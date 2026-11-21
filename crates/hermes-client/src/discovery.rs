@@ -244,8 +244,11 @@ impl Endpoint {
     /// Return the home folder the gateway sent for a served profile, or `None` when the
     /// gateway does not serve that name. The name is matched as `resolve_profile` matches it.
     pub fn profile_home(&self, name: &str) -> Option<&ProfileHome> {
-        let _ = name;
-        todo!("return the served home for the profile")
+        let name = name.trim().to_lowercase();
+        self.profiles
+            .iter()
+            .find(|profile| profile.name == name)
+            .map(|profile| &profile.home)
     }
 
     /// Copy this endpoint with a different instance id. Live test 32 uses it.

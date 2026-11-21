@@ -2,9 +2,9 @@
 use super::{
     self as skill, InstallAction, InstallReport, SKILL_NAME, SKILL_VERSION, SkillError, SkillTarget,
 };
-use crate::hermes::{LinkWireFactory, WireError, WireFactory};
-use serde_json::Value;
-use std::{path::Path, time::Duration};
+use std::path::Path;
+
+const LOCAL_FOLDER_NOTE: &str = "using the local profile folder";
 
 pub async fn resolve_target(profile: &str) -> Result<(SkillTarget, Vec<String>), SkillError> {
     resolve_target_in(profile, &hermes_client::default_home()).await
@@ -15,50 +15,32 @@ pub async fn resolve_target_in(
     hermes_home: &Path,
 ) -> Result<(SkillTarget, Vec<String>), SkillError> {
     let profile = skill::normalise_profile(profile)?;
-    let home = hermes_home.to_path_buf();
     let options = hermes_client::DiscoverOptions {
         ensure: hermes_client::EnsurePolicy::Never,
         ..Default::default()
     };
-    match hermes_client::discover_with(&home, &options).await {
-        Ok(_) => {
-            let factory = LinkWireFactory::new(home.clone());
-            match factory.open(&profile).await {
-                Ok(wire) => {
-                    let result = wire
-                        .call(
-                            "profiles.list",
-                            serde_json::Map::from_iter([(
-                                "include_sessions".into(),
-                                Value::Bool(false),
-                            )]),
-                            Duration::from_secs(5),
-                        )
-                        .await
-                        .map_err(|e| SkillError::Template(e.to_string()))?;
-                    let row = result["profiles"]
-                        .as_array()
-                        .and_then(|p| p.first())
-                        .ok_or_else(|| {
-                            SkillError::Template("gateway returned no profile row".into())
-                        })?;
-                    return Ok((SkillTarget::from_profile_row(&profile, row)?, vec![]));
-                }
-                Err(WireError::NotServed(_)) => {}
-                Err(e) => return Err(SkillError::Template(e.to_string())),
-            }
-        }
+    match hermes_client::discover_with(hermes_home, &options).await {
+        Ok(endpoint) => match skill::target_from_endpoint(&profile, &endpoint, hermes_home)? {
+            Some(target) => Ok((target, vec![])),
+            None => Ok((
+                SkillTarget::resolve_local(&profile, hermes_home)?,
+                vec![format!(
+                    "the gateway does not serve profile {profile}; {LOCAL_FOLDER_NOTE}"
+                )],
+            )),
+        },
         Err(
             hermes_client::DiscoveryError::NoGateway
             | hermes_client::DiscoveryError::NamedProfileHome
             | hermes_client::DiscoveryError::NotReady { .. },
-        ) => {}
-        Err(e) => return Err(SkillError::Template(e.to_string())),
+        ) => Ok((
+            SkillTarget::resolve_local(&profile, hermes_home)?,
+            vec!["gateway not running; using the local profile folder".into()],
+        )),
+        Err(error) => Err(SkillError::Template(format!(
+            "could not find the folder for profile {profile}: {error}"
+        ))),
     }
-    Ok((
-        SkillTarget::resolve_local(&profile, &home)?,
-        vec!["gateway not running; using the local profile folder".into()],
-    ))
 }
 pub fn report_text(
     target: &SkillTarget,
@@ -68,7 +50,7 @@ pub fn report_text(
 ) -> String {
     let mut lines = vec![];
     for warning in &report.warnings {
-        if warning == "gateway not running; using the local profile folder" {
+        if warning.ends_with(LOCAL_FOLDER_NOTE) {
             lines.push(warning.clone());
         } else {
             lines.push(format!("warning: {warning}"));

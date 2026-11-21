@@ -119,8 +119,23 @@ pub fn target_from_endpoint(
     endpoint: &hermes_client::Endpoint,
     hermes_home: &Path,
 ) -> Result<Option<SkillTarget>, SkillError> {
-    let _ = (profile, endpoint, hermes_home);
-    todo!("confirm the served folder against the local rule")
+    let profile = normalise_profile(profile)?;
+    let Some(reported) = endpoint.profile_home(&profile) else {
+        return Ok(None);
+    };
+    let expected = SkillTarget::resolve_local(&profile, hermes_home)?;
+    let reported = reported.as_path();
+    let same_folder = reported.is_absolute()
+        && reported
+            .canonicalize()
+            .is_ok_and(|reported| reported == expected.home);
+    if !same_folder {
+        return Err(SkillError::GatewayFolderMismatch { profile });
+    }
+    Ok(Some(SkillTarget {
+        via_gateway: true,
+        ..expected
+    }))
 }
 pub fn hermes_root_of(home: &Path, native_home: &Path) -> PathBuf {
     if home.starts_with(native_home) {
@@ -177,38 +192,6 @@ impl SkillTarget {
             root.join("profiles").join(&profile)
         };
         Self::make(profile, home, root, false)
-    }
-    pub fn from_profile_row(profile: &str, row: &serde_json::Value) -> Result<Self, SkillError> {
-        let profile = normalise_profile(profile)?;
-        let served = row["name"].as_str().unwrap_or_default();
-        if served != profile {
-            return Err(SkillError::GatewayMismatch {
-                served: served.into(),
-                wanted: profile,
-            });
-        }
-        let home = row["path"]
-            .as_str()
-            .map(PathBuf::from)
-            .ok_or_else(|| SkillError::Template("profile row has no folder".into()))?;
-        let root = if profile == "default" {
-            home.clone()
-        } else if home
-            .parent()
-            .and_then(Path::file_name)
-            .is_some_and(|s| s == "profiles")
-        {
-            home.parent()
-                .and_then(Path::parent)
-                .ok_or_else(|| SkillError::InvalidRoot(home.clone()))?
-                .into()
-        } else {
-            return Err(SkillError::Template(format!(
-                "unexpected profile folder {}",
-                home.display()
-            )));
-        };
-        Self::make(profile, home, root, true)
     }
     fn make(
         profile: String,
@@ -363,8 +346,6 @@ pub enum SkillError {
     InvalidRoot(PathBuf),
     #[error("profile '{profile}' not found ({home})")]
     ProfileNotFound { profile: String, home: PathBuf },
-    #[error("gateway serves '{served}', not '{wanted}'")]
-    GatewayMismatch { served: String, wanted: String },
     #[error(
         "the gateway serves profile {profile} from a different folder than this Hermes home gives; restart the gateway, then try again"
     )]

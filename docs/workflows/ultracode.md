@@ -13,11 +13,13 @@ talaria workflow skill status --profile fixture --json
 ```
 
 Installation never starts a gateway. When none is running it uses the existing local profile
-folder and says so. The profile must already exist. A connected gateway's first profile row
-supplies the authoritative home; a mismatched name is refused. The skill embeds that profile
-and a root `HERMES_HOME` prefix so the lead's terminal can find the root gateway even when its
-environment names a profile folder. Use `--command <absolute-path>` if the lead's terminal
-cannot find `talaria` on PATH.
+folder and says so. The profile must already exist. A connected gateway confirms the folder
+through its served-profile entry on the control socket. A gateway that serves the profile from a
+different folder than the Hermes home gives is refused with advice to restart the gateway. A
+gateway that does not serve the profile falls back to the local folder and says so. The skill
+embeds that profile and a root `HERMES_HOME` prefix so the lead's terminal can find the root
+gateway even when its environment names a profile folder. Use `--command <absolute-path>` if the
+lead's terminal cannot find `talaria` on PATH.
 
 `install` supports `--command`, `--force`, `--dry-run`, and `--json`. Status distinguishes
 missing, current, outdated, modified, and foreign. An unchanged current install is a no-op.
