@@ -10,6 +10,30 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-11-21
+
+Talaria 0.9.1 is the packaged binary and Homebrew release of 0.9.0 after
+PR #757 fixed `tools/package/package.py` `--version` validation and
+`brew audit --strict`. There are no Rust runtime behavior changes from 0.9.0.
+The v0.9.0 tag remains unchanged.
+
+See the [release notes](https://github.com/infiquetra/talaria/blob/v0.9.1/docs/release-notes/v0.9.1.md)
+and the [migration guide](https://github.com/infiquetra/talaria/blob/v0.9.1/docs/migrating-from-0.6.5.md).
+
+### Added
+
+- Prebuilt release archives and a Homebrew formula for the 0.9.0 feature set.
+
+### Changed
+
+- Packaging accepts the Hermes compatibility line in `talaria --version` and
+  Homebrew formula tests compare the first line; final releases omit the redundant
+  formula `version` declaration (#757).
+
+### Removed
+
+- None.
+
 ## [0.9.0] — 2026-11-20
 
 See the [release notes](https://github.com/infiquetra/talaria/blob/v0.9.0/docs/release-notes/v0.9.0.md)
@@ -690,7 +714,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/infiquetra/talaria/releases/tag/v0.9.1
 [0.9.0]: https://github.com/infiquetra/talaria/releases/tag/v0.9.0
 [0.8.1]: https://github.com/infiquetra/talaria/releases/tag/v0.8.1
 [0.8.0]: https://github.com/infiquetra/talaria/releases/tag/v0.8.0
