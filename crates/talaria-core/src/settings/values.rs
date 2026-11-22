@@ -1,6 +1,6 @@
 use super::{
-    ChoiceValue, FieldKind, FieldView, Pick, SchemaList, choice_spec, contains_secret_key,
-    env_reference_names, secrets::has_env_reference,
+    ChoiceSpec, ChoiceValue, FieldKind, FieldView, ManyStore, OwnKind, Pick, SchemaList,
+    choice_spec, contains_secret_key, env_reference_names, number_spec, secrets::has_env_reference,
 };
 use serde_json::Value;
 use std::fmt;
@@ -14,6 +14,10 @@ pub enum ValueKind {
     JsonList,
     Nullable,
     Choice,
+    /// Any number of listed values, ticked one by one.
+    Many,
+    /// A listed word or an entry of the user's own.
+    Mixed,
     ReadOnly(ReadOnlyReason),
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -38,6 +42,18 @@ impl fmt::Display for InputError {
     }
 }
 impl std::error::Error for InputError {}
+/// The leaves of a delegation or auxiliary entry that the Model roles screen writes.
+const ROUTE_LEAVES: [&str; 7] = [
+    "provider",
+    "model",
+    "base_url",
+    "api_key",
+    "api_mode",
+    "reasoning_effort",
+    "fallback_providers",
+];
+/// Whether another screen writes this key. Only those leaves are owned: the behaviour keys beside
+/// them, such as the delegation limits and the auxiliary timeouts, are edited here.
 pub(crate) fn owned_elsewhere(key: &str) -> bool {
     [
         "model",
@@ -46,11 +62,18 @@ pub(crate) fn owned_elsewhere(key: &str) -> bool {
         "agent.reasoning_effort",
         "providers",
         "custom_providers",
+        "moa.default_preset",
+        "moa.active_preset",
     ]
     .contains(&key)
-        || ["delegation.", "auxiliary.", "moa."]
-            .iter()
-            .any(|p| key.starts_with(p))
+        || key.starts_with("moa.presets.")
+        || key
+            .strip_prefix("delegation.")
+            .is_some_and(|leaf| ROUTE_LEAVES.contains(&leaf))
+        || key.strip_prefix("auxiliary.").is_some_and(|rest| {
+            rest.split_once('.')
+                .is_some_and(|(_, leaf)| ROUTE_LEAVES.contains(&leaf))
+        })
 }
 pub fn value_kind(
     field: &FieldView,
@@ -67,11 +90,40 @@ pub fn value_kind(
     if current.is_some_and(contains_secret_key) {
         return ValueKind::ReadOnly(ReadOnlyReason::HoldsSecret);
     }
-    if let Some(spec) = choice_spec(&field.key)
-        && matches!(field.kind, FieldKind::String | FieldKind::Select)
+    if let Some(spec) = choice_spec(&field.key) {
+        match spec.pick {
+            Pick::One if matches!(field.kind, FieldKind::String | FieldKind::Select) => {
+                return ValueKind::Choice;
+            }
+            Pick::Many { .. }
+                if matches!(
+                    field.kind,
+                    FieldKind::String | FieldKind::List | FieldKind::Select
+                ) =>
+            {
+                return ValueKind::Many;
+            }
+            Pick::Mixed { .. }
+                if matches!(
+                    field.kind,
+                    FieldKind::String | FieldKind::List | FieldKind::Select
+                ) =>
+            {
+                return ValueKind::Mixed;
+            }
+            _ => {}
+        }
+    }
+    // A number with a stated range, or whose blank value means "not set": Hermes types the
+    // second kind as a string because its default is null.
+    if let Some(spec) = number_spec(&field.key)
+        && (field.kind == FieldKind::Number
+            || (field.kind == FieldKind::String && spec.blank.is_some()))
     {
-        return match spec.pick {
-            Pick::One => ValueKind::Choice,
+        return if spec.whole() {
+            ValueKind::Integer
+        } else {
+            ValueKind::Float
         };
     }
     let decided = current
@@ -136,16 +188,42 @@ pub fn parse_input(
             "false" | "off" | "no" | "0" => Ok(Value::Bool(false)),
             _ => Err(error("Choose one of the listed values.")),
         },
-        ValueKind::Integer => text
-            .parse::<i64>()
-            .map(Value::from)
-            .map_err(|_| error("Enter a whole number.")),
-        ValueKind::Float => text
-            .parse::<f64>()
-            .ok()
-            .and_then(serde_json::Number::from_f64)
-            .map(Value::Number)
-            .ok_or_else(|| error("Enter a number.")),
+        ValueKind::Integer => {
+            let spec = number_spec(&field.key);
+            if text.is_empty() && spec.is_some_and(|spec| spec.blank.is_some()) {
+                return Ok(Value::Null);
+            }
+            let number = text.parse::<i64>().map_err(|_| match spec {
+                Some(spec) => InputError {
+                    message: spec.unreadable(),
+                },
+                None => error("Enter a whole number."),
+            })?;
+            match spec.filter(|spec| !spec.allows(number as f64)) {
+                Some(spec) => Err(InputError {
+                    message: spec.refusal(),
+                }),
+                None => Ok(Value::from(number)),
+            }
+        }
+        ValueKind::Float => {
+            let spec = number_spec(&field.key);
+            if text.is_empty() && spec.is_some_and(|spec| spec.blank.is_some()) {
+                return Ok(Value::Null);
+            }
+            let number = text
+                .parse::<f64>()
+                .ok()
+                .filter(|number| spec.is_none_or(|spec| spec.allows(*number)))
+                .and_then(serde_json::Number::from_f64);
+            match (number, spec) {
+                (Some(number), _) => Ok(Value::Number(number)),
+                (None, Some(spec)) => Err(InputError {
+                    message: spec.refusal(),
+                }),
+                (None, None) => Err(error("Enter a number.")),
+            }
+        }
         ValueKind::Text => Ok(Value::String(text.into())),
         ValueKind::StringList => Ok(Value::Array(
             text.split(',')
@@ -219,7 +297,94 @@ pub fn parse_input(
                 })
             }
         }
+        ValueKind::Many => match choice_spec(&field.key) {
+            Some(spec) => parse_many(spec, text, current),
+            None => Err(error("This setting cannot be edited here.")),
+        },
+        ValueKind::Mixed => match choice_spec(&field.key) {
+            Some(spec) => parse_mixed(spec, text),
+            None => Err(error("This setting cannot be edited here.")),
+        },
         ValueKind::ReadOnly(_) => Err(error("This setting cannot be edited here.")),
+    }
+}
+/// The names a multiple choice key holds now, whatever its storage.
+pub(crate) fn picked_names(value: &Value) -> Vec<String> {
+    match value {
+        Value::Array(items) => items.iter().map(option_text).collect(),
+        Value::String(text) => text
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+/// The value to save for these picks.
+pub(crate) fn many_value(store: ManyStore, picks: &[String]) -> Value {
+    match store {
+        ManyStore::List => Value::Array(picks.iter().cloned().map(Value::String).collect()),
+        ManyStore::CommaString => Value::String(picks.join(", ")),
+    }
+}
+fn parse_many(spec: &ChoiceSpec, text: &str, current: Option<&Value>) -> Result<Value, InputError> {
+    let Pick::Many { store, .. } = spec.pick else {
+        return Err(InputError {
+            message: "This setting cannot be edited here.".into(),
+        });
+    };
+    let held = current.map(picked_names).unwrap_or_default();
+    let mut picks: Vec<String> = Vec::new();
+    let mut unlisted: Vec<&str> = Vec::new();
+    for name in text
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        if !spec.items.iter().any(|item| item.value == name) && !held.iter().any(|h| h == name) {
+            unlisted.push(name);
+        } else if !picks.iter().any(|pick| pick == name) {
+            picks.push(name.to_owned());
+        }
+    }
+    if unlisted.is_empty() {
+        return Ok(many_value(store, &picks));
+    }
+    let mut names: Vec<&str> = spec.items.iter().take(8).map(|item| item.value).collect();
+    if spec.items.len() > 8 {
+        names.push("…");
+    }
+    Err(InputError {
+        message: format!(
+            "Choose from: {}; not listed: {}.",
+            names.join(", "),
+            unlisted.join(", ")
+        ),
+    })
+}
+fn parse_mixed(spec: &ChoiceSpec, text: &str) -> Result<Value, InputError> {
+    let Pick::Mixed { own, .. } = spec.pick else {
+        return Err(InputError {
+            message: "This setting cannot be edited here.".into(),
+        });
+    };
+    if spec.items.iter().any(|item| item.value == text) {
+        return Ok(spec.saved(text));
+    }
+    let refused = || InputError {
+        message: format!("Enter {}.", spec.ask),
+    };
+    match own {
+        OwnKind::List => {
+            let names = picked_names(&Value::String(text.into()));
+            if names.is_empty() {
+                Err(refused())
+            } else {
+                Ok(Value::Array(names.into_iter().map(Value::String).collect()))
+            }
+        }
+        OwnKind::Number => text.parse::<u64>().map(Value::from).map_err(|_| refused()),
     }
 }
 /// The values a choice key lists, in display order: the built-in rows, then the schema options

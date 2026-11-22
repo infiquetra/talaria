@@ -172,8 +172,8 @@ fn open_load_browse_edit_review_apply_flow() {
 
     let values = json!({
         "model": "example", "model_context_length": 0, "fallback_providers": [],
-        "agent": {"reasoning_effort": "medium"}, "delegation": {"enabled": true},
-        "auxiliary": {"vision": {"model": "example"}}, "moa": {"enabled": false},
+        "agent": {"reasoning_effort": "medium"}, "delegation": {"model": "example"},
+        "auxiliary": {"vision": {"model": "example"}}, "moa": {"default_preset": "example"},
         "providers": {}, "custom_providers": []
     });
     for (key, kind, label) in [
@@ -189,17 +189,17 @@ fn open_load_browse_edit_review_apply_flow() {
             FieldKind::String,
             "edit in Model roles",
         ),
-        (
-            "delegation.enabled",
-            FieldKind::Boolean,
-            "edit in Model roles",
-        ),
+        ("delegation.model", FieldKind::String, "edit in Model roles"),
         (
             "auxiliary.vision.model",
             FieldKind::String,
             "edit in Model roles",
         ),
-        ("moa.enabled", FieldKind::Boolean, "edit in Model roles"),
+        (
+            "moa.default_preset",
+            FieldKind::String,
+            "edit in Model roles",
+        ),
         ("providers", FieldKind::Object, "edit in Providers"),
         ("custom_providers", FieldKind::List, "edit in Providers"),
     ] {
@@ -1293,9 +1293,10 @@ fn ordered_many_appends_new_picks_and_unticking_removes() {
     move_to(&mut state, "[ ] latency");
     space(&mut state);
     enter(&mut state);
-    assert_eq!(
-        staged_patch(&mut state, doc.clone()),
-        json!({"display": {"runtime_footer": {"fields": ["model", "context_pct", "cwd", "latency"]}}})
+    assert!(
+        state.view().rows[0]
+            .value
+            .contains("[model, context_pct, cwd, latency]")
     );
     action(&mut state, SettingsAction::Edit);
     move_to(&mut state, "[x] context_pct");
@@ -1351,13 +1352,11 @@ fn default_set_row_clears_the_list() {
         staged_patch(&mut state, doc.clone()),
         json!({"display": {"status_bar": {"fields": []}}})
     );
-    // Enter on the row itself chooses it too.
-    let (mut state, doc) = many_chooser("display.status_bar.fields", FieldKind::List, current);
+    // Enter keeps the ticks as they are; it does not press the row under the cursor, so opening
+    // the list and pressing Enter never clears what was ticked.
+    let (mut state, _) = many_chooser("display.status_bar.fields", FieldKind::List, current);
     enter(&mut state);
-    assert_eq!(
-        staged_patch(&mut state, doc),
-        json!({"display": {"status_bar": {"fields": []}}})
-    );
+    assert_eq!(marker(&state, "display.status_bar.fields"), "");
 }
 
 #[test]

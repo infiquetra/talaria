@@ -19,6 +19,8 @@ pub struct ChoiceSpec {
     pub items: &'static [ChoiceValue],
     /// The hint on a last "Type a value…" row, when Hermes also takes values outside the list.
     pub custom: Option<&'static str>,
+    /// For a [`Pick::Mixed`] key, what an own entry is, finishing "Enter …" when one is refused.
+    pub ask: &'static str,
     pub schema: SchemaList,
     pub save: SaveAs,
     /// A list that differs per install or profile, fetched when the chooser opens and merged
@@ -50,6 +52,37 @@ pub struct RuntimeChoice {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
     One,
+    /// Any number of the listed values, ticked one by one.
+    Many {
+        /// The order of the picks is meaningful, so a new pick goes last and the order is kept.
+        ordered: bool,
+        /// A first row that clears the picks, named for what an empty list means.
+        empty_label: Option<&'static str>,
+        store: ManyStore,
+    },
+    /// One of the listed words, or an entry of the user's own: the last row opens an editor.
+    Mixed {
+        own_label: &'static str,
+        own: OwnKind,
+    },
+}
+
+/// How the picks of a [`Pick::Many`] key are stored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManyStore {
+    /// A list of strings.
+    List,
+    /// One string with the picks separated by a comma, because Hermes types the key as a string.
+    CommaString,
+}
+
+/// What a [`Pick::Mixed`] key takes beside its words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnKind {
+    /// A comma separated list, saved as a list of strings.
+    List,
+    /// A whole number, saved as a number.
+    Number,
 }
 
 /// What happens to the options the gateway's schema sends for the key.
@@ -68,6 +101,8 @@ pub enum SaveAs {
     Text,
     /// A key whose default is null: blank saves null, `true` and `false` save booleans.
     Json,
+    /// A key that holds a list: one word saves as a list of that word and blank as an empty list.
+    List,
 }
 
 /// One row of a key's list.
@@ -90,6 +125,8 @@ impl ChoiceSpec {
             (SaveAs::Json, "") => Value::Null,
             (SaveAs::Json, "true") => Value::Bool(true),
             (SaveAs::Json, "false") => Value::Bool(false),
+            (SaveAs::List, "") => Value::Array(Vec::new()),
+            (SaveAs::List, word) => Value::Array(vec![Value::String(word.into())]),
             _ => Value::String(text.into()),
         }
     }
@@ -111,6 +148,13 @@ impl ChoiceSpec {
     const fn json(self) -> Self {
         Self {
             save: SaveAs::Json,
+            ..self
+        }
+    }
+
+    const fn as_list(self) -> Self {
+        Self {
+            save: SaveAs::List,
             ..self
         }
     }
@@ -142,9 +186,45 @@ const fn one(key: &'static str, items: &'static [ChoiceValue]) -> ChoiceSpec {
         pick: Pick::One,
         items,
         custom: None,
+        ask: "",
         schema: SchemaList::Merge,
         save: SaveAs::Text,
         runtime: None,
+    }
+}
+
+const fn many(
+    key: &'static str,
+    ordered: bool,
+    empty_label: Option<&'static str>,
+    store: ManyStore,
+    items: &'static [ChoiceValue],
+) -> ChoiceSpec {
+    ChoiceSpec {
+        pick: Pick::Many {
+            ordered,
+            empty_label,
+            store,
+        },
+        ..one(key, items)
+    }
+}
+
+/// A word list that is also saved as JSON, with an own entry of the given kind on the last row.
+const fn mixed(
+    key: &'static str,
+    own_label: &'static str,
+    own: OwnKind,
+    hint: &'static str,
+    ask: &'static str,
+    items: &'static [ChoiceValue],
+) -> ChoiceSpec {
+    ChoiceSpec {
+        pick: Pick::Mixed { own_label, own },
+        custom: Some(hint),
+        ask,
+        save: SaveAs::Json,
+        ..one(key, items)
     }
 }
 
@@ -169,7 +249,276 @@ pub fn choice_specs() -> &'static [ChoiceSpec] {
     SPECS
 }
 
+/// The range, step and unit of a number, as far as the Hermes source states them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NumberSpec {
+    pub key: &'static str,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    /// Both bounds are left out: the value lies strictly between them.
+    pub exclusive: bool,
+    pub step: f64,
+    pub unit: &'static str,
+    /// What a blank value means, for a key where blank saves null.
+    pub blank: Option<&'static str>,
+}
+
+impl NumberSpec {
+    /// Whether the value is a whole number.
+    #[must_use]
+    pub fn whole(&self) -> bool {
+        self.step.fract() == 0.0
+    }
+
+    /// Whether the source states a bound.
+    #[must_use]
+    pub fn ranged(&self) -> bool {
+        self.min.is_some() || self.max.is_some()
+    }
+
+    #[must_use]
+    pub fn allows(&self, number: f64) -> bool {
+        let (low, high) = if self.exclusive {
+            (
+                self.min.is_none_or(|min| number > min),
+                self.max.is_none_or(|max| number < max),
+            )
+        } else {
+            (
+                self.min.is_none_or(|min| number >= min),
+                self.max.is_none_or(|max| number <= max),
+            )
+        };
+        low && high
+    }
+
+    /// A bound or step as the user types it: `1` for a whole number, `0.05` otherwise.
+    #[must_use]
+    pub fn text(&self, number: f64) -> String {
+        if self.whole() {
+            format!("{}", number.round() as i64)
+        } else {
+            format!("{:?}", (number * 1e6).round() / 1e6)
+        }
+    }
+
+    /// What to say when a value is refused, ending in how to leave the key unset when it may be.
+    #[must_use]
+    pub fn refusal(&self) -> String {
+        let ask = match (self.min, self.max) {
+            (Some(min), Some(max)) if self.exclusive => format!(
+                "a number above {} and below {}",
+                self.text(min),
+                self.text(max)
+            ),
+            (Some(min), Some(max)) => {
+                format!("a number from {} to {}", self.text(min), self.text(max))
+            }
+            (Some(min), None) => format!("a number of {} or more", self.text(min)),
+            (None, Some(max)) => format!("a number of {} or less", self.text(max)),
+            (None, None) if self.whole() => "a whole number".to_owned(),
+            (None, None) => "a number".to_owned(),
+        };
+        if self.blank.is_some() {
+            format!("Enter {ask}, or leave it blank.")
+        } else {
+            format!("Enter {ask}.")
+        }
+    }
+
+    /// What to say when the text is not a number at all: a whole number key asks for one, even
+    /// where a range follows.
+    #[must_use]
+    pub fn unreadable(&self) -> String {
+        if !self.whole() {
+            self.refusal()
+        } else if self.blank.is_some() {
+            "Enter a whole number, or leave it blank.".to_owned()
+        } else {
+            "Enter a whole number.".to_owned()
+        }
+    }
+
+    /// The line shown above the number editor.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        match (self.min, self.max) {
+            (Some(min), Some(max)) if self.exclusive => parts.push(format!(
+                "range above {} and below {}",
+                self.text(min),
+                self.text(max)
+            )),
+            (Some(min), Some(max)) => {
+                parts.push(format!("range {} to {}", self.text(min), self.text(max)));
+            }
+            (Some(min), None) => parts.push(format!("at least {}", self.text(min))),
+            (None, Some(max)) => parts.push(format!("at most {}", self.text(max))),
+            (None, None) => {}
+        }
+        if self.ranged() {
+            parts.push(format!("step {}", self.text(self.step)));
+            parts.push(self.unit.to_owned());
+        } else {
+            let kind = if self.whole() {
+                "whole number"
+            } else {
+                "number"
+            };
+            parts.push(format!("{kind} of {}", self.unit));
+        }
+        if let Some(blank) = self.blank {
+            parts.push(format!("blank = {blank}"));
+        }
+        parts.join(" · ")
+    }
+
+    /// The text of the number one step above or below `text`, kept inside the range. Blank or
+    /// unreadable text counts as zero. None when the source states no range to step within.
+    #[must_use]
+    pub fn nudge(&self, text: &str, up: bool) -> Option<String> {
+        if !self.ranged() {
+            return None;
+        }
+        let low = self
+            .min
+            .map(|min| if self.exclusive { min + self.step } else { min });
+        let high = self
+            .max
+            .map(|max| if self.exclusive { max - self.step } else { max });
+        let base = text
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|number| number.is_finite())
+            .unwrap_or(0.0);
+        let mut next = if up {
+            base + self.step
+        } else {
+            base - self.step
+        };
+        if let Some(low) = low {
+            next = next.max(low);
+        }
+        if let Some(high) = high {
+            next = next.min(high);
+        }
+        Some(self.text(next))
+    }
+}
+
+/// The number spec for `key`, when Hermes states a range or a blank meaning for it.
+#[must_use]
+pub fn number_spec(key: &str) -> Option<&'static NumberSpec> {
+    NUMBERS.iter().find(|spec| spec.key == key)
+}
+
+/// Every number spec, sorted by key.
+#[must_use]
+pub fn number_specs() -> &'static [NumberSpec] {
+    NUMBERS
+}
+
+const fn num(key: &'static str, step: f64, unit: &'static str) -> NumberSpec {
+    NumberSpec {
+        key,
+        min: None,
+        max: None,
+        exclusive: false,
+        step,
+        unit,
+        blank: None,
+    }
+}
+
+impl NumberSpec {
+    const fn range(self, min: f64, max: f64) -> Self {
+        Self {
+            min: Some(min),
+            max: Some(max),
+            ..self
+        }
+    }
+
+    const fn at_least(self, min: f64) -> Self {
+        Self {
+            min: Some(min),
+            ..self
+        }
+    }
+
+    const fn between(self, min: f64, max: f64) -> Self {
+        Self {
+            exclusive: true,
+            ..self.range(min, max)
+        }
+    }
+
+    const fn blank(self, meaning: &'static str) -> Self {
+        Self {
+            blank: Some(meaning),
+            ..self
+        }
+    }
+}
+
+static NUMBERS: &[NumberSpec] = &[
+    num("agent.budget_warning_ratio", 0.05, "ratio")
+        .between(0.0, 1.0)
+        .blank("off"),
+    num("agent.max_turns", 1.0, "turns")
+        .at_least(1.0)
+        .blank("no limit"),
+    num("agent.run_budget_seconds", 1.0, "seconds").blank("off"),
+    num("approvals.discord_prompt_timeout", 1.0, "seconds").at_least(30.0),
+    num(
+        "compression.codex_responses_compact_threshold",
+        1.0,
+        "tokens",
+    )
+    .blank("follow the local trigger"),
+    num("compression.max_attempts", 1.0, "rounds").range(1.0, 10.0),
+    num("compression.threshold", 0.05, "ratio of the context window").range(0.0, 1.0),
+    num("compression.threshold_tokens", 1.0, "tokens").blank("off"),
+    num("context_file_max_chars", 1.0, "characters").blank("scale with the model window"),
+    num("cron.max_parallel_jobs", 1.0, "jobs").blank("no limit"),
+    num("database.journal_size_limit", 1.0, "bytes").blank("no limit"),
+    num("database.wal_autocheckpoint", 1.0, "pages").blank("SQLite default"),
+    num("display.pet.scale", 0.05, "scale").range(0.1, 3.0),
+    num("kanban.max_in_progress", 1.0, "tasks").blank("derive from memory"),
+    num("kanban.max_in_progress_per_profile", 1.0, "workers").blank("no cap"),
+    num("max_concurrent_sessions", 1.0, "sessions")
+        .at_least(0.0)
+        .blank("no limit"),
+    num("openrouter.min_coding_score", 0.05, "score").range(0.0, 1.0),
+    num("openrouter.response_cache_ttl", 1.0, "seconds").range(1.0, 86400.0),
+    num("plugins.hook_callback_timeout", 1.0, "seconds").range(0.0, 600.0),
+    num("plugins.load_timeout_seconds", 1.0, "seconds").range(0.0, 600.0),
+    num("tools.tool_search.listing_max_tokens", 100.0, "tokens").range(200.0, 60000.0),
+    num("tools.tool_search.max_search_limit", 1.0, "hits").range(1.0, 50.0),
+    num("tools.tool_search.search_default_limit", 1.0, "hits").at_least(1.0),
+    num("tools.tool_search.threshold_pct", 1.0, "percent").range(0.0, 100.0),
+    num("vision.embed_target_bytes", 1024.0, "bytes").range(65536.0, 4194304.0),
+    num("vision.max_calls_per_image", 1.0, "calls").blank("3 in subagents, no limit otherwise"),
+    num("voice.beep_volume", 0.05, "amplitude").range(0.0, 1.0),
+    num("wake_word.sensitivity", 0.05, "threshold").range(0.0, 1.0),
+];
+
 static SPECS: &[ChoiceSpec] = &[
+    mixed(
+        "agent.agent_cache.memory_high_mb",
+        "Number of MB…",
+        OwnKind::Number,
+        "A whole number of megabytes; 0 turns the pass off.",
+        "a whole number of MB, or choose auto or off",
+        &[
+            v(
+                "auto",
+                "Derive the budget from the memory limit or total RAM.",
+            ),
+            v("off", "Never shed cached sessions for memory."),
+        ],
+    ),
     one(
         "agent.coding_context",
         &[
@@ -185,6 +534,21 @@ static SPECS: &[ChoiceSpec] = &[
             v("off", "No coding brief."),
         ],
     ),
+    mixed(
+        "agent.execution_guidance",
+        "Own list…",
+        OwnKind::List,
+        "Model names to match, separated by commas, for example gpt, codex.",
+        "model names separated by commas, for example gpt, codex",
+        &[
+            v(
+                "auto",
+                "For gpt, codex, grok, deepseek, kimi, qwen, glm, minimax, mimo and mistral models.",
+            ),
+            v("true", "For every model."),
+            v("false", "Never."),
+        ],
+    ),
     one(
         "agent.image_input_mode",
         &[
@@ -194,6 +558,18 @@ static SPECS: &[ChoiceSpec] = &[
             ),
             v("native", "Always attach images to the model."),
             v("text", "Always describe images with vision_analyze first."),
+        ],
+    ),
+    mixed(
+        "agent.intent_ack_continuation",
+        "Own list…",
+        OwnKind::List,
+        "Model names to match, separated by commas, for example gpt, codex.",
+        "model names separated by commas, for example gpt, codex",
+        &[
+            v("auto", "Only for the codex_responses API mode."),
+            v("true", "For every API mode."),
+            v("false", "Never."),
         ],
     ),
     one(
@@ -223,6 +599,30 @@ static SPECS: &[ChoiceSpec] = &[
             v("high", "Long answers."),
         ],
     ),
+    mixed(
+        "agent.tool_use_enforcement",
+        "Own list…",
+        OwnKind::List,
+        "Model names to match, separated by commas, for example gpt, codex.",
+        "model names separated by commas, for example gpt, codex",
+        &[
+            v("auto", "Only for GPT and Codex models."),
+            v("true", "For every model."),
+            v("false", "Never."),
+        ],
+    ),
+    mixed(
+        "approvals.approvers",
+        "Own list…",
+        OwnKind::List,
+        "User ids allowed to answer, separated by commas.",
+        "user ids separated by commas",
+        &[
+            v("*", "Any admitted member."),
+            v("", "Only the requester and platform admins.").label("Requester and admins only"),
+        ],
+    )
+    .as_list(),
     one(
         "approvals.cron_mode",
         &[
@@ -409,6 +809,20 @@ static SPECS: &[ChoiceSpec] = &[
         ],
     ),
     one(
+        "delegation.gateway_mode",
+        &[
+            v("inline", "Subagents join the turn that started them."),
+            v(
+                "background",
+                "Subagents run in the background and report back.",
+            ),
+            v(
+                "auto",
+                "Inline where interim messages are off, background elsewhere.",
+            ),
+        ],
+    ),
+    one(
         "desktop.disable_gpu",
         &[
             v("auto", "Disable the GPU only on remote displays."),
@@ -433,6 +847,28 @@ static SPECS: &[ChoiceSpec] = &[
             v("kwallet5", "KWallet 5."),
             v("kwallet6", "KWallet 6."),
             v("basic", "Unencrypted."),
+        ],
+    ),
+    many(
+        "discord.server_actions",
+        false,
+        Some("All actions"),
+        ManyStore::CommaString,
+        &[
+            v("list_guilds", "List the servers the bot is in."),
+            v("server_info", "Read a server's details."),
+            v("list_channels", "List a server's channels."),
+            v("channel_info", "Read a channel's details."),
+            v("list_roles", "List a server's roles."),
+            v("member_info", "Read a member's details."),
+            v("search_members", "Search a server's members."),
+            v("fetch_messages", "Read messages in a channel."),
+            v("list_pins", "List a channel's pinned messages."),
+            v("pin_message", "Pin a message."),
+            v("unpin_message", "Unpin a message."),
+            v("create_thread", "Start a thread."),
+            v("add_role", "Give a member a role."),
+            v("remove_role", "Take a role from a member."),
         ],
     ),
     one(
@@ -583,6 +1019,19 @@ static SPECS: &[ChoiceSpec] = &[
             ),
         ],
     ),
+    many(
+        "display.runtime_footer.fields",
+        true,
+        None,
+        ManyStore::List,
+        &[
+            v("model", "Model name."),
+            v("context_pct", "Context use in percent."),
+            v("cwd", "Working folder."),
+            v("latency", "Latency."),
+            v("served_model", "Model the routing proxy served."),
+        ],
+    ),
     one(
         "display.skin",
         &[
@@ -605,6 +1054,35 @@ static SPECS: &[ChoiceSpec] = &[
     )
     .custom("The name of a skin file in the profile's skins folder.")
     .runtime(RuntimeList::Skins),
+    many(
+        "display.status_bar.fields",
+        false,
+        Some("Default set (empty list)"),
+        ManyStore::List,
+        &[
+            v("model", "Model name."),
+            v("context_detail", "Context use with token counts."),
+            v("context_pct", "Context use in percent."),
+            v("cache_hit", "Prompt cache hit rate."),
+            v("latency", "Latency."),
+            v("tps", "Tokens per second."),
+            v("compressions", "How often the context was compressed."),
+            v("bg_tasks", "Background tasks."),
+            v("bg_processes", "Background processes."),
+            v("bg_subagents", "Background subagents."),
+            v("goal", "The current goal."),
+            v("git_branch", "The current git branch."),
+            v("duration", "Session duration."),
+            v("prompt_elapsed", "Time spent on the current prompt."),
+            v("idle_since", "Time since the last final reply."),
+            v("focus", "Focus mode."),
+            v("yolo", "Whether approvals are off."),
+            v("stash", "Parked prompt drafts."),
+            v("battery", "Battery level."),
+            v("title", "Session title."),
+            v("total_tokens", "Tokens used in the session."),
+        ],
+    ),
     one(
         "display.tool_progress_grouping",
         &[

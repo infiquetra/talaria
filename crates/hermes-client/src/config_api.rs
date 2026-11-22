@@ -123,9 +123,17 @@ async fn config_object(rest: &RestClient, path: &str) -> Result<Value, RestError
     }
     Ok(value)
 }
+/// Saves `patch`. A patch that holds the display language also asks Hermes to keep the language
+/// key: without that, the save drops a value equal to the default, so an English choice would
+/// vanish and the desktop app would follow the system language again.
 pub async fn config_write(rest: &RestClient, patch: &Value) -> Result<(), RestError> {
+    let path = if patch.pointer("/display/language").is_some() {
+        "/api/config?preserve_language=true"
+    } else {
+        "/api/config"
+    };
     let result = rest
-        .put_json("/api/config", &serde_json::json!({"config": patch}))
+        .put_json(path, &serde_json::json!({"config": patch}))
         .await?;
     if result.get("ok").and_then(Value::as_bool) != Some(true) {
         return Err(RestError::BadBody(

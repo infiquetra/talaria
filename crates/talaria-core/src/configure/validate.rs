@@ -3,8 +3,8 @@ use super::{
     CapKind, Change, Context, McpSource, Proposal, Screen, SecretDetector, Section, WITHHELD,
 };
 use crate::settings::{
-    FieldView, ReadOnlyReason, ValueKind, apply_effect, contains_secret_key, env_reference_names,
-    is_secret_key, value_kind,
+    FieldView, Pick, ReadOnlyReason, ValueKind, apply_effect, choice_spec, contains_secret_key,
+    env_reference_names, is_secret_key, number_spec, value_kind,
 };
 use serde_json::Value;
 use std::borrow::Cow;
@@ -574,6 +574,16 @@ fn on_off(enabled: bool) -> &'static str {
     if enabled { "on" } else { "off" }
 }
 pub fn check_value(kind: &ValueKind, field: &FieldView, value: &Value) -> Result<Value, String> {
+    if let Some(spec) = number_spec(&field.key)
+        && matches!(kind, ValueKind::Integer | ValueKind::Float)
+    {
+        if value.is_null() && spec.blank.is_some() {
+            return Ok(Value::Null);
+        }
+        if value.as_f64().is_some_and(|number| !spec.allows(number)) {
+            return Err(spec.refusal());
+        }
+    }
     let ok = match kind {
         ValueKind::Bool => value.is_boolean(),
         ValueKind::Integer => {
@@ -610,6 +620,28 @@ pub fn check_value(kind: &ValueKind, field: &FieldView, value: &Value) -> Result
                     .as_ref()
                     .is_some_and(|options| options.contains(value))
         }
+        ValueKind::Many => choice_spec(&field.key).is_some_and(|spec| match spec.pick {
+            Pick::Many { store, .. } => {
+                let names = crate::settings::picked_names(value);
+                let shaped = match store {
+                    crate::settings::ManyStore::List => value
+                        .as_array()
+                        .is_some_and(|items| items.iter().all(Value::is_string)),
+                    crate::settings::ManyStore::CommaString => value.is_string(),
+                };
+                shaped
+                    && names
+                        .iter()
+                        .all(|name| spec.items.iter().any(|item| item.value == *name))
+            }
+            _ => false,
+        }),
+        ValueKind::Mixed => choice_spec(&field.key).is_some_and(|spec| match value {
+            Value::Bool(_) | Value::Number(_) => true,
+            Value::String(word) => spec.items.iter().any(|item| item.value == word),
+            Value::Array(items) => items.iter().all(Value::is_string),
+            _ => false,
+        }),
         ValueKind::ReadOnly(_) => false,
     };
     if ok {
@@ -624,6 +656,8 @@ pub fn check_value(kind: &ValueKind, field: &FieldView, value: &Value) -> Result
             ValueKind::JsonList => "expected an array",
             ValueKind::Nullable => "expected null or a scalar",
             ValueKind::Choice => "expected a listed choice",
+            ValueKind::Many => "expected a list of listed values",
+            ValueKind::Mixed => "expected a listed word, a number or a list of names",
             ValueKind::ReadOnly(_) => "this setting cannot be edited here",
         }
         .into())
