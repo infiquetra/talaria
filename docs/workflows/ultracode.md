@@ -84,10 +84,12 @@ open`), and adds the agent count to the status segment (`ultracode · 3/10 agent
 then kept on a narrow line. When the run ends it prints `Workflow run <outcome>: …` and the
 dock line goes away. The view never opens by itself. `workflow_view` (Alt+W) opens the latest
 run that this Talaria window saw start after an Ultracode-routed prompt in the foreground
-session, or the run list when it saw none. A run started some other way, or in another window,
-is reached through the run list. A session started with
-`--remote` runs workflows on the gateway's machine, so Talaria does not watch for them and the
-routing notice says so. Two Talaria windows on one profile can both announce the same run.
+session, or the run list when it saw none. Runs are matched by profile and start time, not
+by the prompt that asked for them, so for an hour after a routed prompt a run started by hand
+or in another window on the same profile is also announced here and can become Alt+W's
+target, and two Talaria windows on one profile can both announce the same run. Any other run
+is reached through the run list. A session started with `--remote` runs workflows on the
+gateway's machine, so Talaria does not watch for them and the routing notice says so.
 
 With the toggle off, the whole word `ultracode` anywhere in a plain prompt sends just that
 prompt to the talaria-workflows skill and shows a one-shot notice. Matching ignores ASCII case. Letters, digits,

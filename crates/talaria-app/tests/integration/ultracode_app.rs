@@ -727,6 +727,75 @@ fn arming_again_opens_a_fresh_window_and_keeps_active_runs() {
     );
 }
 
+/// docs/workflows/ultracode.md describes this: inside the watch's hour, a run started by hand
+/// or in another window on the same profile is announced here and becomes Alt+W's target.
+#[test]
+fn run_started_by_hand_inside_the_hour_is_announced_and_tracked() {
+    use talaria_workflow::runner::RunStatus;
+    let id = session();
+    let mut service = on();
+    service.arm(&id, "fixture", 1_000, 0);
+    let _ = service.scan_due(0);
+    let mine = [run_row("run-mine", "fixture", 2_000, RunStatus::Running, 0)];
+    let _ = service.on_runs(&mine, 100, Some("Alt+W"));
+    let _ = service.scan_due(2_100);
+    let mine = [run_row(
+        "run-mine",
+        "fixture",
+        2_000,
+        RunStatus::Completed,
+        1,
+    )];
+    let _ = service.on_runs(&mine, 2_200, Some("Alt+W"));
+    // Thirty minutes later a run is started by hand on the same profile.
+    let half_hour = 30 * 60 * 1_000;
+    assert!(
+        service.scan_due(half_hour).is_some(),
+        "the watch is still alive"
+    );
+    let rows = [
+        run_row("run-mine", "fixture", 2_000, RunStatus::Completed, 1),
+        run_row(
+            "run-by-hand",
+            "fixture",
+            i64::try_from(half_hour).unwrap(),
+            RunStatus::Running,
+            0,
+        ),
+    ];
+    assert_eq!(
+        notices(&service.on_runs(&rows, half_hour + 100, Some("Alt+W"))),
+        [
+            "Workflow run started: review-branch (run-by-hand). Press Alt+W or type /workflows to see its agents."
+        ]
+    );
+    assert_eq!(
+        service.tracked(&id).map(|run| run.run_id.as_str()),
+        Some("run-by-hand"),
+        "Alt+W opens the run started by hand"
+    );
+}
+
+#[test]
+fn ultracode_guide_says_a_run_started_elsewhere_can_be_announced() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/workflows/ultracode.md");
+    let guide = std::fs::read_to_string(path).unwrap();
+    let guide = guide.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        !guide.contains(
+            "A run started some other way, or in another window, is reached through the run list"
+        ),
+        "the guide must not say a run started elsewhere is only reached through the run list"
+    );
+    assert!(
+        guide.contains(
+            "a run started by hand or in another window on the same profile is also announced here and can become Alt+W's target"
+        ),
+        "the guide must say a run started elsewhere inside the hour can become Alt+W's target"
+    );
+}
+
 #[test]
 fn watch_lives_one_window_after_the_last_routed_prompt() {
     use talaria_workflow::runner::RunStatus;
