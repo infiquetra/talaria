@@ -1117,6 +1117,14 @@ impl MockGateway {
             Some(names.iter().map(|name| (*name).to_owned()).collect());
     }
 
+    /// The descriptions `complete.slash` sends as each skin item's `meta`, as Hermes does.
+    pub fn set_skin_descriptions(&self, descriptions: &[(&str, &str)]) {
+        lock(&self.shared).sess.skin_descriptions = descriptions
+            .iter()
+            .map(|(name, text)| ((*name).to_owned(), (*text).to_owned()))
+            .collect();
+    }
+
     /// Refuse `complete.slash` for `/skin`, as when the list cannot be fetched.
     pub fn set_skin_list_unavailable(&self, unavailable: bool) {
         lock(&self.shared).sess.skin_list_unavailable = unavailable;
@@ -2651,6 +2659,8 @@ struct SessionSide {
     config_skin_null: bool,
     /// Names `complete.slash` returns for a `/skin` query. `None` keeps the generic fixture.
     skin_names: Option<Vec<String>>,
+    /// The `meta` (description) `complete.slash` gives a skin name, when set.
+    skin_descriptions: HashMap<String, String>,
     /// A `/skin` completion is refused, so the caller cannot see the list.
     skin_list_unavailable: bool,
     // Permissions and moves (#237).
@@ -2761,6 +2771,7 @@ impl SessionSide {
             config_skin: "default".to_owned(),
             config_skin_null: false,
             skin_names: None,
+            skin_descriptions: HashMap::new(),
             skin_list_unavailable: false,
             approvals_mode: "manual".to_owned(),
             mode_read_denied: false,
@@ -3323,11 +3334,15 @@ fn plan_slash(
                     .filter(|name| name.starts_with(&prefix) && name.as_str() != prefix)
                     .take(30)
                     .map(|name| {
-                        json!({
+                        let mut item = json!({
                             "text": name,
                             "display": name,
                             "kind": "argument",
-                        })
+                        });
+                        if let Some(meta) = state.sess.skin_descriptions.get(name) {
+                            item["meta"] = json!(meta);
+                        }
+                        item
                     })
                     .collect();
                 let result = json!({"items": items, "replace_from": 6});

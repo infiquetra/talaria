@@ -38,6 +38,8 @@ mod checklist_keys;
 mod checklist_render;
 #[path = "integration/checklist_replay.rs"]
 mod checklist_replay;
+#[path = "integration/choice_render.rs"]
+mod choice_render;
 #[path = "integration/comfort_keys.rs"]
 mod comfort_keys;
 #[path = "integration/comforts_pty.rs"]

@@ -58,6 +58,9 @@ mod voice_gateway;
 #[path = "integration/acp_wire.rs"]
 mod acp_wire;
 
+#[path = "integration/appearance_choice.rs"]
+mod appearance_choice;
+
 #[path = "integration/appearance_flow.rs"]
 mod appearance_flow;
 

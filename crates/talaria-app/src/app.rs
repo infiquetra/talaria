@@ -5,6 +5,8 @@
 //! depends on a terminal library. Every gateway call runs in a spawned task and comes back as an
 //! [`AppMessage`]; the loop itself never waits on the network.
 
+pub mod choice;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::future::Future;
 use std::ops::Range;
@@ -335,6 +337,8 @@ pub enum UserAction {
     Queue(QueueIntent),
     /// The draft changed, or a completion-list key was pressed. Issue #223.
     Palette(PaletteInput),
+    /// A key for the open `/theme` or `/skin` selector.
+    Choice(talaria_core::commands::ChoiceKey),
     /// A composer edit, including an explicit history recall.
     DraftEdited {
         text: String,
@@ -432,6 +436,8 @@ pub struct View<'a> {
     pub held: usize,
     /// The slash palette under the composer.
     pub palette: &'a PaletteState,
+    /// The `/theme` or `/skin` selector under the composer, while it is open.
+    pub choice: Option<&'a talaria_core::commands::ChoiceList>,
     /// The rewind overlay, while it is open. Issue #233.
     pub rewind: Option<RewindView<'a>>,
     /// Whether the context figure must stay hidden for this session.
@@ -905,6 +911,10 @@ pub struct AppState {
     pub draft: String,
     /// Slash palette. Closed until a slash draft opens it. Issue #223.
     pub palette: PaletteState,
+    /// The open `/theme` or `/skin` selector.
+    pub choice: Option<choice::Selector>,
+    /// A skin preview that changed, or may change, the profile's skin.
+    pub skin_preview: Option<choice::SkinPreview>,
     /// The catalogue store for this connection.
     pub commands: CommandsState,
     /// Commands Talaria runs itself.
@@ -1234,6 +1244,8 @@ impl AppState {
             masked: Vec::new(),
             draft: String::new(),
             palette: PaletteState::closed(),
+            choice: None,
+            skin_preview: None,
             ultracode: crate::ultracode::UltracodeService::default(),
             ultracode_requests: std::collections::HashMap::new(),
             commands: CommandsState::default(),
@@ -1440,6 +1452,7 @@ impl AppState {
             masked: &self.masked,
             held: self.held.len(),
             palette: &self.palette,
+            choice: choice::list(self),
             rewind: self.rewind.is_open().then(|| self.rewind.view(wall_ms())),
             context_hidden: self
                 .opened
@@ -1988,6 +2001,8 @@ pub enum AppMessage {
         /// The connection generation of a reconnect describe.
         generation: Option<u64>,
     },
+    /// Work for the `/theme` or `/skin` selector finished.
+    Choice(choice::ChoiceReply),
     /// A file read and whole-file validation completed off the application loop.
     ThemeFileDone {
         generation: u64,
@@ -2352,6 +2367,8 @@ pub enum AppEffect {
     ContinueThemeFiles,
     /// Run `/skin`, with its name argument if any.
     Skin(Option<String>),
+    /// Work for the `/theme` or `/skin` selector.
+    Choice(choice::ChoiceWork),
     /// Describe again after a reconnect of this generation.
     Describe(u64),
     Quit,
@@ -4368,6 +4385,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
+        AppMessage::Choice(reply) => choice::reply(state, reply),
         AppMessage::ThemeFileDone { generation, result } => {
             if !state.appearance.finish_file_request(generation) {
                 return Vec::new();
@@ -7085,6 +7103,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Notice(text) => vec![notice_lines(&text)],
         UserAction::Queue(intent) => queue_intent(state, intent),
         UserAction::Palette(input) => palette_input(state, input),
+        UserAction::Choice(key) => choice::key(state, key),
         UserAction::DraftEdited {
             text,
             caret,
@@ -7641,6 +7660,9 @@ fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
     let command = match action {
         LocalAction::Skin => {
             let name = Some(argument.trim().to_owned()).filter(|name| !name.is_empty());
+            if name.is_none() {
+                return vec![AppEffect::Choice(choice::ChoiceWork::ListSkins)];
+            }
             return vec![AppEffect::Skin(name)];
         }
         LocalAction::Theme => return theme_command(state, argument.trim()),
@@ -9106,10 +9128,14 @@ fn send_expanded(state: &mut AppState, payload: SubmittedAttachments) -> Vec<App
     effects
 }
 
-/// `/theme` with its argument: the report, or a background override for this session.
+/// `/theme` with its argument: the report and the selector, or a background override for this
+/// session.
 fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     if argument.is_empty() {
-        return vec![AppEffect::ThemeReport];
+        return vec![
+            AppEffect::ThemeReport,
+            AppEffect::Choice(choice::ChoiceWork::ListThemes),
+        ];
     }
     if matches!(argument.split_whitespace().next(), Some("use" | "reload")) {
         return vec![AppEffect::ThemeFileCommand(argument.to_owned())];
@@ -14275,6 +14301,10 @@ fn apply<S: Screen>(
                 run_theme_file_command(state, executor, argument)
             }
             AppEffect::ContinueThemeFiles => start_next_theme_file_command(state, executor),
+            AppEffect::Choice(work) => {
+                let ignored = screen.theme_report().and_then(|report| report.not_applied);
+                choice::run(state, executor, work, ignored);
+            }
             AppEffect::Skin(name) => {
                 let client = state
                     .service
@@ -15976,6 +16006,7 @@ async fn run_inner<S: Screen>(
         task.abort();
     }
     state.close_client_voice_jobs().await;
+    choice::restore_on_exit(&mut state).await;
     let provider_closing = state.provider_service.as_ref().map(|service| {
         let closing = service.close();
         tokio::spawn(async move {

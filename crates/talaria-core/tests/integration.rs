@@ -75,6 +75,8 @@ mod checklist_model;
 mod checklist_snapshot;
 #[path = "integration/checklist_tracker.rs"]
 mod checklist_tracker;
+#[path = "integration/choice_list.rs"]
+mod choice_list;
 #[path = "integration/commands_catalog.rs"]
 mod commands_catalog;
 #[path = "integration/commands_local.rs"]

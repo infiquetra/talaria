@@ -3,6 +3,7 @@
 //! Issue #223. The functions below are stubs. They compile so the tests can call them.
 
 pub mod catalog;
+pub mod choice;
 pub mod local;
 pub mod outcome;
 pub mod palette;
@@ -12,6 +13,7 @@ pub mod state;
 pub use catalog::{
     ArgumentMode, CatalogEntry, CatalogResult, CommandCatalog, CommandSource, SkillOrigin,
 };
+pub use choice::{ChoiceEffect, ChoiceItem, ChoiceKey, ChoiceList};
 pub use local::{LOCAL_COMMANDS, LocalAction, LocalCommand, LocalCommandTable};
 pub use outcome::{CommandOutcome, ErrorView, describe_error, interpret_result};
 pub use palette::{

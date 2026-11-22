@@ -87,7 +87,7 @@ use talaria_tui::pager::{
     ConnectionBanner, Details, Pager, PagerAction, PagerCellLines, PagerContext, SearchIndex,
     SearchInput,
 };
-use talaria_tui::palette::PaletteSection;
+use talaria_tui::palette::{ChoiceSection, PaletteSection, sample_lines};
 use talaria_tui::profiles::{
     ProfilesRenderer, cursor_position as profiles_cursor, key_action as profiles_key,
 };
@@ -542,6 +542,43 @@ fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
         };
     }
     None
+}
+
+/// The open `/theme` or `/skin` selector's key: the completion list's bindings and the arrows
+/// move it, Enter applies, Esc or Ctrl+C cancels, and typed characters filter it.
+fn choice_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::commands::ChoiceKey> {
+    use talaria_core::commands::ChoiceKey;
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    match keymap.completion(&key) {
+        Some(CompletionAction::Next) => return Some(ChoiceKey::Next),
+        Some(CompletionAction::Prev) => return Some(ChoiceKey::Prev),
+        Some(CompletionAction::Close) => return Some(ChoiceKey::Cancel),
+        Some(CompletionAction::Accept) | None => {}
+    }
+    let mods = key.mods;
+    if mods.ctrl && !mods.alt && !mods.super_key && matches!(key.code, KeyCode::Char('c' | 'C')) {
+        return Some(ChoiceKey::Cancel);
+    }
+    if mods.ctrl || mods.alt || mods.super_key || mods.other {
+        return None;
+    }
+    match key.code {
+        KeyCode::Up => Some(ChoiceKey::Prev),
+        KeyCode::Down => Some(ChoiceKey::Next),
+        KeyCode::Enter if !mods.shift => Some(ChoiceKey::Apply),
+        KeyCode::Esc => Some(ChoiceKey::Cancel),
+        KeyCode::Backspace => Some(ChoiceKey::Erase),
+        KeyCode::Char(c) if !c.is_control() => Some(ChoiceKey::Type(c)),
+        _ => None,
+    }
+}
+
+/// A typed `/` starts a new command while the selector is open: the selector closes, as Esc
+/// closes it, and the composer takes the key. No theme or skin name holds a `/`.
+fn choice_hands_to_composer(keymap: &KeyMap, key: Key) -> bool {
+    choice_key(keymap, key) == Some(talaria_core::commands::ChoiceKey::Type('/'))
 }
 
 /// Route only keys that the current immutable attachment view can consume.
@@ -2859,6 +2896,24 @@ impl TuiScreen {
                         .into_iter()
                         .collect();
                 }
+                // An open `/theme` or `/skin` selector takes every key before the composer,
+                // unless a prompt card is waiting for an answer.
+                if view.choice.is_some()
+                    && self.search.is_none()
+                    && self.prompts.section().is_none()
+                {
+                    if choice_hands_to_composer(&self.keymap, key) {
+                        let mut actions = vec![UserAction::Choice(
+                            talaria_core::commands::ChoiceKey::Cancel,
+                        )];
+                        actions.extend(self.composer_key(key, view, now));
+                        return actions;
+                    }
+                    return choice_key(&self.keymap, key)
+                        .map(UserAction::Choice)
+                        .into_iter()
+                        .collect();
+                }
                 if action == Some(Action::LayoutPanel) {
                     return vec![UserAction::LayoutPanel];
                 }
@@ -4371,6 +4426,24 @@ impl Screen for TuiScreen {
         let prompts = self.prompts.section();
         let palette =
             PaletteSection::new(view.palette, self.rows).with_theme(self.theme.views.clone());
+        // The selector draws in the palette's place, under a sample of the selected look:
+        // finished scrollback keeps its colours, so the sample is where a preview shows.
+        let choice = view
+            .choice
+            .map(|list| ChoiceSection::new(list, self.rows).with_theme(self.theme.views.clone()));
+        let no_captures = HashMap::new();
+        let sample = view
+            .choice
+            .filter(|_| self.rows >= SHORT_TERMINAL_ROWS)
+            .map(|_| {
+                let cells = CapturedCells {
+                    current: &self.theme,
+                    captured: &no_captures,
+                    tools: &self.cells,
+                    transcript_key: None,
+                };
+                MarkdownTailSection::new(sample_lines(&cells, width))
+            });
         let confirmation = if prompts.is_none() {
             self.confirmation.as_ref().map(|card| {
                 let section =
@@ -4573,7 +4646,12 @@ impl Screen for TuiScreen {
             if let Some(partial) = &partial {
                 sections.push(partial);
             }
-            if !composer_is_empty || prompts.is_none() {
+            if let Some(choice) = &choice {
+                if let Some(sample) = &sample {
+                    sections.push(sample);
+                }
+                sections.push(choice);
+            } else if !composer_is_empty || prompts.is_none() {
                 sections.push(&palette);
             }
         }
@@ -5883,6 +5961,80 @@ mod tests {
             Some("Example provider / example-model · high")
         );
         assert_eq!(browse.details, details.as_slice());
+    }
+
+    #[test]
+    fn open_selector_takes_arrows_enter_escape_and_typed_keys_before_the_composer() {
+        use super::choice_key;
+        use talaria_core::commands::ChoiceKey;
+        let defaults = KeyMap::defaults();
+        let key = |code, mods| Key::from(KeyEvent::new(code, mods));
+        for (code, mods, expected) in [
+            (KeyCode::Up, KeyModifiers::NONE, ChoiceKey::Prev),
+            (KeyCode::Down, KeyModifiers::NONE, ChoiceKey::Next),
+            (KeyCode::Enter, KeyModifiers::NONE, ChoiceKey::Apply),
+            (KeyCode::Esc, KeyModifiers::NONE, ChoiceKey::Cancel),
+            (KeyCode::Backspace, KeyModifiers::NONE, ChoiceKey::Erase),
+            (KeyCode::Char('e'), KeyModifiers::NONE, ChoiceKey::Type('e')),
+            (
+                KeyCode::Char('E'),
+                KeyModifiers::SHIFT,
+                ChoiceKey::Type('E'),
+            ),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL, ChoiceKey::Cancel),
+        ] {
+            assert_eq!(
+                choice_key(&defaults, key(code, mods)),
+                Some(expected),
+                "{code:?}"
+            );
+        }
+        // The completion list's own bindings move the selector too.
+        assert_eq!(
+            choice_key(&defaults, key(KeyCode::Char('n'), KeyModifiers::CONTROL)),
+            Some(ChoiceKey::Next)
+        );
+        assert_eq!(
+            choice_key(&defaults, key(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+            Some(ChoiceKey::Prev)
+        );
+        // Other keys go nowhere: none of them reaches the composer while the list is open.
+        for (code, mods) in [
+            (KeyCode::Char('x'), KeyModifiers::ALT),
+            (KeyCode::F(5), KeyModifiers::NONE),
+            (KeyCode::PageDown, KeyModifiers::NONE),
+        ] {
+            assert_eq!(choice_key(&defaults, key(code, mods)), None, "{code:?}");
+        }
+        let mut release = key(KeyCode::Down, KeyModifiers::NONE);
+        release.kind = talaria_tui::keys::KeyKind::Release;
+        assert_eq!(choice_key(&defaults, release), None);
+    }
+
+    #[test]
+    fn typed_slash_closes_selector_and_reaches_the_composer() {
+        use super::choice_hands_to_composer;
+        let defaults = KeyMap::defaults();
+        let key = |code, mods| Key::from(KeyEvent::new(code, mods));
+        // A typed command after a bare /theme or /skin reaches the composer.
+        assert!(choice_hands_to_composer(
+            &defaults,
+            key(KeyCode::Char('/'), KeyModifiers::NONE)
+        ));
+        for (code, mods) in [
+            (KeyCode::Char('q'), KeyModifiers::NONE),
+            (KeyCode::Char('/'), KeyModifiers::CONTROL),
+            (KeyCode::Char('/'), KeyModifiers::ALT),
+            (KeyCode::Esc, KeyModifiers::NONE),
+        ] {
+            assert!(
+                !choice_hands_to_composer(&defaults, key(code, mods)),
+                "{code:?} {mods:?}"
+            );
+        }
+        let mut release = key(KeyCode::Char('/'), KeyModifiers::NONE);
+        release.kind = talaria_tui::keys::KeyKind::Release;
+        assert!(!choice_hands_to_composer(&defaults, release));
     }
 
     #[test]

@@ -270,7 +270,7 @@ fn draw_footer(buf: &mut Buffer, area: Rect, y: u16, state: &PaletteState) {
 
 /// Hermes text made safe to lay out: control and bidirectional characters become visible
 /// stand-ins, and the line breaks and tabs left over become spaces.
-fn clean(text: &str) -> String {
+pub(super) fn clean(text: &str) -> String {
     sanitize_untrusted(text)
         .chars()
         .map(|ch| if ch == '\n' || ch == '\t' { ' ' } else { ch })
