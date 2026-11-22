@@ -166,7 +166,12 @@ fn same_cell_content(left: &Cell, right: &Cell) -> bool {
     let mut normalized = left.clone();
     match (&mut normalized, right) {
         (Cell::User(a), Cell::User(b)) => a.id = b.id,
-        (Cell::Assistant(a), Cell::Assistant(b)) => a.id = b.id,
+        // A stored row never says it was `message.interim` commentary, so that flag is not a
+        // difference.
+        (Cell::Assistant(a), Cell::Assistant(b)) => {
+            a.id = b.id;
+            a.interim = b.interim;
+        }
         (Cell::Reasoning(a), Cell::Reasoning(b)) => a.id = b.id,
         (Cell::Tool(a), Cell::Tool(b)) => return same_tool_call(a, b),
         (Cell::Notice(a), Cell::Notice(b)) => a.id = b.id,

@@ -1918,22 +1918,25 @@ fn gap_after_a_live_turn_hermes_wrote_keeps_what_was_shown() {
     );
 }
 
-/// The stored rows of a turn that asked one question and ran one command, as the pinned
-/// gateway's display projection writes them: tool rows carry their arguments, not their result.
+/// The stored rows of a turn that asked one question, wrote a line of commentary and ran one
+/// command, as the pinned gateway's display projection writes them: tool rows carry their
+/// arguments, not their result, and the commentary row does not say it was interim.
 fn question_and_command_rows(command: &str) -> Vec<Value> {
     // synthetic
     vec![
         json!({"role": "tool", "name": "clarify", "tool_call_id": "call-q1",
                "context": "Which parser first?",
                "args": {"questions": [{"question": "Which parser first?", "choices": ["fast", "strict"]}]}}),
+        json!({"role": "assistant", "text": "Running the tests."}),
         json!({"role": "tool", "name": "terminal", "tool_call_id": "call-t1",
                "context": command, "args": {"command": command}}),
         json!({"role": "assistant", "text": "All tests pass."}),
     ]
 }
 
-/// Opens `base`, then plays the same turn live: the question asked and settled, the command run
-/// with its result and duration, and the reply. Returns the state with that turn shown.
+/// Opens `base`, then plays the same turn live: the question asked and settled, the commentary
+/// sent as `message.interim`, the command run with its result and duration, and the reply.
+/// Returns the state with that turn shown.
 fn live_question_and_command_turn(base: &Value) -> AppState {
     let mut state = AppState::new(LAUNCH_ID);
     update(
@@ -1973,6 +1976,10 @@ fn live_question_and_command_turn(base: &Value) -> AppState {
                    "result": json!({"responses": [{"question": "Which parser first?",
                        "status": "answered", "user_response": "strict"}],
                        "outcome": "submitted"}).to_string()}),
+        ),
+        (
+            "message.interim",
+            json!({"text": "Running the tests.", "already_streamed": false}),
         ),
         (
             "tool.start",
@@ -2024,9 +2031,9 @@ fn transcript_refreshed(effects: &[AppEffect]) -> bool {
 
 #[test]
 fn gap_after_a_live_question_and_command_keeps_what_was_shown() {
-    // Live, the command's row has an outcome, a duration and a summary, and the question has a
-    // prompt row; the stored rows have none of those. They are still the same cells, so the gap
-    // commits only the new message.
+    // Live, the command's row has an outcome, a duration and a summary, the question has a
+    // prompt row and the commentary is marked interim; the stored rows have none of those. They
+    // are still the same cells, so the gap commits only the new message.
     let base = resume_snapshot("/work/proj");
     let mut messages = base["display_messages"]
         .as_array()
@@ -2045,6 +2052,12 @@ fn gap_after_a_live_question_and_command_keeps_what_was_shown() {
         shown.iter().any(|cell| cell.starts_with("prompt:")),
         "the live question has its prompt row: {shown:#?}"
     );
+    let interim = state.opened.as_ref().is_some_and(|opened| {
+        opened.state.cells().iter().any(
+            |cell| matches!(cell, Cell::Assistant(a) if a.interim && a.text == "Running the tests."),
+        )
+    });
+    assert!(interim, "the live commentary is interim: {shown:#?}");
     let effects = update(
         &mut state,
         AppMessage::Recovered(Ok(OpenedSession::from_snapshot(snapshot_of(&extended)))),
