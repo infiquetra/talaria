@@ -152,6 +152,41 @@ pub(super) fn scale(state: &AppState) -> Option<&EffortScale> {
     }
 }
 
+/// While the `/effort` scale is open, what can hold the keys above the composer: the
+/// foreground session's open questions and approvals, its connection card and the masked
+/// requests. `None` while the scale is closed, so nothing is read then.
+pub(super) fn cards(state: &AppState) -> Option<Vec<String>> {
+    scale(state)?;
+    let opened = state.opened.as_ref();
+    let prompts = opened
+        .into_iter()
+        .flat_map(|opened| opened.state.open_prompts())
+        .map(|prompt| format!("{:?}", prompt.key));
+    let connection = opened
+        .and_then(|opened| opened.state.connection_card())
+        .map(|card| format!("connection {}", card.op_id));
+    let masked = state
+        .masked
+        .iter()
+        .map(|request| format!("masked {}", request.token));
+    Some(prompts.chain(connection).chain(masked).collect())
+}
+
+/// A question or approval card arrived while the `/effort` scale was open: the card needs the
+/// keys and the rows, so the scale closes as Esc would, writing nothing.
+pub(super) fn yield_to_card(
+    state: &mut AppState,
+    before: Option<&[String]>,
+    mut effects: Vec<AppEffect>,
+) -> Vec<AppEffect> {
+    if let Some(before) = before
+        && cards(state).is_some_and(|now| now.iter().any(|card| !before.contains(card)))
+    {
+        effects.extend(close(state));
+    }
+    effects
+}
+
 /// What the scale shows about the foreground session now.
 fn effort_facts(state: &AppState) -> Option<(String, ScaleFacts)> {
     let opened = state.opened.as_ref()?;

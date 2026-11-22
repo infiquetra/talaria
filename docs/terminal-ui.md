@@ -128,6 +128,11 @@ their notices and checks are the same. Esc, a paste, a typed `/` or a session sw
 sends nothing, and Enter with nothing changed closes it quietly. `/effort <level>` typed in full
 still sets the level directly. At 80 columns and wider the Hivecode switch sits beside the scale;
 narrower, it gets its own row, and below about 53 columns the scale becomes one `◀ level ▶` row.
+Like the slash list, it takes at most a third of the terminal's rows, so the composer and the
+working row keep theirs. A short terminal drops the save line, the note, the description and the
+`Faster … Smarter` row in that order, then keeps one key hint row naming Enter and Esc, then
+uses the one-row scale. The title, the scale and that hint row always stay. A question or
+approval card that needs the keys closes the selector, as Esc does, so the card is shown in full.
 Nothing in it animates, and the marker and the bold label show the selection without colour.
 
 | State | Message and recovery |
