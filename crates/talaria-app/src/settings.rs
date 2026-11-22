@@ -188,6 +188,8 @@ fn listed_choice(row: ListedValue, labelled: bool) -> RuntimeChoice {
             words.push(' ');
         }
         words.push_str(status);
+        // Hermes ends most probe details with a full stop already.
+        let detail = detail.trim_end_matches('.');
         words.push_str(&if detail.is_empty() {
             ".".to_owned()
         } else {

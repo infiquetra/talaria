@@ -1136,3 +1136,58 @@ fn a_value_from_a_runtime_list_is_not_called_unlisted() {
     let row = state.view().rows[0].value.clone();
     assert!(!row.contains("not in the list"), "{row}");
 }
+
+#[test]
+fn the_cursor_stays_on_the_current_value_when_its_list_arrives() {
+    let mut state = browsing(
+        &["display.skin"],
+        json!({"display": {"skin": "example-zzz-skin"}}),
+    );
+    action(&mut state, SettingsAction::Edit);
+    // Until the list arrives nobody knows the value is unlisted.
+    assert_eq!(selected_choice(&state), "example-zzz-skin (current)");
+    let items = vec![
+        listed("example-aaa-skin", "Another user skin."),
+        listed("example-zzz-skin", "A user skin."),
+    ];
+    loaded(&mut state, "display.skin", items.clone());
+    assert_eq!(
+        selected_choice(&state),
+        "example-zzz-skin (current) (default)"
+    );
+    edit_key(&mut state, EditKey::Enter);
+    assert_eq!(state.view().rows[0].value, "\"example-zzz-skin\"");
+
+    // From the loading row the cursor moves to the value in force, and Enter chooses it.
+    let mut state = browsing(
+        &["display.skin"],
+        json!({"display": {"skin": "example-zzz-skin"}}),
+    );
+    action(&mut state, SettingsAction::Edit);
+    edit_key(&mut state, EditKey::End);
+    assert_eq!(selected_choice(&state), "Loading the list…");
+    loaded(&mut state, "display.skin", items);
+    assert_eq!(
+        selected_choice(&state),
+        "example-zzz-skin (current) (default)"
+    );
+    edit_key(&mut state, EditKey::Enter);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(state.view().rows[0].value, "\"example-zzz-skin\"");
+
+    // A value the arriving list lacks keeps its row and is now called unlisted.
+    let mut state = browsing(
+        &["display.skin"],
+        json!({"display": {"skin": "example-zzz-skin"}}),
+    );
+    action(&mut state, SettingsAction::Edit);
+    loaded(
+        &mut state,
+        "display.skin",
+        vec![listed("example-aaa-skin", "Another user skin.")],
+    );
+    assert_eq!(
+        selected_choice(&state),
+        "example-zzz-skin (current, not in the list)"
+    );
+}

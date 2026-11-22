@@ -276,8 +276,9 @@ async fn choice_lists_read_the_edited_profiles_routes() {
                 json!({"active": "local", "backends": [
                     {"name": "local", "label": "Local", "description": "Run on this machine.",
                      "active": true, "status": "ready", "detail": ""},
-                    {"name": "docker", "label": "Docker", "description": "Isolated container.",
-                     "active": false, "status": "needs_setup", "detail": "docker is not installed"},
+                    {"name": "daytona", "label": "Daytona", "description": "Cloud sandbox.",
+                     "active": false, "status": "needs_setup",
+                     "detail": "Set DAYTONA_API_KEY to use the Daytona backend."},
                     {"name": "example-plugin", "label": "Example", "description": "A plugin backend.",
                      "active": false, "status": "unavailable", "detail": ""}
                 ]}),
@@ -333,8 +334,8 @@ async fn choice_lists_read_the_edited_profiles_routes() {
         [
             choice("local", "Run on this machine."),
             choice(
-                "docker",
-                "Isolated container. Needs setup: docker is not installed."
+                "daytona",
+                "Cloud sandbox. Needs setup: Set DAYTONA_API_KEY to use the Daytona backend."
             ),
             choice("example-plugin", "A plugin backend. Unavailable."),
         ]

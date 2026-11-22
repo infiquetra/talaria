@@ -1286,14 +1286,34 @@ impl SettingsState {
             self.lists.remove(&list);
             return Vec::new();
         }
-        let rows = self.choice_rows();
-        let selected = rows.get(self.choice_cursor).map(|row| row.name.clone());
+        let held = self
+            .choice_rows()
+            .get(self.choice_cursor)
+            .map(|row| row.pick.clone());
         self.lists.insert(list, answer);
-        if let Some(name) = selected
-            && let Some(at) = self.choice_rows().iter().position(|row| row.name == name)
-        {
-            self.choice_cursor = at;
-        }
+        // Stay on the same value. The kept-value and loading rows can vanish in the merge, so
+        // those move to the value in force.
+        let rows = self.choice_rows();
+        let at = rows
+            .iter()
+            .position(|row| match (&held, &row.pick) {
+                (Some(ChoicePick::Value(held)), ChoicePick::Value(value)) => held == value,
+                (Some(ChoicePick::Type), ChoicePick::Type)
+                | (Some(ChoicePick::Status), ChoicePick::Status) => true,
+                _ => false,
+            })
+            .or_else(|| rows.iter().position(|row| row.current))
+            .or_else(|| {
+                rows.iter()
+                    .position(|row| matches!(row.pick, ChoicePick::Keep))
+            })
+            .unwrap_or(0);
+        let visible = self.visible_choices(&rows);
+        self.choice_cursor = if visible.contains(&at) {
+            at
+        } else {
+            visible.first().copied().unwrap_or(0)
+        };
         Vec::new()
     }
     /// Whether a value is missing from the key's fetched list. Before that list loads nobody
@@ -1491,10 +1511,19 @@ impl SettingsState {
                 Some("") => "\"\"".into(),
                 _ => option_text(current),
             };
+            // While a fetched list loads or after it failed, nobody knows the value is unlisted.
+            let (name, description) = if self.unlisted_in_fetched(&field.key, current) {
+                (
+                    format!("{text} (current, not in the list)"),
+                    "Set outside this list; Enter keeps it.",
+                )
+            } else {
+                (format!("{text} (current)"), "Enter keeps it.")
+            };
             rows.push(ChoiceRow {
                 pick: ChoicePick::Keep,
-                name: format!("{text} (current, not in the list)"),
-                description: "Set outside this list; Enter keeps it.".into(),
+                name,
+                description: description.into(),
                 current: false,
                 default: false,
             });

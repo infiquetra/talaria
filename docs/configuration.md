@@ -547,7 +547,8 @@ connection; backends (with a setup status), themes and context engines come from
 dashboard routes with the profile's own ticket; profile names are the ones the gateway
 serves. If the list cannot be read, the row says
 `Could not load the list (<reason>). Showing built-in names. Ctrl+R retries.` and the
-chooser stays usable. In a chooser, the `settings_reload` binding (Ctrl+R) asks for its list
+chooser stays usable. Until the list arrives, a current value that no built-in name matches
+shows as `<value> (current)`, and the cursor stays on the same value when the list merges. In a chooser, the `settings_reload` binding (Ctrl+R) asks for its list
 again instead of reloading every setting. A list is kept while settings stay open.
 Pending edits require confirmation before closing. Ctrl+Z suspends as usual.
 
