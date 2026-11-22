@@ -11,6 +11,8 @@ pub const STEPS: u8 = 5;
 pub enum AuthoringStage {
     /// Reading the roster and the guide, deciding what to build.
     Planning,
+    /// Still the first step, while the agent writes project files before any workflow script.
+    ProjectFiles,
     /// Writing or changing the workflow script.
     Writing,
     /// Reading the written script back or running a check on it.
@@ -36,7 +38,7 @@ impl AuthoringProgress {
     /// The step in plain words.
     pub fn label(&self) -> &'static str {
         match self.stage {
-            AuthoringStage::Planning => "planning the workflow",
+            AuthoringStage::Planning | AuthoringStage::ProjectFiles => "planning the workflow",
             AuthoringStage::Writing => "writing the workflow script",
             AuthoringStage::Checking => "checking the script",
             AuthoringStage::Waiting if self.script.is_some() => "waiting for your approval",
@@ -49,7 +51,7 @@ impl AuthoringProgress {
     /// The step's number, from 1 to [`STEPS`].
     pub fn step(&self) -> u8 {
         match self.stage {
-            AuthoringStage::Planning => 1,
+            AuthoringStage::Planning | AuthoringStage::ProjectFiles => 1,
             AuthoringStage::Writing => 2,
             AuthoringStage::Checking => 3,
             AuthoringStage::Waiting | AuthoringStage::Answered => 4,
@@ -139,6 +141,14 @@ fn follow(progress: &mut AuthoringProgress, tool: &ToolCell) {
             if let Some(name) = target {
                 progress.script = Some(name);
                 progress.stage = AuthoringStage::Writing;
+            } else if progress.stage == AuthoringStage::Planning
+                && !text("path")
+                    .or_else(|| text("patch"))
+                    .unwrap_or_default()
+                    .contains("/drafts/")
+            {
+                // A file outside the drafts folder, before any script: the project itself.
+                progress.stage = AuthoringStage::ProjectFiles;
             }
         }
         "terminal" => {

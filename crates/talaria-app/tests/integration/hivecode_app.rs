@@ -426,10 +426,7 @@ fn answer_y_installs_and_other_lines_print_the_command() {
 fn remote_missing_does_not_ask() {
     let id = session();
     let missing = json!({"skills":{}});
-    let expected = format!(
-        "{}. The skill must be installed on the machine that runs the gateway.",
-        notice::missing("fixture")
-    );
+    let expected = notice::missing_remote("fixture");
 
     let mut service = HivecodeService::new(false);
     service.set_remote(true);
@@ -961,6 +958,42 @@ fn hivecode_guide_says_a_run_started_elsewhere_can_be_announced() {
 }
 
 #[test]
+fn hivecode_guide_quotes_the_notices_as_printed() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/workflows/hivecode.md");
+    let guide = std::fs::read_to_string(path).unwrap();
+    let guide = guide.split_whitespace().collect::<Vec<_>>().join(" ");
+    let changes = [
+        "changed:SKILL.md".to_owned(),
+        "added:references/extra.md".to_owned(),
+    ];
+    for quoted in [
+        notice::ON.to_owned(),
+        notice::OPENED_ON.to_owned(),
+        notice::STILL_ON.to_owned(),
+        notice::BRANCH_CARRIED.to_owned(),
+        notice::REMOTE_RUN_TAIL.to_owned(),
+        notice::skill_changed("<name>", &changes),
+        notice::skill_differs("<name>"),
+        notice::offer("<name>"),
+        "/hivecode reinstall".to_owned(),
+        "No workflow started. Hivecode is still on.".to_owned(),
+        "Step 1 of 5: planning the workflow · the agent is writing project files".to_owned(),
+        "stopped by its budget (5 agents).".to_owned(),
+        "differs from the one last sent in the conversation".to_owned(),
+    ] {
+        assert!(guide.contains(&quoted), "the guide must quote: {quoted}");
+    }
+    for gone in [
+        "[y/N]`. An install from an older",
+        "one-shot notice",
+        "routing notice says so",
+    ] {
+        assert!(!guide.contains(gone), "the guide still says: {gone}");
+    }
+}
+
+#[test]
 fn watch_lives_one_window_after_the_last_routed_prompt() {
     use talaria_workflow::runner::RunStatus;
     let id = session();
@@ -1054,44 +1087,32 @@ fn setup_is_checked_locally_on_turn_on_reopen_and_routed_prompts() {
 }
 
 #[test]
-fn a_changed_skill_warns_once_and_offers_the_reinstall() {
+fn a_changed_skill_warns_once_and_names_the_reinstall_command() {
     use talaria_app::hivecode::SkillCheck;
     let id = session();
     let mut service = on();
+    let changes: Vec<String> = vec![
+        "changed:SKILL.md".into(),
+        "added:references/extra.md".into(),
+    ];
     let changed = SkillCheck::Modified {
-        changes: vec![
-            "changed:SKILL.md".into(),
-            "added:references/extra.md".into(),
-        ],
+        changes: changes.clone(),
         digest: "digest-1".into(),
     };
     let actions = service.on_setup(&id, "fixture", setup(changed.clone()));
     assert_eq!(
         notice_texts(&actions),
         [
-            notice::skill_changed(
-                "fixture",
-                &[
-                    "changed:SKILL.md".into(),
-                    "added:references/extra.md".into()
-                ]
-            ),
-            notice::reinstall_offer("fixture"),
+            notice::skill_changed("fixture", &changes),
+            notice::skill_lock("fixture"),
         ]
     );
-    // The same change is reported once.
+    // The same change is reported once, and no typed line answers it.
     assert!(service.on_setup(&id, "fixture", setup(changed)).is_empty());
-    // The answer goes through the install offer's yes-or-no path.
-    assert_eq!(
-        service.answer_install(&id, "y"),
-        Some(vec![Action::ReinstallSkill {
-            session: id.clone(),
-            profile: "fixture".into()
-        }])
-    );
-    assert_eq!(service.answer_install(&id, "y"), None, "answered once");
-
-    // A further change warns again; a prompt typed instead of an answer goes back to the composer.
+    for line in ["y", "yes", "n", "", "fix the parser"] {
+        assert_eq!(service.answer_install(&id, line), None, "{line:?}");
+    }
+    // A further change warns again.
     let again = SkillCheck::Modified {
         changes: vec!["changed:SKILL.md".into()],
         digest: "digest-2".into(),
@@ -1100,15 +1121,7 @@ fn a_changed_skill_warns_once_and_offers_the_reinstall() {
         notice_texts(&service.on_setup(&id, "fixture", setup(again))).len(),
         2
     );
-    assert_eq!(
-        service.answer_install(&id, "fix the parser"),
-        Some(vec![
-            Action::Notice(notice::reinstall_declined("fixture")),
-            Action::RestoreComposer("fix the parser".into()),
-        ])
-    );
-
-    // An older install from a previous Talaria offers the same update.
+    // An older install, and an unrecorded one that is not this Talaria's copy, say so once.
     let actions = service.on_setup(
         &id,
         "fixture",
@@ -1116,17 +1129,15 @@ fn a_changed_skill_warns_once_and_offers_the_reinstall() {
             digest: "digest-3".into(),
         }),
     );
-    assert_eq!(
-        notice_texts(&actions),
-        [
-            notice::skill_outdated("fixture"),
-            notice::reinstall_offer("fixture")
-        ]
+    assert_eq!(notice_texts(&actions), [notice::skill_outdated("fixture")]);
+    let actions = service.on_setup(
+        &id,
+        "fixture",
+        setup(SkillCheck::Differs {
+            digest: "digest-4".into(),
+        }),
     );
-    assert_eq!(
-        service.answer_install(&id, "n"),
-        Some(vec![Action::Notice(notice::reinstall_declined("fixture"))])
-    );
+    assert_eq!(notice_texts(&actions), [notice::skill_differs("fixture")]);
     assert!(
         service
             .on_setup(&id, "fixture", setup(SkillCheck::Unchanged))
@@ -1135,7 +1146,30 @@ fn a_changed_skill_warns_once_and_offers_the_reinstall() {
 }
 
 #[test]
-fn missing_tiers_and_builtins_give_one_notice() {
+fn hivecode_reinstall_asks_for_the_reinstall() {
+    let id = session();
+    let mut service = on();
+    assert_eq!(
+        service.handle_local_command("reinstall", foreground(&id)),
+        vec![Action::ReinstallSkill {
+            session: id.clone(),
+            profile: "fixture".into()
+        }]
+    );
+    let mut remote = on();
+    remote.set_remote(true);
+    assert_eq!(
+        remote.handle_local_command("reinstall", foreground(&id)),
+        vec![Action::Notice(notice::reinstall_remote("fixture"))]
+    );
+    assert_eq!(
+        service.handle_local_command("reinstall", None),
+        vec![Action::Notice(notice::NO_SESSION.into())]
+    );
+}
+
+#[test]
+fn missing_tiers_and_builtins_give_two_short_notices() {
     use talaria_app::hivecode::{SetupFacts, SkillCheck, TierCheck};
     let id = session();
     let mut service = on();
@@ -1147,11 +1181,13 @@ fn missing_tiers_and_builtins_give_one_notice() {
     let actions = service.on_setup(&id, "fixture", facts.clone());
     assert_eq!(
         actions,
-        vec![Action::Notice(notice::setup_missing(
-            "fixture",
-            Some(notice::NO_TIERS),
-            &["review-branch".into(), "research".into()]
-        ))]
+        vec![
+            Action::Notice(notice::setup_tiers("fixture", notice::NO_TIERS)),
+            Action::Notice(notice::setup_builtins(&[
+                "review-branch".into(),
+                "research".into()
+            ])),
+        ]
     );
     assert!(
         service.on_setup(&id, "fixture", facts).is_empty(),
@@ -1263,12 +1299,72 @@ fn setup_read_compares_the_installed_skill_with_its_install_record() {
         TierCheck::Unreadable(_)
     ));
 
-    // No install record: nothing to compare with, so nothing to say about the skill.
+    // No install record: the files are compared with the copy built into this Talaria.
     let other = tempfile::tempdir().unwrap();
+    let SkillCheck::Differs { digest } = read_setup("default", &hermes, other.path()).skill else {
+        panic!("the edited copy differs");
+    };
+    assert!(!digest.is_empty());
+    let (_fresh, fresh_hermes, _) = installed_skill();
     assert_eq!(
-        read_setup("default", &hermes, other.path()).skill,
+        read_setup("default", &fresh_hermes, other.path()).skill,
+        SkillCheck::Unchanged,
+        "the same files say nothing"
+    );
+    // No skill at all is the catalogue check's to report.
+    let empty = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(empty.path().join("hermes-home")).unwrap();
+    assert_eq!(
+        read_setup("default", &empty.path().join("hermes-home"), other.path()).skill,
         SkillCheck::Unknown
     );
+}
+
+#[test]
+fn a_corrupt_empty_or_huge_mode_file_starts_off_and_is_rewritten_cleanly() {
+    use talaria_app::hivecode_files::{MODE_FILE_LIMIT, ModeFile};
+    use talaria_core::hivecode::{HivecodeState, SavedModes};
+    let huge = {
+        let mut text = String::from("{\"version\": 1, \"sessions\": {");
+        text.push_str(&" ".repeat(MODE_FILE_LIMIT as usize));
+        text.push_str("}}");
+        text
+    };
+    for (what, content) in [
+        (
+            "corrupt",
+            "{\"version\": 1, \"sessions\": {\"stored-s\": tru".to_owned(),
+        ),
+        ("empty", String::new()),
+        ("binary", "\u{0}\u{1b}[31m\u{feff}".to_owned()),
+        ("huge", huge),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("workflow-mode.json");
+        std::fs::write(&path, &content).unwrap();
+        assert!(ModeFile::read(&path).is_err(), "{what} is unreadable");
+        // Startup keeps an empty state: the session opens with the mode off.
+        let mut state = HivecodeState::new(false);
+        if let Ok(saved) = ModeFile::read(&path) {
+            state.restore(saved);
+        }
+        let id = SessionId::new("runtime-1");
+        assert!(!state.adopt(&id, "stored-s"), "{what}: the mode starts off");
+        // The next change rewrites the file cleanly.
+        state.set(&id, true);
+        ModeFile::new(path.clone())
+            .write(1, &state.take_saved(1_000).unwrap())
+            .unwrap();
+        let saved = ModeFile::read(&path).unwrap();
+        assert_ne!(saved, SavedModes::default(), "{what}");
+        let mut restarted = HivecodeState::new(false);
+        restarted.restore(saved);
+        assert!(
+            restarted.adopt(&SessionId::new("runtime-2"), "stored-s"),
+            "{what}"
+        );
+        assert!(std::fs::metadata(&path).unwrap().len() < 1_000, "{what}");
+    }
 }
 
 #[test]

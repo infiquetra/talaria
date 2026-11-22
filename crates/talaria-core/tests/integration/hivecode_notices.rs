@@ -3,7 +3,7 @@
 use talaria_core::hivecode::notice;
 
 /// The one way every notice says what Hivecode does with a prompt.
-const SKILL_ROLE: &str = "With Hivecode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
+const SKILL_ROLE: &str = "It lets the agent propose a workflow and ask before starting it.";
 
 fn explains_skill_role(text: &str) {
     assert!(
@@ -28,11 +28,13 @@ fn never_says_a_prompt_runs_by_itself(text: &str) {
 #[test]
 fn every_routing_notice_says_the_agent_asks_first() {
     for text in [notice::ON, notice::ON_REMOTE] {
-        assert!(text.contains("is handled as a workflow"), "{text}");
         assert!(
-            text.contains("the agent proposes a workflow and asks before starting it"),
+            text.contains(
+                "a plain prompt is now handled as a multi-agent workflow the agent proposes and asks before starting"
+            ),
             "{text}"
         );
+        assert!(text.ends_with("/hivecode off to stop."), "{text}");
         never_says_a_prompt_runs_by_itself(text);
     }
     never_says_a_prompt_runs_by_itself(&notice::bypassed("goal"));
@@ -78,11 +80,6 @@ fn hidden_skill_notice_explains_why_and_keeps_collision_guidance() {
 }
 
 #[test]
-fn enabled_notice_already_explains_the_skill_role() {
-    explains_skill_role(notice::ON);
-}
-
-#[test]
 fn missing_skill_offer_names_the_profile() {
     assert_eq!(
         notice::offer("fixture"),
@@ -94,37 +91,33 @@ fn missing_skill_offer_names_the_profile() {
 }
 
 #[test]
-fn on_notice_says_slash_commands_are_not_routed_and_where_runs_appear() {
-    for phrase in [
-        "Slash commands such as /goal still go to Hermes as typed",
-        "A started run shows above the composer",
-        "/workflows lists every run",
-        "stays on in a /branch copy",
-        "other sessions keep their own setting",
-        "/hivecode off to stop",
-    ] {
-        assert!(notice::ON.contains(phrase), "{phrase:?}: {}", notice::ON);
-    }
-}
-
-#[test]
-fn remote_on_notice_says_runs_start_on_the_gateway_machine() {
-    explains_skill_role(notice::ON_REMOTE);
-    for phrase in [
-        "Slash commands such as /goal still go to Hermes as typed",
-        "Runs start on the gateway's machine, so this window cannot show them",
-        "talaria workflow list there lists them",
-        "stays on in a /branch copy",
-        "/hivecode off to stop",
-    ] {
+fn remote_notices_say_runs_start_on_the_gateway_machine() {
+    for text in [notice::ON_REMOTE, notice::OPENED_ON_REMOTE] {
         assert!(
-            notice::ON_REMOTE.contains(phrase),
-            "{phrase:?}: {}",
-            notice::ON_REMOTE
+            text.contains("Runs start on the gateway's machine and do not show in this window."),
+            "{text}"
         );
     }
-    assert!(!notice::ON_REMOTE.contains("above the composer"));
-    assert!(!notice::ON_REMOTE.contains("/workflows lists"));
+    assert_eq!(
+        notice::ON_REMOTE.replace(
+            " Runs start on the gateway's machine and do not show in this window.",
+            ""
+        ),
+        notice::ON
+    );
+    assert_eq!(
+        notice::OPENED_ON_REMOTE.replace(
+            " Runs start on the gateway's machine and do not show in this window.",
+            ""
+        ),
+        notice::OPENED_ON
+    );
+    assert!(notice::REMOTE_RUN_TAIL.contains("gateway's machine"));
+    assert!(
+        notice::missing_remote("fixture").contains(
+            "on the gateway's machine. Install it there with: talaria workflow skill install --profile fixture"
+        )
+    );
 }
 
 #[test]
@@ -167,64 +160,162 @@ fn the_switch_is_announced_on_open_and_after_an_interrupt() {
         notice::STILL_ON,
         "Hivecode is still on: your next plain prompt is handled as a workflow too."
     );
-    for text in [notice::ON, notice::ON_REMOTE] {
-        assert!(text.contains("resumed after a restart"), "{text}");
-    }
+    assert_eq!(notice::STILL_ON_TAIL, "Hivecode is still on.");
 }
 
 #[test]
-fn a_changed_skill_says_who_changed_it_what_it_causes_and_how_to_fix_it() {
+fn a_changed_skill_names_the_files_what_it_causes_and_the_reinstall_command() {
     let changes = [
         "changed:SKILL.md".to_owned(),
         "added:references/extra.md".to_owned(),
     ];
-    let text = notice::skill_changed("fixture", &changes);
-    for phrase in [
-        "talaria-workflows skill in profile fixture",
-        "changed by another program",
-        "Hermes's self-improvement review",
-        "changed SKILL.md",
-        "added references/extra.md",
-        "may not follow Talaria's instructions",
-        "hermes -p fixture curator lock talaria-workflows",
-    ] {
-        assert!(text.contains(phrase), "{phrase:?}: {text}");
-    }
-    assert!(
-        notice::skill_changed("default", &changes)
-            .contains("run: hermes -p default curator lock talaria-workflows"),
+    assert_eq!(
+        notice::skill_changed("fixture", &changes),
+        "Another program changed the talaria-workflows skill in profile fixture (SKILL.md, extra.md), so the agent may stop proposing workflows. /hivecode reinstall restores Talaria's copy."
+    );
+    assert_eq!(
+        notice::skill_lock("default"),
+        "To stop Hermes changing the skill again, run: hermes -p default curator lock talaria-workflows",
         "without -p Hermes uses the profile chosen with hermes profile use"
     );
-    assert!(notice::skill_outdated("fixture").contains("older than the copy in this Talaria"));
     assert_eq!(
-        notice::reinstall_offer("fixture"),
-        "Reinstall Talaria's talaria-workflows skill into profile fixture now? The installed copy is backed up first. [y/N]"
+        notice::skill_differs("fixture"),
+        "The talaria-workflows skill in profile fixture differs from the copy in this Talaria, so the agent may stop proposing workflows. /hivecode reinstall replaces it."
     );
-    assert!(
-        notice::reinstall_declined("fixture")
-            .contains("talaria workflow skill install --force --profile fixture")
-    );
+    assert!(notice::skill_outdated("fixture").contains("older than the copy in this Talaria"));
+    assert!(notice::skill_outdated("fixture").ends_with("/hivecode reinstall updates it."));
+    for text in [
+        notice::skill_changed("fixture", &changes),
+        notice::skill_differs("fixture"),
+        notice::skill_outdated("fixture"),
+    ] {
+        assert!(
+            !text.contains("[y/N]"),
+            "nothing waits for an answer: {text}"
+        );
+    }
 }
 
 #[test]
-fn missing_setup_is_one_notice_with_the_commands() {
-    let both = notice::setup_missing(
-        "fixture",
-        Some("no tiers are configured"),
-        &["review-branch".to_owned(), "research".to_owned()],
+fn a_changed_skill_names_at_most_three_files() {
+    let changes: Vec<String> = (0..400)
+        .map(|i| format!("added:scripts/__pycache__/helper_{i:03}.cpython-312.pyc"))
+        .collect();
+    let text = notice::skill_changed("fixture", &changes);
+    assert!(text.contains(" and 397 more)"), "{text}");
+    assert_eq!(text.matches("helper_").count(), 3, "{text}");
+    assert!(rows_at_120(&text) <= 2, "{text}");
+    // A file name from another program is cleaned of control characters.
+    let hostile = notice::skill_changed("fixture", &["added:evil\n\u{1b}[31m.md".to_owned()]);
+    assert!(!hostile.chars().any(char::is_control), "{hostile:?}");
+}
+
+#[test]
+fn reinstall_confirms_in_one_line() {
+    assert_eq!(
+        notice::reinstalled("fixture", Some("/home/fixture/.talaria/skills/backups/old")),
+        "Reinstalled Talaria's talaria-workflows skill in profile fixture; the old copy is in /home/fixture/.talaria/skills/backups/old."
     );
-    for phrase in [
-        "Workflow setup is incomplete",
-        "Staffing tiers: no tiers are configured",
-        "staffing.toml",
-        "talaria workflow roster --profile fixture",
-        "Built-in workflows not installed: review-branch, research",
-        "talaria workflow builtins install",
-    ] {
-        assert!(both.contains(phrase), "{phrase:?}: {both}");
+    assert_eq!(
+        notice::reinstalled("fixture", None),
+        "Installed Talaria's talaria-workflows skill in profile fixture."
+    );
+    assert!(notice::reinstall_failed("lock timed out").ends_with(": lock timed out"));
+    assert!(
+        notice::reinstall_remote("fixture")
+            .ends_with("talaria workflow skill install --force --profile fixture")
+    );
+    assert_eq!(notice::USAGE, "Usage: /hivecode [on|off|status|reinstall]");
+}
+
+#[test]
+fn missing_setup_is_two_short_notices_each_ending_with_its_command() {
+    assert_eq!(
+        notice::setup_tiers("fixture", notice::NO_TIERS),
+        "Staffing tiers: no tiers are configured, so the agent names every model itself. Add tiers to staffing.toml, then check them with: talaria workflow roster --profile fixture"
+    );
+    assert_eq!(
+        notice::setup_builtins(&["review-branch".to_owned(), "research".to_owned()]),
+        "Built-in workflows not installed (review-branch, research), so the agent writes each workflow itself. Install them with: talaria workflow builtins install"
+    );
+    let unreadable = notice::setup_tiers(
+        "fixture",
+        &format!("staffing.toml could not be read ({})", "x".repeat(300)),
+    );
+    assert!(rows_at_120(&unreadable) <= 2, "{unreadable}");
+    assert!(unreadable.ends_with("talaria workflow roster --profile fixture"));
+}
+
+/// The rows a notice takes at 120 columns, with its `· ` prefix, wrapped at spaces.
+fn rows_at_120(text: &str) -> usize {
+    let mut rows = 1;
+    let mut used = 0;
+    for word in format!("\u{b7} {text}").split(' ') {
+        let width = word.chars().count();
+        let needed = if used == 0 { width } else { used + 1 + width };
+        if needed <= 120 {
+            used = needed;
+        } else {
+            rows += 1 + width.saturating_sub(1) / 120;
+            used = width % 120;
+        }
     }
-    let tiers_only = notice::setup_missing("fixture", Some("no tiers are configured"), &[]);
-    assert!(!tiers_only.contains("Built-in"), "{tiers_only}");
-    let builtins_only = notice::setup_missing("fixture", None, &["research".to_owned()]);
-    assert!(!builtins_only.contains("Staffing"), "{builtins_only}");
+    rows
+}
+
+#[test]
+fn every_hivecode_notice_fits_in_two_rows_at_120_columns() {
+    let profile = "fixture-review";
+    let changes: Vec<String> = (0..9)
+        .map(|i| format!("changed:references/a-long-reference-name-{i}.md"))
+        .collect();
+    let notices = [
+        notice::ON.to_owned(),
+        notice::ON_REMOTE.to_owned(),
+        notice::OPENED_ON.to_owned(),
+        notice::OPENED_ON_REMOTE.to_owned(),
+        notice::STILL_ON.to_owned(),
+        notice::BRANCH_CARRIED.to_owned(),
+        notice::OFF.to_owned(),
+        notice::NO_SESSION.to_owned(),
+        notice::USAGE.to_owned(),
+        notice::bypassed("background"),
+        notice::offer(profile),
+        notice::missing(profile),
+        notice::missing_remote(profile),
+        notice::unknown(&"gateway disconnected ".repeat(20)),
+        notice::unavailable(profile),
+        notice::collision(profile),
+        notice::skill_changed(profile, &changes),
+        notice::skill_lock(profile),
+        notice::skill_differs(profile),
+        notice::skill_outdated(profile),
+        notice::reinstalled(
+            profile,
+            Some(&format!("/home/{}/backup", "deep/".repeat(40))),
+        ),
+        notice::reinstall_failed(&"lock timed out ".repeat(20)),
+        notice::reinstall_remote(profile),
+        notice::setup_tiers(profile, notice::NO_TIERS),
+        notice::setup_builtins(&[
+            "fix-failing-tests".to_owned(),
+            "hivecode".to_owned(),
+            "research".to_owned(),
+            "review-branch".to_owned(),
+        ]),
+        notice::status(
+            true,
+            profile,
+            &talaria_core::hivecode::SkillAvailability::Unknown {
+                reason: "x ".repeat(200),
+            },
+        ),
+    ];
+    for text in notices {
+        assert!(
+            rows_at_120(&text) <= 2,
+            "{} rows: {text}",
+            rows_at_120(&text)
+        );
+    }
 }

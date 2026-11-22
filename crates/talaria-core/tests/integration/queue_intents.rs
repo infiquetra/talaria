@@ -863,6 +863,64 @@ fn a_prompt_carrying_the_workflow_skill_that_never_starts_is_reported_once() {
 }
 
 #[test]
+fn a_routed_prompt_naming_the_session_model_that_never_starts_is_reported_once() {
+    let named = format!(
+        "{}\nSession model: model-b on provider-a",
+        talaria_core::hivecode::follow_up_text("fix the lexer")
+    );
+    let bare = talaria_core::hivecode::follow_up_text("fix the lexer");
+    // Waiting in the queue, it may still be removed.
+    let mut state = running();
+    state.queue.rows = vec![queued("adm-a", &named, 1)];
+    assert!(state.queue.model_waiting());
+    let _ = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Remove,
+            admission_id: Some(aid("adm-a")),
+            submission_id: None,
+            result: receipt("adm-a", Status::Terminal, Some("cancelled")),
+        },
+    );
+    assert_eq!(state.queue.take_returned(), ["fix the lexer"]);
+    assert!(!state.queue.model_waiting());
+    assert!(state.queue.take_model_dropped());
+    assert!(!state.queue.take_model_dropped(), "reported once");
+    // A reminder that names no model leaves the record alone.
+    let mut state = running();
+    state.queue.rows = vec![queued("adm-a", &bare, 1)];
+    assert!(!state.queue.model_waiting());
+    let _ = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Remove,
+            admission_id: Some(aid("adm-a")),
+            submission_id: None,
+            result: receipt("adm-a", Status::Terminal, Some("cancelled")),
+        },
+    );
+    assert!(!state.queue.take_model_dropped());
+    // Refused by Hermes.
+    let mut state = SessionState::empty(sid());
+    let _ = update(
+        &mut state,
+        Event::SubmitCommand {
+            text: named.clone(),
+            display: "fix the lexer".to_string(),
+            submission_id: "sub-1".to_string(),
+        },
+    );
+    let _ = update(
+        &mut state,
+        Event::SubmitFailed {
+            submission_id: "sub-1".to_string(),
+            reason: "refused".to_string(),
+        },
+    );
+    assert!(state.queue.take_model_dropped());
+}
+
+#[test]
 fn lost_submit_shows_sending() {
     let mut state = running();
     let _ = update(

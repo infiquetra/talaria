@@ -306,6 +306,11 @@ pub fn installed_digest(dir: &Path) -> io::Result<String> {
     }
     Ok(hex::encode(hasher.finalize()))
 }
+/// True when the folder holds exactly the `rendered` files, compared by hash.
+pub fn same_files(dir: &Path, rendered: &[RenderedFile]) -> io::Result<bool> {
+    let (files, special) = scan(dir)?;
+    Ok(special.is_empty() && files == render_hashes(rendered))
+}
 pub(crate) fn render_hashes(files: &[RenderedFile]) -> BTreeMap<String, String> {
     files
         .iter()

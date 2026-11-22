@@ -680,9 +680,13 @@ fn take_row(state: &mut SessionState, id: &AdmissionId) -> Option<String> {
 
 /// A prompt left the queue without being seen to start. When it carried the whole workflow
 /// skill, the conversation may not hold the skill, so the next routed prompt sends it again.
+/// When it named the session model, the next routed prompt names it again.
 fn note_dropped(state: &mut SessionState, sent: &str) {
     if crate::hivecode::loads_skill(sent) {
         state.queue.skill_dropped = true;
+    }
+    if crate::hivecode::sent_session_model(sent).is_some() {
+        state.queue.model_dropped = true;
     }
 }
 

@@ -171,6 +171,9 @@ pub struct QueueState {
     /// True when a prompt that carried the whole workflow skill left without starting, until
     /// taken.
     pub(crate) skill_dropped: bool,
+    /// True when a routed prompt that named the session model left without starting, until
+    /// taken.
+    pub(crate) model_dropped: bool,
     /// True once an unreadable queue frame has been noted for this session.
     pub(crate) decode_noted: bool,
     /// Counter for submission ids minted without an [`IdSource`].
@@ -412,6 +415,43 @@ impl QueueState {
     #[must_use]
     pub fn take_skill_dropped(&mut self) -> bool {
         std::mem::take(&mut self.skill_dropped)
+    }
+
+    /// True when a routed prompt that named the session model was removed, refused or never
+    /// confirmed since the last call, so the conversation may not hold that model line. Clears it.
+    #[must_use]
+    pub fn take_model_dropped(&mut self) -> bool {
+        std::mem::take(&mut self.model_dropped)
+    }
+
+    /// True while a prompt that carried the whole workflow skill waits to start: it may still be
+    /// removed, so the conversation does not hold the skill yet.
+    #[must_use]
+    pub fn skill_waiting(&self) -> bool {
+        let carries = |text: &str| crate::hivecode::loads_skill(text);
+        self.ledger
+            .values()
+            .any(|entry| !entry.cell_drawn && carries(&entry.text))
+            || self.rows.iter().any(|row| {
+                !row.steering
+                    && matches!(row.status, RowStatus::Queued | RowStatus::Unknown)
+                    && carries(&row.text)
+            })
+    }
+
+    /// True while a routed prompt that named the session model waits to start: it may still be
+    /// removed, so the conversation does not hold that model line yet.
+    #[must_use]
+    pub fn model_waiting(&self) -> bool {
+        let names = |text: &str| crate::hivecode::sent_session_model(text).is_some();
+        self.ledger
+            .values()
+            .any(|entry| !entry.cell_drawn && names(&entry.text))
+            || self.rows.iter().any(|row| {
+                !row.steering
+                    && matches!(row.status, RowStatus::Queued | RowStatus::Unknown)
+                    && names(&row.text)
+            })
     }
 
     /// Rows that count toward the indicator, in sequence order.

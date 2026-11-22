@@ -7,7 +7,8 @@ use talaria_core::{
         HivecodeCommand, HivecodeState, SKILL_COMMAND, SavedChanges, SavedModes, SkillAvailability,
         SkillEpoch, SubmitRoute,
         authoring::{AuthoringEnd, AuthoringStage, AuthoringView, RunFacts, resume},
-        follow_up_text, notice, route_submit_with_model, skill_availability,
+        follow_up_with_model, notice, route_submit_with_model, session_model_names,
+        skill_availability,
     },
     session::{Cell, SessionId, TurnOutcome, TurnState},
 };
@@ -40,7 +41,8 @@ pub enum Action {
         session: SessionId,
         profile: String,
     },
-    /// Replace a changed or older install with this Talaria's copy, backing it up first.
+    /// Replace the installed skill with this Talaria's copy, backing it up first: what
+    /// `/hivecode reinstall` asks for.
     ReinstallSkill {
         session: SessionId,
         profile: String,
@@ -54,6 +56,10 @@ pub enum SkillCheck {
     /// Another program changed the files; `changes` are the inspection's entries.
     Modified {
         changes: Vec<String>,
+        digest: String,
+    },
+    /// No install record, and the files are not this Talaria's copy.
+    Differs {
         digest: String,
     },
     /// An unchanged install from an older Talaria.
@@ -79,6 +85,14 @@ pub struct SetupFacts {
 pub struct Foreground<'a> {
     pub session: &'a SessionId,
     pub profile: &'a str,
+}
+/// An edit of a queued routed prompt: the row's submission id and text before, and the
+/// submission id and text Hermes admits in its place.
+pub struct Retype<'a> {
+    pub input_id: &'a str,
+    pub submission_id: &'a str,
+    pub old: &'a str,
+    pub new: &'a str,
 }
 /// How often the runs folder is read while a routed prompt waits for its run.
 const SCAN_EVERY_MS: u64 = 2_000;
@@ -175,14 +189,18 @@ pub struct HivecodeService {
     asked: HashSet<SessionId>,
     kept: HashSet<SessionId>,
     pending: HashMap<SessionId, String>,
-    /// Sessions whose pending offer is a reinstall of a changed or older skill.
-    reinstall: HashSet<SessionId>,
     /// The skill change last reported for each profile, by digest.
     warned_skill: HashMap<String, String>,
     /// The missing setup last reported for each profile.
     warned_setup: HashMap<String, String>,
     /// Sessions that routed a prompt in this process.
     routed: HashSet<SessionId>,
+    /// Sessions whose interrupted routed turn left its line, which says Hivecode is still on,
+    /// before Hermes answered the interrupt.
+    ended_interrupted: HashSet<SessionId>,
+    /// Sessions whose interrupt Hermes answered while a routed turn was building: the line that
+    /// turn leaves says Hivecode is still on.
+    interrupt_answered: HashSet<SessionId>,
     /// Sessions whose next open says nothing, because a notice about the switch is already shown.
     announced: HashSet<SessionId>,
     /// True until the first session opens when Talaria was started with Hivecode on: that
@@ -211,10 +229,11 @@ impl HivecodeService {
             asked: HashSet::new(),
             kept: HashSet::new(),
             pending: HashMap::new(),
-            reinstall: HashSet::new(),
             warned_skill: HashMap::new(),
             warned_setup: HashMap::new(),
             routed: HashSet::new(),
+            ended_interrupted: HashSet::new(),
+            interrupt_answered: HashSet::new(),
             announced: HashSet::new(),
             launch_on: default_on,
             remote: false,
@@ -249,18 +268,6 @@ impl HivecodeService {
     }
     pub fn answer_install(&mut self, session: &SessionId, line: &str) -> Option<Vec<Action>> {
         let profile = self.pending.remove(session)?;
-        if self.reinstall.remove(session) {
-            let declined = Action::Notice(notice::reinstall_declined(&profile));
-            return Some(match line.trim() {
-                "y" | "Y" | "yes" => vec![Action::ReinstallSkill {
-                    session: session.clone(),
-                    profile,
-                }],
-                "" | "n" | "N" | "no" => vec![declined],
-                // A prompt typed instead of an answer is not lost.
-                _ => vec![declined, Action::RestoreComposer(line.into())],
-            });
-        }
         Some(vec![if line.trim() == "y" {
             Action::InstallSkill {
                 session: session.clone(),
@@ -316,10 +323,10 @@ impl HivecodeService {
         })
     }
     /// Report what a setup read found, each finding once until it changes. A changed or older
-    /// skill offers the reinstall through the install offer's yes-or-no answer.
+    /// skill names `/hivecode reinstall`; no typed line is ever taken as an answer.
     pub fn on_setup(
         &mut self,
-        session: &SessionId,
+        _session: &SessionId,
         profile: &str,
         facts: SetupFacts,
     ) -> Vec<Action> {
@@ -337,18 +344,26 @@ impl HivecodeService {
             let key = format!("{tiers:?}{:?}", facts.missing_builtins);
             if self.warned_setup.get(profile) != Some(&key) {
                 self.warned_setup.insert(profile.into(), key);
-                actions.push(Action::Notice(notice::setup_missing(
-                    profile,
-                    tiers.as_deref(),
-                    &facts.missing_builtins,
-                )));
+                if let Some(reason) = &tiers {
+                    actions.push(Action::Notice(notice::setup_tiers(profile, reason)));
+                }
+                if !facts.missing_builtins.is_empty() {
+                    actions.push(Action::Notice(notice::setup_builtins(
+                        &facts.missing_builtins,
+                    )));
+                }
             }
         }
-        let (warning, digest) = match facts.skill {
-            SkillCheck::Modified { changes, digest } => {
-                (notice::skill_changed(profile, &changes), digest)
-            }
-            SkillCheck::Outdated { digest } => (notice::skill_outdated(profile), digest),
+        let (warnings, digest) = match facts.skill {
+            SkillCheck::Modified { changes, digest } => (
+                vec![
+                    notice::skill_changed(profile, &changes),
+                    notice::skill_lock(profile),
+                ],
+                digest,
+            ),
+            SkillCheck::Differs { digest } => (vec![notice::skill_differs(profile)], digest),
+            SkillCheck::Outdated { digest } => (vec![notice::skill_outdated(profile)], digest),
             SkillCheck::Unchanged => {
                 self.warned_skill.remove(profile);
                 return actions;
@@ -359,10 +374,7 @@ impl HivecodeService {
             return actions;
         }
         self.warned_skill.insert(profile.into(), digest);
-        actions.push(Action::Notice(warning));
-        actions.push(Action::Notice(notice::reinstall_offer(profile)));
-        self.pending.insert(session.clone(), profile.into());
-        self.reinstall.insert(session.clone());
+        actions.extend(warnings.into_iter().map(Action::Notice));
         actions
     }
     /// The session routed a prompt, so an interrupt there says Hivecode is still on.
@@ -380,6 +392,8 @@ impl HivecodeService {
         cells: usize,
         wall_ms: i64,
     ) {
+        self.ended_interrupted.remove(session);
+        self.interrupt_answered.remove(session);
         self.authoring
             .entry(session.clone())
             .or_default()
@@ -467,7 +481,25 @@ impl HivecodeService {
             status: run.status.as_str(),
             agents: run.agents_total_known,
         });
-        Some(notice::authoring_ended(&progress, end, elapsed_ms, run))
+        let found = run.is_some();
+        let mut line = notice::authoring_ended(&progress, end, elapsed_ms, run);
+        // A remote gateway starts the run where this window cannot follow it.
+        if self.remote
+            && !found
+            && end == AuthoringEnd::Completed
+            && progress.stage == AuthoringStage::Running
+        {
+            line.push_str(&format!(" {}", notice::REMOTE_RUN_TAIL));
+        }
+        // An interrupt does not end the mode: this line says so, in place of a separate one.
+        let answered = self.interrupt_answered.remove(session);
+        if end == AuthoringEnd::Interrupted && self.state.is_on(session) {
+            line.push_str(&format!(" {}", notice::STILL_ON_TAIL));
+            if !answered {
+                self.ended_interrupted.insert(session.clone());
+            }
+        }
+        Some(line)
     }
     /// The building block, while the routed turn runs and no run it started is tracked: from
     /// then on the run dock shows in its place.
@@ -488,7 +520,21 @@ impl HivecodeService {
             elapsed_ms: authoring.elapsed_ms(started_ms, now_ms),
         })
     }
-    pub fn after_interrupt(&self, session: &SessionId) -> Option<Action> {
+    /// What Hermes's answer to an interrupt adds: that Hivecode is still on, unless the
+    /// interrupted routed turn's own line says so.
+    pub fn after_interrupt(&mut self, session: &SessionId) -> Option<Action> {
+        if self.ended_interrupted.remove(session) {
+            return None;
+        }
+        let building = self
+            .authoring
+            .get(session)
+            .and_then(VecDeque::front)
+            .is_some_and(|authoring| authoring.started_ms.is_some());
+        if building && self.state.is_on(session) {
+            self.interrupt_answered.insert(session.clone());
+            return None;
+        }
         (self.routed.contains(session) && self.state.is_on(session))
             .then(|| Action::Notice(notice::STILL_ON.into()))
     }
@@ -505,6 +551,17 @@ impl HivecodeService {
             return vec![Action::Notice(notice::NO_SESSION.into())];
         };
         self.bind(session, profile);
+        if command == HivecodeCommand::Reinstall {
+            // The reinstalled skill goes whole with the next routed prompt.
+            return vec![if self.remote {
+                Action::Notice(notice::reinstall_remote(profile))
+            } else {
+                Action::ReinstallSkill {
+                    session: session.clone(),
+                    profile: profile.into(),
+                }
+            }];
+        }
         if command == HivecodeCommand::Off
             || (command == HivecodeCommand::Toggle && self.state.is_on(session))
         {
@@ -555,10 +612,7 @@ impl HivecodeService {
                 };
                 return vec![Action::Notice(text.into()), Action::Changed];
             }
-            SkillAvailability::Missing if self.remote => format!(
-                "{}. The skill must be installed on the machine that runs the gateway.",
-                notice::missing(profile)
-            ),
+            SkillAvailability::Missing if self.remote => notice::missing_remote(profile),
             SkillAvailability::Missing if !self.asked.contains(session) => {
                 self.kept.insert(session.clone());
                 notice::offer(profile)
@@ -587,10 +641,13 @@ impl HivecodeService {
             } => {
                 // The building block shows once the turn starts; no line is printed here.
                 let mut actions = vec![];
-                // The conversation holds the skill already: the prompt goes with a reminder.
+                // The conversation holds the skill already: the prompt goes with a reminder,
+                // and names the session model again when it changed since it last went.
                 if !one_shot && self.state.skill_loaded(session) {
+                    let names = session_model_names(session_model)
+                        .filter(|names| self.state.named_model(session) != Some(names.as_str()));
                     actions.push(Action::SubmitCommand {
-                        text: follow_up_text(text),
+                        text: follow_up_with_model(text, names.as_deref()),
                         display: text.into(),
                         submission_id: crate::commands::fresh_submission_id(),
                     });
@@ -637,10 +694,7 @@ impl HivecodeService {
                 ..
             }) if reason == "unsupported_command" => {
                 if self.remote {
-                    format!(
-                        "{}. The skill must be installed on the machine that runs the gateway.",
-                        notice::missing(profile)
-                    )
+                    notice::missing_remote(profile)
                 } else if self.asked.contains(session) {
                     notice::missing(profile)
                 } else {
@@ -674,6 +728,53 @@ impl HivecodeService {
     /// The whole skill went into the session's conversation `epoch`.
     pub fn skill_sent(&mut self, session: &SessionId, epoch: SkillEpoch) {
         self.state.skill_sent(session, epoch);
+    }
+    /// A routed prompt sent `text`: note the session model it named.
+    pub fn model_sent(&mut self, session: &SessionId, text: &str) {
+        self.state.model_sent(session, text);
+    }
+    /// A routed prompt that named the session model never started: the next one names it.
+    pub fn forget_model(&mut self, session: &SessionId) {
+        self.state.forget_model(session);
+    }
+    /// A queued routed prompt was edited: its turn's block follows the edited text. The prompt
+    /// is found by the submission id its queue row carries; only a row without one is matched
+    /// by its text, oldest first. Hermes admits the edit under its new submission id at the back
+    /// of the queue, so the prompt's entry moves there too.
+    pub fn retype_authoring(&mut self, session: &SessionId, edit: &Retype<'_>) {
+        let Some(queue) = self.authoring.get_mut(session) else {
+            return;
+        };
+        // A retried edit was already applied.
+        if queue
+            .iter()
+            .any(|authoring| authoring.submission_id == edit.submission_id)
+        {
+            return;
+        }
+        let Some(at) = queue.iter().position(|authoring| {
+            authoring.started_ms.is_none()
+                && if edit.input_id.is_empty() {
+                    authoring.typed == edit.old
+                } else {
+                    authoring.submission_id == edit.input_id
+                }
+        }) else {
+            return;
+        };
+        if let Some(mut authoring) = queue.remove(at) {
+            authoring.submission_id = edit.submission_id.to_owned();
+            edit.new.clone_into(&mut authoring.typed);
+            queue.push_back(authoring);
+        }
+    }
+    /// The notice a session that opens with Hivecode on prints.
+    pub fn opened_notice(&self) -> &'static str {
+        if self.remote {
+            notice::OPENED_ON_REMOTE
+        } else {
+            notice::OPENED_ON
+        }
     }
     /// Say which conversation the session holds now, before a prompt is routed.
     pub fn note_epoch(&mut self, session: &SessionId, epoch: &SkillEpoch) {
@@ -772,11 +873,7 @@ impl HivecodeService {
                         Action::Notice(notice::run_finished(
                             &row.name,
                             &row.run_id,
-                            if row.status == RunStatus::BudgetExhausted {
-                                "stopped by its budget"
-                            } else {
-                                row.status.as_str()
-                            },
+                            notice::run_outcome(row.status.as_str()),
                             key,
                         )),
                     ));

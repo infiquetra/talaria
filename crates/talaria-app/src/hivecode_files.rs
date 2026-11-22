@@ -12,6 +12,10 @@ use talaria_workflow::{builtins, skill, staffing::StaffingTable};
 
 /// The saved switch's file name in Talaria's home folder.
 pub const MODE_FILE: &str = "workflow-mode.json";
+/// The largest saved switch file read; a larger one is unreadable and replaced by the next save.
+pub const MODE_FILE_LIMIT: u64 = 4 * 1024 * 1024;
+/// The command an install from Talaria writes into the skill.
+pub const INSTALL_COMMAND: &str = "talaria";
 
 /// The saved per-session switch, shared by every Talaria window on this machine. A save holds a
 /// lock beside the file, reads the file again, merges in this window's changes and replaces the
@@ -34,13 +38,23 @@ impl ModeFile {
     pub fn path(&self) -> &Path {
         &self.path
     }
-    /// The saved settings; a missing file has none.
+    /// The saved settings; a missing file has none. A file over [`MODE_FILE_LIMIT`] is
+    /// unreadable.
     pub fn read(path: &Path) -> Result<SavedModes, String> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => SavedModes::from_json(&text),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(SavedModes::default()),
-            Err(error) => Err(error.kind().to_string()),
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(SavedModes::default());
+            }
+            Err(error) => return Err(error.kind().to_string()),
+        };
+        let mut text = String::new();
+        io::Read::read_to_string(&mut io::Read::take(file, MODE_FILE_LIMIT + 1), &mut text)
+            .map_err(|error| error.kind().to_string())?;
+        if text.len() as u64 > MODE_FILE_LIMIT {
+            return Err("the file is too large".into());
         }
+        SavedModes::from_json(&text)
     }
     /// Merge `changes`, save number `generation`, into the file. An unreadable file is replaced.
     pub fn write(&self, generation: u64, changes: &SavedChanges) -> io::Result<()> {
@@ -109,7 +123,7 @@ fn read_skill(profile: &str, hermes_home: &Path, talaria_home: &Path) -> SkillCh
         return SkillCheck::Unknown;
     };
     let Some(entry) = records.entry(&target.dir) else {
-        return SkillCheck::Unknown;
+        return unrecorded(&target);
     };
     let Ok(rendered) = skill::render(&target.profile, &entry.command, &entry.hermes_root) else {
         return SkillCheck::Unknown;
@@ -126,5 +140,23 @@ fn read_skill(profile: &str, hermes_home: &Path, talaria_home: &Path) -> SkillCh
         },
         skill::SkillState::Outdated => SkillCheck::Outdated { digest: digest() },
         skill::SkillState::Missing | skill::SkillState::Foreign => SkillCheck::Unknown,
+    }
+}
+
+/// A skill with no install record in Talaria's home folder, compared with the copy built into
+/// this Talaria. A missing skill is the catalogue check's to report.
+fn unrecorded(target: &skill::SkillTarget) -> SkillCheck {
+    if std::fs::symlink_metadata(&target.dir).is_err() {
+        return SkillCheck::Unknown;
+    }
+    let Ok(rendered) = skill::render(&target.profile, INSTALL_COMMAND, &target.hermes_root) else {
+        return SkillCheck::Unknown;
+    };
+    match skill::same_files(&target.dir, &rendered) {
+        Ok(true) => SkillCheck::Unchanged,
+        Ok(false) => SkillCheck::Differs {
+            digest: skill::installed_digest(&target.dir).unwrap_or_default(),
+        },
+        Err(_) => SkillCheck::Unknown,
     }
 }

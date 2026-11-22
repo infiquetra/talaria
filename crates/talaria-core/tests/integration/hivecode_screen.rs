@@ -398,3 +398,56 @@ fn an_edited_routed_prompt_keeps_the_session_model_line() {
     assert_eq!(typed_text(&edited), Some("fix the lexer"));
     assert_eq!(retyped("plain text", "new text"), "new text");
 }
+
+#[test]
+fn a_reminder_names_a_changed_session_model_and_never_shows_it() {
+    use talaria_core::hivecode::{
+        HivecodeState, follow_up_with_model, loads_skill, sent_session_model, session_model_names,
+        shown_text,
+    };
+    let names = session_model_names(Some(("model-b", "provider-a")));
+    assert_eq!(names.as_deref(), Some("model-b on provider-a"));
+    assert_eq!(session_model_names(Some(("model-b", " "))), None);
+    assert_eq!(session_model_names(Some(("model\u{1b}", "p"))), None);
+    let sent = follow_up_with_model("go ahead", names.as_deref());
+    assert_eq!(
+        sent,
+        format!(
+            "{}\nSession model: model-b on provider-a",
+            follow_up_text("go ahead")
+        )
+    );
+    assert_eq!(typed_text(&sent), Some("go ahead"));
+    assert_eq!(shown_text(&sent), "go ahead");
+    assert!(!loads_skill(&sent));
+    assert_eq!(sent_session_model(&sent), Some("model-b on provider-a"));
+    assert_eq!(
+        follow_up_with_model("go ahead", None),
+        follow_up_text("go ahead")
+    );
+    // An edit keeps the line behind the new words.
+    let edited = retyped(&sent, "stop");
+    assert!(
+        edited.ends_with("stop\nSession model: model-b on provider-a"),
+        "{edited}"
+    );
+    assert_eq!(typed_text(&edited), Some("stop"));
+    // The state remembers the pair each routed prompt named.
+    let mut state = HivecodeState::new(true);
+    let id = SessionId::new("session");
+    state.model_sent(
+        &id,
+        &format!("{FULL}\nSession model: model-a on provider-a"),
+    );
+    assert_eq!(state.named_model(&id), Some("model-a on provider-a"));
+    state.model_sent(&id, &follow_up_text("go ahead"));
+    assert_eq!(state.named_model(&id), Some("model-a on provider-a"));
+    state.model_sent(&id, &sent);
+    assert_eq!(state.named_model(&id), Some("model-b on provider-a"));
+    state.model_sent(&id, FULL);
+    assert_eq!(
+        state.named_model(&id),
+        None,
+        "a skill without the line names none"
+    );
+}

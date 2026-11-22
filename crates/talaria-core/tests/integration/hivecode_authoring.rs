@@ -146,7 +146,9 @@ fn a_patch_to_the_draft_counts_as_writing_and_other_files_do_not() {
             json!({"path": "src/parser.rs", "content": "fn main() {}"}),
         ),
     );
-    assert_eq!(now(&state).stage, AuthoringStage::Planning);
+    // Still the first step, and the block says the agent is writing project files.
+    assert_eq!(now(&state).stage, AuthoringStage::ProjectFiles);
+    assert_eq!(now(&state).step(), 1);
     assert_eq!(now(&state).script, None);
     update(
         &mut state,
@@ -243,6 +245,69 @@ fn the_block_names_the_step_and_the_script_in_plain_words() {
         notice::authoring_step(&planning),
         "Step 1 of 5: planning the workflow"
     );
+    let project = AuthoringProgress {
+        stage: AuthoringStage::ProjectFiles,
+        script: None,
+    };
+    assert_eq!(
+        notice::authoring_step(&project),
+        "Step 1 of 5: planning the workflow · the agent is writing project files"
+    );
+    assert_eq!(
+        notice::authoring_short(&project, 12_000),
+        "Hivecode · the agent is writing project files · 12s"
+    );
+    // A script name from the model is cleaned and kept short.
+    let hostile = AuthoringProgress {
+        stage: AuthoringStage::Writing,
+        script: Some(format!("evil\n\u{1b}[31m{}.workflow", "x".repeat(80))),
+    };
+    for text in [
+        notice::authoring_step(&hostile),
+        notice::authoring_ended(&hostile, AuthoringEnd::Completed, 1_000, None),
+    ] {
+        assert!(!text.chars().any(char::is_control), "{text:?}");
+        assert!(text.chars().count() < 200, "{text:?}");
+    }
+}
+
+#[test]
+fn project_files_written_before_any_script_are_named_in_the_block() {
+    let mut state = turn();
+    update(
+        &mut state,
+        tool(
+            2,
+            "t1",
+            "write_file",
+            json!({"path": "/home/fixture/project/src/parser.rs", "content": "fn main() {}"}),
+        ),
+    );
+    assert_eq!(now(&state).stage, AuthoringStage::ProjectFiles);
+    assert_eq!(now(&state).step(), 1, "the step count is kept");
+    // A note in the drafts folder is not a project file.
+    let mut drafts = turn();
+    update(
+        &mut drafts,
+        tool(
+            2,
+            "t1",
+            "write_file",
+            json!({"path": "/home/fixture/.talaria/drafts/notes.md", "content": "notes"}),
+        ),
+    );
+    assert_eq!(now(&drafts).stage, AuthoringStage::Planning);
+    // Once the script is written the block follows the script.
+    update(
+        &mut state,
+        tool(
+            3,
+            "t2",
+            "write_file",
+            json!({"path": DRAFT, "content": "export const meta = {name:'fix-parser'};"}),
+        ),
+    );
+    assert_eq!(now(&state).stage, AuthoringStage::Writing);
 }
 
 #[test]
@@ -324,6 +389,20 @@ fn the_line_left_behind_says_how_the_build_ended() {
                 }),
             ),
             "Hivecode built the workflow in 3m 20s: fix-parser failed (1 agent).",
+        ),
+        // A run stopped by its budget says so in the run watcher's words.
+        (
+            notice::authoring_ended(
+                &running,
+                AuthoringEnd::Completed,
+                200_000,
+                Some(RunFacts {
+                    status: "budget_exhausted",
+                    agents: 5,
+                    ..run
+                }),
+            ),
+            "Hivecode built the workflow in 3m 20s: fix-parser stopped by its budget (5 agents).",
         ),
         // A turn stopped after it sent the run command, before Talaria found the run (always
         // so on a remote gateway), does not say that no workflow started.
