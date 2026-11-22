@@ -30,6 +30,10 @@ pub const KEY_SET: &str = "[key set]";
 pub const NOT_SET: &str = "(not set)";
 pub const NOT_IN_LIST: &str = "(not in the model list)";
 pub const NOT_SET_UP: &str = "not set up: add it under Providers";
+/// Providers manages the connected profile, so another profile's key is added after connecting.
+pub const NOT_SET_UP_OTHER: &str =
+    "not set up for this profile: connect to it from /profiles, then add it under Providers";
+pub const CURRENT_ROUTE: &str = "(current)";
 pub const LOADING_MODELS: &str = "loading models...";
 pub const UNAVAILABLE: &str = "This Hermes has no {route}.";
 pub const NO_ANSWER: &str = "Hermes did not answer. Ctrl+R to retry.";

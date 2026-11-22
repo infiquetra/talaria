@@ -41,6 +41,24 @@ pub(super) fn read_lines(error: &RolesError, what: &str) -> Vec<String> {
     }
 }
 
+/// The one line the route picker shows when the model list could not be read.
+pub(super) fn catalog_line(error: &RolesError) -> String {
+    match error {
+        RolesError::NotSent { reason } => {
+            format!("Could not load the model list: {reason}. Ctrl+R to retry.")
+        }
+        RolesError::Refused {
+            detail: Some(detail),
+            ..
+        } => format!("Hermes refused the model list: {detail}. Ctrl+R to retry."),
+        RolesError::Refused { detail: None, .. } => {
+            "Hermes refused the model list. Ctrl+R to retry.".to_owned()
+        }
+        RolesError::OutcomeUnknown | RolesError::RestartRequired => text::CATALOG_FAILED.to_owned(),
+        _ => read_lines(error, "the model list").join(" "),
+    }
+}
+
 /// A failed write is followed by a read-back unless nothing could have changed.
 pub(super) fn needs_read_back(error: &RolesError) -> bool {
     !matches!(error, RolesError::NotSent { .. } | RolesError::SignIn)

@@ -8,7 +8,7 @@ use crate::support;
 
 use support::{ByteSink, Vt, live_view_sections};
 use talaria_core::profiles::{
-    DetailView, FormField, FormView, Panel, ProfilesView, RowTone, RowView,
+    DetailView, FormField, FormView, Panel, ProfilesView, RowTone, RowView, TypedInput,
 };
 use talaria_tui::history::sanitize;
 use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
@@ -208,6 +208,7 @@ fn main_view() -> ProfilesView {
         }),
         notice: None,
         confirm: None,
+        empty: None,
     }
 }
 
@@ -413,6 +414,27 @@ fn paint_panel(
             put(row, "Enter review · Esc cancel".to_owned());
             Some((2 + *at as u16, (top + 1) as u16))
         }
+        Panel::Delete(input) | Panel::Rename(input) => {
+            // What a delete removes wraps instead of being cut.
+            let mut row = top;
+            for line in &input.lines {
+                for part in wrap_words(&s(line), cols) {
+                    put(row, part);
+                    row += 1;
+                }
+            }
+            let field = row;
+            put(field, format!("> {}", s(&input.text)));
+            row += 1;
+            if let Some(error) = &input.error {
+                for part in wrap_words(&s(error), cols) {
+                    put(row, part);
+                    row += 1;
+                }
+            }
+            put(row, s(&input.footer));
+            Some((2 + input.cursor as u16, field as u16))
+        }
         _ => None,
     }
 }
@@ -445,7 +467,11 @@ fn expected(view: &ProfilesView, cols: usize, rows: usize) -> (Vec<String>, Opti
             screen[1] = "Loading profiles...".to_owned();
         } else if matches!(
             view.panel,
-            Panel::Form(_) | Panel::Review(_) | Panel::DescriptionInput { .. }
+            Panel::Form(_)
+                | Panel::Review(_)
+                | Panel::DescriptionInput { .. }
+                | Panel::Delete(_)
+                | Panel::Rename(_)
         ) {
             if wide {
                 let count = view.rows.len();
@@ -460,6 +486,8 @@ fn expected(view: &ProfilesView, cols: usize, rows: usize) -> (Vec<String>, Opti
             if view.filter.is_some() && view.rows.is_empty() {
                 let text = view.filter.as_deref().unwrap_or_default();
                 screen[1] = format!("No profile matches \"{}\".", s(text));
+            } else if let Some(empty) = view.empty.as_ref().filter(|_| view.rows.is_empty()) {
+                screen[1] = cut(&s(empty), cols);
             } else if wide {
                 let count = view.rows.len();
                 let list_len = (count.min((rows - 2) / 2)).max(1);
@@ -594,6 +622,45 @@ fn snapshots_at_four_sizes() {
         other => other,
     };
     check(&narrow_detail, 38, 20);
+
+    // Deleting asks for the typed name under what Hermes removes; renaming asks for the name.
+    let typed = TypedInput {
+        name: "fixture".to_owned(),
+        lines: vec![
+            "Delete profile fixture".to_owned(),
+            "Hermes permanently removes its config, API keys, memories, sessions, skills and cron jobs. This cannot be undone.".to_owned(),
+            "fixture is served, so Hermes stops its gateway first.".to_owned(),
+            "Type fixture to confirm.".to_owned(),
+        ],
+        text: "fixt".to_owned(),
+        cursor: 4,
+        error: Some("Type fixture exactly, or press Esc to cancel.".to_owned()),
+        footer: "Enter delete · Esc cancel".to_owned(),
+    };
+    let mut delete = main_view();
+    delete.panel = Panel::Delete(typed.clone());
+    check(&delete, 100, 30);
+    check(&delete, 38, 20);
+    let mut rename = main_view();
+    rename.panel = Panel::Rename(TypedInput {
+        lines: vec!["Rename profile fixture".to_owned(), "New name:".to_owned()],
+        text: "fixture-r".to_owned(),
+        cursor: 9,
+        error: None,
+        footer: "Enter rename · Esc cancel".to_owned(),
+        ..typed
+    });
+    check(&rename, 100, 30);
+    check(&rename, 38, 20);
+
+    // An empty list says how to create a profile.
+    let mut empty = main_view();
+    empty.rows.clear();
+    empty.selected = None;
+    empty.panel = Panel::None;
+    empty.empty = Some("No profiles. Press n to create one.".to_owned());
+    check(&empty, 100, 30);
+    check(&empty, 38, 20);
 
     let mut loading = main_view();
     loading.loading = true;

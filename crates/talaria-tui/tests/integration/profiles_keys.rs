@@ -38,6 +38,7 @@ fn key_of(text: &str) -> Key {
         "ctrl+s" => press(KeyCode::Char('s'), true, false),
         "ctrl+g" => press(KeyCode::Char('g'), true, false),
         "R" => press(KeyCode::Char('R'), false, true),
+        "N" => press(KeyCode::Char('N'), false, true),
         single => {
             let mut chars = single.chars();
             match (chars.next(), chars.next()) {
@@ -68,6 +69,8 @@ fn keys_and_rebinding() {
         ("r", Action::ProfilesRefresh),
         ("R", Action::ProfilesRescan),
         ("n", Action::ProfilesNew),
+        ("d", Action::ProfilesDelete),
+        ("N", Action::ProfilesRename),
         ("e", Action::ProfilesDescription),
         ("s", Action::ProfilesSoul),
         ("m", Action::ProfilesModels),
@@ -117,6 +120,19 @@ fn keys_and_rebinding() {
     assert_eq!(
         key_action(&map, &key_of("c"), true),
         Some(KeyAction::Char('c'))
+    );
+    assert_eq!(
+        key_action(&map, &key_of("d"), false),
+        Some(KeyAction::Delete)
+    );
+    assert_eq!(
+        key_action(&map, &key_of("N"), false),
+        Some(KeyAction::Rename)
+    );
+    // Typing a profile's name to confirm a delete keeps d as a letter.
+    assert_eq!(
+        key_action(&map, &key_of("d"), true),
+        Some(KeyAction::Char('d'))
     );
 
     // `/profiles` opens the overlay.
@@ -235,6 +251,8 @@ fn hint_labels_follow_the_keymap() {
         ("profiles_connect", vec![]),
         ("profiles_description", vec!["ctrl+e"]),
         ("profiles_soul", vec!["shift+o"]),
+        ("profiles_delete", vec!["ctrl+x"]),
+        ("profiles_rename", vec![]),
     ]
     .into_iter()
     .map(|(name, chords)| {
@@ -253,6 +271,8 @@ fn hint_labels_follow_the_keymap() {
             connect: None,
             description: Some("Ctrl+E".to_owned()),
             soul: Some("O".to_owned()),
+            delete: Some("Ctrl+X".to_owned()),
+            rename: None,
             ..KeyLabels::default()
         }
     );

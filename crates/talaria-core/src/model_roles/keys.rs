@@ -271,6 +271,7 @@ impl ModelRolesState {
             cursor: 0,
             refreshing: false,
             escape_disables_chain,
+            escape_removes_slot: false,
         });
     }
 
@@ -415,6 +416,9 @@ impl ModelRolesState {
                             target.references.push(empty_slot());
                         }
                         self.open_picker(PickTarget::MoaReference(index), false);
+                        if let Mode::Picker(picker) = &mut self.mode {
+                            picker.escape_removes_slot = true;
+                        }
                     }
                 } else if self.moa.value().is_some() {
                     self.open_input(InputTarget::PresetName, String::new());
@@ -818,6 +822,15 @@ impl ModelRolesState {
                 if picker.escape_disables_chain {
                     self.sub_edit().chain = ChainMode::Disabled;
                 }
+                if picker.escape_removes_slot
+                    && let PickTarget::MoaReference(index) = picker.target
+                {
+                    self.edit_selected_preset(|preset| {
+                        if index < preset.references.len() {
+                            preset.references.remove(index);
+                        }
+                    });
+                }
                 return Vec::new();
             }
             RolesKey::Char(ch) => {
@@ -880,7 +893,8 @@ impl ModelRolesState {
                                 .provider(&provider)
                                 .map(|row| row.api_url.clone())
                                 .unwrap_or_default(),
-                            _ => String::new(),
+                            // Without the list this row only keeps the route already set.
+                            _ => return Vec::new(),
                         };
                         self.apply_pick(&picker.target, provider, model, api_url);
                         return Vec::new();

@@ -58,8 +58,10 @@ struct Rig {
 
 async fn rig(profile: &str, connection: &str, origin: bool) -> Rig {
     let rest = MockRest::start().await;
-    let (gateway, socket, _inbound) = MockGateway::start().await;
+    // The page has no socket. The mock stays up to show nothing is ever sent to it.
+    let (gateway, _socket, _inbound) = MockGateway::start().await;
     gateway.set_model_options(catalogue(), catalogue());
+    gateway.set_connection_profile(connection);
     let client = hermes_client::RestClient::new(
         &rest.origin(),
         Arc::new(CountingMinter::default()),
@@ -68,10 +70,8 @@ async fn rig(profile: &str, connection: &str, origin: bool) -> Rig {
     .expect("loopback client");
     let service = ModelRolesService::new(ModelRolesOpen {
         profile: profile.to_owned(),
-        connection_profile: connection.to_owned(),
         api_origin: origin.then(|| rest.origin()),
         rest: origin.then_some(client),
-        socket: Some(socket),
         served_profiles: vec![connection.to_owned(), "other".to_owned()],
     });
     Rig {
@@ -403,24 +403,18 @@ async fn no_socket_writes() {
             privacy_filter: None,
         }))
         .await;
-    let methods: std::collections::BTreeSet<_> = rig
+    let methods: Vec<_> = rig
         .gateway
         .seen()
         .iter()
         .filter_map(|frame| frame.method.clone())
         .collect();
-    assert_eq!(
-        methods,
-        std::collections::BTreeSet::from(["model.options".to_owned()])
+    assert!(
+        methods.is_empty(),
+        "the page sends nothing on the socket: {methods:?}"
     );
-    for frame in rig.gateway.seen() {
-        if frame.method.as_deref() == Some("model.options") {
-            assert_eq!(frame.params["explicit_only"], true);
-            assert_eq!(frame.params["include_unconfigured"], true);
-            assert!(frame.params.get("session_id").is_none());
-        }
-    }
     let requests = rig.rest.requests().await;
+    assert_eq!(options_requests(&requests).len(), 1);
     assert!(requests.iter().any(|item| item.method == "POST"));
     assert!(
         requests
@@ -441,43 +435,226 @@ async fn other_profile_and_not_connected() {
         .service
         .execute(RolesEffect::LoadCatalog { refresh: false })
         .await;
-    let frames = other.gateway.seen();
-    let options = frames
-        .iter()
-        .find(|frame| frame.method.as_deref() == Some("model.options"))
-        .expect("catalogue");
-    assert_eq!(options.params["profile"], "other");
     let requests = other.rest.requests().await;
-    assert!(
-        !requests.is_empty()
-            || frames
-                .iter()
-                .any(|frame| frame.method.as_deref() == Some("model.options"))
-    );
+    assert_eq!(options_requests(&requests).len(), 1);
+    assert!(other.gateway.seen().is_empty(), "the socket is never used");
     assert_no_profile(&requests);
 
     let unserved = ModelRolesService::new(ModelRolesOpen {
         profile: "missing".to_owned(),
-        connection_profile: "fixture".to_owned(),
         api_origin: Some(other.rest.origin()),
         rest: None,
-        socket: None,
         served_profiles: vec!["fixture".to_owned()],
     });
-    let inputs = unserved.execute(RolesEffect::LoadAll).await;
-    assert!(
-        matches!(inputs.first(), Some(RolesInput::NotServed { profile }) if profile == "missing")
-    );
+    for effect in [
+        RolesEffect::LoadAll,
+        RolesEffect::LoadCatalog { refresh: false },
+    ] {
+        let inputs = unserved.execute(effect).await;
+        assert!(
+            matches!(inputs.first(), Some(RolesInput::NotServed { profile }) if profile == "missing")
+        );
+    }
     assert!(other.rest.requests().await.len() == requests.len());
 
     let offline = ModelRolesService::new(ModelRolesOpen {
         profile: "fixture".to_owned(),
-        connection_profile: "fixture".to_owned(),
         api_origin: None,
         rest: None,
-        socket: None,
         served_profiles: vec!["fixture".to_owned()],
     });
-    let inputs = offline.execute(RolesEffect::LoadAll).await;
-    assert_eq!(inputs, vec![RolesInput::NotConnected]);
+    for effect in [
+        RolesEffect::LoadAll,
+        RolesEffect::LoadCatalog { refresh: false },
+    ] {
+        assert_eq!(
+            offline.execute(effect).await,
+            vec![RolesInput::NotConnected]
+        );
+    }
+}
+
+/// A failed list read carries its reason to the page.
+#[tokio::test]
+async fn a_failed_model_list_carries_its_reason() {
+    let server = rig("other", "fixture", true).await;
+    server
+        .rest
+        .fail_status("GET", "/api/model/options", 500, None)
+        .await;
+    let inputs = server
+        .service
+        .execute(RolesEffect::LoadCatalog { refresh: false })
+        .await;
+    assert_eq!(
+        inputs,
+        vec![RolesInput::CatalogFailed {
+            error: RolesError::Server { status: 500 }
+        }]
+    );
+
+    let forbidden = rig("other", "fixture", true).await;
+    forbidden
+        .rest
+        .fail_status(
+            "GET",
+            "/api/model/options",
+            403,
+            Some("profile_scope_mismatch"),
+        )
+        .await;
+    let inputs = forbidden
+        .service
+        .execute(RolesEffect::LoadCatalog { refresh: false })
+        .await;
+    assert!(
+        matches!(
+            inputs.as_slice(),
+            [RolesInput::CatalogFailed { error: RolesError::Forbidden { detail } }]
+                if detail.contains("profile_scope_mismatch")
+        ),
+        "{inputs:?}"
+    );
+
+    let dropped = rig("other", "fixture", true).await;
+    dropped
+        .rest
+        .drop_after_request("GET", "/api/model/options")
+        .await;
+    let inputs = dropped
+        .service
+        .execute(RolesEffect::LoadCatalog { refresh: false })
+        .await;
+    assert!(
+        matches!(
+            inputs.as_slice(),
+            [RolesInput::CatalogFailed {
+                error: RolesError::NotSent { .. }
+            }]
+        ),
+        "{inputs:?}"
+    );
+}
+
+fn options_requests(requests: &[mock_rest::RecordedRequest]) -> Vec<String> {
+    requests
+        .iter()
+        .filter(|item| item.method == "GET" && item.path.starts_with("/api/model/options"))
+        .map(|item| item.path.clone())
+        .collect()
+}
+
+fn expected_catalogue() -> talaria_core::model_roles::RouteCatalog {
+    talaria_core::model_roles::RouteCatalog::from_result(
+        &serde_json::from_value(catalogue()).expect("catalogue"),
+    )
+}
+
+/// The route list is read over the page's own REST client, ticketed for the page's profile, so
+/// another profile's list is never asked for over the connection's socket.
+#[tokio::test]
+async fn the_model_list_comes_over_rest_for_every_profile() {
+    for profile in ["other", "fixture"] {
+        let rig = rig(profile, "fixture", true).await;
+        rig.rest
+            .script("GET", "/api/model/options", 200, catalogue());
+        let inputs = rig
+            .service
+            .execute(RolesEffect::LoadCatalog { refresh: false })
+            .await;
+        let requests = rig.rest.requests().await;
+        let paths = options_requests(&requests);
+        assert_eq!(paths.len(), 1, "{profile}: {paths:?}");
+        assert!(paths[0].contains("explicit_only=true"), "{}", paths[0]);
+        assert!(
+            paths[0].contains("include_unconfigured=true"),
+            "{}",
+            paths[0]
+        );
+        assert!(!paths[0].contains("refresh"), "{}", paths[0]);
+        assert_no_profile(&requests);
+        assert!(
+            rig.gateway
+                .seen()
+                .iter()
+                .all(|frame| frame.method.as_deref() != Some("model.options")),
+            "{profile}: nothing goes over the socket"
+        );
+        assert_eq!(
+            inputs,
+            vec![RolesInput::CatalogLoaded(expected_catalogue())],
+            "{profile}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_model_list_refresh_asks_hermes_to_refresh() {
+    let rig = rig("other", "fixture", true).await;
+    rig.rest
+        .script("GET", "/api/model/options", 200, catalogue());
+    rig.service
+        .execute(RolesEffect::LoadCatalog { refresh: true })
+        .await;
+    let paths = options_requests(&rig.rest.requests().await);
+    assert_eq!(paths.len(), 1);
+    assert!(paths[0].contains("refresh=true"), "{}", paths[0]);
+}
+
+/// Hermes can take longer than an ordinary read to build the list on a cold cache, so the list
+/// has a deadline of its own instead of the client's read deadline.
+#[tokio::test]
+async fn a_slow_model_list_still_arrives() {
+    let rest = MockRest::start().await;
+    rest.script("GET", "/api/model/options", 200, catalogue());
+    rest.delay(
+        "GET",
+        "/api/model/options",
+        std::time::Duration::from_millis(1500),
+    )
+    .await;
+    let client = hermes_client::RestClient::new(
+        &rest.origin(),
+        Arc::new(CountingMinter::default()),
+        hermes_client::RestOptions {
+            get_deadline: std::time::Duration::from_secs(1),
+            ..hermes_client::RestOptions::default()
+        },
+    )
+    .expect("loopback client");
+    let service = ModelRolesService::new(ModelRolesOpen {
+        profile: "other".to_owned(),
+        api_origin: Some(rest.origin()),
+        rest: Some(client),
+        served_profiles: vec!["fixture".to_owned(), "other".to_owned()],
+    });
+    let inputs = service
+        .execute(RolesEffect::LoadCatalog { refresh: false })
+        .await;
+    assert_eq!(
+        inputs,
+        vec![RolesInput::CatalogLoaded(expected_catalogue())]
+    );
+    // An ordinary read on the same client does run out.
+    rest.delay(
+        "GET",
+        "/api/model/info",
+        std::time::Duration::from_millis(1500),
+    )
+    .await;
+    let inputs = service
+        .execute(RolesEffect::Load {
+            read: talaria_core::model_roles::Read::Info,
+        })
+        .await;
+    assert!(
+        matches!(
+            inputs.as_slice(),
+            [RolesInput::LoadFailed {
+                error: RolesError::NotSent { .. },
+                ..
+            }]
+        ),
+        "{inputs:?}"
+    );
 }

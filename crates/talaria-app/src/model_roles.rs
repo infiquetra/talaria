@@ -4,15 +4,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use hermes_client::{
-    AssignScope, AssignmentReply, AuxiliaryModels, Client, EffortField, MoaConfig, MoaPreset,
-    MoaSlot, ModelAssignment, ModelInfo, NamedPreset, RestClient, RestError, RestOptions,
-    RouteFields, assign_model, auxiliary_models, config_read, config_write, moa_config, model_info,
-    save_moa,
+    AssignScope, AssignmentReply, AuxiliaryModels, EffortField, MoaConfig, MoaPreset, MoaSlot,
+    ModelAssignment, ModelInfo, NamedPreset, RestClient, RestError, RestOptions, RouteFields,
+    assign_model, auxiliary_models, config_read, config_write, moa_config, model_info,
+    model_options, save_moa,
 };
-use hermes_contract::{
-    methods::legacy::model_options,
-    schemas::{ModelOptionsParams, ModelOptionsResult},
-};
+use hermes_contract::schemas::ModelOptionsResult;
 use serde_json::{Map, Value};
 use talaria_core::model_roles::{
     ApplyReply, ApplyStep, AssignOutcome, AssignScopeView, Assignment, AuxSlot, AuxView,
@@ -23,10 +20,8 @@ use talaria_core::model_roles::{
 /// What the page needs in order to read and write one profile.
 pub struct ModelRolesService {
     profile: String,
-    connection_profile: String,
     api_origin: Option<String>,
     rest: Option<RestClient>,
-    socket: Option<Client>,
     served_profiles: Vec<String>,
     saved_default: Option<(String, String)>,
 }
@@ -34,10 +29,8 @@ pub struct ModelRolesService {
 /// How to build the service for one open page.
 pub struct ModelRolesOpen {
     pub profile: String,
-    pub connection_profile: String,
     pub api_origin: Option<String>,
     pub rest: Option<RestClient>,
-    pub socket: Option<Client>,
     /// Profile names this gateway serves. An empty list means the check is not available.
     pub served_profiles: Vec<String>,
 }
@@ -57,10 +50,8 @@ impl ModelRolesService {
     pub fn new(open: ModelRolesOpen) -> Self {
         Self {
             profile: open.profile,
-            connection_profile: open.connection_profile,
             api_origin: open.api_origin,
             rest: open.rest,
-            socket: open.socket,
             served_profiles: open.served_profiles,
             saved_default: None,
         }
@@ -89,9 +80,6 @@ impl ModelRolesService {
             return vec![RolesInput::NotServed {
                 profile: self.profile.clone(),
             }];
-        }
-        if let RolesEffect::LoadCatalog { refresh } = effect {
-            return vec![self.load_catalog(refresh).await];
         }
         let Some(rest) = self.rest.as_ref() else {
             return vec![RolesInput::NotConnected];
@@ -142,31 +130,18 @@ impl ModelRolesService {
                     },
                 }]
             }
-            RolesEffect::LoadCatalog { .. } | RolesEffect::Close => Vec::new(),
-        }
-    }
-
-    /// The route list comes over the socket. The profile is named only when it is not the
-    /// connection's own.
-    async fn load_catalog(&self, refresh: bool) -> RolesInput {
-        let Some(socket) = self.socket.as_ref() else {
-            return RolesInput::CatalogFailed {
-                reason: "Talaria is not connected to the gateway".to_owned(),
-            };
-        };
-        let profile = (self.profile != self.connection_profile).then(|| self.profile.clone());
-        let params = ModelOptionsParams {
-            explicit_only: true,
-            include_unconfigured: true,
-            refresh,
-            profile,
-            session_id: None,
-        };
-        match socket.call::<model_options::Marker>(params).await {
-            Ok(result) => RolesInput::CatalogLoaded(catalog(&result)),
-            Err(error) => RolesInput::CatalogFailed {
-                reason: error.to_string(),
-            },
+            // The route list comes over the page's own client, whose ticket is bound to the
+            // page's profile. The connection's socket is bound to the connected profile, and
+            // Hermes refuses it any other profile's list.
+            RolesEffect::LoadCatalog { refresh } => {
+                vec![match model_options(rest, refresh).await {
+                    Ok(result) => RolesInput::CatalogLoaded(catalog(&result)),
+                    Err(error) => RolesInput::CatalogFailed {
+                        error: roles_error(&error, false, false),
+                    },
+                }]
+            }
+            RolesEffect::Close => Vec::new(),
         }
     }
 }
@@ -522,12 +497,7 @@ fn raw_view(raw: &Value) -> RawRoles {
 
 /// Find the running gateway and build the service for one profile. The gateway is never
 /// started or restarted from here. With no gateway the page reports it is not connected.
-pub(crate) async fn open_service(
-    home: PathBuf,
-    profile: String,
-    connection_profile: String,
-    socket: Option<Client>,
-) -> Option<Arc<ModelRolesService>> {
+pub async fn open_service(home: PathBuf, profile: String) -> Option<Arc<ModelRolesService>> {
     use hermes_client::{DiscoverOptions, EnsurePolicy, NativeHttpMinter, discover_with};
     let endpoint = Arc::new(
         discover_with(
@@ -558,10 +528,8 @@ pub(crate) async fn open_service(
     Some(Arc::new(
         ModelRolesService::new(ModelRolesOpen {
             profile,
-            connection_profile,
             api_origin: Some(origin),
             rest,
-            socket,
             served_profiles,
         })
         .with_saved_default(saved_default),

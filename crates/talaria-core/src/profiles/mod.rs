@@ -114,6 +114,31 @@ pub struct CreatedProfile {
     pub keys_copied: bool,
 }
 
+/// What a delete did, when Hermes answered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeleteOutcome {
+    /// The profile is gone.
+    Deleted,
+    /// The profile's folder is gone, but Hermes has not cleared its session identity.
+    SettlementPending {
+        /// The command Hermes gives to finish it.
+        retry_command: String,
+    },
+}
+
+/// Why a rename or delete did not complete, in words for one notice line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RegistryFailure {
+    /// Nothing was sent; the words say why.
+    NotSent(String),
+    /// The gateway gave no ticket for the profile; the words say why.
+    NoTicket(String),
+    /// Hermes refused or failed, in its own words.
+    Refused(String),
+    /// The request was sent and the answer was lost.
+    Unknown,
+}
+
 /// A configure answer for the one section sent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Applied {
@@ -190,6 +215,10 @@ pub enum KeyAction {
     Rescan,
     /// Open the create form.
     New,
+    /// Delete the selected profile, after its name is typed.
+    Delete,
+    /// Rename the selected profile.
+    Rename,
     /// Edit the description.
     EditDescription,
     /// Edit the soul.
@@ -258,6 +287,10 @@ pub enum ProfilesInput {
     Paste(String),
     /// A create call answered.
     CreateAnswered(Result<CreatedProfile, CallFailure>),
+    /// A delete of this profile answered.
+    DeleteAnswered(String, Result<DeleteOutcome, RegistryFailure>),
+    /// A rename of this profile answered with the name Hermes kept.
+    RenameAnswered(String, Result<String, RegistryFailure>),
     /// A configure call answered.
     ConfigureAnswered(String, Section, Result<Applied, CallFailure>),
     /// A rescan answered.
@@ -300,6 +333,18 @@ pub enum ProfilesEffect {
     },
     /// Create one profile.
     Create(CreateRequest),
+    /// Delete one served profile. Hermes asks nothing more.
+    Delete {
+        /// The profile name.
+        name: String,
+    },
+    /// Rename one served profile.
+    Rename {
+        /// The profile name.
+        name: String,
+        /// The validated new name.
+        new_name: String,
+    },
     /// Configure one section of one profile.
     Configure {
         /// The profile name.
@@ -413,6 +458,23 @@ pub struct FormView {
     pub name_error: Option<String>,
 }
 
+/// A one-line answer typed about one profile: the delete confirmation or the new name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypedInput {
+    /// The profile it acts on.
+    pub name: String,
+    /// The lines above the input, the title first.
+    pub lines: Vec<String>,
+    /// The typed text.
+    pub text: String,
+    /// The cursor, in characters.
+    pub cursor: usize,
+    /// The error under the input, when any.
+    pub error: Option<String>,
+    /// The key line under the input.
+    pub footer: String,
+}
+
 /// The panel the overlay shows instead of the detail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Panel {
@@ -433,6 +495,10 @@ pub enum Panel {
         /// The error under the input, when any.
         error: Option<String>,
     },
+    /// The delete confirmation: what goes, and the typed name.
+    Delete(TypedInput),
+    /// The new name of a profile.
+    Rename(TypedInput),
     /// The narrow-layout detail.
     NarrowDetail(DetailView),
     /// No panel.
@@ -457,6 +523,10 @@ pub struct KeyLabels {
     pub rescan: Option<String>,
     /// `profiles_new`.
     pub new: Option<String>,
+    /// `profiles_delete`.
+    pub delete: Option<String>,
+    /// `profiles_rename`.
+    pub rename: Option<String>,
     /// `profiles_description`.
     pub description: Option<String>,
     /// `profiles_soul`.
@@ -473,6 +543,8 @@ impl Default for KeyLabels {
             refresh: label("r"),
             rescan: label("R"),
             new: label("n"),
+            delete: label("d"),
+            rename: label("N"),
             description: label("e"),
             soul: label("s"),
         }
@@ -495,6 +567,8 @@ pub struct ProfilesView {
     pub selected: Option<usize>,
     /// The active filter text.
     pub filter: Option<String>,
+    /// What an empty unfiltered list says instead of rows.
+    pub empty: Option<String>,
     /// The open panel.
     pub panel: Panel,
     /// The shown notice.
@@ -508,6 +582,7 @@ pub struct ProfilesView {
 pub struct ProfilesState {
     open: bool,
     connected: String,
+    remote: bool,
     generation: u64,
     started: bool,
     loaded: bool,
@@ -534,6 +609,7 @@ pub struct ProfilesState {
     page_size: usize,
     confirm: Option<Confirm>,
     creating: Option<CreateRequest>,
+    registry: Option<String>,
     create_form: Option<FormView>,
     configuring: Option<Review>,
     rescanning: bool,
@@ -655,6 +731,13 @@ struct DescriptionEdit {
 }
 
 #[derive(Clone, Debug)]
+struct TypedEdit {
+    name: String,
+    input: TextInput,
+    error: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 struct SoulEdit {
     name: String,
     base: String,
@@ -675,6 +758,8 @@ enum EditPanel {
     None,
     Create(FormView),
     Description(DescriptionEdit),
+    Delete(TypedEdit),
+    Rename(TypedEdit),
     Review {
         review: Review,
         back: Box<EditPanel>,
@@ -715,6 +800,7 @@ impl ProfilesState {
         Self {
             open: false,
             connected: normalize_profile_name(&connected_profile.into()),
+            remote: false,
             generation: 0,
             started: false,
             loaded: false,
@@ -741,6 +827,7 @@ impl ProfilesState {
             page_size: 10,
             confirm: None,
             creating: None,
+            registry: None,
             create_form: None,
             configuring: None,
             rescanning: false,
@@ -768,11 +855,20 @@ impl ProfilesState {
         }
     }
 
+    /// Record whether the launch dialed a remote gateway. Rename and delete need this
+    /// machine's control socket, so they are refused there.
+    pub fn set_remote_gateway(&mut self, remote: bool) {
+        self.remote = remote;
+    }
+
     /// Whether fixed text editing keys take precedence over bound actions.
     #[must_use]
     pub fn text_focus(&self) -> bool {
         self.filter_typing
-            || matches!(&self.panel, EditPanel::Description(_))
+            || matches!(
+                &self.panel,
+                EditPanel::Description(_) | EditPanel::Delete(_) | EditPanel::Rename(_)
+            )
             || matches!(&self.panel, EditPanel::Create(form) if matches!(form.focus, FormField::Name | FormField::Description))
     }
 
@@ -790,7 +886,7 @@ impl ProfilesState {
     }
 
     /// The first detail line: the keys that act on this row.
-    fn detail_keys(&self, served: bool, connected: bool) -> String {
+    fn detail_keys(&self, served: bool, connected: bool, default: bool) -> String {
         let keys = &self.keys;
         let mut parts = Vec::new();
         if served {
@@ -807,6 +903,10 @@ impl ProfilesState {
             }
         }
         parts.extend(self.hint_parts(&[(&keys.description, "description"), (&keys.soul, "soul")]));
+        if served && !connected && !default {
+            parts.extend(self.hint_parts(&[(&keys.rename, "rename"), (&keys.delete, "delete")]));
+        }
+        parts.extend(self.hint_parts(&[(&keys.new, "new profile")]));
         let mut line = if parts.is_empty() {
             String::new()
         } else {
@@ -816,7 +916,7 @@ impl ProfilesState {
             if !line.is_empty() {
                 line.push_str(". ");
             }
-            line.push_str("Models and connect need a profile this gateway serves.");
+            line.push_str("Models, connect, rename and delete need a profile this gateway serves.");
         }
         line
     }
@@ -1052,7 +1152,11 @@ impl ProfilesState {
     fn detail(&self, row: &ProfileRow) -> DetailView {
         let explanation = self.explanation(row);
         let connected = row.name == self.connected;
-        let mut lines = vec![self.detail_keys(row.state == ServeState::Served, connected)];
+        let mut lines = vec![self.detail_keys(
+            row.state == ServeState::Served,
+            connected,
+            row.is_default || row.name == "default",
+        )];
         if !row.in_roster && !matches!(self.descriptions.get(&row.name), Some(Ok(_))) {
             lines.push("Hermes did not list this profile's details.".into());
         }
@@ -1305,6 +1409,10 @@ impl ProfilesState {
                     self.detail_visible = false;
                     EditPanel::None
                 }
+                EditPanel::Delete(_) | EditPanel::Rename(_) => {
+                    self.detail_visible = true;
+                    EditPanel::None
+                }
                 EditPanel::None => {
                     if self.narrow_detail {
                         self.narrow_detail = false;
@@ -1357,6 +1465,14 @@ impl ProfilesState {
                     edit.error = None;
                     self.panel = EditPanel::Description(edit);
                 }
+                return;
+            }
+            EditPanel::Delete(edit) => {
+                self.typed_key(edit, true, &key, effects);
+                return;
+            }
+            EditPanel::Rename(edit) => {
+                self.typed_key(edit, false, &key, effects);
                 return;
             }
             EditPanel::Review { .. }
@@ -1488,6 +1604,7 @@ impl ProfilesState {
                 }
             }
             KeyAction::Models | KeyAction::Connect => self.profile_action(key, effects),
+            KeyAction::Delete | KeyAction::Rename => self.registry_action(&key, effects),
             KeyAction::Up
             | KeyAction::Down
             | KeyAction::PageUp
@@ -1564,23 +1681,219 @@ impl ProfilesState {
         }
     }
 
+    /// Ask for the typed name before a delete, or for the new name before a rename, of the
+    /// selected profile; refuse in one line what Hermes or Talaria cannot do.
+    fn registry_action(&mut self, key: &KeyAction, effects: &mut Vec<ProfilesEffect>) {
+        let Some(row) = self
+            .selected
+            .as_ref()
+            .and_then(|name| self.rows.iter().find(|row| &row.name == name))
+        else {
+            return;
+        };
+        let name = row.name.clone();
+        let delete = *key == KeyAction::Delete;
+        let verb = if delete { "delete" } else { "rename" };
+        let command = if delete {
+            format!("hermes profile delete {name}")
+        } else {
+            format!("hermes profile rename {name} NEW-NAME")
+        };
+        let refusal = if self.remote {
+            Some(format!(
+                "Talaria {verb}s profiles only through a gateway on this machine. On the gateway's machine, run: {command}"
+            ))
+        } else if self.registry.is_some() {
+            Some("A delete or rename is already in progress.".to_owned())
+        } else if row.is_default || name == "default" {
+            Some(if delete {
+                "Hermes never deletes the default profile: it is the Hermes home itself. To remove everything, run: hermes uninstall".to_owned()
+            } else {
+                "The default profile keeps its name: Hermes can change only its display name, which Talaria does not offer.".to_owned()
+            })
+        } else if name == self.connected {
+            Some(format!(
+                "Talaria is connected to profile {name}, so it cannot {verb} it. Connect to another profile first, then {verb} {name}."
+            ))
+        } else if row.state != ServeState::Served {
+            Some(format!(
+                "Talaria can {verb} only a profile this gateway serves; {name} is {}. Run: {command}",
+                self.explanation(row).label
+            ))
+        } else {
+            None
+        };
+        if let Some(text) = refusal {
+            self.notice(text, effects);
+            return;
+        }
+        self.detail_visible = false;
+        let edit = TypedEdit {
+            name,
+            input: TextInput::default(),
+            error: None,
+        };
+        self.panel = if delete {
+            EditPanel::Delete(edit)
+        } else {
+            EditPanel::Rename(edit)
+        };
+    }
+
+    /// One key in the delete confirmation or the rename input. Enter sends only a typed name
+    /// that matches, or a new name that passes the create checks.
+    fn typed_key(
+        &mut self,
+        mut edit: TypedEdit,
+        delete: bool,
+        key: &KeyAction,
+        effects: &mut Vec<ProfilesEffect>,
+    ) {
+        if !matches!(
+            key,
+            KeyAction::Enter | KeyAction::CtrlEnter | KeyAction::Open
+        ) {
+            edit.input.key(key);
+            edit.error = None;
+            self.panel = if delete {
+                EditPanel::Delete(edit)
+            } else {
+                EditPanel::Rename(edit)
+            };
+            return;
+        }
+        if delete {
+            if edit.input.text.trim() == edit.name {
+                self.registry = Some(edit.name.clone());
+                effects.push(ProfilesEffect::Delete { name: edit.name });
+            } else {
+                edit.error = Some(format!(
+                    "Type {} exactly, or press Esc to cancel.",
+                    edit.name
+                ));
+                self.panel = EditPanel::Delete(edit);
+            }
+            return;
+        }
+        match validate_new_name(&edit.input.text, &self.known_names()) {
+            Ok(new_name) => {
+                self.registry = Some(edit.name.clone());
+                effects.push(ProfilesEffect::Rename {
+                    name: edit.name,
+                    new_name,
+                });
+            }
+            Err(error) => {
+                edit.error = Some(error.to_string());
+                self.panel = EditPanel::Rename(edit);
+            }
+        }
+    }
+
+    /// Every name a new profile must not take: the roster, served, parked and stopped names.
+    fn known_names(&self) -> Vec<String> {
+        let mut known: Vec<_> = self
+            .roster
+            .iter()
+            .flatten()
+            .map(|row| row.name.clone())
+            .collect();
+        known.extend(self.gateway.served.iter().cloned());
+        known.extend(self.gateway.parked.iter().map(|(name, _)| name.clone()));
+        if let Some(topology) = &self.topology {
+            known.extend(topology.stopped.iter().cloned());
+        }
+        known
+    }
+
+    /// The notice for a delete or rename that did not complete, and whether the list
+    /// should be read again because Hermes may have changed it.
+    fn registry_failure(
+        verb: &str,
+        done: &str,
+        name: &str,
+        failure: RegistryFailure,
+    ) -> (String, bool) {
+        match failure {
+            RegistryFailure::Refused(words) => (
+                format!("Hermes refused to {verb} {name}: {}", cut_words(&words)),
+                false,
+            ),
+            RegistryFailure::NoTicket(words) => (
+                format!("Talaria could not get a ticket to {verb} {name}: {words}"),
+                false,
+            ),
+            RegistryFailure::Unknown => (
+                format!(
+                    "Talaria lost the answer to the {verb} request. Hermes may have {done} {name}; the list below is fresh."
+                ),
+                true,
+            ),
+            RegistryFailure::NotSent(words) => {
+                (format!("Not sent: {words}. Nothing changed."), false)
+            }
+        }
+    }
+
+    fn registry_answered(
+        &mut self,
+        name: String,
+        result: Result<String, RegistryFailure>,
+        delete: bool,
+        effects: &mut Vec<ProfilesEffect>,
+    ) {
+        self.registry = None;
+        let (text, refresh) = match result {
+            Ok(text) => (text, true),
+            Err(failure) if delete => Self::registry_failure("delete", "deleted", &name, failure),
+            Err(failure) => Self::registry_failure("rename", "renamed", &name, failure),
+        };
+        self.notice(text, effects);
+        if refresh && self.open {
+            self.refresh(effects);
+        }
+    }
+
+    fn typed_view(&self, edit: &TypedEdit, delete: bool) -> TypedInput {
+        let name = &edit.name;
+        let (lines, footer) = if delete {
+            (
+                vec![
+                    format!("Delete profile {name}"),
+                    "Hermes permanently removes its config, API keys, memories, sessions, skills and cron jobs. This cannot be undone.".to_owned(),
+                    format!("{name} is served, so Hermes stops its gateway first."),
+                    format!("Type {name} to confirm."),
+                ],
+                "Enter delete · Esc cancel",
+            )
+        } else {
+            (
+                vec![
+                    format!("Rename profile {name}"),
+                    format!(
+                        "{name} is served, so Hermes stops its gateway while it moves the profile."
+                    ),
+                    "New name:".to_owned(),
+                ],
+                "Enter rename · Esc cancel",
+            )
+        };
+        TypedInput {
+            name: name.clone(),
+            lines,
+            text: edit.input.text.clone(),
+            cursor: edit.input.cursor,
+            error: edit.error.clone(),
+            footer: footer.to_owned(),
+        }
+    }
+
     fn form_key(&self, form: &mut FormView, key: &KeyAction) -> Option<CreateRequest> {
         if matches!(key, KeyAction::CtrlEnter)
             || matches!(key, KeyAction::Enter | KeyAction::Open)
                 && matches!(form.focus, FormField::Name | FormField::CopyKeys)
         {
-            let mut known: Vec<_> = self
-                .roster
-                .iter()
-                .flatten()
-                .map(|row| row.name.clone())
-                .collect();
-            known.extend(self.gateway.served.iter().cloned());
-            known.extend(self.gateway.parked.iter().map(|(name, _)| name.clone()));
-            if let Some(topology) = &self.topology {
-                known.extend(topology.stopped.iter().cloned());
-            }
-            let name = match validate_new_name(&form.name, &known) {
+            let name = match validate_new_name(&form.name, &self.known_names()) {
                 Ok(name) => {
                     form.name_error = None;
                     name
@@ -1967,6 +2280,7 @@ impl ProfilesState {
                 let mut panel = std::mem::take(&mut self.panel);
                 match &mut panel {
                     EditPanel::Description(edit) => edit.input.insert(&text),
+                    EditPanel::Delete(edit) | EditPanel::Rename(edit) => edit.input.insert(&text),
                     EditPanel::Create(form) => {
                         let (value, cursor) = if form.focus == FormField::Name {
                             (&mut form.name, &mut form.name_cursor)
@@ -1995,6 +2309,26 @@ impl ProfilesState {
             }
             ProfilesInput::CreateAnswered(result) => {
                 self.created_answer(result, now_ms, &mut effects)
+            }
+            ProfilesInput::DeleteAnswered(name, result) => {
+                let result = result.map(|outcome| match outcome {
+                    DeleteOutcome::Deleted => format!("Deleted profile {name}."),
+                    DeleteOutcome::SettlementPending { retry_command } => format!(
+                        "Deleted profile {name}, but Hermes has not finished clearing its session identity. Run: {retry_command}"
+                    ),
+                });
+                self.registry_answered(name, result, true, &mut effects);
+            }
+            ProfilesInput::RenameAnswered(name, result) => {
+                let result = result.map(|new_name| {
+                    let new_name = normalize_profile_name(&new_name);
+                    let text = format!("Renamed profile {name} to {new_name}.");
+                    if self.selected.as_ref() == Some(&name) {
+                        self.selected = Some(new_name);
+                    }
+                    text
+                });
+                self.registry_answered(name, result, false, &mut effects);
             }
             ProfilesInput::ConfigureAnswered(name, section, result) => {
                 self.configured_answer(name, section, result, &mut effects)
@@ -2053,6 +2387,29 @@ impl ProfilesState {
         effects
     }
 
+    /// What a loaded list with no rows says. "No profiles" is true only when the gateway
+    /// and the profile list both answered; otherwise the list is empty because a read
+    /// failed, so the screen says which and what to do.
+    fn empty_text(&self) -> String {
+        if let Some(failure) = &self.discovery_failure {
+            return if failure.next_step.is_empty() {
+                failure.message.clone()
+            } else {
+                format!("{} {}", failure.message, failure.next_step)
+            };
+        }
+        if self.roster.is_none() {
+            return self.keys.refresh.as_ref().map_or_else(
+                || "Hermes did not return the profile list.".to_owned(),
+                |key| format!("Hermes did not return the profile list. Press {key} to try again."),
+            );
+        }
+        self.keys.new.as_ref().map_or_else(
+            || "No profiles.".to_owned(),
+            |key| format!("No profiles. Press {key} to create one."),
+        )
+    }
+
     /// Everything the screen draws.
     #[must_use]
     pub fn view(&self) -> ProfilesView {
@@ -2068,6 +2425,8 @@ impl ProfilesState {
                 cursor: edit.input.cursor,
                 error: edit.error.clone(),
             },
+            EditPanel::Delete(edit) => Panel::Delete(self.typed_view(edit, true)),
+            EditPanel::Rename(edit) => Panel::Rename(self.typed_view(edit, false)),
             EditPanel::Review { review, .. } => Panel::Review(self.review_lines(review)),
             EditPanel::None => match selected.and_then(|index| visible.get(index)) {
                 Some(row) if self.detail_visible => {
@@ -2084,14 +2443,17 @@ impl ProfilesState {
         ProfilesView {
             loading: !self.loaded,
             header: format!("Profiles ({} on disk · {} served)", self.roster.as_ref().map_or_else(|| "-".into(), |rows| rows.len().to_string()), self.rows.iter().filter(|row| row.state == ServeState::Served).count()),
+            // Creating comes first, so a narrow header that drops hints from the end keeps it.
             hints: self.hint_parts(&[
+                (&self.keys.new, "new profile"),
                 (&self.keys.models, "models"),
                 (&self.keys.connect, "connect"),
                 (&self.keys.refresh, "refresh"),
                 (&self.keys.rescan, "rescan"),
-                (&self.keys.new, "new"),
                 (&self.keys.description, "description"),
                 (&self.keys.soul, "soul"),
+                (&self.keys.rename, "rename"),
+                (&self.keys.delete, "delete"),
             ]),
             rows: visible.iter().map(|row| {
                 let explanation = self.explanation(row);
@@ -2105,6 +2467,8 @@ impl ProfilesState {
             }).collect(),
             selected,
             filter: self.filter.as_ref().map(|filter| filter.text.clone()),
+            empty: (self.loaded && self.rows.is_empty() && self.filter.is_none())
+                .then(|| self.empty_text()),
             panel,
             notice: self.notices.front().cloned(),
             confirm: self.confirm.as_ref().map(|confirm| match confirm {

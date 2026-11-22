@@ -712,3 +712,131 @@ fn keys_table() {
             || shown(&state).contains("Esc")
     );
 }
+
+fn picker_status(state: &ModelRolesState) -> Option<String> {
+    state.view().picker.and_then(|picker| picker.status)
+}
+
+fn picker_rows(state: &ModelRolesState) -> Vec<String> {
+    state
+        .view()
+        .picker
+        .map(|picker| picker.rows.into_iter().map(|row| row.text).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_failed_model_list_says_why() {
+    let cases = [
+        (
+            RolesError::Refused {
+                status: 409,
+                detail: Some("profile busy".to_owned()),
+            },
+            "Hermes refused the model list: profile busy. Ctrl+R to retry.",
+        ),
+        (
+            RolesError::NotSent {
+                reason: "connection refused".to_owned(),
+            },
+            "Could not load the model list: connection refused. Ctrl+R to retry.",
+        ),
+        (
+            RolesError::Server { status: 500 },
+            "Hermes could not read the model list. Ctrl+R to retry.",
+        ),
+        (
+            RolesError::Forbidden {
+                detail: "profile_scope_mismatch".to_owned(),
+            },
+            "Hermes refused this profile (profile_scope_mismatch). This is a Talaria defect; please report it.",
+        ),
+    ];
+    for (error, expected) in cases {
+        let mut state = open();
+        state.update(RolesInput::Key(RolesKey::Enter));
+        state.update(RolesInput::CatalogFailed { error });
+        assert_eq!(picker_status(&state).as_deref(), Some(expected));
+    }
+}
+
+fn unready_catalog() -> RouteCatalog {
+    RouteCatalog {
+        providers: vec![
+            RouteProvider {
+                slug: "public".to_owned(),
+                name: "Public".to_owned(),
+                models: vec!["alpha".to_owned()],
+                authenticated: true,
+                is_user_defined: false,
+                api_url: String::new(),
+            },
+            RouteProvider {
+                slug: "keyless".to_owned(),
+                name: "Keyless".to_owned(),
+                models: Vec::new(),
+                authenticated: false,
+                is_user_defined: false,
+                api_url: String::new(),
+            },
+        ],
+    }
+}
+
+#[test]
+fn a_provider_without_a_key_points_to_the_right_place_for_the_page_profile() {
+    let mut own = open();
+    own.update(RolesInput::CatalogLoaded(unready_catalog()));
+    own.update(RolesInput::Key(RolesKey::Enter));
+    assert!(
+        picker_rows(&own)
+            .iter()
+            .any(|row| row == "Keyless  not set up: add it under Providers"),
+        "{:?}",
+        picker_rows(&own)
+    );
+
+    let mut other = open();
+    other.set_connection_profile("elsewhere");
+    other.update(RolesInput::CatalogLoaded(unready_catalog()));
+    other.update(RolesInput::Key(RolesKey::Enter));
+    assert!(
+        picker_rows(&other).iter().any(|row| row
+            == "Keyless  not set up for this profile: connect to it from /profiles, then add it under Providers"),
+        "{:?}",
+        picker_rows(&other)
+    );
+
+    // Naming the page's own profile is the connected case.
+    let mut same = open();
+    same.set_connection_profile("fixture");
+    same.update(RolesInput::CatalogLoaded(unready_catalog()));
+    same.update(RolesInput::Key(RolesKey::Enter));
+    assert!(
+        picker_rows(&same)
+            .iter()
+            .any(|row| row == "Keyless  not set up: add it under Providers")
+    );
+}
+
+#[test]
+fn the_picker_shows_the_stored_route_while_the_model_list_is_missing() {
+    let mut state = open();
+    state.update(RolesInput::Loaded(Loaded::Info(RolesInfo {
+        model: "stored-model".to_owned(),
+        provider: "public".to_owned(),
+        auto_context_length: 0,
+        config_context_length: 0,
+        capabilities: Map::new(),
+    })));
+    state.update(RolesInput::CatalogFailed {
+        error: RolesError::Server { status: 500 },
+    });
+    state.update(RolesInput::Key(RolesKey::Enter));
+    let rows = picker_rows(&state);
+    assert_eq!(rows, vec!["public / stored-model (current)".to_owned()]);
+    // Choosing it changes nothing, so nothing is pending.
+    state.update(RolesInput::Key(RolesKey::Enter));
+    assert!(state.view().picker.is_none());
+    assert!(!shown(&state).contains("unapplied"));
+}

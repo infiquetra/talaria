@@ -348,6 +348,8 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("profiles_refresh", &["r"][..]),
         ("profiles_rescan", &["R"][..]),
         ("profiles_new", &["n"][..]),
+        ("profiles_delete", &["d"][..]),
+        ("profiles_rename", &["N"][..]),
         ("profiles_description", &["e"][..]),
         ("profiles_soul", &["s"][..]),
         ("profiles_models", &["m"][..]),

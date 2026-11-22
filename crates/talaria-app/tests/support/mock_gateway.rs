@@ -2638,6 +2638,8 @@ struct SessionSide {
     options_profile: Value,
     /// When set, `model.options` is refused with this reason instead of a catalogue.
     options_fail: Option<String>,
+    /// The profile this connection's ticket is bound to. Naming any other profile is refused.
+    connection_profile: String,
     /// `config.get` value for the reasoning key. Null is a value the client can read.
     reasoning_value: Value,
     mutate_revision: i64,
@@ -2758,6 +2760,7 @@ impl SessionSide {
             options_with_session: json!({"model": "", "provider": "", "providers": []}),
             options_profile: json!({"model": "", "provider": "", "providers": []}),
             options_fail: None,
+            connection_profile: "fixture".to_owned(),
             reasoning_value: json!("high"),
             mutate_revision: 0,
             mutate_generation: 0,
@@ -5217,6 +5220,11 @@ impl MockGateway {
         lock(&self.shared).sess.options_fail = reason.map(str::to_owned);
     }
 
+    /// The profile the connection is bound to; `model.options` naming another one is refused.
+    pub fn set_connection_profile(&self, profile: &str) {
+        lock(&self.shared).sess.connection_profile = profile.to_owned();
+    }
+
     /// The value `config.get` returns for `reasoning`.
     pub fn set_reasoning_value(&self, value: Value) {
         lock(&self.shared).sess.reasoning_value = value;
@@ -5518,6 +5526,19 @@ pub struct TicketSeen {
     pub at: Instant,
 }
 
+/// One rename or delete the profile routes read.
+#[derive(Clone, Debug)]
+pub struct RegistrySeen {
+    /// `PATCH` or `DELETE`.
+    pub method: String,
+    /// The request target, `/api/profiles/<name>`.
+    pub target: String,
+    /// The JSON body, or null.
+    pub body: Value,
+    /// The ticket the request carried, when the control socket minted it.
+    pub ticket: Option<TicketSeen>,
+}
+
 struct StandaloneInfo {
     capability_http: Mutex<Vec<(String, String)>>,
     capability_http_failure: Mutex<Option<u16>>,
@@ -5533,6 +5554,8 @@ struct StandaloneInfo {
     refuse_tickets: Mutex<bool>,
     fleet_profiles: Mutex<Vec<String>>,
     parked_profiles: Mutex<Vec<(String, String)>>,
+    profile_registry: Mutex<Vec<RegistrySeen>>,
+    profile_registry_reply: Mutex<Option<(u16, Value)>>,
     configure_rest_origin: Mutex<Option<String>>,
     doctor: Mutex<DoctorMockState>,
 }
@@ -5656,6 +5679,8 @@ impl StandaloneGateway {
             refuse_tickets: Mutex::new(false),
             fleet_profiles: Mutex::new(Vec::new()),
             parked_profiles: Mutex::new(Vec::new()),
+            profile_registry: Mutex::new(Vec::new()),
+            profile_registry_reply: Mutex::new(None),
             doctor: Mutex::new(DoctorMockState {
                 state: "ready".into(),
                 code_sha: CODE_SHA.into(),
@@ -5747,6 +5772,32 @@ impl StandaloneGateway {
         }
     }
 
+    /// Answer one settings route on the REST mock with a handler of the test's own.
+    pub fn configure_rest_route<F>(&self, method: &str, path: &str, handler: F)
+    where
+        F: Fn(&configure_rest::RecordedRequest) -> (u16, Value) + Send + Sync + 'static,
+    {
+        self.enable_configure_rest();
+        if let Some(mock) = plain(&self.configure_rest).as_ref() {
+            mock.set_route(method, path, handler);
+        }
+    }
+
+    /// Merge `patch` into the settings mock's stored configuration file.
+    pub fn configure_rest_merge_raw(&self, patch: &Value) {
+        self.enable_configure_rest();
+        if let Some(mock) = plain(&self.configure_rest).as_ref() {
+            mock.merge_raw(patch);
+        }
+    }
+
+    /// The settings mock's recorded requests, with their headers.
+    pub fn configure_rest_recorded(&self) -> Vec<configure_rest::RecordedRequest> {
+        let rest = plain(&self.configure_rest);
+        rest.as_ref()
+            .map_or_else(Vec::new, |mock| self.block_on(mock.requests()))
+    }
+
     /// Return the settings mock's recorded method, target, and body in order.
     pub fn configure_rest_requests(&self) -> Vec<(String, String, Vec<u8>)> {
         let rest = plain(&self.configure_rest);
@@ -5821,6 +5872,30 @@ impl StandaloneGateway {
     /// Mark a profile parked. Identify reports the name and the reason.
     pub fn set_parked_profile(&self, name: &str, reason: &str) {
         plain(&self.info.parked_profiles).push((name.to_owned(), reason.to_owned()));
+    }
+
+    /// Answer every accepted rename or delete with this status and body, until changed.
+    /// Without it a delete answers `{"ok": true}` and a rename names the new profile.
+    pub fn script_profile_registry(&self, status: u16, body: Value) {
+        *plain(&self.info.profile_registry_reply) = Some((status, body));
+    }
+
+    /// Every rename and delete the profile routes read, in order.
+    pub fn profile_registry_requests(&self) -> Vec<RegistrySeen> {
+        plain(&self.info.profile_registry).clone()
+    }
+
+    /// The ticket the control socket minted with this value, if it minted one.
+    pub fn ticket_for(&self, value: &str) -> Option<TicketSeen> {
+        plain(&self.info.tickets)
+            .iter()
+            .find(|issued| issued.value == value)
+            .map(|issued| TicketSeen {
+                scope: issued.scope.clone(),
+                purpose: issued.purpose.clone(),
+                profile_id: issued.profile_id.clone(),
+                at: issued.at,
+            })
     }
 
     /// Every ticket minted, in order, with the scope and profile it names.
@@ -6033,10 +6108,14 @@ fn issue_ticket(info: &StandaloneInfo, request: &Value) -> Value {
     }
     if !matches!(
         params["purpose"].as_str(),
-        Some("interactive" | "native-http")
+        Some("interactive" | "native-http" | "native-profile-registry")
     ) || !matches!(params["scope"].as_str(), Some("profile" | "host"))
     {
         return refuse("session-ticket: invalid bootstrap parameters");
+    }
+    // gateway/runtime_bootstrap.py: a registry grant names exactly one profile.
+    if params["purpose"] == "native-profile-registry" && params["scope"] == "host" {
+        return refuse("session-ticket: bootstrap binding rejected");
     }
     // gateway/runtime_bootstrap.py lines 37 to 42: host scope needs purpose interactive,
     // and any served profile id may be named. The mock refuses host scope only when a
@@ -6103,7 +6182,7 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
                 let Some(count) = request else { return };
                 let line = String::from_utf8_lossy(&first[..count]);
                 let target = line.split_whitespace().nth(1).unwrap_or("");
-                if target.starts_with("/api/config") {
+                if target.starts_with("/api/config") || target.starts_with("/api/model") {
                     if let Some(address) = origin.strip_prefix("http://")
                         && let Ok(mut rest) = TcpStream::connect(address).await
                     {
@@ -6135,6 +6214,10 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
             if head.starts_with("GET /api/status") || head.starts_with("POST /api/gateway/restart")
             {
                 doctor_http(stream, info).await;
+            } else if head.starts_with("DELETE /api/profiles/")
+                || head.starts_with("PATCH /api/profiles/")
+            {
+                profile_registry_http(stream, info).await;
             } else {
                 let connection = {
                     let mut sockets = plain(&info.websockets);
@@ -6749,4 +6832,103 @@ async fn doctor_http(stream: TcpStream, info: Arc<StandaloneInfo>) {
     );
     let _ = stream.write_all(response.as_bytes()).await;
 }
+/// `PATCH` and `DELETE /api/profiles/<name>` as the pinned Hermes guards them
+/// (hermes_cli/dashboard_auth/native_http.py): only an unused `native-profile-registry`
+/// ticket minted for that profile's own home, and never the home the gateway runs from.
+async fn profile_registry_http(stream: TcpStream, info: Arc<StandaloneInfo>) {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    if reader.read_line(&mut line).await.is_err() {
+        return;
+    }
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("").to_owned();
+    let target = parts.next().unwrap_or("").to_owned();
+    let mut headers = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).await.unwrap_or(0) == 0 || line == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = line.trim_end().split_once(':') {
+            headers.push((name.to_ascii_lowercase(), value.trim().to_owned()));
+        }
+    }
+    let length = headers
+        .iter()
+        .find(|(k, _)| k == "content-length")
+        .and_then(|(_, v)| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = vec![0u8; length];
+    use tokio::io::AsyncReadExt;
+    if reader.read_exact(&mut body).await.is_err() {
+        return;
+    }
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let credential = headers
+        .iter()
+        .find(|(k, _)| k == "x-hermes-gateway-ticket")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    let name = target.trim_start_matches("/api/profiles/").to_owned();
+    let home = if name == "default" {
+        info.home.clone()
+    } else if name == "fixture" {
+        info.fixture.clone()
+    } else {
+        name.clone()
+    };
+    let ticket = {
+        let mut tickets = plain(&info.tickets);
+        tickets
+            .iter_mut()
+            .find(|ticket| {
+                ticket.value == credential
+                    && !ticket.used
+                    && ticket.purpose == "native-profile-registry"
+            })
+            .map(|ticket| {
+                ticket.used = true;
+                TicketSeen {
+                    scope: ticket.scope.clone(),
+                    purpose: ticket.purpose.clone(),
+                    profile_id: ticket.profile_id.clone(),
+                    at: ticket.at,
+                }
+            })
+    };
+    plain(&info.profile_registry).push(RegistrySeen {
+        method: method.clone(),
+        target,
+        body: body.clone(),
+        ticket: ticket.clone(),
+    });
+    let (status, reply) = match &ticket {
+        None => (401, json!({"detail": "Unauthorized"})),
+        // _check_registry_scope: the grant's own profile, and never the launch home.
+        Some(ticket) if ticket.profile_id != home || home == info.home => {
+            (403, json!({"detail": "profile_scope_mismatch"}))
+        }
+        Some(_) => plain(&info.profile_registry_reply)
+            .clone()
+            .unwrap_or_else(|| {
+                if method == "DELETE" {
+                    (200, json!({"ok": true, "path": home}))
+                } else {
+                    (
+                        200,
+                        json!({"ok": true, "name": body["new_name"], "path": home}),
+                    )
+                }
+            }),
+    };
+    let data = reply.to_string();
+    let mut stream = reader.into_inner();
+    let response = format!(
+        "HTTP/1.1 {status} response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}",
+        data.len(),
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+}
+
 include!("mock_mcp.rs");

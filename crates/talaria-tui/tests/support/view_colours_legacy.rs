@@ -497,6 +497,7 @@ fn profiles(fixtures: &mut Vec<Fixture>, resolved: &ThemeFileResolution) {
         panel: Panel::None,
         notice: Some("Review the configuration".into()),
         confirm: None,
+        empty: None,
     };
     fixtures.push(draw("profiles", "profiles", true, |area, buffer| {
         resolved.draw_profiles(&view, area, buffer);
@@ -1195,6 +1196,7 @@ pub fn wide_profile_divider(resolved: &ThemeFileResolution) -> Buffer {
         }),
         notice: None,
         confirm: None,
+        empty: None,
     };
     let area = Rect::new(0, 0, 120, 24);
     let mut buffer = Buffer::empty(area);

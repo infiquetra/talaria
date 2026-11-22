@@ -16,6 +16,8 @@ use crate::discovery::{
 pub enum Purpose {
     Interactive,
     NativeHttp,
+    /// Rename or delete the one served profile the ticket names, and nothing else.
+    NativeProfileRegistry,
 }
 
 impl Purpose {
@@ -23,6 +25,7 @@ impl Purpose {
         match self {
             Self::Interactive => "interactive",
             Self::NativeHttp => "native-http",
+            Self::NativeProfileRegistry => "native-profile-registry",
         }
     }
 }
@@ -51,7 +54,7 @@ impl Scope {
             Purpose::Interactive => Ok(Self {
                 kind: ScopeKind::Host,
             }),
-            Purpose::NativeHttp => Err(ScopeError),
+            Purpose::NativeHttp | Purpose::NativeProfileRegistry => Err(ScopeError),
         }
     }
 

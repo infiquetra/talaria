@@ -198,6 +198,8 @@ profiles_filter = ["/"]
 profiles_refresh = ["r"]
 profiles_rescan = ["R"]
 profiles_new = ["n"]
+profiles_delete = ["d"]
+profiles_rename = ["N"]
 profiles_description = ["e"]
 profiles_soul = ["s"]
 profiles_models = ["m"]
@@ -649,6 +651,17 @@ after `y` confirms: serving new profiles can also start their messaging bots. `n
 profile after validation and review, `e` edits its description, and `s` opens its soul in the
 configured external editor. Soul edits are reviewed and checked against a fresh copy before
 saving. A concurrent change keeps the unsaved edit in memory for the next `s`. Skills, toolsets, and Model Context Protocol servers are shown here without edit controls.
+
+`d` deletes the selected profile. The confirmation lists what Hermes removes (config, API keys,
+memories, sessions, skills and cron jobs), says that Hermes stops the profile's gateway first,
+and sends nothing until you type the profile's name, as `hermes profile delete` asks. `N`
+renames the selected profile; the new name passes the same checks as a created one. Both use
+Hermes's profile routes with a ticket for that one profile, which only the gateway's control
+socket on this machine gives, so they work only on a profile the gateway serves and only
+through a local gateway. Talaria refuses the default profile and the profile it is connected
+to, and Hermes refuses the profile its gateway was started from. When Hermes deletes the
+folder but has not finished clearing the profile's session identity, the notice shows the
+command Hermes gives to finish it.
 
 Enter or `m` on a served profile opens its `/models` page: the main model, fallbacks, helper
 (auxiliary) models, subagents and mixture of agents of that profile, even when Talaria is

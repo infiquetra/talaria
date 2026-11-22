@@ -945,6 +945,10 @@ pub enum Action {
     ProfilesRescan,
     /// Open the create form. Issue #253.
     ProfilesNew,
+    /// Delete the selected profile, after its name is typed.
+    ProfilesDelete,
+    /// Rename the selected profile.
+    ProfilesRename,
     /// Edit the selected profile's description. Issue #253.
     ProfilesDescription,
     /// Edit the selected profile's soul. Issue #253.
@@ -1013,7 +1017,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 209] = [
+    pub const ALL: [Self; 211] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1192,6 +1196,8 @@ impl Action {
         Self::ProfilesRefresh,
         Self::ProfilesRescan,
         Self::ProfilesNew,
+        Self::ProfilesDelete,
+        Self::ProfilesRename,
         Self::ProfilesDescription,
         Self::ProfilesSoul,
         Self::ProfilesModels,
@@ -1408,6 +1414,8 @@ impl Action {
             Self::ProfilesRefresh => "profiles_refresh",
             Self::ProfilesRescan => "profiles_rescan",
             Self::ProfilesNew => "profiles_new",
+            Self::ProfilesDelete => "profiles_delete",
+            Self::ProfilesRename => "profiles_rename",
             Self::ProfilesDescription => "profiles_description",
             Self::ProfilesSoul => "profiles_soul",
             Self::ProfilesModels => "profiles_models",
@@ -1633,6 +1641,8 @@ impl Action {
             | Self::ProfilesRefresh
             | Self::ProfilesRescan
             | Self::ProfilesNew
+            | Self::ProfilesDelete
+            | Self::ProfilesRename
             | Self::ProfilesDescription
             | Self::ProfilesSoul
             | Self::ProfilesModels
@@ -1854,6 +1864,8 @@ impl Action {
             Self::ProfilesRefresh => &["r"],
             Self::ProfilesRescan => &["shift+r"],
             Self::ProfilesNew => &["n"],
+            Self::ProfilesDelete => &["d"],
+            Self::ProfilesRename => &["shift+n"],
             Self::ProfilesDescription => &["e"],
             Self::ProfilesSoul => &["s"],
             Self::ProfilesModels => &["m"],
@@ -2916,7 +2928,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 209);
+        assert_eq!(Action::ALL.len(), 211);
         for (index, action) in Action::ALL.iter().enumerate() {
             assert_eq!(action.index(), index, "{}", action.config_name());
         }
@@ -3036,6 +3048,8 @@ mod tests {
                 | Action::ProfilesRefresh
                 | Action::ProfilesRescan
                 | Action::ProfilesNew
+                | Action::ProfilesDelete
+                | Action::ProfilesRename
                 | Action::ProfilesDescription
                 | Action::ProfilesSoul
                 | Action::ProfilesModels
@@ -3212,6 +3226,8 @@ mod tests {
                 | Action::ProfilesRefresh
                 | Action::ProfilesRescan
                 | Action::ProfilesNew
+                | Action::ProfilesDelete
+                | Action::ProfilesRename
                 | Action::ProfilesDescription
                 | Action::ProfilesSoul
                 | Action::ProfilesModels
@@ -3528,7 +3544,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 209);
+        assert_eq!(Action::ALL.len(), 211);
     }
 
     #[test]

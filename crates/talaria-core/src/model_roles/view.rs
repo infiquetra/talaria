@@ -299,7 +299,15 @@ impl ModelRolesState {
 
     pub(super) fn picker_entries(&self, picker: &PickerMode) -> Vec<Entry> {
         let CatalogState::Ready(catalog) = &self.catalog else {
-            return Vec::new();
+            // Without the list, the route already set is still shown and can be kept.
+            return match self.target_route(&picker.target) {
+                Some((provider, model))
+                    if picker.step == PickerStep::Providers && !model.is_empty() =>
+                {
+                    vec![Entry::Stored { provider, model }]
+                }
+                _ => Vec::new(),
+            };
         };
         let mut out: Vec<Entry> = Vec::new();
         if let PickerStep::Models { provider } = &picker.step
@@ -356,6 +364,8 @@ impl ModelRolesState {
                 } => {
                     let line = if *choosable {
                         name.clone()
+                    } else if self.other_profile {
+                        format!("{name}  {}", text::NOT_SET_UP_OTHER)
                     } else {
                         format!("{name}  {}", text::NOT_SET_UP)
                     };
@@ -365,9 +375,15 @@ impl ModelRolesState {
                     }
                 }
                 Entry::Model { model, .. } => Item::pick(Kind::MainModel, model.clone()),
-                Entry::Stored { model, .. } => Item {
-                    marker: Some('!'),
-                    ..Item::pick(Kind::MainModel, format!("{model} {}", text::NOT_IN_LIST))
+                Entry::Stored { provider, model } => match &self.catalog {
+                    CatalogState::Ready(_) => Item {
+                        marker: Some('!'),
+                        ..Item::pick(Kind::MainModel, format!("{model} {}", text::NOT_IN_LIST))
+                    },
+                    _ => Item::pick(
+                        Kind::MainModel,
+                        format!("{provider} / {model} {}", text::CURRENT_ROUTE),
+                    ),
                 },
             })
             .collect();
@@ -391,7 +407,7 @@ impl ModelRolesState {
         } else {
             match &self.catalog {
                 CatalogState::Pending => Some(text::LOADING_MODELS.to_owned()),
-                CatalogState::Failed => Some(text::CATALOG_FAILED.to_owned()),
+                CatalogState::Failed(line) => Some(line.clone()),
                 CatalogState::Ready(_) => None,
             }
         };
