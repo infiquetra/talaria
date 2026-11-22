@@ -892,6 +892,29 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_paste_closes_the_selector_and_reaches_the_composer() {
+        let mut state = selector();
+        previewing(&mut state);
+        let _ = answered(&mut state, "ares");
+        let effects = update(
+            &mut state,
+            AppMessage::User(UserAction::Paste {
+                text: "pasted words".into(),
+                draft: String::new(),
+                caret: 0,
+            }),
+        );
+        // The next Enter sends the pasted text instead of applying a skin.
+        assert!(state.choice.is_none(), "the selector closes on a paste");
+        assert_eq!(writes(&effects), ["default"], "the original skin goes back");
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::Attachment(crate::attachments::AttachmentEffect::EditDraft { text, .. })
+                if text == "pasted words"
+        )));
+    }
+
+    #[test]
     fn a_skin_list_that_arrives_during_a_switch_opens_no_selector() {
         let mut state = AppState::new("choice-tests");
         state.profile = "fixture".into();

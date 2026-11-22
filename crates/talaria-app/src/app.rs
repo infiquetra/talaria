@@ -7182,35 +7182,12 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             }
         }
         UserAction::Paste { text, draft, caret } => {
-            state.draft = draft;
-            state.caret = caret;
-            let Some(opened) = &state.opened else {
-                return vec![AppEffect::Attachment(AttachmentEffect::EditDraft {
-                    range: caret..caret,
-                    text,
-                })];
-            };
-            let folder = state
-                .folder
-                .cwd
-                .as_deref()
-                .or(opened.info.cwd.as_deref())
-                .map(Path::new)
-                .unwrap_or(&state.attachment_folder);
-            let rule = state.attachments.rule();
-            let effects = state
-                .attachments
-                .on_paste(&text, &SessionId::new(&opened.session_id), folder, &rule)
-                .into_iter()
-                .map(|effect| match effect {
-                    AttachmentEffect::EditDraft { text, .. } => AttachmentEffect::EditDraft {
-                        range: caret..caret,
-                        text,
-                    },
-                    effect => effect,
-                })
-                .collect();
-            attachment_effects(effects)
+            // The paste goes to the composer, so an open selector closes first and puts the
+            // look back, as a typed `/` does; otherwise the next Enter would apply a theme or
+            // skin instead of sending the pasted text.
+            let mut effects = choice::close(state);
+            effects.extend(paste(state, text, draft, caret));
+            effects
         }
         UserAction::Input(key) => input_key(state, key),
         UserAction::LayoutPanel => {
@@ -7268,6 +7245,39 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Picker(input) => picker_input(state, input),
         UserAction::AttentionNext => attention_next(state),
     }
+}
+
+/// A paste into the composer: it lands at the caret, and a dropped file becomes an attachment.
+fn paste(state: &mut AppState, text: String, draft: String, caret: usize) -> Vec<AppEffect> {
+    state.draft = draft;
+    state.caret = caret;
+    let Some(opened) = &state.opened else {
+        return vec![AppEffect::Attachment(AttachmentEffect::EditDraft {
+            range: caret..caret,
+            text,
+        })];
+    };
+    let folder = state
+        .folder
+        .cwd
+        .as_deref()
+        .or(opened.info.cwd.as_deref())
+        .map(Path::new)
+        .unwrap_or(&state.attachment_folder);
+    let rule = state.attachments.rule();
+    let effects = state
+        .attachments
+        .on_paste(&text, &SessionId::new(&opened.session_id), folder, &rule)
+        .into_iter()
+        .map(|effect| match effect {
+            AttachmentEffect::EditDraft { text, .. } => AttachmentEffect::EditDraft {
+                range: caret..caret,
+                text,
+            },
+            effect => effect,
+        })
+        .collect();
+    attachment_effects(effects)
 }
 
 /// Keys in the foreground: an open palette takes Enter and Esc before the composer and the
