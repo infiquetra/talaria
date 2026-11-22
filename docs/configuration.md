@@ -721,9 +721,19 @@ to, and Hermes refuses the profile its gateway was started from. When Hermes del
 folder but has not finished clearing the profile's session identity, the notice shows the
 command Hermes gives to finish it.
 
+While Hermes works on a delete or rename, which can take up to a minute, the panel under the
+list shows one line such as `Deleting fixture: Hermes is stopping its gateway (12 s).` and the
+row reads `deleting` or `renaming`. Until Hermes answers, every key that acts on that row
+(models, connect, description, soul, rename, delete) answers with one line such as
+`fixture is being deleted. Wait until Hermes answers.` A deleted profile leaves the list at once,
+and a renamed one takes its new name; a profile that is already gone says so and the list is read
+again. The create notice drops its `Waiting for the gateway to serve it...` part as soon as the
+list shows the new profile served.
+
 Enter or `m` on a served profile opens its `/models` page: the main model, fallbacks, helper
 (auxiliary) models, subagents and mixture of agents of that profile, even when Talaria is
-connected to another one. Closing that page returns to `/profiles`. `c` asks first, then starts
+connected to another one. Closing that page returns to `/profiles`, and a main model saved there
+shows in the list at once. `c` asks first, then starts
 a new session on the selected profile in the current folder; the previous session keeps running
 in Hermes and `/resume` returns to it. The connection lasts for this run; to start on a
 profile next time, launch with `talaria --profile` and the profile's name. Both keys refuse a profile the

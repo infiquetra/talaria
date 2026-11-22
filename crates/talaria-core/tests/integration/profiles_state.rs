@@ -2340,6 +2340,15 @@ fn delete_answers_name_the_outcome() {
         );
         assert_eq!(notice_of(&machine), words);
         assert_eq!(effects.iter().any(is_fetch), refreshes, "{words}");
+        if machine
+            .view()
+            .rows
+            .iter()
+            .all(|row| row.name_cell != "fixture")
+        {
+            // Hermes deleted it, so the row is gone at once.
+            continue;
+        }
         // The next delete is allowed again.
         let _ = machine.update(ProfilesInput::Key(KeyAction::Delete), 30);
         assert!(
@@ -2491,4 +2500,390 @@ fn rename_validates_the_new_name_and_reports_the_result() {
         notice_of(&machine),
         "Hermes refused to rename fixture: A profile named 'fixture-r' already exists."
     );
+}
+
+fn tick_after(effects: &[ProfilesEffect], wanted: u64) -> u64 {
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            ProfilesEffect::ScheduleTick { after_ms, token } if *after_ms == wanted => Some(*token),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no tick after {wanted} ms: {effects:?}"))
+}
+
+fn progress_of(machine: &ProfilesState) -> Option<String> {
+    match machine.view().panel {
+        Panel::Progress(line) => Some(line),
+        _ => None,
+    }
+}
+
+fn row_of(machine: &ProfilesState, name: &str) -> Option<(String, String)> {
+    machine
+        .view()
+        .rows
+        .into_iter()
+        .find(|row| row.name_cell == name)
+        .map(|row| (row.label, row.next_step))
+}
+
+/// While Hermes deletes or renames a profile, the panel says so with the seconds waited, the
+/// row is marked, and every key that acts on that row refuses in one line until the answer.
+#[test]
+fn a_delete_in_flight_shows_progress_and_the_row_refuses_every_action() {
+    let mut machine = loaded_at("fixture");
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Delete), 10_000);
+    type_text(&mut machine, "fixture", 10_000);
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Enter), 10_000);
+    assert!(registry_sent(&effects));
+    assert_eq!(
+        progress_of(&machine).as_deref(),
+        Some("Deleting fixture: Hermes is stopping its gateway (0 s).")
+    );
+    assert_eq!(
+        row_of(&machine, "fixture"),
+        Some(("deleting".to_owned(), "wait for Hermes".to_owned()))
+    );
+
+    // The line counts the seconds on its own.
+    let token = tick_after(&effects, 1_000);
+    let effects = machine.update(ProfilesInput::Tick { token }, 13_400);
+    assert!(has(&effects, &ProfilesEffect::Redraw), "{effects:?}");
+    let _ = tick_after(&effects, 1_000);
+    assert_eq!(
+        progress_of(&machine).as_deref(),
+        Some("Deleting fixture: Hermes is stopping its gateway (3 s).")
+    );
+
+    // Every action on the row is refused with one line and sends nothing.
+    for key in [
+        KeyAction::Connect,
+        KeyAction::Models,
+        KeyAction::Enter,
+        KeyAction::EditDescription,
+        KeyAction::EditSoul,
+        KeyAction::Rename,
+        KeyAction::Delete,
+    ] {
+        let effects = machine.update(ProfilesInput::Key(key.clone()), 14_000);
+        assert!(sends_nothing(&effects), "{key:?}: {effects:?}");
+        assert!(!registry_sent(&effects), "{key:?}");
+        if matches!(key, KeyAction::EditDescription | KeyAction::EditSoul) {
+            assert!(
+                !effects
+                    .iter()
+                    .any(|effect| matches!(effect, ProfilesEffect::Describe { .. })),
+                "{key:?}: {effects:?}"
+            );
+        }
+        assert_eq!(machine.view().confirm, None, "{key:?}");
+        assert!(!machine.text_focus(), "{key:?}");
+        assert_eq!(
+            notice_of(&machine),
+            "fixture is being deleted. Wait until Hermes answers.",
+            "{key:?}"
+        );
+        let _ = machine.update(ProfilesInput::UnboundKey, 14_000);
+    }
+
+    // Closing and opening the list again keeps the line and its clock.
+    let _ = machine.update(ProfilesInput::Closed, 15_000);
+    let effects = machine.update(ProfilesInput::Open, 16_000);
+    let _ = tick_after(&effects, 1_000);
+    full_load(&mut machine, 1, 16_000);
+    assert_eq!(
+        progress_of(&machine).as_deref(),
+        Some("Deleting fixture: Hermes is stopping its gateway (6 s).")
+    );
+
+    // The answer ends it: the line goes, and the row acts again.
+    let _ = machine.update(
+        ProfilesInput::DeleteAnswered(
+            "fixture".to_owned(),
+            Err(RegistryFailure::Refused("busy".to_owned())),
+        ),
+        17_000,
+    );
+    assert_eq!(progress_of(&machine), None);
+    let _ = machine.update(ProfilesInput::UnboundKey, 17_000);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Connect), 17_000);
+    assert_eq!(machine.view().confirm.as_deref(), Some(CONNECT_CONFIRM));
+
+    // A rename names both names; another row still says one request runs at a time.
+    let mut machine = loaded_at("fixture");
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Rename), 0);
+    type_text(&mut machine, "fixture-r", 0);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Enter), 0);
+    assert_eq!(
+        progress_of(&machine).as_deref(),
+        Some("Renaming fixture to fixture-r: Hermes is stopping its gateway (0 s).")
+    );
+    assert_eq!(row_of(&machine, "fixture").unwrap().0, "renaming");
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Models), 0);
+    assert_eq!(
+        notice_of(&machine),
+        "fixture is being renamed. Wait until Hermes answers."
+    );
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Down), 0);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Delete), 0);
+    assert_eq!(
+        notice_of(&machine),
+        "A delete or rename is already in progress."
+    );
+}
+
+/// Serve a just-created profile and select it; returns the create's scheduled ticks.
+fn created_and_served(machine: &mut ProfilesState) -> Vec<(u64, u64)> {
+    machine.set_layout(120, 10);
+    let _ = machine.update(ProfilesInput::Open, 0);
+    full_load(machine, 0, 0);
+    let _ = submit_create(machine, "fixture-new", 500);
+    let effects = machine.update(
+        ProfilesInput::CreateAnswered(Ok(CreatedProfile {
+            name: "fixture-new".to_owned(),
+            keys_copied: true,
+        })),
+        1_000,
+    );
+    let ticks = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProfilesEffect::ScheduleTick { after_ms, token } => Some((*after_ms, *token)),
+            _ => None,
+        })
+        .collect();
+    let effects = machine.update(ProfilesInput::Refresh, 2_000);
+    answer_refresh(machine, &effects, 2_000, &["fixture-new"]);
+    for _ in 0..10 {
+        let view = machine.view();
+        if view
+            .selected
+            .is_some_and(|index| view.rows[index].name_cell == "fixture-new")
+        {
+            break;
+        }
+        let _ = machine.update(ProfilesInput::Key(KeyAction::Down), 2_100);
+    }
+    ticks
+}
+
+/// Answer the refresh these effects asked for, with `extra` served and on disk.
+fn answer_refresh(
+    machine: &mut ProfilesState,
+    effects: &[ProfilesEffect],
+    at: u64,
+    extra: &[&str],
+) {
+    let generation = effects
+        .iter()
+        .find_map(|effect| match effect {
+            ProfilesEffect::Discover { generation } => Some(*generation),
+            _ => None,
+        })
+        .expect("a refresh");
+    let mut served = gateway();
+    let mut listed = roster();
+    for name in extra {
+        served.served.push((*name).to_owned());
+        listed.push(RosterEntry {
+            name: (*name).to_owned(),
+            display_name: (*name).to_owned(),
+            ..RosterEntry::default()
+        });
+    }
+    let _ = machine.update(ProfilesInput::Discovered(generation, Ok(served)), at);
+    let _ = machine.update(ProfilesInput::Listed(generation, Ok(listed)), at);
+    let _ = machine.update(ProfilesInput::Topology(generation, Ok(topo())), at);
+}
+
+fn names_of(machine: &ProfilesState) -> Vec<String> {
+    machine
+        .view()
+        .rows
+        .into_iter()
+        .map(|row| row.name_cell)
+        .collect()
+}
+
+/// A profile deleted or renamed soon after its create never comes back as "starting".
+#[test]
+fn a_deleted_or_renamed_new_profile_does_not_come_back() {
+    let mut machine = state();
+    let ticks = created_and_served(&mut machine);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Delete), 3_000);
+    type_text(&mut machine, "fixture-new", 3_000);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Enter), 3_000);
+    let effects = machine.update(
+        ProfilesInput::DeleteAnswered("fixture-new".to_owned(), Ok(DeleteOutcome::Deleted)),
+        4_000,
+    );
+    // Gone at once, before the refresh answers.
+    assert!(!names_of(&machine).contains(&"fixture-new".to_owned()));
+    answer_refresh(&mut machine, &effects, 4_500, &[]);
+    assert!(!names_of(&machine).contains(&"fixture-new".to_owned()));
+    // The create's own later refresh does not bring it back either.
+    let token = ticks.iter().find(|(after, _)| *after == 35_000).unwrap().1;
+    let effects = machine.update(ProfilesInput::Tick { token }, 36_000);
+    answer_refresh(&mut machine, &effects, 36_000, &[]);
+    assert!(
+        !names_of(&machine).contains(&"fixture-new".to_owned()),
+        "{:?}",
+        names_of(&machine)
+    );
+
+    // A rename leaves no row under the old name.
+    let mut machine = state();
+    let _ = created_and_served(&mut machine);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Rename), 3_000);
+    type_text(&mut machine, "fixture-good", 3_000);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Enter), 3_000);
+    let effects = machine.update(
+        ProfilesInput::RenameAnswered("fixture-new".to_owned(), Ok("fixture-good".to_owned())),
+        4_000,
+    );
+    assert!(!names_of(&machine).contains(&"fixture-new".to_owned()));
+    assert!(names_of(&machine).contains(&"fixture-good".to_owned()));
+    answer_refresh(&mut machine, &effects, 4_500, &["fixture-good"]);
+    assert!(
+        !names_of(&machine).contains(&"fixture-new".to_owned()),
+        "{:?}",
+        names_of(&machine)
+    );
+    assert_eq!(row_of(&machine, "fixture-good").unwrap().0, "served");
+
+    // A lost answer may have deleted it, so the list trusts Hermes alone.
+    let mut machine = state();
+    let _ = created_and_served(&mut machine);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Delete), 3_000);
+    type_text(&mut machine, "fixture-new", 3_000);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Enter), 3_000);
+    let effects = machine.update(
+        ProfilesInput::DeleteAnswered("fixture-new".to_owned(), Err(RegistryFailure::Unknown)),
+        4_000,
+    );
+    answer_refresh(&mut machine, &effects, 4_500, &[]);
+    assert!(!names_of(&machine).contains(&"fixture-new".to_owned()));
+}
+
+/// The line that waits for the gateway goes once the list shows the new profile served.
+#[test]
+fn the_waiting_line_goes_once_the_new_profile_is_served() {
+    let mut machine = state();
+    machine.set_layout(120, 10);
+    let _ = machine.update(ProfilesInput::Open, 0);
+    full_load(&mut machine, 0, 0);
+    let _ = submit_create(&mut machine, "fixture-new", 500);
+    let effects = machine.update(
+        ProfilesInput::CreateAnswered(Ok(CreatedProfile {
+            name: "fixture-new".to_owned(),
+            keys_copied: true,
+        })),
+        1_000,
+    );
+    assert_eq!(
+        notice_of(&machine),
+        "Created profile fixture-new. Provider keys copied: yes. Waiting for the gateway to serve it..."
+    );
+    // Not served yet: the line stays.
+    let token = tick_after(&effects, 0);
+    let refresh = machine.update(ProfilesInput::Tick { token }, 1_000);
+    answer_refresh(&mut machine, &refresh, 1_200, &[]);
+    assert!(notice_of(&machine).contains("Waiting for the gateway"));
+    // Served: the waiting part goes and the rest stays.
+    let token = tick_after(&effects, 5_000);
+    let refresh = machine.update(ProfilesInput::Tick { token }, 6_000);
+    answer_refresh(&mut machine, &refresh, 6_200, &["fixture-new"]);
+    assert_eq!(row_of(&machine, "fixture-new").unwrap().0, "served");
+    assert_eq!(
+        notice_of(&machine),
+        "Created profile fixture-new. Provider keys copied: yes."
+    );
+}
+
+/// A delete or rename of a profile that is already gone says so and reads the list again.
+#[test]
+fn a_profile_already_gone_refreshes_the_list() {
+    for (key, answer) in [
+        (
+            KeyAction::Delete,
+            ProfilesInput::DeleteAnswered(
+                "fixture".to_owned(),
+                Err(RegistryFailure::Gone(
+                    "the gateway no longer serves it".to_owned(),
+                )),
+            ),
+        ),
+        (
+            KeyAction::Rename,
+            ProfilesInput::RenameAnswered(
+                "fixture".to_owned(),
+                Err(RegistryFailure::Gone(
+                    "Profile 'fixture' does not exist".to_owned(),
+                )),
+            ),
+        ),
+    ] {
+        let mut machine = loaded_at("fixture");
+        let _ = machine.update(ProfilesInput::Key(key.clone()), 10);
+        type_text(&mut machine, "fixture", 10);
+        if key == KeyAction::Rename {
+            type_text(&mut machine, "-r", 10);
+        }
+        let _ = machine.update(ProfilesInput::Key(KeyAction::Enter), 10);
+        let effects = machine.update(answer, 20);
+        assert!(effects.iter().any(is_fetch), "{key:?}: {effects:?}");
+        let verb = if key == KeyAction::Delete {
+            "delete"
+        } else {
+            "rename"
+        };
+        let words = if key == KeyAction::Delete {
+            "the gateway no longer serves it"
+        } else {
+            "Profile 'fixture' does not exist"
+        };
+        assert_eq!(
+            notice_of(&machine),
+            format!("Could not {verb} fixture: {words}. The list below is fresh.")
+        );
+    }
+}
+
+/// A model saved on the model roles page shows in the list at once, closed or open.
+#[test]
+fn a_saved_main_model_shows_in_the_list_at_once() {
+    let mut machine = loaded_at("fixture");
+    let _ = machine.update(
+        ProfilesInput::Described(0, "fixture".to_owned(), Ok(description("fixture"))),
+        10,
+    );
+    assert_eq!(
+        model_cell(&machine, "fixture"),
+        "minimax-m3.1-flash · ollama-cloud"
+    );
+    let _ = machine.update(ProfilesInput::Closed, 20);
+    let _ = machine.update(
+        ProfilesInput::ModelSaved {
+            name: "fixture".to_owned(),
+            provider: "fixture-provider".to_owned(),
+            model: "fixture-model".to_owned(),
+        },
+        30,
+    );
+    // Reopened, the list shows the saved model while Hermes is read again.
+    let _ = machine.update(ProfilesInput::Open, 40);
+    assert_eq!(
+        model_cell(&machine, "fixture"),
+        "fixture-model · fixture-provider"
+    );
+    match machine.view().panel {
+        Panel::Detail(detail) => assert!(
+            detail
+                .lines
+                .contains(&"Model: fixture-provider · fixture-model".to_owned()),
+            "{detail:?}"
+        ),
+        other => panic!("no detail: {other:?}"),
+    }
 }

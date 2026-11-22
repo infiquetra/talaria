@@ -365,6 +365,12 @@ impl ModelRolesState {
             self.mode = Mode::Prompt(Prompt::Confirm { message });
             return Vec::new();
         }
+        if let ApplyReply::Assigned(AssignOutcome::Main {
+            provider, model, ..
+        }) = &reply
+        {
+            self.main_saved = Some((provider.clone(), model.clone()));
+        }
         let run = self.run_for(Section::Main);
         run.model_saved = true;
         if let ApplyReply::Assigned(AssignOutcome::Main {
