@@ -160,3 +160,89 @@ pub(super) fn hard(spans: Vec<Span<'static>>, width: usize) -> Vec<Line<'static>
     }
     result
 }
+
+/// What a continued code row starts with, so copied rows are recognisable as one line.
+pub(super) const CONTINUATION: &str = "↪ ";
+
+/// Wrap one line of a code block. A line wider than `width` breaks after a space when one
+/// sits in the last third of the row, and otherwise at the width. Every continuation row
+/// starts with the dim `marker` and then the line's own indent.
+pub(super) fn code(spans: Vec<Span<'static>>, width: usize, marker: Style) -> Vec<Line<'static>> {
+    if spans.iter().any(|span| span.content.contains('\n')) {
+        return hard(spans, width);
+    }
+    let width = width.max(1);
+    let mut units: Vec<(&str, Style, usize)> = Vec::new();
+    for span in &spans {
+        for grapheme in span.content.graphemes(true) {
+            if grapheme == "\t" {
+                units.extend([(" ", span.style, 1); 4]);
+            } else {
+                units.push((grapheme, span.style, UnicodeWidthStr::width(grapheme)));
+            }
+        }
+    }
+    let row = |units: &[(&str, Style, usize)]| {
+        let mut spans = Vec::new();
+        for (text, style, _) in units {
+            append(&mut spans, text, *style);
+        }
+        Line::from(spans)
+    };
+    if units.iter().map(|unit| unit.2).sum::<usize>() <= width {
+        return vec![row(&units)];
+    }
+    let marker_columns = UnicodeWidthStr::width(CONTINUATION);
+    let indent = units.iter().take_while(|unit| unit.0 == " ").count();
+    let hanging = indent.min(width.saturating_sub(marker_columns) / 2);
+    let indent_style = units.first().map_or(Style::default(), |unit| unit.1);
+    let mut output = Vec::new();
+    let mut start = 0;
+    while start < units.len() {
+        let first = start == 0;
+        let room = if first {
+            width
+        } else {
+            width - marker_columns - hanging
+        };
+        let mut used = 0;
+        let mut end = start;
+        while end < units.len() && (end == start || used + units[end].2 <= room) {
+            used += units[end].2;
+            end += 1;
+        }
+        let mut next = end;
+        if end < units.len() {
+            let floor = room - room / 3;
+            let mut before = 0;
+            let mut found = None;
+            for (offset, unit) in units[start..end].iter().enumerate() {
+                before += unit.2;
+                if unit.0 == " "
+                    && before >= floor
+                    && units[start + offset + 1..].iter().any(|u| u.0 != " ")
+                {
+                    found = Some(start + offset + 1);
+                }
+            }
+            if let Some(found) = found {
+                next = found;
+            }
+        }
+        let mut line = Vec::new();
+        if !first {
+            append(&mut line, CONTINUATION, marker);
+            append(&mut line, &" ".repeat(hanging), indent_style);
+        }
+        for (text, style, _) in &units[start..next] {
+            append(&mut line, text, *style);
+        }
+        output.push(Line::from(line));
+        start = next;
+        // Spaces that trail the whole line show nothing; do not give them a row of their own.
+        if units[start..].iter().all(|unit| unit.0 == " ") {
+            break;
+        }
+    }
+    output
+}

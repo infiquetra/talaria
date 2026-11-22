@@ -192,14 +192,19 @@ impl Renderer<'_> {
                     .collect();
                 let mut result = Vec::new();
                 if let Some(label) = info.and_then(|info| info.split_whitespace().next()) {
-                    result.extend(wrap::hard(
-                        vec![Span::styled(
-                            label.to_lowercase(),
-                            self.style(self.options.theme.code_label),
-                        )],
-                        width,
-                    ));
+                    let label = label.to_lowercase();
+                    let label_style = self.style(self.options.theme.code_label);
+                    let used = wrap::columns(&[Span::raw(label.as_str())]);
+                    if used + 2 <= width {
+                        result.push(Line::from(Span::styled(
+                            format!("{label} {}", "─".repeat(width - used - 1)),
+                            label_style,
+                        )));
+                    } else {
+                        result.extend(wrap::hard(vec![Span::styled(label, label_style)], width));
+                    }
                 }
+                let marker = self.style(self.options.theme.code_label);
                 for line in self.cache.render(info, &text, self.views) {
                     let spans = line
                         .spans
@@ -211,7 +216,7 @@ impl Renderer<'_> {
                             )
                         })
                         .collect();
-                    result.extend(wrap::hard(spans, width));
+                    result.extend(wrap::code(spans, width, marker));
                 }
                 result
             }
