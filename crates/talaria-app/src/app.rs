@@ -4009,11 +4009,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                     .map(|opened| opened.state.cells())
                     .unwrap_or_default();
                 // A turn starts at the person's prompt or at the notice of a turn Hermes wrote.
-                let last_user = cells.iter().rposition(|cell| match cell {
-                    Cell::User(_) => true,
-                    Cell::Notice(notice) => notice.body.is_some(),
-                    _ => false,
-                });
+                let last_user = cells.iter().rposition(Cell::starts_turn);
                 if let Some(index) = last_user {
                     let assistant_markdown: Vec<String> = cells[index + 1..]
                         .iter()

@@ -68,6 +68,44 @@ impl Cell {
             Self::Background(_) => true,
         }
     }
+
+    /// Whether this cell opens a turn: a prompt the person sent, or the notice that stands for a
+    /// turn Hermes started itself (a notice that keeps what Hermes handed the agent as its body).
+    #[must_use]
+    pub fn starts_turn(&self) -> bool {
+        match self {
+            Self::User(_) => true,
+            Self::Notice(notice) => notice.body.is_some(),
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cell, NoticeCell, UserCell};
+    use crate::session::{CellId, NoticeKind};
+
+    fn notice(body: Option<&str>) -> Cell {
+        Cell::Notice(NoticeCell {
+            id: CellId::new(1),
+            kind: NoticeKind::Automation,
+            text: "Subagent results returned to the agent".to_owned(),
+            detail: None,
+            body: body.map(str::to_owned),
+        })
+    }
+
+    #[test]
+    fn a_prompt_and_a_turn_hermes_started_open_a_turn_and_a_plain_notice_does_not() {
+        let user = Cell::User(UserCell {
+            id: CellId::new(1),
+            text: "a question".to_owned(),
+        });
+        assert!(user.starts_turn());
+        assert!(notice(Some("synthetic result")).starts_turn());
+        assert!(!notice(None).starts_turn());
+    }
 }
 
 /// A user cell is final as soon as it exists.

@@ -463,7 +463,8 @@ fn activity_line(session: &SessionState, width: usize) -> String {
     cut(&format!("\u{273b} {activity}"), width, false)
 }
 
-/// The cells of the latest turn as wrapped lines. When the turn has an outcome line, its own
+/// The cells of the latest turn as wrapped lines, from the cell that started it: the person's
+/// prompt or the notice of a turn Hermes started. When the turn has an outcome line, its own
 /// interrupted and error notices are left out because that line says the same.
 fn tail_lines(
     session: &SessionState,
@@ -472,10 +473,7 @@ fn tail_lines(
     views: Option<&ViewStyles>,
 ) -> Vec<Line<'static>> {
     let cells = session.cells();
-    let start = cells
-        .iter()
-        .rposition(|cell| matches!(cell, Cell::User(_)))
-        .unwrap_or(0);
+    let start = cells.iter().rposition(Cell::starts_turn).unwrap_or(0);
     let last_error = cells
         .iter()
         .rposition(|cell| matches!(cell, Cell::Notice(n) if n.kind == NoticeKind::Error));
@@ -542,4 +540,75 @@ fn tail_lines(
         out.extend(wrap_lines(lines, width));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tail_lines;
+    use hermes_contract::schemas::CanonicalSnapshot;
+    use serde_json::json;
+    use talaria_core::session::SessionState;
+
+    fn session(messages: serde_json::Value) -> SessionState {
+        let snapshot: CanonicalSnapshot = serde_json::from_value(json!({
+            "session_id": "s-peek",
+            "stored_session_id": "stored-1",
+            "messages": messages,
+            "message_count": 4,
+            "running": false,
+            "authority_epoch": 1,
+            "replay_epoch": "epoch-1",
+            "last_sequence": 1,
+            "subscription_id": "sub-1",
+            "revision": 1,
+            "execution_generation": 1,
+            "pending": [],
+            "prompts": [],
+            "info": {"desktop_protocol": "1"}
+        }))
+        .expect("snapshot");
+        SessionState::from_snapshot(snapshot)
+    }
+
+    fn text(session: &SessionState) -> String {
+        tail_lines(session, 80, true, None)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_turn_hermes_started_is_the_latest_turn_without_the_previous_prompt() {
+        let session = session(json!([
+            {"role": "user", "text": "first question"},
+            {"role": "assistant", "text": "first answer"},
+            {"role": "user", "display_kind": "async_delegation_complete",
+             "text": "synthetic subagent result"},
+            {"role": "assistant", "text": "second answer"}
+        ]));
+        let shown = text(&session);
+        assert!(shown.contains("second answer"), "{shown}");
+        assert!(shown.contains("Subagent results returned"), "{shown}");
+        assert!(!shown.contains("first question"), "{shown}");
+        assert!(!shown.contains("first answer"), "{shown}");
+    }
+
+    #[test]
+    fn a_typed_prompt_still_starts_the_latest_turn() {
+        let session = session(json!([
+            {"role": "user", "text": "first question"},
+            {"role": "assistant", "text": "first answer"},
+            {"role": "user", "text": "second question"},
+            {"role": "assistant", "text": "second answer"}
+        ]));
+        let shown = text(&session);
+        assert!(shown.contains("second question"), "{shown}");
+        assert!(!shown.contains("first answer"), "{shown}");
+    }
 }
