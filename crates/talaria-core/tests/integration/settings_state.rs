@@ -1416,6 +1416,35 @@ fn a_stored_name_the_list_lacks_stays_ticked_and_survives() {
 }
 
 #[test]
+fn unticking_the_last_unlisted_name_leaves_the_cursor_on_a_row_that_still_works() {
+    let (mut state, doc) = many_chooser(
+        "display.status_bar.fields",
+        FieldKind::List,
+        json!(["model", "future_field"]),
+    );
+    move_to(&mut state, "[x] future_field (not in the list)");
+    space(&mut state);
+    let names = choice_names(&state);
+    assert!(
+        !names.iter().any(|name| name.contains("future_field")),
+        "{names:?}"
+    );
+    // The row is gone, so the cursor moves to the new last row, where Space still ticks.
+    let last = names.last().unwrap().clone();
+    assert!(last.starts_with("[ ] "), "{last}");
+    assert_eq!(selected_choice(&state), last);
+    space(&mut state);
+    assert_eq!(selected_choice(&state), last.replacen("[ ]", "[x]", 1));
+    space(&mut state);
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"display": {"status_bar": {"fields": ["model"]}}})
+    );
+}
+
+#[test]
 fn escape_discards_the_ticks() {
     let (mut state, _) = many_chooser(
         "display.status_bar.fields",

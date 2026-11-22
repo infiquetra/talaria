@@ -3,8 +3,8 @@ use super::{
     CapKind, Change, Context, McpSource, Proposal, Screen, SecretDetector, Section, WITHHELD,
 };
 use crate::settings::{
-    FieldView, Pick, ReadOnlyReason, ValueKind, apply_effect, choice_spec, contains_secret_key,
-    env_reference_names, is_secret_key, number_spec, value_kind,
+    FieldView, OwnKind, Pick, ReadOnlyReason, ValueKind, apply_effect, choice_spec,
+    contains_secret_key, env_reference_names, is_secret_key, number_spec, value_kind,
 };
 use serde_json::Value;
 use std::borrow::Cow;
@@ -636,11 +636,22 @@ pub fn check_value(kind: &ValueKind, field: &FieldView, value: &Value) -> Result
             }
             _ => false,
         }),
-        ValueKind::Mixed => choice_spec(&field.key).is_some_and(|spec| match value {
-            Value::Bool(_) | Value::Number(_) => true,
-            Value::String(word) => spec.items.iter().any(|item| item.value == word),
-            Value::Array(items) => items.iter().all(Value::is_string),
-            _ => false,
+        ValueKind::Mixed => choice_spec(&field.key).is_some_and(|spec| {
+            let Pick::Mixed { own, .. } = spec.pick else {
+                return false;
+            };
+            // A listed word, as typed or as the editor saves it (true and false as booleans).
+            let listed = spec
+                .items
+                .iter()
+                .any(|item| value.as_str() == Some(item.value) || spec.saved(item.value) == *value);
+            listed
+                || match own {
+                    OwnKind::Number => value.as_u64().is_some(),
+                    OwnKind::List => value
+                        .as_array()
+                        .is_some_and(|items| items.iter().all(Value::is_string)),
+                }
         }),
         ValueKind::ReadOnly(_) => false,
     };
@@ -657,7 +668,13 @@ pub fn check_value(kind: &ValueKind, field: &FieldView, value: &Value) -> Result
             ValueKind::Nullable => "expected null or a scalar",
             ValueKind::Choice => "expected a listed choice",
             ValueKind::Many => "expected a list of listed values",
-            ValueKind::Mixed => "expected a listed word, a number or a list of names",
+            ValueKind::Mixed => match choice_spec(&field.key).map(|spec| spec.pick) {
+                Some(Pick::Mixed {
+                    own: OwnKind::Number,
+                    ..
+                }) => "expected a listed word or a whole number",
+                _ => "expected a listed word or a list of names",
+            },
             ValueKind::ReadOnly(_) => "this setting cannot be edited here",
         }
         .into())

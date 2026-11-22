@@ -1759,8 +1759,19 @@ impl SettingsState {
         match key {
             SettingsKey::Edit(EditKey::Esc) => self.screen = Screen::Browsing,
             SettingsKey::Char(' ') if many => {
-                if let Some(row) = at.and_then(|at| rows.get(visible[at])) {
+                if let Some(at) = at
+                    && let Some(row) = rows.get(visible[at])
+                {
                     self.tick(&row.pick.clone());
+                    // Unticking a name the list lacks drops its row: stay at the same place in
+                    // the shorter list rather than past its end.
+                    let rows = self.choice_rows();
+                    let visible = self.visible_choices(&rows);
+                    if !visible.contains(&self.choice_cursor)
+                        && let Some(&near) = visible.get(at.min(visible.len().saturating_sub(1)))
+                    {
+                        self.choice_cursor = near;
+                    }
                 }
             }
             SettingsKey::Edit(

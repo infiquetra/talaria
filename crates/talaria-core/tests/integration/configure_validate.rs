@@ -544,6 +544,7 @@ fn proposals_for_list_word_and_ranged_number_keys_are_checked_against_their_spec
     for (key, kind) in [
         ("display.status_bar.fields", FieldKind::List),
         ("agent.tool_use_enforcement", FieldKind::String),
+        ("agent.agent_cache.memory_high_mb", FieldKind::String),
         ("agent.run_budget_seconds", FieldKind::String),
         ("compression.threshold", FieldKind::Number),
     ] {
@@ -554,7 +555,11 @@ fn proposals_for_list_word_and_ranged_number_keys_are_checked_against_their_spec
         ctx.schema.fields.push(added);
     }
     ctx.effective["display"]["status_bar"] = json!({"fields": []});
-    ctx.effective["agent"] = json!({"tool_use_enforcement": "auto", "run_budget_seconds": 60});
+    ctx.effective["agent"] = json!({
+        "tool_use_enforcement": "auto",
+        "agent_cache": {"memory_high_mb": "auto"},
+        "run_budget_seconds": 60
+    });
     ctx.effective["compression"] = json!({"threshold": 0.5});
     let status = |changes: Vec<Change>| {
         validate(&proposal(changes), &ctx, detect)
@@ -581,6 +586,39 @@ fn proposals_for_list_word_and_ranged_number_keys_are_checked_against_their_spec
             } else {
                 RowStatus::Ready
             }
+        );
+    }
+    // A list key's own entry is a list of names, never a number or an unlisted word.
+    for value in [json!(7), json!("sometimes"), json!([1, 2])] {
+        assert!(
+            matches!(
+                status(vec![set("agent.tool_use_enforcement", value.clone())]),
+                RowStatus::Invalid(_)
+            ),
+            "{value} was accepted"
+        );
+    }
+    // A number key's own entry is a whole number of MB, never a list, a fraction or below zero.
+    for value in [json!("off"), json!(2048), json!(0)] {
+        assert_eq!(
+            status(vec![set("agent.agent_cache.memory_high_mb", value.clone())]),
+            RowStatus::Ready,
+            "{value} was refused"
+        );
+    }
+    for value in [
+        json!(["gpt"]),
+        json!(-5),
+        json!(1.5),
+        json!(true),
+        json!("lots"),
+    ] {
+        assert!(
+            matches!(
+                status(vec![set("agent.agent_cache.memory_high_mb", value.clone())]),
+                RowStatus::Invalid(_)
+            ),
+            "{value} was accepted"
         );
     }
     assert_eq!(
