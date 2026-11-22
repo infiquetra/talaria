@@ -2161,6 +2161,60 @@ fn the_create_key_is_named_wherever_the_user_looks() {
     assert_eq!(loaded_at("fixture").view().empty, None);
 }
 
+/// A list that is empty because a read failed never claims there are no profiles.
+#[test]
+fn an_empty_list_after_a_failed_load_names_the_failure() {
+    // No gateway: discovery, the roster and topology all fail, and no notice shows.
+    let mut machine = state();
+    let _ = machine.update(ProfilesInput::Open, 0);
+    let _ = machine.update(ProfilesInput::Discovered(0, Err(discovery_failure())), 0);
+    let _ = machine.update(ProfilesInput::Listed(0, Err("not connected".to_owned())), 0);
+    let _ = machine.update(
+        ProfilesInput::Topology(0, Err("not connected".to_owned())),
+        0,
+    );
+    let view = machine.view();
+    assert!(view.rows.is_empty());
+    assert_eq!(
+        view.empty.as_deref(),
+        Some(
+            "no Hermes gateway is running for this home Run `hermes gateway ensure --json` to start the Hermes gateway, then try again."
+        )
+    );
+    assert!(!view.empty.unwrap_or_default().contains("No profiles"));
+
+    // The gateway answered with nothing served but the profile list did not come back.
+    let mut machine = state();
+    let _ = machine.update(ProfilesInput::Open, 0);
+    let _ = machine.update(
+        ProfilesInput::Discovered(
+            0,
+            Ok(GatewayView {
+                served: vec![],
+                parked: vec![],
+            }),
+        ),
+        0,
+    );
+    let _ = machine.update(ProfilesInput::Listed(0, Err("no answer".to_owned())), 0);
+    let _ = machine.update(
+        ProfilesInput::Topology(
+            0,
+            Ok(HostTopology {
+                stopped: vec![],
+                ..topo()
+            }),
+        ),
+        0,
+    );
+    let view = machine.view();
+    assert!(view.rows.is_empty());
+    assert_eq!(
+        view.empty.as_deref(),
+        Some("Hermes did not return the profile list. Press r to try again.")
+    );
+}
+
 /// Delete asks for the exact name, lists what Hermes removes, and sends only on a match.
 #[test]
 fn delete_lists_what_goes_and_needs_the_typed_name() {

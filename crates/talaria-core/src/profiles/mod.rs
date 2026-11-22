@@ -2387,6 +2387,29 @@ impl ProfilesState {
         effects
     }
 
+    /// What a loaded list with no rows says. "No profiles" is true only when the gateway
+    /// and the profile list both answered; otherwise the list is empty because a read
+    /// failed, so the screen says which and what to do.
+    fn empty_text(&self) -> String {
+        if let Some(failure) = &self.discovery_failure {
+            return if failure.next_step.is_empty() {
+                failure.message.clone()
+            } else {
+                format!("{} {}", failure.message, failure.next_step)
+            };
+        }
+        if self.roster.is_none() {
+            return self.keys.refresh.as_ref().map_or_else(
+                || "Hermes did not return the profile list.".to_owned(),
+                |key| format!("Hermes did not return the profile list. Press {key} to try again."),
+            );
+        }
+        self.keys.new.as_ref().map_or_else(
+            || "No profiles.".to_owned(),
+            |key| format!("No profiles. Press {key} to create one."),
+        )
+    }
+
     /// Everything the screen draws.
     #[must_use]
     pub fn view(&self) -> ProfilesView {
@@ -2444,12 +2467,8 @@ impl ProfilesState {
             }).collect(),
             selected,
             filter: self.filter.as_ref().map(|filter| filter.text.clone()),
-            empty: (self.loaded && self.rows.is_empty() && self.filter.is_none()).then(|| {
-                self.keys.new.as_ref().map_or_else(
-                    || "No profiles.".to_owned(),
-                    |key| format!("No profiles. Press {key} to create one."),
-                )
-            }),
+            empty: (self.loaded && self.rows.is_empty() && self.filter.is_none())
+                .then(|| self.empty_text()),
             panel,
             notice: self.notices.front().cloned(),
             confirm: self.confirm.as_ref().map(|confirm| match confirm {
