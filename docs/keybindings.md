@@ -250,7 +250,7 @@ Typing `/` in the composer opens the slash command palette under the composer. A
 | Profiles page down | PageDown | Move the selection down. | `profiles_page_down` |
 | Profiles first | Home | Use profiles first. | `profiles_first` |
 | Profiles last | End | Use profiles last. | `profiles_last` |
-| Profiles open | Enter | Open the selected item. | `profiles_open` |
+| Profiles open | Enter | Open the selected profile's models page, as M does; in a narrow window the first press shows the profile's details. | `profiles_open` |
 | Profiles filter | / | Filter the list. | `profiles_filter` |
 | Profiles refresh | R | Refresh the view. | `profiles_refresh` |
 | Profiles rescan | Shift+R | Use profiles rescan. | `profiles_rescan` |

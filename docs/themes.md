@@ -172,7 +172,11 @@ The rule every component that draws follows, under reduced motion:
 Under full motion the same is recommended. Any future animation must be off under reduced motion
 and must not draw while nothing changes.
 
-The working row above the composer holds Talaria's one animation. Under full motion, while a
+Talaria has two animations: the working row above the composer and the spinner in the launch
+dialog. The launch dialog shows the spinner beside the stage it has reached while it starts a
+session, one frame for every 100 milliseconds since the launch began.
+
+The working row is the larger one. Under full motion, while a
 turn runs, a glow sweeps across the row and back every two seconds, drawn at most about 12 times
 a second. Its colour runs from the status bar's muted colour to a colour halfway between the text
 and the accent. A 256-colour terminal shows the nearest palette colours, and a 16-colour or
