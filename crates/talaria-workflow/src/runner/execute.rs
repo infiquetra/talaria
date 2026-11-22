@@ -15,7 +15,7 @@ use crate::{
     engine::{self, CallId, EngineEvent, OutcomeKind, ParsedScript, RunOutcome, RunOutcomeKind},
     hermes::{
         AgentFeedItem, AgentFeedReceiver, ExplicitLaunch, HermesPort, LaunchDefaults,
-        SchemaTurnPolicy,
+        SchemaTurnPolicy, StopResult,
     },
     journal::{
         AdmissionGate, AdmissionState, GatewayPort, JournalNotice, JournaledBackend, NewManifest,
@@ -1003,10 +1003,11 @@ async fn execute_inner(
     let mut stop_requested = false;
     // The gate starts open; only a change is journaled, so script logs stay in view.
     let mut journaled_paused = false;
-    // Calls the budget refused or stopped, the latest reason, and turns already told to stop.
+    // Calls the budget refused or stopped, the latest reason, and turns whose stop is in
+    // flight or was sent.
     let (mut refused, mut budget_stopped) = (0_usize, 0_usize);
     let mut budget_reason: Option<String> = None;
-    let mut stop_sent = BTreeSet::<String>::new();
+    let stop_sent = Arc::new(std::sync::Mutex::new(BTreeSet::<String>::new()));
     let outcome = loop {
         tokio::select! {
             unsettled=async {match stopping.as_mut(){Some(f)=>f.await,None=>std::future::pending().await}},if stopping.is_some()=>{stopped=Some(unsettled);stopping=None;},
@@ -1041,7 +1042,7 @@ async fn execute_inner(
                         journal.record_engine_event(&EngineEvent::Log{message,workflow_path:vec![]}).await.map_err(|e| e.to_string())?;
                     }
                     if event["event"]=="budget_reached" && !stop_requested {
-                        stop_for_budget(&port,dir.path(),&mut stop_sent,&mut tasks.handles);
+                        stop_for_budget(&port,dir.path(),&stop_sent,&mut tasks.handles);
                     }
                     (output.out)(&RunnerEvent::Scheduler(event));
                 }
@@ -1064,9 +1065,10 @@ async fn execute_inner(
                         gate.set_paused(true);
                         cancel.cancel();
                     }
-                    // A turn admitted after the budget ran out is stopped on the next tick.
+                    // A turn admitted after the budget ran out is stopped on the next tick, and a
+                    // stop the gateway did not confirm is sent again.
                     if !stop_requested && gate.budget_stop().is_some() {
-                        stop_for_budget(&port,dir.path(),&mut stop_sent,&mut tasks.handles);
+                        stop_for_budget(&port,dir.path(),&stop_sent,&mut tasks.handles);
                     }
                 }
                 Some(Input::Failure(error))=>{cancel.cancel();return Err(error);}
@@ -1217,12 +1219,14 @@ fn budget_note(event: &Value, stop: impl FnOnce() -> Option<String>) -> Option<S
         _ => None,
     }
 }
-/// Interrupt every admitted turn once, through the same stop the operator's stop uses. The
-/// interrupted calls settle and end as stopped for the budget.
+/// Interrupt every admitted turn through the same stop the operator's stop uses. The
+/// interrupted calls settle and end as stopped for the budget. `sent` holds the admissions
+/// with a stop in flight or confirmed; a stop the gateway did not confirm leaves the set, so
+/// the next tick sends it again while the turn is still admitted.
 fn stop_for_budget(
     port: &HermesPort,
     dir: &Path,
-    sent: &mut BTreeSet<String>,
+    sent: &Arc<std::sync::Mutex<BTreeSet<String>>>,
     handles: &mut Vec<tokio::task::JoinHandle<()>>,
 ) {
     let Ok(targets) = control::read_records(dir)
@@ -1231,11 +1235,20 @@ fn stop_for_budget(
     else {
         return;
     };
+    handles.retain(|handle| !handle.is_finished());
     for target in targets {
-        if sent.insert(target.admission_id.clone()) {
-            let port = port.clone();
+        let fresh = sent
+            .lock()
+            .is_ok_and(|mut set| set.insert(target.admission_id.clone()));
+        if fresh {
+            let (port, sent) = (port.clone(), sent.clone());
             handles.push(tokio::spawn(async move {
-                let _ = port.stop(&target.profile, &target.session_id).await;
+                // `NotRunning` can also mean the port has no receipt yet for a reattached turn.
+                if port.stop(&target.profile, &target.session_id).await != StopResult::Sent
+                    && let Ok(mut set) = sent.lock()
+                {
+                    set.remove(&target.admission_id);
+                }
             }));
         }
     }

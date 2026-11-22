@@ -179,7 +179,7 @@ pub fn request_stop(runs_dir: &Path, target: &str, timeout: Duration) -> StopExi
             Err(_) => return StopExit::Unconfirmed,
         };
         match fold.terminal.as_deref() {
-            Some("completed" | "failed") => {
+            Some("completed" | "budget_exhausted" | "failed") => {
                 return StopExit::AlreadyFinished {
                     outcome: fold.terminal.unwrap_or_default(),
                 };
@@ -347,7 +347,11 @@ pub(crate) fn restart_needs_execution(
         let Some(record) = latest.get(key) else {
             continue;
         };
-        required |= record["t"] != "call_finished" || record["outcome"]["kind"] == "failed";
+        required |= record["t"] != "call_finished"
+            || matches!(
+                record["outcome"]["kind"].as_str(),
+                Some("failed" | "stopped")
+            );
     }
     Ok(required)
 }
@@ -424,4 +428,43 @@ pub(crate) fn latest_summary(records: &[RecordLine]) -> Value {
 
 pub(crate) fn remove_stale_runner(dir: &Path) -> io::Result<()> {
     files::remove(&dir.join("runner.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::journal::{CallOutcome, Record};
+
+    #[test]
+    fn a_restarted_stopped_call_needs_another_execution() {
+        let finish = |key: &str, outcome| RecordLine {
+            v: 1,
+            seq: 1,
+            at_ms: 0,
+            record: Record::CallFinished {
+                key: key.into(),
+                attempt: 0,
+                outcome,
+                turns: 1,
+            },
+        };
+        let records = [
+            finish(
+                "stopped",
+                CallOutcome::Stopped {
+                    reason: "token budget exhausted (spent 20 of 10)".into(),
+                },
+            ),
+            finish("skipped", CallOutcome::Skipped),
+        ];
+        let keys = |key: &str| BTreeSet::from([key.to_owned()]);
+        assert_eq!(
+            restart_needs_execution(&records, &keys("stopped")),
+            Ok(true)
+        );
+        assert_eq!(
+            restart_needs_execution(&records, &keys("skipped")),
+            Ok(false)
+        );
+    }
 }

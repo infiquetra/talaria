@@ -226,7 +226,7 @@ impl RunJournal {
                     .await?;
                 }
                 Record::CallFinished {
-                    outcome: CallOutcome::Failed { .. },
+                    outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
                     ..
                 }
                 | Record::CallResolved { .. } => {}

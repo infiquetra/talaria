@@ -132,7 +132,8 @@ When counted spend reaches a budget:
   `agent_refused` engine event with the label, phase and reason; calls waiting at
   the admission gate end as stopped without reaching Hermes.
 - Running agents are stopped through the same interrupt the operator's stop uses.
-  Their turns settle, so their usage is still journaled, and each call finishes
+  A stop the gateway does not confirm is sent again on the runner's next check
+  for as long as the turn is still running. Their turns settle, so their usage is still journaled, and each call finishes
   with a `stopped` outcome whose reason names what was spent. A turn that had
   already finished with an answer keeps it, and no agent starts a correction turn.
 - The runner journals one log line when the budget is reached, and the run ends

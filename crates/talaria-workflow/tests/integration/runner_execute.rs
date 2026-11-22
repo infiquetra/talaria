@@ -48,6 +48,7 @@ struct WireState {
     requests: BTreeMap<String, String>,
     released: BTreeSet<String>,
     unconfirmed: bool,
+    failing_interrupts: u32,
 }
 #[derive(Clone)]
 struct Session {
@@ -75,6 +76,10 @@ impl CountingWireFactory {
     }
     fn unconfirmed(&self) {
         self.inner.lock().unwrap().unconfirmed = true;
+    }
+    /// The next `count` interrupts time out without reaching the session.
+    fn fail_interrupts(&self, count: u32) {
+        self.inner.lock().unwrap().failing_interrupts = count;
     }
     fn hold_stops(&self) {
         self.hold_stop.store(true, Ordering::SeqCst);
@@ -228,6 +233,10 @@ impl Wire for CountingWire {
                         "terminal"
                     };
                     receipt(id, session, status, params["include_result"] == true)
+                }
+                "session.interrupt" if state.failing_interrupts > 0 => {
+                    state.failing_interrupts -= 1;
+                    return Err(WireError::Timeout);
                 }
                 "prompt.cancel" | "session.interrupt" => {
                     let id = params["session_id"].as_str().unwrap();
@@ -1070,6 +1079,76 @@ fn token_budget_stops_running_agents_and_refuses_new_ones() {
     assert!(!header.contains("failed"), "{header}");
     let summary = talaria_workflow::runner::runs::discover_runs(&h.runs);
     assert_eq!(summary[0].status.as_str(), "budget_exhausted");
+}
+
+#[test]
+fn token_budget_sends_a_failed_stop_again() {
+    // The first interrupt times out. Without a second one the held agent would run on past the
+    // budget and the run would never finish.
+    let h = Harness::new(
+        "return await agent('hold usage:1000 worker', {label:'worker'}).catch(e => e.name);",
+    );
+    h.wire.fail_interrupts(1);
+    let mut req = h.request();
+    req.budget_tokens = Some(500);
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
+    assert!(
+        events.iter().any(|e| e["event"] == "agent_finished"
+            && e["label"] == "worker"
+            && e["state"] == "stopped"),
+        "{events:?}"
+    );
+    assert_eq!(
+        h.wire
+            .frames()
+            .iter()
+            .filter(|f| f.method == "session.interrupt")
+            .count(),
+        2
+    );
+    assert!(
+        records(&folder)
+            .iter()
+            .any(|r| r["t"] == "call_finished" && r["outcome"]["kind"] == "stopped")
+    );
+}
+
+#[test]
+fn stop_reports_a_run_the_budget_ended_while_waiting() {
+    use crate::support::harness::{line, new_dir, records_path, start_record, write_records};
+    use std::io::Write;
+    use talaria_workflow::{engine::RunOutcomeKind, journal::Record};
+    let (_temp, dir) = new_dir();
+    write_records(&dir, &[start_record(&dir)]);
+    let path = records_path(&dir);
+    // The runner finishes for the budget after the stop request is written.
+    let finisher = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        let finished = line(
+            2,
+            Record::RunFinished {
+                outcome: RunOutcomeKind::BudgetExhausted,
+                summary: Default::default(),
+            },
+        );
+        let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+        writeln!(file, "{}", serde_json::to_string(&finished).unwrap()).unwrap();
+    });
+    let stop = request_stop(
+        dir.path(),
+        dir.path().to_str().unwrap(),
+        Duration::from_secs(5),
+    );
+    finisher.join().unwrap();
+    assert_eq!(
+        stop,
+        StopExit::AlreadyFinished {
+            outcome: "budget_exhausted".into()
+        }
+    );
 }
 
 #[test]
