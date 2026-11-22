@@ -37,6 +37,8 @@ enum Seen {
         file: Option<String>,
         polarity: Polarity,
         skin: Option<String>,
+        /// The look is a `/theme` preview, not the one in force.
+        previewing: bool,
     },
     Choice(Option<Shown>),
 }
@@ -106,6 +108,7 @@ impl app::Screen for ChoiceScreen {
             file: view.file_id.map(str::to_owned),
             polarity: view.polarity.0,
             skin: view.skin.map(|skin| skin.name.clone()),
+            previewing: view.previewing,
         });
     }
     fn theme_report(&self) -> Option<ThemeReport> {
@@ -338,7 +341,7 @@ fn theme_preview_changes_appearance_and_escape_restores_it() {
             wait_for(
                 &mut seen,
                 "the ember preview",
-                |seen| matches!(seen, Seen::Appearance { file: Some(file), .. } if file == "ember"),
+                |seen| matches!(seen, Seen::Appearance { file: Some(file), previewing: true, .. } if file == "ember"),
             )
             .await;
             // The Background rows preview the polarity with the theme as it was at open.
@@ -351,7 +354,7 @@ fn theme_preview_changes_appearance_and_escape_restores_it() {
         .await;
             key(&tx, ChoiceKey::Cancel);
             wait_for(&mut seen, "the restored theme", |seen| {
-            matches!(seen, Seen::Appearance { file: Some(file), polarity: Polarity::Dark, .. } if file == "global")
+            matches!(seen, Seen::Appearance { file: Some(file), polarity: Polarity::Dark, previewing: false, .. } if file == "global")
         })
         .await;
             // Nothing reached the configuration file, and the session still follows it.

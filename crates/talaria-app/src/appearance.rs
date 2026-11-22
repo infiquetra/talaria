@@ -979,6 +979,9 @@ pub struct AppearanceView<'a> {
     pub file: Option<&'a crate::theme_file::ThemeFile>,
     /// The identifier of the last valid selected file.
     pub file_id: Option<&'a str>,
+    /// The `/theme` selector is showing a look that is not in force. Rows committed meanwhile
+    /// keep the look in force.
+    pub previewing: bool,
 }
 
 impl AppearanceService {
@@ -1005,6 +1008,7 @@ impl AppearanceService {
             polarity,
             file,
             file_id,
+            previewing: self.preview.is_some(),
         }
     }
 }

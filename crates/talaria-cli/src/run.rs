@@ -217,6 +217,47 @@ fn subagent_style(theme: &Theme) -> SubagentStyle {
     }
 }
 
+/// What finished rows are committed with: the theme in force. A `/theme` preview shows only in
+/// the live region and the selector's sample, because scrollback cannot be redrawn and Esc could
+/// not put a previewed row back.
+struct InForce {
+    theme: Arc<Theme>,
+    /// Markdown cells, with tool cells drawn as tool rows and diffs.
+    cells: ToolCellLines,
+    checklist: ChecklistStyle,
+}
+
+impl InForce {
+    fn new(theme: &Arc<Theme>, keymap: &KeyMap) -> Self {
+        Self {
+            theme: Arc::clone(theme),
+            cells: tool_cells(theme, keymap),
+            checklist: checklist_style(theme),
+        }
+    }
+
+    /// Take the theme now shown, unless it is a preview.
+    fn follow(&mut self, shown: &Arc<Theme>, previewing: bool, keymap: &KeyMap) {
+        if !previewing {
+            *self = Self::new(shown, keymap);
+        }
+    }
+
+    /// Committed cells: each assistant or reasoning cell in the theme it started under.
+    fn cells<'a>(
+        &'a self,
+        captured: &'a HashMap<CellId, Arc<Theme>>,
+        transcript_key: Option<&'a str>,
+    ) -> CapturedCells<'a> {
+        CapturedCells {
+            current: &self.theme,
+            captured,
+            tools: &self.cells,
+            transcript_key,
+        }
+    }
+}
+
 fn checklist_style(theme: &Theme) -> ChecklistStyle {
     if theme.views.active() {
         theme.views.checklist_style()
@@ -347,6 +388,8 @@ pub struct TuiScreen {
     captured: HashMap<CellId, Arc<Theme>>,
     /// How much of the streaming reply is already in scrollback.
     replies: ReplyCommits,
+    /// What finished rows are committed with.
+    in_force: InForce,
     /// The checklist's styles: the same choice of colour the Markdown renderer makes.
     checklist_style: ChecklistStyle,
     color: bool,
@@ -2081,7 +2124,7 @@ impl TuiScreen {
     }
 
     /// Take a newly resolved theme for the composer, the status line and later cells.
-    fn set_theme(&mut self, theme: Theme) {
+    fn set_theme(&mut self, theme: Theme, previewing: bool) {
         self.workspace_renderer.clear();
         if let Some(transcript) = self.transcript.as_mut() {
             transcript.pager.invalidate_rendering();
@@ -2096,6 +2139,7 @@ impl TuiScreen {
         self.cells = tool_cells(&theme, &self.keymap);
         self.tool_theme = theme.tool.clone();
         self.theme = Arc::new(theme);
+        self.in_force.follow(&self.theme, previewing, &self.keymap);
     }
 
     fn sync_prompts(&mut self, view: &View<'_>, now: Instant) {
@@ -4385,6 +4429,7 @@ impl Screen for TuiScreen {
             now,
         );
         self.cells.set_clock(&self.clock, now);
+        self.in_force.cells.set_clock(&self.clock, now);
         self.sync_confirmation_focus(now);
         if let Some(rewind) = &view.rewind {
             self.transcript_overlay_open = false;
@@ -4441,6 +4486,9 @@ impl Screen for TuiScreen {
                     .saturating_mul(2)
                     .max(PREVIEW_MIN_LINES);
                 let current = &self.theme;
+                // A cell keeps the theme in force when it started, never a preview, because
+                // that is the theme it is committed with.
+                let in_force = &self.in_force.theme;
                 let captured = &mut self.captured;
                 let tools = &self.cells;
                 let replies = &self.replies;
@@ -4463,7 +4511,7 @@ impl Screen for TuiScreen {
                         }
                         let theme = match themed_cell_id(cell) {
                             Some(id) => Arc::clone(
-                                captured.entry(id).or_insert_with(|| Arc::clone(current)),
+                                captured.entry(id).or_insert_with(|| Arc::clone(in_force)),
                             ),
                             None => Arc::clone(current),
                         };
@@ -4930,7 +4978,7 @@ impl Screen for TuiScreen {
 
     fn commit_context(&mut self, block: &ContextBlock) {
         let width = self.terminal.viewport().width;
-        let style = self.theme.views.context_style();
+        let style = self.in_force.theme.views.context_style();
         let lines = match block {
             ContextBlock::Breakdown { typed, breakdown } => {
                 context_block(typed, breakdown, width, &style)
@@ -4950,6 +4998,7 @@ impl Screen for TuiScreen {
             ContextBlock::Notice(notice) => notice_block(notice, width, &style),
         };
         let lines = self
+            .in_force
             .theme
             .views
             .inline_lines(lines, talaria_tui::theme::surfaces::tokens::CONTEXT_TEXT);
@@ -4958,12 +5007,12 @@ impl Screen for TuiScreen {
 
     fn commit_checklist(&mut self, commit: &ChecklistCommit) {
         let width = self.terminal.viewport().width;
-        let lines = committed_block_lines(commit, width, &self.checklist_style);
+        let lines = committed_block_lines(commit, width, &self.in_force.checklist);
         self.commit_workspace_lines(lines);
     }
 
     fn commit_subagent_batch(&mut self, batch: &FinishedBatch) {
-        let style = subagent_style(&self.theme);
+        let style = subagent_style(&self.in_force.theme);
         let lines = batch_block_lines(batch, self.terminal.viewport().width, &style);
         self.commit_workspace_lines(lines);
     }
@@ -4977,12 +5026,9 @@ impl Screen for TuiScreen {
                 .map(WorkspaceCommit::Cell),
         );
         let transcript_key = self.keymap.label(Action::TranscriptOpen);
-        let render = CapturedCells {
-            current: &self.theme,
-            captured: &self.captured,
-            tools: &self.cells,
-            transcript_key: transcript_key.as_deref(),
-        };
+        let render = self
+            .in_force
+            .cells(&self.captured, transcript_key.as_deref());
         let lines = self
             .replies
             .final_lines(cells, &render, self.terminal.viewport().width);
@@ -5078,7 +5124,7 @@ impl Screen for TuiScreen {
         let resolved = self.look.resolve(view);
         self.composer_border = resolved.border;
         self.theme_file_report = resolved.report;
-        self.set_theme(resolved.theme);
+        self.set_theme(resolved.theme, view.previewing);
     }
 
     fn startup_theme_files(&self) -> Option<ThemeFileSession> {
@@ -5156,19 +5202,17 @@ impl TuiScreen {
     fn commit_closed_blocks(&mut self, state: &SessionState, view: &View<'_>, width: u16) {
         let allowed = !(view.layout.workspace_enabled() || view.layout.menu_transient)
             && state.commit_cursor() >= state.final_prefix_len();
-        // The committed rows use the theme the reply started under, as its later rows do.
+        // The committed rows use the theme in force when the reply started, as its later rows
+        // do, and never a `/theme` preview.
         if let Some(id) = state.live_tail().first().and_then(themed_cell_id) {
             self.captured
                 .entry(id)
-                .or_insert_with(|| Arc::clone(&self.theme));
+                .or_insert_with(|| Arc::clone(&self.in_force.theme));
         }
         let transcript_key = self.keymap.label(Action::TranscriptOpen);
-        let render = CapturedCells {
-            current: &self.theme,
-            captured: &self.captured,
-            tools: &self.cells,
-            transcript_key: transcript_key.as_deref(),
-        };
+        let render = self
+            .in_force
+            .cells(&self.captured, transcript_key.as_deref());
         let lines = self.replies.before_frame(
             state.cells(),
             state.final_prefix_len(),
@@ -5577,8 +5621,9 @@ fn session(
         polarity: look.polarity,
         file: theme_files.as_ref().and_then(ThemeFileSession::file),
         file_id: theme_files.as_ref().and_then(ThemeFileSession::active_id),
+        previewing: false,
     });
-    let theme = resolved.theme;
+    let theme = Arc::new(resolved.theme);
     let size = terminal_size().map_err(TerminalError::Io)?;
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
@@ -5663,7 +5708,8 @@ fn session(
         startup_theme_files: theme_files,
         theme_file_report: resolved.report,
         composer_border: resolved.border,
-        theme: Arc::new(theme),
+        in_force: InForce::new(&theme, &keymap),
+        theme,
         captured: HashMap::new(),
         checklist_style,
         color,
@@ -6489,6 +6535,50 @@ mod tests {
             diff: None,
             duration_s: Some(0.1),
         })
+    }
+
+    #[test]
+    fn rows_committed_during_a_theme_preview_keep_the_theme_in_force() {
+        // Two built-in theme files that colour a tool row differently.
+        let theme = |id| {
+            let file = talaria_app::theme_file::builtin(id).expect("a built-in theme");
+            std::sync::Arc::new(
+                talaria_tui::theme::resolve_with_theme_file(
+                    &ThemeInputs {
+                        skin: None,
+                        skipped: &[],
+                        follow_hermes_skin: false,
+                        polarity: (Polarity::Dark, PolaritySource::Config),
+                        depth: (ColorDepth::TrueColor, DepthSource::Config),
+                        motion: (Motion::Full, MotionSource::Default),
+                        terminal: TerminalColors::default(),
+                    },
+                    Some(&file),
+                )
+                .theme,
+            )
+        };
+        let (dark, light) = (theme("ember"), theme("paper"));
+        let keymap = KeyMap::defaults();
+        let none = std::collections::HashMap::new();
+        let committed =
+            |in_force: &super::InForce| in_force.cells(&none, None).lines(&ten_line_tool(), 100);
+        let as_dark = committed(&super::InForce::new(&dark, &keymap));
+        let as_light = committed(&super::InForce::new(&light, &keymap));
+        assert_ne!(
+            as_dark, as_light,
+            "ember and paper draw the row differently"
+        );
+
+        let mut in_force = super::InForce::new(&dark, &keymap);
+        in_force.follow(&light, true, &keymap);
+        assert_eq!(
+            committed(&in_force),
+            as_dark,
+            "a row committed while paper is previewed keeps ember"
+        );
+        in_force.follow(&light, false, &keymap);
+        assert_eq!(committed(&in_force), as_light, "a chosen theme is in force");
     }
 
     #[test]
