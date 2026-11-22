@@ -25,7 +25,7 @@ use crate::{
     schedule::{MoneySource, Scheduler, SchedulerConfig, Spend},
     staffing::{
         PriceBook, Roster, RosterError, RunBudget, StaffedLaunch, StaffingResolver, StaffingTable,
-        check_tiers, estimate_run_cost, staffing_drift,
+        check_script_routes, check_tiers, estimate_run_cost, script_routes, staffing_drift,
     },
     worktree::GitWorktrees,
 };
@@ -263,6 +263,15 @@ async fn prepare(
         output,
     )
     .await?;
+    // A misspelt model would otherwise fail only when its agent starts, after earlier agents
+    // have spent.
+    let unknown = check_script_routes(&preflight.roster, &script_routes(&parsed.body));
+    for problem in &unknown {
+        output.diagnostic(problem);
+    }
+    if !unknown.is_empty() {
+        return Err(2);
+    }
     let wire = services.wires.open(&req.profile).await.map_err(|e| {
         output.diagnostic(e.to_string());
         1

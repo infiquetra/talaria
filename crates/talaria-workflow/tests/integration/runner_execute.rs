@@ -262,6 +262,7 @@ impl Wire for CountingWire {
                     }
                 }
                 "session.list" => json!({"sessions":[],"scope":"live"}),
+                "session.close" => json!({"closed":true,"messages":[]}),
                 _ => return Err(WireError::Other(format!("unexpected method: {method}"))),
             };
             Ok(result)
@@ -563,6 +564,70 @@ fn preflight_refuses_before_creating_a_run() {
     assert!(events.iter().any(
         |e| e["event"] == "diagnostic" && e["text"].as_str().unwrap().contains("has no price")
     ));
+}
+
+#[test]
+fn script_with_an_unknown_model_is_refused_before_any_agent_starts() {
+    let h = Harness::new(
+        "const good = await agent('one', {label:'one', model:'scripted-model', provider:'scripted'});\n\
+         return await agent('two', {label:'two', model:'scripted-modle', provider:'scripted'});",
+    );
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 2);
+    assert!(!h.runs.exists(), "no run folder may be created");
+    let unknown: Vec<_> = exit
+        .problems
+        .iter()
+        .filter(|p| p.starts_with("script line"))
+        .collect();
+    assert_eq!(unknown.len(), 1, "{:?}", exit.problems);
+    assert!(
+        unknown[0]
+            .contains("model 'scripted-modle' on 'scripted' is not usable: model is not offered")
+            && unknown[0].contains("nearest known spelling: 'scripted-model'")
+            && unknown[0].contains("line 3"),
+        "{:?}",
+        exit.problems
+    );
+    assert!(
+        events.iter().any(|e| e["event"] == "diagnostic"
+            && e["text"].as_str().unwrap().contains("scripted-modle"))
+    );
+    assert!(
+        h.wire
+            .frames()
+            .iter()
+            .all(|f| f.method != "session.create" && f.method != "prompt.submit")
+    );
+    // The same script with the right spelling runs.
+    let h = Harness::new(
+        "return await agent('two', {label:'two', model:'scripted-model', provider:'scripted'});",
+    );
+    let (exit, _) = Worker::start(Start::New(h.request()), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+}
+
+#[test]
+fn a_finished_agent_session_is_closed_in_hermes() {
+    let h = Harness::new("return await agent('review', {label:'review', tier:'first'});");
+    let (exit, _) = Worker::start(Start::New(h.request()), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 0);
+    let frames = h.wire.frames();
+    let closes: Vec<_> = frames
+        .iter()
+        .filter(|f| f.method == "session.close")
+        .collect();
+    assert_eq!(
+        closes.len(),
+        1,
+        "{:?}",
+        frames.iter().map(|f| &f.method).collect::<Vec<_>>()
+    );
+    assert_eq!(closes[0].params["session_id"], "session-1");
+    // The close comes after the answer was read, never before.
+    let position = |method: &str| frames.iter().rposition(|f| f.method == method).unwrap();
+    assert!(position("session.close") > position("prompt.receipt"));
 }
 
 #[test]

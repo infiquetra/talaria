@@ -6,7 +6,7 @@ use talaria_core::{
     session::SessionId,
     ultracode::{
         SKILL_COMMAND, SkillAvailability, SubmitRoute, UltracodeCommand, UltracodeState, notice,
-        route_submit, skill_availability,
+        route_submit_with_model, skill_availability,
     },
 };
 use talaria_workflow::runner::{RunStatus, RunSummary};
@@ -214,7 +214,16 @@ impl UltracodeService {
         vec![Action::Notice(text)]
     }
     pub fn intercept_submit(&self, session: &SessionId, text: &str) -> Option<Vec<Action>> {
-        match route_submit(text, self.state.is_on(session)) {
+        self.intercept_submit_with_model(session, text, None)
+    }
+    /// As [`Self::intercept_submit`], with the model and provider the session runs on.
+    pub fn intercept_submit_with_model(
+        &self,
+        session: &SessionId,
+        text: &str,
+        session_model: Option<(&str, &str)>,
+    ) -> Option<Vec<Action>> {
+        match route_submit_with_model(text, self.state.is_on(session), session_model) {
             SubmitRoute::Plain => None,
             SubmitRoute::Workflow {
                 command_line,

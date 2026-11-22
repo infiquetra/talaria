@@ -64,6 +64,13 @@ all tier-check problems and warnings, and computes the cost estimate. A missing 
 means an empty table. No run folder exists until preflight succeeds. Unpriced work has unknown
 cost, rather than a zero estimate.
 
+Preflight also reads the literal `model` and `provider` names in the script's options objects
+and checks each against the roster. A name the roster cannot serve fails the run with exit 2
+before any agent starts, one line per unknown pair with its script line and the nearest known
+spelling. Names that are computed, or that sit beside a `profile` key, are checked when their
+agent starts. When an agent's call settles, its Hermes session is closed (`session.close`; the
+stored session stays resumable). A failed close is ignored.
+
 The manifest records the parsed workflow name, actual script hash, version, profile, input,
 roster, and the finite-only approval-policy intent. The deterministic seed hashes the original
 timestamp and script hash. Resume reuses the stored timestamp and seed. Approval behavior

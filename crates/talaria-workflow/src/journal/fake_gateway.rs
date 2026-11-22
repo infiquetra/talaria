@@ -70,6 +70,8 @@ struct State {
     #[serde(skip)]
     subscriptions: BTreeSet<String>,
     #[serde(skip)]
+    closed: Vec<String>,
+    #[serde(skip)]
     released: BTreeSet<String>,
     #[serde(skip)]
     fail_count: u32,
@@ -121,6 +123,7 @@ impl FakeGateway {
                 rules: Vec::new(),
                 stats: FakeStats::default(),
                 subscriptions: BTreeSet::new(),
+                closed: Vec::new(),
                 released: BTreeSet::new(),
                 fail_count: 0,
                 fail_error: None,
@@ -220,6 +223,13 @@ impl FakeGateway {
             s.fail_count = n;
             s.fail_error = Some(error);
         }
+    }
+    /// The sessions closed so far, in the order they were closed.
+    pub fn closed_sessions(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .map(|s| s.closed.clone())
+            .unwrap_or_default()
     }
     pub fn stats(&self) -> FakeStats {
         if let Ok(mut s) = self.state.lock() {
@@ -569,6 +579,22 @@ impl GatewayPort for FakeGateway {
             refresh(&mut s);
             save(&mut s)?;
             Ok(r)
+        })
+    }
+    fn close_session(
+        &self,
+        _profile: String,
+        session: String,
+    ) -> BoxFuture<'static, Result<(), PortError>> {
+        let this = self.clone();
+        // Not routed through `access`: a close is bookkeeping, not a call to fail or count.
+        Box::pin(async move {
+            let mut s = this
+                .state
+                .lock()
+                .map_err(|e| PortError::Transport(e.to_string()))?;
+            s.closed.push(session);
+            Ok(())
         })
     }
 }

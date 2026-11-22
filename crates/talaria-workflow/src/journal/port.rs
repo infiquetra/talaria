@@ -121,6 +121,15 @@ pub trait GatewayPort: Send + Sync + 'static {
         admission_id: String,
         execution_generation: i64,
     ) -> BoxFuture<'static, Result<Receipt, PortError>>;
+    /// Tear down the gateway's live session once its call has settled. The stored session stays
+    /// resumable. A port with no such call leaves the session as it is.
+    fn close_session(
+        &self,
+        _profile: String,
+        _session_id: String,
+    ) -> BoxFuture<'static, Result<(), PortError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 pub trait TurnPolicy: Send + Sync + 'static {
     fn first_turn(&self, request: &AgentRequest, launch: &ResolvedLaunch) -> String;
@@ -257,5 +266,8 @@ impl<P: GatewayPort> GatewayPort for Arc<P> {
         g: i64,
     ) -> BoxFuture<'static, Result<Receipt, PortError>> {
         (**self).resolve_unknown(p, s, a, g)
+    }
+    fn close_session(&self, p: String, s: String) -> BoxFuture<'static, Result<(), PortError>> {
+        (**self).close_session(p, s)
     }
 }

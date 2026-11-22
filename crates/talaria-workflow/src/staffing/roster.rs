@@ -47,6 +47,7 @@ pub struct Roster {
     profile: String,
     current_model: String,
     current_provider: String,
+    current_from_session: bool,
     providers: Vec<ProviderEntry>,
     taken_at: DateTime<Utc>,
 }
@@ -136,9 +137,24 @@ impl Roster {
             profile: profile.into(),
             current_model: result["model"].as_str().unwrap_or_default().into(),
             current_provider: result["provider"].as_str().unwrap_or_default().into(),
+            current_from_session: false,
             providers,
             taken_at: now,
         })
+    }
+    /// Make the model and provider a session runs on the current pair. The profile's own
+    /// configured model knows nothing of what the user picked for the session.
+    pub fn with_session_model(mut self, model: &str, provider: &str) -> Self {
+        if !model.is_empty() && !provider.is_empty() {
+            self.current_model = model.into();
+            self.current_provider = provider.into();
+            self.current_from_session = true;
+        }
+        self
+    }
+    /// Whether [`Self::current`] is the session's pair rather than the profile's.
+    pub fn current_from_session(&self) -> bool {
+        self.current_from_session
     }
     pub fn profile(&self) -> &str {
         &self.profile

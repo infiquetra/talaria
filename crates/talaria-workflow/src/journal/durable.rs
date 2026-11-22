@@ -155,7 +155,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             turns,
             outcome: CallOutcome::from_agent(outcome.clone()),
         };
-        match self.journal.append(record).await {
+        let finished = match self.journal.append(record).await {
             Ok(_) => Ok(outcome),
             Err(JournalError::RecordTooLarge { t, .. }) => {
                 let outcome = AgentOutcome::Failed {
@@ -168,11 +168,31 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                         turns,
                         outcome: CallOutcome::from_agent(outcome.clone()),
                     })
-                    .await?;
-                Ok(outcome)
+                    .await
+                    .map(|_| outcome)
             }
             Err(e) => Err(e),
+        };
+        if finished.is_ok() {
+            self.close_session(key).await;
         }
+        finished
+    }
+    /// Close the call's session in Hermes once its outcome is recorded; left open, it lingers
+    /// until the gateway's own cleanup. A failed close changes nothing the run depends on.
+    async fn close_session(&self, key: &str) {
+        let Ok(history) = self.journal.history(key) else {
+            return;
+        };
+        let (Some(session), Some((_, launch, _, _))) = (history.session(), history.intent()) else {
+            return;
+        };
+        let profile = launch.profile.clone();
+        let _ = tokio::time::timeout(
+            Duration::from_secs(15),
+            self.port.close_session(profile, session),
+        )
+        .await;
     }
     async fn run(&self, request: AgentRequest) -> Result<AgentOutcome, JournalError> {
         let launch = match self.resolver.resolve(&request) {
@@ -698,6 +718,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                                             turns: turns.len() as u32,
                                         })
                                         .await?;
+                                    self.close_session(&key).await;
                                     self.retried.lock().map_err(io_error)?.insert(key.clone());
                                     next_attempt = Some(
                                         attempt

@@ -9053,7 +9053,18 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
         if let Some(actions) = state.ultracode.answer_install(&session, &text) {
             return ultracode_actions(state, actions);
         }
-        if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
+        let session_model = state
+            .model
+            .clone()
+            .or_else(|| state.opened.as_ref().and_then(|o| o.info.model.clone()))
+            .zip(state.opened.as_ref().and_then(|o| o.info.provider.clone()));
+        if let Some(actions) = state.ultracode.intercept_submit_with_model(
+            &session,
+            &text,
+            session_model
+                .as_ref()
+                .map(|(model, provider)| (model.as_str(), provider.as_str())),
+        ) {
             return ultracode_actions(state, actions);
         }
     }
@@ -11076,6 +11087,37 @@ mod attachment_tests {
         assert_eq!(state.caret, 10);
         assert!(state.held.is_empty());
         assert!(state.held_attachments.is_empty());
+    }
+
+    #[test]
+    fn routed_workflow_prompt_names_the_model_the_session_runs_on() {
+        let mut state = opened();
+        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        let line = |effects: &[AppEffect]| {
+            effects.iter().find_map(|effect| match effect {
+                AppEffect::Ultracode {
+                    action: crate::ultracode::Action::RunCommand { command_line, .. },
+                    ..
+                } => Some(command_line.clone()),
+                _ => None,
+            })
+        };
+        let effects = submit(&mut state, "review the parser".into());
+        assert_eq!(
+            line(&effects).as_deref(),
+            Some("/talaria-workflows review the parser")
+        );
+        if let Some(opened) = state.opened.as_mut() {
+            opened.info.model = Some("profile-model".into());
+            opened.info.provider = Some("provider-a".into());
+        }
+        // The model the user switched to wins over the one the session started with.
+        state.model = Some("picked-model".into());
+        let effects = submit(&mut state, "review the parser".into());
+        assert_eq!(
+            line(&effects).as_deref(),
+            Some("/talaria-workflows review the parser\nSession model: picked-model on provider-a")
+        );
     }
 
     fn image(state: &mut AppState, path: &str) -> String {

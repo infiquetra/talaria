@@ -118,6 +118,14 @@ retains the full report with staffing problems. Exit 1 has a null report, gatewa
 local fields, and an error kind: home_unavailable, filesystem, staffing_invalid,
 gateway_unavailable, profile_unserved, or roster_failed. Roster discovery never ensures a gateway.
 
+Each signed in provider in the report lists its usable `model_ids` and its
+`unavailable_models`; a provider that is not signed in keeps only its count. The report's
+`current` names the model and provider the lead should treat as the default and says where it
+came from: `session` when the roster was asked for with `--session-model` and
+`--session-provider`, otherwise `profile`. A routed prompt ends with a line
+`Session model: <model> on <provider>` naming the pair the session runs on, so the lead can
+pass it to those two flags.
+
 The lead uses a listed built-in path or writes a draft script. It runs foreground workflows
 in a background terminal with completion notification and waits using that process's returned
 session id. The final `run_finished` JSON line supplies the run id, outcome, result, and spend.
