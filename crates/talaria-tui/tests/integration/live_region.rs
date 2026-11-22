@@ -616,3 +616,60 @@ fn changed_line_shows_its_new_text() {
         "a shortened line keeps no tail of the old text"
     );
 }
+
+fn numbered(count: usize) -> Vec<ratatui::text::Line<'static>> {
+    (1..=count)
+        .map(|n| ratatui::text::Line::from(format!("row {n:02}")))
+        .collect()
+}
+
+fn line_texts(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
+    lines.iter().map(ToString::to_string).collect()
+}
+
+#[test]
+fn a_tail_that_fits_is_drawn_whole_without_a_marker() {
+    let lines = numbered(15);
+    let kept = talaria_tui::live::clip_tail(lines.clone(), 15, |hidden| {
+        panic!("no marker for a tail that fits, asked for {hidden} hidden rows")
+    });
+    assert_eq!(line_texts(&kept), line_texts(&lines));
+}
+
+#[test]
+fn a_cut_tail_starts_with_a_marker_counting_every_row_not_drawn() {
+    let lines = numbered(40);
+    let kept = talaria_tui::live::clip_tail(lines.clone(), 15, |hidden| {
+        ratatui::text::Line::from(format!("marker {hidden}"))
+    });
+    assert_eq!(
+        kept.len(),
+        15,
+        "the cap stays at 15 rows, the marker among them"
+    );
+    assert_eq!(kept[0].to_string(), "marker 26");
+    assert_eq!(line_texts(&kept[1..]), line_texts(&lines[26..]));
+}
+
+#[test]
+fn the_cut_marker_says_how_many_rows_wait_and_which_key_shows_them() {
+    use talaria_tui::live::tail_cut_text;
+    assert_eq!(
+        tail_cut_text(26, false, Some("Ctrl+O")),
+        "\u{2191} 26 earlier rows are not in scrollback yet \u{b7} Ctrl+O shows them now"
+    );
+    assert_eq!(
+        tail_cut_text(1, false, Some("F2")),
+        "\u{2191} 1 earlier row is not in scrollback yet \u{b7} F2 shows it now"
+    );
+    // A long reply already trimmed before the cut: the count is a floor.
+    assert_eq!(
+        tail_cut_text(26, true, Some("Ctrl+O")),
+        "\u{2191} more than 26 earlier rows are not in scrollback yet \u{b7} Ctrl+O shows them now"
+    );
+    // No key opens the transcript: name the view instead.
+    assert_eq!(
+        tail_cut_text(26, false, None),
+        "\u{2191} 26 earlier rows are not in scrollback yet \u{b7} the transcript view shows them"
+    );
+}

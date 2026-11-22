@@ -96,6 +96,23 @@ pub fn max_live_height(rows: u16) -> u16 {
     rows.saturating_sub(2)
 }
 
+/// Cuts the live tail to its last `max` rows.
+pub fn clip_tail(
+    mut lines: Vec<Line<'static>>,
+    max: usize,
+    _marker: impl FnOnce(usize) -> Line<'static>,
+) -> Vec<Line<'static>> {
+    if lines.len() > max {
+        lines.drain(..lines.len() - max);
+    }
+    lines
+}
+
+/// The text of a cut tail's first row.
+pub fn tail_cut_text(_hidden: usize, _more: bool, _transcript_key: Option<&str>) -> String {
+    String::new()
+}
+
 /// Plain text split on newlines and wrapped to the width.
 pub struct PlainTextSection {
     lines: Vec<Line<'static>>,

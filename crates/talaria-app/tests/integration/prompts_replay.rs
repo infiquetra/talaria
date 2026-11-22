@@ -17,7 +17,9 @@ use mock_gateway::{
 };
 use serde_json::Value;
 use talaria_app::prompts::PromptService;
-use talaria_core::session::{Effect, PromptCell, PromptKey, SessionId, SessionState, update};
+use talaria_core::session::{
+    Effect, Event, PromptCell, PromptKey, SessionId, SessionState, update,
+};
 use talaria_tui::keys::{Key, KeyCode, KeyKind, Mods};
 use talaria_tui::prompts::{KeyOutcome, PromptIntent, PromptStack};
 
@@ -153,9 +155,10 @@ async fn approval_fixture_sends_recorded_respond() {
     }
 
     let executed = service.execute(&client, effect).await;
-    assert!(
-        executed.events.is_empty(),
-        "a resolved answer with no note gives no follow-up event"
+    assert_eq!(
+        executed.events,
+        vec![Event::AnswerAccepted { key: key.clone() }],
+        "a resolved answer with no note is only reported as accepted"
     );
     assert!(
         executed.notices.is_empty(),
@@ -225,7 +228,10 @@ async fn clarification_fixture_sends_clarify_respond() {
     }
 
     let executed = service.execute(&client, effect).await;
-    assert!(executed.events.is_empty());
+    assert_eq!(
+        executed.events,
+        vec![Event::AnswerAccepted { key: key.clone() }]
+    );
     assert!(executed.notices.is_empty());
 
     // The recording withholds the answer, so only the other three keys can be compared.

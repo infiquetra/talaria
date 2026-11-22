@@ -681,6 +681,11 @@ impl PromptStack {
     pub fn section(&self) -> Option<PromptSection<'_>> {
         (!self.cards.is_empty()).then_some(PromptSection { stack: self })
     }
+
+    /// Whether the card on top, the one drawn, shows this prompt.
+    pub fn shows_prompt(&self, _key: &PromptKey) -> bool {
+        false
+    }
 }
 
 fn connection_choices(card: &ConnectionCard) -> &'static [ConnectionChoice] {

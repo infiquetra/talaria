@@ -3015,19 +3015,22 @@ async fn refused_note_follow_up_offers_the_draft() {
             .execute(
                 &client,
                 Effect::RespondApproval {
-                    key,
+                    key: key.clone(),
                     choice: String::from("once"),
                 },
             )
             .await;
         assert_eq!(
             executed.events,
-            vec![Event::Submit {
-                text: String::from("go 2"),
-                display: String::from("go 2"),
-                submission_id: String::from("note-sub-1"),
-                attachments: Vec::new(),
-            }]
+            vec![
+                Event::AnswerAccepted { key },
+                Event::Submit {
+                    text: String::from("go 2"),
+                    display: String::from("go 2"),
+                    submission_id: String::from("note-sub-1"),
+                    attachments: Vec::new(),
+                },
+            ]
         );
         assert!(executed.notices.is_empty());
         assert!(mock.requests("prompt.submit").is_empty());

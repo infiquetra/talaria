@@ -80,6 +80,11 @@ pub enum Event {
         /// Prompt key.
         key: PromptKey,
     },
+    /// Hermes replied `resolved`: the answer took effect.
+    AnswerAccepted {
+        /// Prompt key.
+        key: PromptKey,
+    },
     /// Hermes accepted an answer to a recovered server request.
     ServerRequestAnswered {
         /// Server request id.
