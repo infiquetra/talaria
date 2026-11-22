@@ -149,6 +149,8 @@ mod doctor_diagnose;
 mod doctor_restart;
 #[path = "integration/drop_path.rs"]
 mod drop_path;
+#[path = "integration/effort_scale.rs"]
+mod effort_scale;
 #[path = "integration/fleet_attention.rs"]
 mod fleet_attention;
 #[path = "integration/fleet_external_seam.rs"]

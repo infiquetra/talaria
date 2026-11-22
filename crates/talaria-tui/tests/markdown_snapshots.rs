@@ -115,7 +115,7 @@ fn nested_quotes_with_list_code() {
             "|<d>▎ </>• a|",
             "|<d>▎ </>  ◦ b|",
             "|<d>▎</>|",
-            "|<d>▎ rust</>|",
+            "|<d>▎ rust ─────────────────────────────────────────────────────────────────────────</>|",
             "|<d>▎ </>let n = 1;|",
         ],
     );
@@ -133,10 +133,10 @@ fn code_labels_and_indented() {
     assert_dump(
         &lines,
         &[
-            "|<d>rust</>|",
+            "|<d>rust ───────────────────────────────────────────────────────────────────────────</>|",
             "|let a = 1;|",
             "||",
-            "|<d>shell</>|",
+            "|<d>shell ──────────────────────────────────────────────────────────────────────────</>|",
             "|echo hi|",
             "||",
             "|plain|",
@@ -144,6 +144,147 @@ fn code_labels_and_indented() {
             "|indented|",
         ],
     );
+}
+
+#[test]
+fn code_label_is_a_header_with_and_without_colour() {
+    // The label is followed by a rule to the block's width, so it reads as a header
+    // even when the terminal shows no colour or dimming.
+    let lines = render("```sh\ncd work\n```", 20);
+    assert_dump(&lines, &["|<d>sh ─────────────────</>|", "|cd work|"]);
+
+    let mut plain = options(20);
+    plain.color = false;
+    let lines = talaria_tui::markdown::render_markdown("```sh\ncd work\n```", &plain);
+    assert_eq!(rows(&lines)[0], "sh ─────────────────");
+    assert!(rows(&lines).iter().all(|row| row != "sh"));
+
+    // A label too wide for a rule still wraps inside the width and is never cut off.
+    let lines = render("```averyveryverylonglanguagename\nx\n```", 12);
+    assert_eq!(rows(&lines), ["averyveryver", "ylonglanguag", "ename", "x"]);
+}
+
+#[test]
+fn wide_code_line_breaks_at_a_space_in_the_last_third() {
+    // Row one holds "alpha beta gamma del" in twenty columns; the last space is at
+    // column 17, inside the last third, so the break goes there and no word is split.
+    let lines = render("```\nalpha beta gamma delta epsilon\n```", 20);
+    assert_dump(&lines, &["|alpha beta gamma |", "|<d>↪ </>delta epsilon|"]);
+}
+
+#[test]
+fn wide_code_line_hard_breaks_when_no_space_is_near_the_end() {
+    // The only space is early in the row, so the line is cut at the width instead.
+    let lines = render("```\nab cdefghijklmnopqrstuvwxyz0123\n```", 20);
+    assert_dump(&lines, &["|ab cdefghijklmnopqrs|", "|<d>↪ </>tuvwxyz0123|"]);
+    // A long unbroken word is cut at the width too.
+    let lines = render("```\nabcdefghijklmnopqrstuvwxyz0123\n```", 20);
+    assert_dump(&lines, &["|abcdefghijklmnopqrst|", "|<d>↪ </>uvwxyz0123|"]);
+}
+
+#[test]
+fn code_continuation_rows_keep_the_indent() {
+    let lines = render("```\n    abcdefghijklmnopqrstuvwxyz\n```", 20);
+    assert_dump(
+        &lines,
+        &["|    abcdefghijklmnop|", "|<d>↪ </>    qrstuvwxyz|"],
+    );
+}
+
+#[test]
+fn wrapped_code_line_rejoins_to_the_original_text() {
+    let line = "build:sprites      src/sprites.py, tests/test_sprites.py                    worker-a / provider-b";
+    // The renderer never lays out narrower than eight columns; nested blocks narrower
+    // than that are covered by `wrapped_code_in_deep_quotes_stays_inside_the_width`.
+    for width in 8..=60u16 {
+        let lines = render(&format!("```\n{line}\n```"), width);
+        let body = &rows(&lines)[..];
+        let mut joined = String::new();
+        for (index, row) in body.iter().enumerate() {
+            assert!(
+                line_columns(&lines[index]) <= usize::from(width),
+                "width {width}: row {index} is too wide: {row:?}"
+            );
+            joined.push_str(if index == 0 {
+                row
+            } else {
+                row.strip_prefix("↪ ").expect("continuation marker")
+            });
+        }
+        // The line has no indent, so dropping each marker gives back the original text.
+        assert_eq!(joined, line, "width {width}: text was split or lost");
+    }
+}
+
+#[test]
+fn wrapped_code_in_deep_quotes_stays_inside_the_width() {
+    // Each quote takes two columns of the twelve, so four quotes leave the block four
+    // columns, five leave it two and six leave it one. Two or fewer is too narrow for
+    // the marker and a character, so the line wraps one row at a time without markers.
+    for (depth, inner) in [(4, 4), (5, 2), (6, 1)] {
+        let prefix = "> ".repeat(depth);
+        let text = format!("{prefix}```\n{prefix}abcdef\n{prefix}```");
+        let lines = render(&text, 12);
+        let quote = "▎ ".repeat(depth);
+        let mut joined = String::new();
+        for (index, row) in rows(&lines).iter().enumerate() {
+            let body = row.strip_prefix(quote.as_str()).expect("quote prefix");
+            assert!(
+                body.chars().count() <= inner,
+                "depth {depth}: row {index} is wider than the block: {row:?}"
+            );
+            if inner > 2 {
+                joined.push_str(body.strip_prefix("↪ ").unwrap_or(body));
+            } else {
+                assert!(!body.contains('↪'), "depth {depth}: marker in {row:?}");
+                joined.push_str(body);
+            }
+        }
+        assert_eq!(joined, "abcdef", "depth {depth}: text was split or lost");
+    }
+}
+
+#[test]
+fn deep_code_indent_is_not_a_break_point() {
+    // The indent reaches past the last third of the row, so the only spaces near the end
+    // are indent. Breaking there would leave a row that looks blank; the text starts on
+    // the first row instead.
+    let line = format!("{}\"https://example.com/a/long/path\",", " ".repeat(32));
+    let lines = render(&format!("```\n{line}\n```"), 40);
+    let first = &rows(&lines)[0];
+    assert_eq!(first, &format!("{}\"https:/", " ".repeat(32)));
+    for (index, line) in lines.iter().enumerate() {
+        assert!(line_columns(line) <= 40, "row {index} is too wide");
+    }
+
+    let lines = render("```\n        deep indentation\n```", 12);
+    assert_dump(
+        &lines,
+        &[
+            "|        deep|",
+            "|<d>↪ </>      inde|",
+            "|<d>↪ </>     ntati|",
+            "|<d>↪ </>     on|",
+        ],
+    );
+}
+
+#[test]
+fn code_line_that_fits_is_unchanged() {
+    let lines = render("```\n\tfn main() {}\n\n  x\n```", 40);
+    assert_dump(&lines, &["|    fn main() {}|", "||", "|  x|"]);
+}
+
+fn rows(lines: &[ratatui::text::Line<'static>]) -> Vec<String> {
+    lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect()
 }
 
 #[test]

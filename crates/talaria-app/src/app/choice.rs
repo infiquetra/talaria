@@ -5,13 +5,19 @@
 //! profile's skin, so a skin preview writes it once the selection has rested, and Esc or quitting
 //! writes the original back. Every write goes through the connection and session the selector
 //! opened on, and a session or profile switch closes the selector and waits for the writes.
+//!
+//! Bare `/effort` opens the same slot with a scale instead of a list
+//! (`talaria_core::models::EffortScale`). It writes nothing while it moves; Enter runs the typed
+//! `/effort` and `/ultracode` commands for what was staged.
 
 use std::time::Duration;
 
 use hermes_client::Client;
 
 use talaria_core::appearance::{AppearanceChange, AppearanceState, NotAppliedReason, Polarity};
-use talaria_core::commands::{ChoiceEffect, ChoiceItem, ChoiceKey, ChoiceList};
+use talaria_core::commands::{ChoiceEffect, ChoiceItem, ChoiceKey, ChoiceList, LocalAction};
+use talaria_core::models::{Effort, EffortScale, ModelsEffect, ScaleEffect, ScaleFacts, ScaleKey};
+use talaria_core::session::SessionId;
 
 use super::{AppEffect, AppMessage, AppState, Executor, SessionService, notice_lines};
 use crate::appearance::{self, SkinChoices, SkinPreviewError, ThemeFileSession, ThemePreview};
@@ -23,13 +29,16 @@ const SKIN_REST: Duration = Duration::from_millis(300);
 const RESTORE_WAIT: Duration = Duration::from_secs(2);
 /// The skin selector's footer note.
 const SKIN_NOTE: &str = "Previewing changes the Hermes profile's skin until you cancel.";
+/// Enter on the `/effort` selector after the foreground session changed under it.
+const EFFORT_SESSION_CHANGED: &str =
+    "The session changed while the effort selector was open, so nothing was changed.";
 /// Id prefixes of the `/theme` rows.
 const FILE: &str = "file:";
 const BACKGROUND: &str = "background:";
 
 /// An open selector.
 pub struct Selector {
-    /// The rows, the filter and the selection.
+    /// The rows, the filter and the selection. Empty and not drawn for the `/effort` scale.
     pub list: ChoiceList,
     kind: Kind,
 }
@@ -45,6 +54,11 @@ enum Kind {
         /// The profile's skin when the list opened.
         original: String,
         target: Target,
+    },
+    /// The `/effort` scale, for the session it opened on.
+    Effort {
+        scale: Box<EffortScale>,
+        session_id: String,
     },
 }
 
@@ -123,7 +137,137 @@ pub struct ThemeListing {
 
 /// The selector the view draws.
 pub(super) fn list(state: &AppState) -> Option<&ChoiceList> {
-    state.choice.as_ref().map(|selector| &selector.list)
+    state
+        .choice
+        .as_ref()
+        .filter(|selector| !matches!(selector.kind, Kind::Effort { .. }))
+        .map(|selector| &selector.list)
+}
+
+/// The `/effort` scale the view draws.
+pub(super) fn scale(state: &AppState) -> Option<&EffortScale> {
+    match &state.choice.as_ref()?.kind {
+        Kind::Effort { scale, .. } => Some(scale),
+        _ => None,
+    }
+}
+
+/// What the scale shows about the foreground session now.
+fn effort_facts(state: &AppState) -> Option<(String, ScaleFacts)> {
+    let opened = state.opened.as_ref()?;
+    let session_id = opened.session_id.clone();
+    let model = state.model.clone().or_else(|| opened.info.model.clone());
+    let route = opened.info.provider.as_deref().zip(model.as_deref());
+    let facts = ScaleFacts {
+        current: state.effort.as_deref().and_then(Effort::parse),
+        wire: state.effort_wire.clone(),
+        offered: route.and_then(|(provider, model)| {
+            state.models.effort_offered(&session_id, provider, model)
+        }),
+        can_disable: route.and_then(|(provider, model)| {
+            state
+                .models
+                .can_disable_reasoning(&session_id, provider, model)
+        }),
+        ultracode: state
+            .ultracode
+            .status_input(Some(&SessionId::new(session_id.clone()))),
+        profile: state.profile.clone(),
+        model,
+    };
+    Some((session_id, facts))
+}
+
+/// Bare `/effort`: open the scale on the session's level and read the level again, quietly.
+pub(super) fn open_effort(state: &mut AppState) -> Vec<AppEffect> {
+    let mut effects = close(state);
+    let Some((session_id, facts)) = effort_facts(state) else {
+        return effects;
+    };
+    state.choice = Some(Selector {
+        list: ChoiceList::new(Vec::new()),
+        kind: Kind::Effort {
+            scale: Box::new(EffortScale::new(facts)),
+            session_id: session_id.clone(),
+        },
+    });
+    // Unlike `/effort` before the scale, the answer prints nothing: the scale shows it.
+    effects.push(AppEffect::Models(ModelsEffect::ReadEffort { session_id }));
+    effects.push(AppEffect::Redraw);
+    effects
+}
+
+/// A read or an event changed what the scale shows: move an untouched marker with it.
+pub(super) fn refresh_effort(state: &mut AppState) {
+    let Some(Kind::Effort { session_id, .. }) = state.choice.as_ref().map(|s| &s.kind) else {
+        return;
+    };
+    let owner = session_id.clone();
+    let Some((session_id, facts)) = effort_facts(state) else {
+        return;
+    };
+    if let Some(Selector {
+        kind: Kind::Effort { scale, .. },
+        ..
+    }) = &mut state.choice
+        && session_id == owner
+    {
+        scale.set_current(facts.current, facts.wire);
+        scale.set_caps(facts.offered, facts.can_disable);
+    }
+}
+
+/// One key for the open `/effort` scale. Enter runs the typed commands for what was staged:
+/// `/effort <level> [--default]`, then `/ultracode on|off`.
+pub(super) fn scale_key(state: &mut AppState, key: ScaleKey) -> Vec<AppEffect> {
+    let Some(Selector {
+        kind: Kind::Effort {
+            scale,
+            session_id: owner,
+        },
+        ..
+    }) = &mut state.choice
+    else {
+        return Vec::new();
+    };
+    let (level, save_default, ultracode) = match scale.update(key) {
+        ScaleEffect::Redraw => return vec![AppEffect::Redraw],
+        ScaleEffect::Cancel => return close(state),
+        ScaleEffect::Apply {
+            level,
+            save_default,
+            ultracode,
+        } => (level, save_default, ultracode),
+    };
+    let owner = owner.clone();
+    state.choice = None;
+    let mut effects = vec![AppEffect::Redraw];
+    if session_id(state).as_deref() != Some(owner.as_str()) {
+        effects.push(notice_lines(EFFORT_SESSION_CHANGED));
+        return effects;
+    }
+    let mut typed = |state: &mut AppState, action, command: &str, argument: String| {
+        let line = format!("/{command} {argument}");
+        effects.extend(super::local_effect(state, action, argument, line));
+    };
+    if let Some(level) = level {
+        let argument = if save_default {
+            format!("{} --default", level.as_wire())
+        } else {
+            level.as_wire().to_owned()
+        };
+        typed(state, LocalAction::Effort, "effort", argument);
+    }
+    if let Some(on) = ultracode {
+        let argument = if on { "on" } else { "off" };
+        typed(
+            state,
+            LocalAction::Ultracode,
+            "ultracode",
+            argument.to_owned(),
+        );
+    }
+    effects
 }
 
 /// Run a selector's work. Replies come back as [`AppMessage::Choice`].
@@ -428,7 +572,11 @@ fn open_skins(
 
 /// One key for the open selector.
 pub(super) fn key(state: &mut AppState, key: ChoiceKey) -> Vec<AppEffect> {
-    let Some(selector) = &mut state.choice else {
+    let Some(selector) = state
+        .choice
+        .as_mut()
+        .filter(|selector| !matches!(selector.kind, Kind::Effort { .. }))
+    else {
         return Vec::new();
     };
     match selector.list.update(key) {
@@ -499,6 +647,7 @@ fn preview(state: &mut AppState, id: &str) -> Vec<AppEffect> {
                 AppEffect::Redraw,
             ]
         }
+        Kind::Effort { .. } => Vec::new(),
     }
 }
 
@@ -549,6 +698,7 @@ fn apply(state: &mut AppState, id: &str) -> Vec<AppEffect> {
             state.skin_preview = None;
             vec![skin, AppEffect::Redraw]
         }
+        Kind::Effort { .. } => vec![AppEffect::Redraw],
     }
 }
 
@@ -575,6 +725,8 @@ pub(super) fn close(state: &mut AppState) -> Vec<AppEffect> {
             effects.push(AppEffect::Redraw);
             effects
         }
+        // The scale wrote nothing.
+        Kind::Effort { .. } => vec![AppEffect::Redraw],
     }
 }
 

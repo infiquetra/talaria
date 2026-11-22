@@ -395,6 +395,9 @@ mod secondary_ignore;
 #[path = "integration/status_effort.rs"]
 mod status_effort;
 
+#[path = "integration/effort_scale.rs"]
+mod effort_scale;
+
 #[path = "integration/subagent_replay.rs"]
 mod subagent_replay;
 

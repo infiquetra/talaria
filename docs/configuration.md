@@ -549,7 +549,9 @@ start after an Ultracode-routed prompt in the foreground session, or the run lis
 `model_favourite` Ctrl+F, `model_refresh` Ctrl+R, `model_chips_next` Tab,
 `model_chips_prev` Shift+Tab, and `model_details` F2 or Ctrl+E. The chips change the list view
 (All, Starred, Configured, Needs setup); Ctrl+G still changes whether a choice is saved for new sessions.
-These actions resolve before composer keys while the picker is open. Typing always filters,
+These actions resolve before composer keys while the picker is open. The `/effort` selector
+uses the same `effort_down`, `effort_up` and `model_scope` keys, so a rebinding applies to both.
+Typing always filters,
 including letters and digits; Ctrl+U clears. Esc closes full details first, then clears the filter,
 then closes the picker. Full details only scroll and never confirm, star or save anything.
 macOS may reserve F2, so Ctrl+E is an equivalent, rebindable default. Conflicting bindings produce

@@ -14,6 +14,34 @@ pub enum Effort {
 }
 
 impl Effort {
+    /// Every level, low to high, as Hermes orders them (`EFFORT_LADDER` in
+    /// `agent/reasoning_effort.py`).
+    pub const ALL: [Self; 8] = [
+        Self::None,
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::Xhigh,
+        Self::Max,
+        Self::Ultra,
+    ];
+
+    /// One plain line about the level, for the `/effort` selector. It names no cost: Talaria
+    /// has no measured cost per level.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::None => "Thinking off: the model answers straight away",
+            Self::Minimal => "The least thinking the model allows",
+            Self::Low => "Quick answers for simple tasks",
+            Self::Medium => "Balanced speed and reasoning; Hermes uses it when nothing is set",
+            Self::High => "More thinking for harder tasks",
+            Self::Xhigh => "Extended thinking for complex work",
+            Self::Max => "The most thinking most models accept",
+            Self::Ultra => "Beyond max where the route accepts it; Hermes lowers it elsewhere",
+        }
+    }
+
     /// Trimmed, any case. Only `none` means off.
     pub fn parse(text: &str) -> Option<Self> {
         match text.trim().to_ascii_lowercase().as_str() {

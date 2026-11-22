@@ -56,15 +56,34 @@ fn closed_fence_commits_open_stays_tail() {
     let mut markdown = stream(80);
     let open = markdown.push("```rust\nlet a = 1;\n");
     assert!(open.committed.is_empty());
-    assert_dump(&open.tail, &["|<d>rust</>|", "|let a = 1;|"]);
+    assert_dump(
+        &open.tail,
+        &[
+            "|<d>rust ───────────────────────────────────────────────────────────────────────────</>|",
+            "|let a = 1;|",
+        ],
+    );
     let closed = markdown.push("```\n");
-    assert_dump(&closed.committed, &["|<d>rust</>|", "|let a = 1;|"]);
+    assert_dump(
+        &closed.committed,
+        &[
+            "|<d>rust ───────────────────────────────────────────────────────────────────────────</>|",
+            "|let a = 1;|",
+        ],
+    );
     assert!(closed.tail.is_empty());
 
     let mut partial = stream(80);
     let update = partial.push("```rust\nlet a = 1;\n`\n");
     assert!(update.committed.is_empty());
-    assert_dump(&update.tail, &["|<d>rust</>|", "|let a = 1;|", "|`|"]);
+    assert_dump(
+        &update.tail,
+        &[
+            "|<d>rust ───────────────────────────────────────────────────────────────────────────</>|",
+            "|let a = 1;|",
+            "|`|",
+        ],
+    );
 }
 
 #[test]
@@ -270,7 +289,12 @@ fn nested_fence_commits_with_container() {
     let closed = listed.push("\ntext\n");
     assert_dump(
         &closed.committed,
-        &["|• item|", "||", "|  <d>rust</>|", "|  let a = 1;|"],
+        &[
+            "|• item|",
+            "||",
+            "|  <d>rust ─────────────────────────────────────────────────────────────────────────</>|",
+            "|  let a = 1;|",
+        ],
     );
     assert_dump(&closed.tail, &["||", "|text|"]);
 
@@ -280,7 +304,10 @@ fn nested_fence_commits_with_container() {
     let closed = quoted.push("\ntext\n");
     assert_dump(
         &closed.committed,
-        &["|<d>▎ rust</>|", "|<d>▎ </>let a = 1;|"],
+        &[
+            "|<d>▎ rust ─────────────────────────────────────────────────────────────────────────</>|",
+            "|<d>▎ </>let a = 1;|",
+        ],
     );
     assert_dump(&closed.tail, &["||", "|text|"]);
 }
