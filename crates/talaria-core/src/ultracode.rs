@@ -34,10 +34,27 @@ pub fn typed_text(text: &str) -> Option<&str> {
     }
     // The skill body may quote the marker, so the person's request follows the last one.
     let rest = &text[text.rfind(SCAFFOLD_REQUEST)? + SCAFFOLD_REQUEST.len()..];
-    Some(
+    Some(without_session_model(
         rest.find(SCAFFOLD_RUNTIME_NOTE)
             .map_or(rest, |end| &rest[..end]),
-    )
+    ))
+}
+/// The label of the line a routed prompt ends with to name the session's model and provider.
+const SESSION_MODEL_LABEL: &str = "Session model: ";
+/// `text` without the model-facing `Session model: <model> on <provider>` line a routed prompt
+/// ends with. Hermes replays a request with its line breaks folded to spaces, so the line may
+/// follow a space instead of a line break.
+fn without_session_model(text: &str) -> &str {
+    let trimmed = text.trim_end();
+    let Some(at) = trimmed.rfind(SESSION_MODEL_LABEL) else {
+        return text;
+    };
+    let names = &trimmed[at + SESSION_MODEL_LABEL.len()..];
+    let follows_a_break = trimmed[..at].ends_with(char::is_whitespace);
+    if at == 0 || !follows_a_break || names.contains('\n') || !names.contains(" on ") {
+        return text;
+    }
+    trimmed[..at].trim_end()
 }
 /// True when `text` carries the whole skill: Hermes's expansion of a routed prompt, not the
 /// reminder that stands in for it once the skill is in the conversation.
@@ -56,14 +73,19 @@ pub fn replayed_request(text: &str) -> Option<&str> {
     if !rest.starts_with(char::is_whitespace) {
         return None;
     }
-    Some(rest.trim()).filter(|request| !request.is_empty())
+    Some(without_session_model(rest.trim())).filter(|request| !request.is_empty())
 }
 /// `typed` with the model-facing part of `sent` in front, so an edited routed prompt stays
 /// routed. Any other `sent` gives `typed` alone.
 pub fn retyped(sent: &str, typed: &str) -> String {
     match typed_text(sent) {
-        Some(old) if sent.ends_with(old) => format!("{}{typed}", &sent[..sent.len() - old.len()]),
-        _ => typed.to_owned(),
+        // `old` is a slice of `sent`: what stands before and after it is kept, so the reminder
+        // or the skill in front and the session model line behind both stay.
+        Some(old) => {
+            let start = old.as_ptr() as usize - sent.as_ptr() as usize;
+            format!("{}{typed}{}", &sent[..start], &sent[start + old.len()..])
+        }
+        None => typed.to_owned(),
     }
 }
 /// The conversation a full copy of the skill went into: the stored session, and how many
@@ -105,7 +127,7 @@ pub fn route_submit_with_model(
             .iter()
             .all(|name| !name.trim().is_empty() && !name.chars().any(char::is_control))
     {
-        command_line.push_str(&format!("\nSession model: {model} on {provider}"));
+        command_line.push_str(&format!("\n{SESSION_MODEL_LABEL}{model} on {provider}"));
     }
     SubmitRoute::Workflow {
         command_line,

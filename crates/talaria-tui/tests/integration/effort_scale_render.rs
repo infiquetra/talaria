@@ -222,3 +222,31 @@ fn the_hints_use_the_keys_the_user_bound() {
     assert!(hint.starts_with(" Alt+H/Alt+L adjust"), "{hint:?}");
     assert!(hint.contains("Alt+G new sessions"), "{hint:?}");
 }
+
+#[test]
+fn names_hermes_reported_cannot_carry_control_characters_into_the_panel() {
+    let scale = EffortScale::new(ScaleFacts {
+        model: Some("model-a\u{1b}[31m\nsecond".into()),
+        current: Some(Effort::Max),
+        wire: Some("medium\u{1b}[2J".into()),
+        offered: Some(true),
+        can_disable: None,
+        ultracode: false,
+        profile: "work\u{1b}]0;title\u{7}".into(),
+    });
+    let (rows, _) = draw(&section(&scale), 100);
+    let all = rows.join("\n");
+    assert!(
+        !all.contains('\u{1b}') && !all.contains('\u{7}'),
+        "a control character reached the panel: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("Effort \u{b7} model-a")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Also save for new sessions on work")),
+        "{rows:#?}"
+    );
+}

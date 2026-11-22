@@ -92,14 +92,15 @@ impl EffortScaleSection {
         .flatten()
         .collect();
         Self {
-            title: scale.title(),
+            // The model, profile and wire level are names Hermes reported: every row that can
+            // carry one is cleaned before it is laid out.
+            title: super::render::clean(&scale.title()),
             levels: scale.levels(),
             selected: scale.selected(),
-            detail: scale.detail(),
-            // The note can carry a model name Hermes reported.
+            detail: super::render::clean(&scale.detail()),
             note: scale.note().map(|note| super::render::clean(&note)),
-            ultracode: scale.ultracode_line(),
-            save: scale.save_line(),
+            ultracode: super::render::clean(&scale.ultracode_line()),
+            save: super::render::clean(&scale.save_line()),
             hints,
             views: None,
         }

@@ -12,7 +12,9 @@ use talaria_core::queue::{
 };
 use talaria_core::rewind::rewind_turns;
 use talaria_core::session::{Cell, Effect, Event, SessionId, SessionState, update};
-use talaria_core::ultracode::{FOLLOW_UP_REMINDER, follow_up_text, notice, typed_text};
+use talaria_core::ultracode::{
+    FOLLOW_UP_REMINDER, follow_up_text, notice, replayed_request, retyped, typed_text,
+};
 
 /// What Hermes expands a routed prompt into: the skill's header and body, then the request.
 const FULL: &str = "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\nPropose a workflow, then ask before starting it.\n\n[Skill directory: fixture-skills/talaria-workflows]\n\nThe user has provided the following instruction alongside the skill invocation: fix the parser";
@@ -352,4 +354,47 @@ fn no_routing_notice_names_the_skill_command_or_wrapper() {
     ];
     texts.retain(|text| !text.is_empty());
     assert_hidden(&texts);
+}
+
+#[test]
+fn the_session_model_line_is_for_the_model_and_never_shown() {
+    let line = "Session model: model-a on provider-a";
+    // As sent: the line follows the request on its own row.
+    let sent = format!("{FULL}\n{line}");
+    assert_eq!(typed_text(&sent), Some("fix the parser"));
+    let runtime = format!("{FULL}\n{line}\n\n[Runtime note: fixture]");
+    assert_eq!(typed_text(&runtime), Some("fix the parser"));
+    // As Hermes replays it: one row, line breaks folded to spaces.
+    assert_eq!(
+        replayed_request(&format!("/talaria-workflows fix the parser {line}")),
+        Some("fix the parser")
+    );
+    assert_eq!(
+        replayed_request(&format!("/talaria-workflows fix the parser\n{line}")),
+        Some("fix the parser")
+    );
+    // Text that only mentions the label is the person's own.
+    for own in [
+        "/talaria-workflows explain the Session model: field",
+        "/talaria-workflows rename Session model: to Model",
+    ] {
+        assert_eq!(
+            replayed_request(own),
+            own.strip_prefix("/talaria-workflows "),
+            "{own}"
+        );
+    }
+}
+
+#[test]
+fn an_edited_routed_prompt_keeps_the_session_model_line() {
+    let line = "\nSession model: model-a on provider-a";
+    let sent = format!("{FULL}{line}");
+    let edited = retyped(&sent, "fix the lexer");
+    assert_eq!(
+        edited,
+        format!("{}{line}", FULL.replace("fix the parser", "fix the lexer"))
+    );
+    assert_eq!(typed_text(&edited), Some("fix the lexer"));
+    assert_eq!(retyped("plain text", "new text"), "new text");
 }
