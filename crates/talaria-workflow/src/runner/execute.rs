@@ -242,6 +242,14 @@ fn session_roster(roster: Arc<Roster>, session_model: Option<&(String, String)>)
         None => roster,
     }
 }
+/// The token and money budget the run started with, as its manifest's roster snapshot records
+/// them; a resume keeps them unless its own flags replace them.
+fn stored_budget(snapshot: &Value) -> (Option<u64>, Option<f64>) {
+    (
+        snapshot["budget"]["tokens"].as_u64(),
+        snapshot["budget"]["money_usd"].as_f64(),
+    )
+}
 fn read_script(path: &Path, output: &mut Output<'_>) -> Result<(String, ParsedScript), i32> {
     let source = fs::read_to_string(path).map_err(|e| {
         output.diagnostic(format!("cannot read workflow script: {e}"));
@@ -469,6 +477,7 @@ async fn resume(
         problems: Vec::new(),
         run_id: None,
     };
+    let mut replayed_code = 0;
     let result = async {
         let path = runs::find_run(&req.runs_dir, &req.target).map_err(|e| {
             output.diagnostic(e.to_string());
@@ -518,7 +527,16 @@ async fn resume(
                 output.diagnostic(e);
                 2
             })?;
-        if fold.terminal.as_deref() == Some("completed") && !restarting {
+        // A run its budget ended replays like a completed one unless a new budget is given:
+        // with its own budget kept, a new execution could only be refused again.
+        let replay = match fold.terminal.as_deref() {
+            Some("completed") => Some(("completed", 0)),
+            Some("budget_exhausted") if req.budget_tokens.is_none() && req.budget_usd.is_none() => {
+                Some(("budget_exhausted", 4))
+            }
+            _ => None,
+        };
+        if let Some((outcome, code)) = replay.filter(|_| !restarting) {
             if let Some(path) = &req.record {
                 super::recording::open(path, false)
                     .and_then(|recording| recording.finish().map(|_| ()).map_err(|e| e.to_string()))
@@ -537,20 +555,26 @@ async fn resume(
             })?;
             output.started(&dir);
             let result = match files::read_json::<OutcomeFile>(&path.join("outcome.json")) {
-                Ok(saved) if saved.v == 1 && saved.outcome == "completed" => saved.result,
+                Ok(saved) if saved.v == 1 && saved.outcome == outcome => saved.result,
                 _ => {
                     (output.out)(&RunnerEvent::Log {
                         message: format!(
-                            "stored result unavailable; completed summary {}",
+                            "stored result unavailable; {outcome} summary {}",
                             fold.summary.unwrap_or(Value::Null)
                         ),
                     });
                     None
                 }
             };
+            if code != 0 {
+                output.diagnostic(
+                    "this run's budget ran out; to continue it, resume with a larger --budget-tokens or --budget-usd",
+                );
+            }
+            replayed_code = code;
             (output.out)(&RunnerEvent::Finished {
                 run_id: dir.run_id().as_str().into(),
-                outcome: "completed".into(),
+                outcome: outcome.into(),
                 result,
                 spend: SpendView {
                     tokens: fold.tokens.unwrap_or_default(),
@@ -612,10 +636,11 @@ async fn resume(
                 },
             )?,
         };
+        let (stored_tokens, stored_usd) = stored_budget(&dir.manifest().roster);
         let preflight = preflight(
             table,
-            req.budget_tokens,
-            req.budget_usd,
+            req.budget_tokens.or(stored_tokens),
+            req.budget_usd.or(stored_usd),
             &dir.manifest().profile,
             Roster::session_model_in(&dir.manifest().roster).as_ref(),
             &services,
@@ -659,7 +684,7 @@ async fn resume(
             )
             .await
         }
-        Ok(None) => output.exit(0),
+        Ok(None) => output.exit(replayed_code),
         Err(code) => output.exit(code),
     }
 }

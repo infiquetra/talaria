@@ -1344,6 +1344,114 @@ fn budget_exhausted_run_resumes_with_a_larger_budget() {
     );
 }
 
+/// Every file under a run folder with its bytes and modification time.
+fn folder_state(dir: &Path) -> BTreeMap<PathBuf, (Vec<u8>, std::time::SystemTime)> {
+    let mut files = BTreeMap::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in fs::read_dir(&next).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let modified = fs::metadata(&path).unwrap().modified().unwrap();
+                files.insert(
+                    path.strip_prefix(dir).unwrap().to_path_buf(),
+                    (fs::read(&path).unwrap(), modified),
+                );
+            }
+        }
+    }
+    files
+}
+
+#[test]
+fn resume_without_a_budget_flag_keeps_the_run_budget() {
+    // The script lets the refusal fail the run, so a resume runs it again.
+    let h = Harness::new(
+        "const first = await agent('first', {label:'first'}); const second = await agent('second', {label:'second'}); return [first, second];",
+    );
+    let mut req = h.request();
+    req.budget_tokens = Some(10);
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 1, "{:?}", exit.problems);
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let (exit, events) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true)).finish();
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "failed", "{events:?}");
+    assert_eq!(exit.code, 1, "{:?}", exit.problems);
+    // The refused agent is refused again: nothing new reaches Hermes.
+    assert_eq!(
+        h.wire
+            .frames()
+            .iter()
+            .filter(|f| f.method == "prompt.submit")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn reading_a_finished_run_with_resume_changes_nothing_in_its_folder() {
+    let h = Harness::new("return await agent('only', {label:'only'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let before = folder_state(&folder);
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let (exit, events) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["result"], "READY");
+    assert!(
+        folder_state(&folder) == before,
+        "a completed run's folder changed"
+    );
+
+    // A run the budget ended keeps its budget, so reading it starts nothing either.
+    let h = Harness::new(
+        "const first = await agent('first', {label:'first'}); let second; try { second = await agent('second', {label:'second'}); } catch (e) { second = e.name; } return [first, second];",
+    );
+    let mut req = h.request();
+    req.budget_tokens = Some(10);
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
+    let before = folder_state(&folder);
+    let frames = h.wire.frames().len();
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let (exit, events) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "budget_exhausted");
+    assert_eq!(finished["result"], json!(["READY", "BudgetExhaustedError"]));
+    assert_eq!(
+        h.wire.frames().len(),
+        frames,
+        "reading the result called Hermes"
+    );
+    assert!(
+        folder_state(&folder) == before,
+        "a budget-exhausted run's folder changed"
+    );
+}
+
 #[test]
 fn agent_without_live_usage_is_noted_once() {
     let h = Harness::new(

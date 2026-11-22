@@ -95,12 +95,17 @@ the same recorder implementation. The resulting log keeps one header and increas
 
 `resume` accepts a run id or folder, an optional replacement `--script`, staffing and budget
 overrides, `--cwd`, location flags, `--record`, and `--json`. A locked run refuses a second
-runner. Use `resolve` to answer its parked calls while it remains alive.
+runner. Use `resolve` to answer its parked calls while it remains alive. A resume keeps the
+token and money budget recorded in the manifest's roster snapshot; `--budget-tokens` or
+`--budget-usd` replaces only the one it names.
 
 A completed execution replays its stored `outcome.json` result without connecting to the
-gateway or executing the script. If a completed run predates that file, the runner reports
+gateway or executing the script, and so does a budget-exhausted run resumed without a budget
+flag (exit 4, with a line saying a larger budget continues it). Neither changes any file in
+the run folder. If a completed run predates that file, the runner reports
 the missing result and the journal's finish summary; it never reruns paid work to recover a
-display value. Failed, aborted, interrupted, and budget-exhausted runs open a new execution.
+display value. Failed, aborted and interrupted runs, and budget-exhausted runs given a new
+budget, open a new execution.
 Their unchanged completed calls remain reusable through journal replay.
 Before admitting new work, resume reattaches the unfinished sessions recorded in the
 journal. Their terminal results still come from receipts through the backend.

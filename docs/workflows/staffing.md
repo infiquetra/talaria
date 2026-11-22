@@ -156,7 +156,8 @@ checked from settled turns only.
 Retries stop when a budget is reached. Resume restores spend, frozen prices and
 width reductions silently, without restoring billing pauses or cooldowns. Resuming
 a `budget_exhausted` run with a larger budget reruns its stopped and refused
-agents and reuses the completed ones.
+agents and reuses the completed ones. A resume without a budget flag keeps the
+run's own budget, so a `budget_exhausted` run then only replays its stored result.
 
 Snapshots omit provider endpoint URLs, environment-key names, warnings and account
 identities or labels. Reports replace controls and bidirectional formatting
