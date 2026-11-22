@@ -4,7 +4,7 @@
 //! counter for the life of the [`crate::Client`]. A call whose connection
 //! dropped, or that waited out its deadline, is never reported as success.
 //!
-//! Seven choices here differ from Hermes' own channel
+//! Eight choices here differ from Hermes' own channel
 //! (`apps/shared/src/json-rpc-channel.ts` at v0.22.4):
 //!
 //! * A numeric id with a method other than a valid event is
@@ -21,6 +21,10 @@
 //! * A failed write of a server-request answer stays answerable
 //!   ([`crate::RespondError::NotConnected`]). Hermes marks the responder settled
 //!   before the write (L371), so a failed write is final there.
+//! * A frame with a bare `Infinity`, `-Infinity` or `NaN` is read with each replaced by `null`,
+//!   and a frame that still is not JSON but whose top-level integer id is readable completes
+//!   that pending call with [`CallError::BadResult`] (Hermes drops the frame and the
+//!   call waits for its timeout).
 
 #![warn(missing_docs)]
 
@@ -71,9 +75,14 @@ pub enum FrameClass {
 /// Valid UTF-8 binary is text. A null or non-string `method` counts as no method.
 #[doc(hidden)]
 pub fn classify(raw: &[u8]) -> FrameClass {
-    let Ok(value) = serde_json::from_slice::<Value>(raw) else {
-        return FrameClass::Malformed(MalformedKind::NotJson);
-    };
+    match parse_frame(raw) {
+        Some(value) => classify_value(&value),
+        None => FrameClass::Malformed(MalformedKind::NotJson),
+    }
+}
+
+/// Classify one frame that already parsed. The same rules as [`classify`].
+pub(crate) fn classify_value(value: &Value) -> FrameClass {
     let Some(object) = value.as_object() else {
         return FrameClass::Malformed(MalformedKind::NotObject);
     };
@@ -97,6 +106,177 @@ pub fn classify(raw: &[u8]) -> FrameClass {
         return FrameClass::Malformed(MalformedKind::GatewayError);
     }
     FrameClass::Malformed(MalformedKind::Unrecognized)
+}
+
+/// The `reason` of a [`CallError::BadResult`] for a reply whose text was not valid JSON.
+pub(crate) const UNREADABLE_REPLY: &str = "reply was not valid JSON";
+
+/// Parse one inbound payload as JSON.
+///
+/// Strict parsing comes first. Only when it fails does the payload get one repair pass for the
+/// bare `Infinity`, `-Infinity` and `NaN` that Python's `json.dumps` writes for a non-finite
+/// float; each becomes `null`. A payload that still does not parse is `None`.
+pub(crate) fn parse_frame(raw: &[u8]) -> Option<Value> {
+    parse_frame_repaired(raw).map(|(value, _)| value)
+}
+
+/// [`parse_frame`], and whether the repair pass was needed.
+pub(crate) fn parse_frame_repaired(raw: &[u8]) -> Option<(Value, bool)> {
+    if let Ok(value) = serde_json::from_slice::<Value>(raw) {
+        return Some((value, false));
+    }
+    let repaired = repair_non_finite(raw)?;
+    serde_json::from_slice::<Value>(&repaired)
+        .ok()
+        .map(|value| (value, true))
+}
+
+/// Replace each bare non-finite number outside a string with `null`.
+///
+/// A token counts only where a JSON value may start (after `:`, `,`, `[` or at the very start)
+/// and only when whitespace, `,`, `]`, `}` or the end follows, so a longer bare word is left
+/// alone. `None` when nothing was replaced.
+fn repair_non_finite(raw: &[u8]) -> Option<Vec<u8>> {
+    const TOKENS: [&[u8]; 3] = [b"-Infinity", b"Infinity", b"NaN"];
+    let mut out = Vec::with_capacity(raw.len());
+    let mut replaced = false;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut previous: Option<u8> = None;
+    let mut index = 0;
+    while index < raw.len() {
+        let byte = raw[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            out.push(byte);
+            index += 1;
+            continue;
+        }
+        if matches!(byte, b' ' | b'\t' | b'\n' | b'\r') {
+            out.push(byte);
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+        } else if matches!(previous, None | Some(b':' | b',' | b'['))
+            && let Some(token) = TOKENS.iter().find(|token| raw[index..].starts_with(token))
+            && raw.get(index + token.len()).is_none_or(|after| {
+                matches!(after, b' ' | b'\t' | b'\n' | b'\r' | b',' | b']' | b'}')
+            })
+        {
+            out.extend_from_slice(b"null");
+            replaced = true;
+            previous = Some(b'l');
+            index += token.len();
+            continue;
+        }
+        previous = Some(byte);
+        out.push(byte);
+        index += 1;
+    }
+    replaced.then_some(out)
+}
+
+/// The integer id of a reply whose text could not be parsed, when it can be read with certainty.
+///
+/// `None` unless the payload is one balanced top-level object with exactly one `id` key whose
+/// value is a plain unsigned integer, no `method` key, and no key written with an escape.
+/// Everything else stays unattributed rather than risk failing the wrong call.
+pub(crate) fn recover_reply_id(raw: &[u8]) -> Option<u64> {
+    let is_space = |byte: &u8| matches!(byte, b' ' | b'\t' | b'\n' | b'\r');
+    let skip_space = |mut at: usize| {
+        while raw.get(at).is_some_and(is_space) {
+            at += 1;
+        }
+        at
+    };
+    let mut index = skip_space(0);
+    if raw.get(index) != Some(&b'{') {
+        return None;
+    }
+    index += 1;
+    let mut depth = 1usize;
+    let mut expect_key = true;
+    let mut id = None;
+    while index < raw.len() {
+        match raw[index] {
+            b'"' => {
+                let start = index + 1;
+                let mut end = start;
+                let mut has_escape = false;
+                loop {
+                    match raw.get(end)? {
+                        b'\\' => {
+                            has_escape = true;
+                            end += 2;
+                        }
+                        b'"' => break,
+                        _ => end += 1,
+                    }
+                }
+                index = end + 1;
+                if depth == 1 && expect_key {
+                    if has_escape {
+                        return None;
+                    }
+                    let key = &raw[start..end];
+                    index = skip_space(index);
+                    if raw.get(index) != Some(&b':') {
+                        return None;
+                    }
+                    index = skip_space(index + 1);
+                    expect_key = false;
+                    if key == b"method" {
+                        return None;
+                    }
+                    if key == b"id" {
+                        let digits = raw[index..]
+                            .iter()
+                            .take_while(|b| b.is_ascii_digit())
+                            .count();
+                        let end = index + digits;
+                        if digits == 0
+                            || (digits > 1 && raw[index] == b'0')
+                            || id.is_some()
+                            || !raw
+                                .get(end)
+                                .is_none_or(|after| is_space(after) || matches!(after, b',' | b'}'))
+                        {
+                            return None;
+                        }
+                        id = Some(std::str::from_utf8(&raw[index..end]).ok()?.parse().ok()?);
+                        index = end;
+                    }
+                }
+            }
+            b'{' | b'[' => {
+                depth += 1;
+                index += 1;
+            }
+            b'}' | b']' => {
+                depth -= 1;
+                index += 1;
+                if depth == 0 {
+                    return raw[index..].iter().all(is_space).then_some(id).flatten();
+                }
+            }
+            b',' => {
+                if depth == 1 {
+                    expect_key = true;
+                }
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    None
 }
 
 /// Encode one request. Keys are `jsonrpc`, `id`, `method`, `params`, in that order.
@@ -139,11 +319,12 @@ pub enum CallError {
     Rpc(RpcError),
     /// The gateway answered with `result`, and that value does not decode.
     ///
-    /// `reason` is the fixed phrase `result did not decode`. The gateway did the work.
+    /// `reason` is `result did not decode`, or `reply was not valid JSON` when the reply's text
+    /// could not be parsed but its id was readable. The gateway did the work.
     BadResult {
         /// The method that was called.
         method: String,
-        /// Always `result did not decode`.
+        /// `result did not decode` or `reply was not valid JSON`.
         reason: &'static str,
     },
     /// No reply arrived before the deadline. The gateway may still apply the call.
@@ -173,6 +354,9 @@ impl CallError {
             Self::Encode => "Correct the parameters before retrying; nothing was sent.",
             Self::InvalidTimeout => "Choose a nonzero timeout; nothing was sent.",
             Self::Rpc(_) => "Check the refusal reason before deciding whether to retry.",
+            Self::BadResult { reason, .. } if *reason == UNREADABLE_REPLY => {
+                "The gateway answered with text that is not valid JSON; the gateway did the work."
+            }
             Self::BadResult { .. } => {
                 "Check the gateway result contract; the gateway did the work."
             }
@@ -190,10 +374,10 @@ impl std::fmt::Debug for CallError {
             Self::Encode => formatter.write_str("Encode"),
             Self::InvalidTimeout => formatter.write_str("InvalidTimeout"),
             Self::Rpc(error) => formatter.debug_tuple("Rpc").field(error).finish(),
-            Self::BadResult { method, .. } => formatter
+            Self::BadResult { method, reason } => formatter
                 .debug_struct("BadResult")
                 .field("method", method)
-                .field("reason", &"result did not decode")
+                .field("reason", reason)
                 .finish(),
             Self::TimedOut { method, after } => formatter
                 .debug_struct("TimedOut")
@@ -215,7 +399,7 @@ impl std::fmt::Display for CallError {
             Self::Encode => formatter.write_str("request parameters did not encode"),
             Self::InvalidTimeout => formatter.write_str("timeout must be nonzero"),
             Self::Rpc(error) => write!(formatter, "{error}"),
-            Self::BadResult { method, .. } => write!(formatter, "{method}: result did not decode"),
+            Self::BadResult { method, reason } => write!(formatter, "{method}: {reason}"),
             Self::TimedOut { method, after } => write!(
                 formatter,
                 "{method}: timed out after {after:?}; the gateway may have applied the call"
@@ -472,6 +656,194 @@ mod tests {
         ] {
             assert!(saw.contains(&kind), "classifier never produced {kind:?}");
         }
+    }
+
+    fn parsed(text: &str) -> Value {
+        parse_frame(text.as_bytes()).unwrap_or_else(|| panic!("did not parse: {text}"))
+    }
+
+    #[test]
+    fn non_finite_tokens_outside_strings_become_null() {
+        assert_eq!(parsed(r#"{"a":Infinity}"#), json!({"a": null}));
+        assert_eq!(parsed(r#"{"a":-Infinity}"#), json!({"a": null}));
+        assert_eq!(parsed(r#"{"a":NaN}"#), json!({"a": null}));
+        assert_eq!(
+            parsed("[NaN, 1, Infinity,-Infinity]"),
+            json!([null, 1, null, null])
+        );
+        assert_eq!(parsed(r#"{"a" : NaN }"#), json!({"a": null}));
+        assert_eq!(parsed("{\"a\":\n\tNaN\r\n}"), json!({"a": null}));
+        assert_eq!(
+            parsed(r#"{"x":{"y":[{"z":Infinity},[NaN,[ -Infinity ]]]},"k":2}"#),
+            json!({"x": {"y": [{"z": null}, [null, [null]]]}, "k": 2})
+        );
+        let frame = parsed(r#"{"id":4,"result":{"chat":Infinity}}"#);
+        assert_eq!(
+            classify_value(&frame),
+            FrameClass::Reply,
+            "a repaired reply is still a reply"
+        );
+        assert_eq!(
+            classify(br#"{"id":4,"result":{"chat":Infinity}}"#),
+            FrameClass::Reply
+        );
+    }
+
+    #[test]
+    fn non_finite_text_inside_strings_is_untouched() {
+        for text in [
+            r#"{"k":"NaN Infinity -Infinity"}"#,
+            r#"{"NaN":1,"-Infinity":[2]}"#,
+            r#"{"s":"x\"NaN\"","n":1}"#,
+            r#"{"s":"\\","t":"Infinity"}"#,
+            r#"{"s":"héllo ☃ NaN","t":"é☃ Infinity é"}"#,
+        ] {
+            let (value, repaired) = parse_frame_repaired(text.as_bytes()).expect("valid frame");
+            assert!(!repaired, "valid frame took the repair path: {text}");
+            assert_eq!(value, serde_json::from_str::<Value>(text).expect("strict"));
+        }
+        // A real token after strings that end in an escape is still replaced, and the
+        // strings around it are kept byte for byte.
+        let (value, repaired) = parse_frame_repaired(
+            r#"{"s":"\\","k":"say \"NaN\"","n":NaN,"u":"é Infinity"}"#.as_bytes(),
+        )
+        .expect("repairable frame");
+        assert!(repaired);
+        assert_eq!(
+            value,
+            json!({"s": "\\", "k": "say \"NaN\"", "n": null, "u": "é Infinity"})
+        );
+        let (value, _) =
+            parse_frame_repaired("{\"é\":\"☃\",\"n\":Infinity,\"ü\":\"ß\"}".as_bytes())
+                .expect("multi-byte text beside a token");
+        assert_eq!(value, json!({"é": "☃", "n": null, "ü": "ß"}));
+    }
+
+    #[test]
+    fn a_token_that_starts_a_longer_bare_word_is_not_rewritten() {
+        for text in [
+            r#"{"a":NaNx}"#,
+            r#"{"a":Infinityx}"#,
+            r#"{"a":-Infinity1}"#,
+            r#"{"a":xNaN}"#,
+            r#"{"a":NaN_}"#,
+            r#"{"a":INFINITY}"#,
+            r#"{"a":nan}"#,
+            r#"{"a":+Infinity}"#,
+            r#"{"a":Infinit}"#,
+            r#"{NaN:1}"#,
+            r#"{"a" NaN}"#,
+        ] {
+            assert!(repair_non_finite(text.as_bytes()).is_none(), "{text}");
+            assert!(parse_frame(text.as_bytes()).is_none(), "{text}");
+            assert_eq!(
+                classify(text.as_bytes()),
+                FrameClass::Malformed(MalformedKind::NotJson),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_invalid_frames_stay_not_json() {
+        let cases: &[&[u8]] = &[
+            br#"{"a":tru}"#,
+            br#"{"id":1,"result":"#,
+            &[0xff, 0xfe, b'N', b'a', b'N'],
+            br#"{"a":NaN,}"#,
+            br#"{"a":NaN"#,
+        ];
+        for frame in cases {
+            assert!(parse_frame(frame).is_none(), "{frame:?}");
+            assert_eq!(
+                classify(frame),
+                FrameClass::Malformed(MalformedKind::NotJson)
+            );
+        }
+        // The table above also gains a reply that needed repair.
+        assert_eq!(
+            classify(br#"{"id":3,"result":{"x":-Infinity}}"#),
+            FrameClass::Reply
+        );
+    }
+
+    #[test]
+    fn valid_frames_take_the_strict_path_only() {
+        for text in [
+            r#"{"id":3,"result":{"ok":true,"n":1.5e3}}"#,
+            r#"{"id":3,"result":"NaN"}"#,
+            r#"[1,2]"#,
+            "3",
+        ] {
+            let (_, repaired) = parse_frame_repaired(text.as_bytes()).expect("valid");
+            assert!(!repaired, "{text}");
+        }
+    }
+
+    #[test]
+    fn reply_id_is_recovered_only_from_top_level_integer_id() {
+        let recovered: &[(&[u8], u64)] = &[
+            (br#"{"jsonrpc":"2.0","id":7,"result":{"a":tru}}"#, 7),
+            (br#"{"jsonrpc":"2.0","id" : 12 ,"result":{"a":tru}}"#, 12),
+            (br#"{"result":{"a":tru,"id":99},"id":5}"#, 5),
+            (br#"{"result":[{"id":99},"id\"",{"x":"}"}],"id":0}"#, 0),
+            (br#"{"id":18446744073709551615,"result":tru}"#, u64::MAX),
+        ];
+        for (frame, id) in recovered {
+            assert_eq!(recover_reply_id(frame), Some(*id), "{frame:?}");
+        }
+        let refused: &[&[u8]] = &[
+            br#"{"result":{"id":5,"a":tru}}"#,
+            br#"{"id":"5","result":tru}"#,
+            br#"{"id":5,"method":"event","params":tru}"#,
+            br#"{"method":"event","id":5,"params":tru}"#,
+            br#"{"id":-5,"result":tru}"#,
+            br#"{"id":5.5,"result":tru}"#,
+            br#"{"id":5e1,"result":tru}"#,
+            br#"{"id":18446744073709551616,"result":tru}"#,
+            br#"{"id":05,"result":tru}"#,
+            br#"{"id":null,"result":tru}"#,
+            br#"{"\u0069d":5,"result":tru}"#,
+            br#"{"id":5,"m\u0065thod":"x","result":tru}"#,
+            br#"{"id":5,"id":6,"result":tru}"#,
+            br#"{"id":5,"result":{"a":tru}"#,
+            br#"{"id":5,"result":"unterminated}"#,
+            br#"[{"id":5,"result":tru}]"#,
+            b"not json",
+            b"",
+        ];
+        for frame in refused {
+            assert_eq!(recover_reply_id(frame), None, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn repair_never_changes_string_contents() {
+        use proptest::prelude::*;
+        proptest!(|(text in any::<String>())| {
+            let escaped = serde_json::to_string(&text).expect("string encodes");
+            let frame = format!(r#"{{"id":1,"result":{{"s":{escaped},"n":NaN}}}}"#);
+            let value = parse_frame(frame.as_bytes()).expect("repairable frame");
+            prop_assert_eq!(value["result"]["s"].as_str(), Some(text.as_str()));
+            prop_assert!(value["result"]["n"].is_null());
+            prop_assert_eq!(recover_reply_id(frame.as_bytes()), Some(1));
+        });
+    }
+
+    #[test]
+    fn unreadable_reply_text_names_the_reply_not_the_result() {
+        let error = CallError::BadResult {
+            method: "profiles.list".into(),
+            reason: UNREADABLE_REPLY,
+        };
+        assert_eq!(error.to_string(), "profiles.list: reply was not valid JSON");
+        assert!(format!("{error:?}").contains("reply was not valid JSON"));
+        assert!(error.next_step().contains("not valid JSON"));
+        let decode = CallError::BadResult {
+            method: "profiles.list".into(),
+            reason: "result did not decode",
+        };
+        assert_eq!(decode.to_string(), "profiles.list: result did not decode");
     }
 
     #[test]

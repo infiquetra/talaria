@@ -23,7 +23,10 @@
 
 #![warn(missing_docs)]
 
-use crate::rpc::{CallError, FrameClass, RpcError, classify, encode_request};
+use crate::rpc::{
+    CallError, FrameClass, RpcError, UNREADABLE_REPLY, classify, classify_value, encode_request,
+    parse_frame, recover_reply_id,
+};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -628,8 +631,12 @@ pub fn decode_frame(
     raw: &[u8],
     responders: &mut dyn FnMut(&str) -> Responder,
 ) -> Decoded {
-    let class = classify(raw);
-    let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
+    let parsed = parse_frame(raw);
+    let class = parsed.as_ref().map_or(
+        FrameClass::Malformed(MalformedKind::NotJson),
+        classify_value,
+    );
+    let value = parsed.unwrap_or(Value::Null);
     let malformed = |kind| {
         Decoded::Inbound(Inbound::Malformed(MalformedFrame {
             generation,
@@ -848,7 +855,7 @@ impl ChannelState {
                     return self.invalidate_ambiguous(&request.id);
                 }
                 if matches!(request.request, ContractServerRequest::Unknown(_)) {
-                    let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
+                    let value = parse_frame(raw).unwrap_or(Value::Null);
                     let method = truncate_method(value["method"].as_str().unwrap_or_default());
                     let mut effects = vec![refusal(
                         generation,
@@ -896,8 +903,22 @@ impl ChannelState {
             Decoded::Inbound(Inbound::Malformed(frame)) => {
                 self.stats.malformed_frames += 1;
                 let mut effects = Vec::new();
+                // A reply whose text cannot be read still names its call: fail that call now
+                // instead of leaving it to its deadline.
+                if frame.kind == MalformedKind::NotJson
+                    && let Some(id) = recover_reply_id(raw)
+                    && let Some(method) = self.calls.remove(&id)
+                {
+                    effects.push(Effect::Complete {
+                        id,
+                        outcome: Err(CallError::BadResult {
+                            method,
+                            reason: UNREADABLE_REPLY,
+                        }),
+                    });
+                }
                 if classify(raw) == FrameClass::ServerRequest {
-                    let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
+                    let value = parse_frame(raw).unwrap_or(Value::Null);
                     let id = value["id"].as_str().unwrap_or_default();
                     if id.len() > MAX_REQUEST_ID_BYTES {
                         effects.extend(self.oversized_id_refusal(generation, id));
@@ -2428,6 +2449,41 @@ mod tests {
             .await
             .expect("detached swallows");
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn unreadable_reply_with_a_pending_id_completes_that_call_once() {
+        let mut state = ChannelState::with_policy(3, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        let id = state.register_call("profiles.list");
+        let other = state.register_call("runtime.describe");
+        let frame = format!(r#"{{"id":{id},"result":{{"a":tru}}}}"#);
+        let effects = state.on_frame(Generation(1), frame.as_bytes(), now);
+        assert_eq!(effects.len(), 2);
+        assert!(matches!(
+            &effects[0],
+            Effect::Complete {
+                id: done,
+                outcome: Err(CallError::BadResult { method, reason }),
+            } if *done == id && method == "profiles.list" && *reason == UNREADABLE_REPLY
+        ));
+        assert!(matches!(
+            &effects[1],
+            Effect::Deliver(Inbound::Malformed(frame)) if frame.kind == MalformedKind::NotJson
+        ));
+        assert_eq!(
+            state.stats(0).pending_calls,
+            1,
+            "the other call still waits"
+        );
+        assert_eq!(state.stats(0).malformed_frames, 1);
+        let again = state.on_frame(Generation(1), frame.as_bytes(), now);
+        assert_eq!(again.len(), 1, "a repeat has no call left to complete");
+        let unattributed = state.on_frame(Generation(1), br#"{"result":{"a":tru}}"#, now);
+        assert_eq!(unattributed.len(), 1);
+        assert_eq!(state.stats(0).pending_calls, 1);
+        let _ = other;
     }
 
     #[test]

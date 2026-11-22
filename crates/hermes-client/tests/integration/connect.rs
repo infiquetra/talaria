@@ -2601,6 +2601,38 @@ mod handshake {
     }
 
     #[tokio::test]
+    async fn handshake_reads_frames_with_non_finite_numbers() {
+        let home = Home::new();
+        let fixture = format!("{}/profiles/fixture", home.canonical());
+        let steps = vec![
+            WsStep::Send(frame_ready()),
+            WsStep::Send(r#"{"jsonrpc":"2.0","id":9,"result":{"chat":Infinity}}"#.to_string()),
+            WsStep::Send(
+                r#"{"jsonrpc":"2.0","method":"event","params":{"type":"x.y","payload":{"n":-Infinity,"m":NaN}}}"#
+                    .to_string(),
+            ),
+            WsStep::Take,
+            WsStep::Send(frame_capabilities()),
+            WsStep::Take,
+            WsStep::Send(frame_describe(&fixture)),
+        ];
+        let (_mock, mut connection) = opened(
+            &home,
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps,
+                guard: false,
+            },
+        )
+        .await;
+        handshake(&mut connection)
+            .await
+            .expect("frames with bare non-finite numbers are read");
+        let parts = connection.into_parts();
+        assert_eq!(parts.buffered.len(), 1, "the event frame is kept");
+    }
+
+    #[tokio::test]
     async fn handshake_deadlines_and_capabilities_failures() {
         let defaults = HandshakeOptions::default();
         assert_eq!(
