@@ -257,29 +257,7 @@ fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
     lines(vec![detail], at(area, bottom, 2), buf);
     let messages = view.banner.clone();
     if view.screen == Screen::Choosing {
-        let available = usize::from(area.height.saturating_sub(top + 1));
-        let first = view
-            .choice_cursor
-            .saturating_sub(available.saturating_sub(1));
-        let options = view
-            .choices
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take(available)
-            .map(|(i, choice)| {
-                format!(
-                    "{} {choice}",
-                    if i == view.choice_cursor { ">" } else { " " }
-                )
-            })
-            .collect();
-        Clear.render(at(area, top, area.height.saturating_sub(top + 1)), buf);
-        lines(
-            options,
-            at(area, top, area.height.saturating_sub(top + 1)),
-            buf,
-        );
+        draw_chooser(view, at(area, top, bottom.saturating_sub(top)), buf);
     } else {
         let region = at(area, bottom + 2, area.height.saturating_sub(bottom + 3));
         if let Some(editor) = &view.editor {
@@ -322,6 +300,65 @@ fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
         &view.footer
     };
     line(footer, at(area, area.height - 1, 1), buf);
+}
+
+/// The open chooser over the field list, above the detail line: the filter, then one row per
+/// value with its marks and description, scrolled to keep the selection in view.
+fn draw_chooser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
+    Clear.render(area, buf);
+    let filter = if view.choice_filter.is_empty() {
+        "type to filter".to_owned()
+    } else {
+        format!("filter: {}", view.choice_filter)
+    };
+    line(&filter, at(area, 0, 1), buf);
+    let available = usize::from(area.height.saturating_sub(1));
+    if view.choices.is_empty() {
+        line(
+            &format!("No match for \"{}\"", view.choice_filter),
+            at(area, 1, 1),
+            buf,
+        );
+        return;
+    }
+    let width = usize::from(area.width);
+    let name_width = view
+        .choices
+        .iter()
+        .map(|choice| Line::from(sanitize(&choice.name).as_ref()).width())
+        .max()
+        .unwrap_or(0)
+        .min(width.saturating_sub(4) / 2);
+    let first = view
+        .choice_cursor
+        .saturating_sub(available.saturating_sub(1));
+    for (offset, (index, choice)) in view
+        .choices
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(available)
+        .enumerate()
+    {
+        let selected = index == view.choice_cursor;
+        let text = format!(
+            "{} {}  {}",
+            if selected { ">" } else { " " },
+            column(&choice.name, name_width),
+            column(
+                &choice.description,
+                width.saturating_sub(name_width + 4).max(1)
+            )
+        );
+        let style = if selected {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        Paragraph::new(sanitize(&text).into_owned())
+            .style(style)
+            .render(at(area, 1 + offset as u16, 1), buf);
+    }
 }
 
 /// Shared review component for formatted domain values.

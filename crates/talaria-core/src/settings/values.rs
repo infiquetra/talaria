@@ -1,5 +1,6 @@
 use super::{
-    FieldKind, FieldView, contains_secret_key, env_reference_names, secrets::has_env_reference,
+    ChoiceValue, FieldKind, FieldView, Pick, SchemaList, choice_spec, contains_secret_key,
+    env_reference_names, secrets::has_env_reference,
 };
 use serde_json::Value;
 use std::fmt;
@@ -65,6 +66,13 @@ pub fn value_kind(
     }
     if current.is_some_and(contains_secret_key) {
         return ValueKind::ReadOnly(ReadOnlyReason::HoldsSecret);
+    }
+    if let Some(spec) = choice_spec(&field.key)
+        && matches!(field.kind, FieldKind::String | FieldKind::Select)
+    {
+        return match spec.pick {
+            Pick::One => ValueKind::Choice,
+        };
     }
     let decided = current
         .filter(|v| !v.is_null())
@@ -177,19 +185,74 @@ pub fn parse_input(
             }
         }
         ValueKind::Choice => {
-            if text.is_empty() && field.clearable {
+            let spec = choice_spec(&field.key);
+            let listed = listed_choices(field);
+            if let Some((value, item)) = listed.iter().find(|(value, item)| match item {
+                Some(item) => item.value == text || item.aliases.contains(&text),
+                None => option_text(value) == text,
+            }) {
+                Ok(match item {
+                    Some(item) if item.value != text => Value::String(text.into()),
+                    _ => value.clone(),
+                })
+            } else if text.is_empty() && field.clearable {
                 Ok(Value::String(String::new()))
+            } else if let Some(current) = current.filter(|current| option_text(current) == text) {
+                Ok(current.clone())
+            } else if let Some(spec) = spec.filter(|spec| spec.custom.is_some()) {
+                Ok(spec.saved(text))
             } else {
-                field
-                    .options
-                    .as_ref()
-                    .and_then(|options| options.iter().find(|v| option_text(v) == text))
-                    .cloned()
-                    .ok_or_else(|| error("Choose one of the listed values."))
+                let mut names: Vec<String> = listed
+                    .iter()
+                    .take(8)
+                    .map(|(value, item)| match item {
+                        Some(item) if item.value.is_empty() => "\"\"".into(),
+                        Some(item) => item.value.into(),
+                        None => option_text(value),
+                    })
+                    .collect();
+                if listed.len() > 8 {
+                    names.push("…".into());
+                }
+                Err(InputError {
+                    message: format!("Choose one of: {}.", names.join(", ")),
+                })
             }
         }
         ValueKind::ReadOnly(_) => Err(error("This setting cannot be edited here.")),
     }
+}
+/// The values a choice key lists, in display order: the built-in rows, then the schema options
+/// they lack unless the built-in list replaces the schema's. Each comes with its built-in row.
+pub(crate) fn listed_choices(field: &FieldView) -> Vec<(Value, Option<&'static ChoiceValue>)> {
+    let spec = choice_spec(&field.key);
+    let mut listed: Vec<(Value, Option<&'static ChoiceValue>)> = spec
+        .map(|spec| {
+            spec.items
+                .iter()
+                .map(|item| (spec.saved(item.value), Some(item)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if spec.is_none() && field.clearable {
+        listed.push((Value::String(String::new()), None));
+    }
+    if spec.is_none_or(|spec| spec.schema == SchemaList::Merge) {
+        for option in field.options.iter().flatten() {
+            if !listed
+                .iter()
+                .any(|(value, item)| is_choice(option, value, *item))
+            {
+                listed.push((option.clone(), None));
+            }
+        }
+    }
+    listed
+}
+/// Whether `value` selects the listed `choice`, directly or through one of its aliases.
+pub(crate) fn is_choice(value: &Value, choice: &Value, item: Option<&ChoiceValue>) -> bool {
+    value == choice
+        || item.is_some_and(|item| value.as_str().is_some_and(|s| item.aliases.contains(&s)))
 }
 pub(crate) fn option_text(value: &Value) -> String {
     value

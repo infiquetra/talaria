@@ -523,8 +523,21 @@ Mixture of Agents presets); see [Model roles](model-roles.md).
 
 The `settings_*` bindings above apply while browsing. `/` focuses the filter; Enter leaves
 it focused on the first matching setting. In an editor, arrows, Home, End, Backspace,
-Delete and Ctrl+U edit text; Enter accepts and Esc cancels. Option lists accept typing to
-filter. Ctrl+R reloads settings, `?` shows help, and Esc clears the filter before closing.
+Delete and Ctrl+U edit text; Enter accepts and Esc cancels. Ctrl+R reloads settings, `?`
+shows help, and Esc clears the filter before closing.
+
+A setting with a known set of values opens a chooser instead of a text box. Each row names
+a value and says in one line what it does; `(current)` marks the value in force and
+`(default)` the profile's default, and the chooser opens on the current value. Typing
+filters by name or description, Up and Down move and wrap, PgUp and PgDn move ten rows,
+Home and End jump to the ends, Enter chooses and Esc cancels. The lists come from the
+gateway's schema plus a table built into Talaria for keys the schema types as plain text;
+that table also corrects schema lists that name values Hermes does not read, such as
+`terminal.modal_mode`. A value set outside the list shows as
+`<value> (current, not in the list)`, and Enter on it keeps it unchanged. Where Hermes also
+takes values outside the list, such as plugin names or voice names, a last row
+`Type a value…` opens a text box that starts with the filter text. The command form below
+accepts the same values, and its refusal names them: `Choose one of: auto, managed, direct.`
 Pending edits require confirmation before closing. Ctrl+Z suspends as usual.
 
 Secrets are fully masked. R reveals a selected secret once for ten seconds or until the
