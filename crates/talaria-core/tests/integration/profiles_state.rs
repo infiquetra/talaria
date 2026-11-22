@@ -1950,6 +1950,52 @@ fn served_rows_without_a_listed_model_are_described_in_the_background() {
     assert_eq!(describes(&effects), ["fixture-a"], "{effects:?}");
 }
 
+/// A background model read that starts while the selection waits to be described
+/// must leave the selection's own describe in place.
+#[test]
+fn a_background_read_keeps_the_selections_pending_describe() {
+    let mut machine = state();
+    let _ = machine.update(ProfilesInput::Open, 0);
+    let _ = full_load(&mut machine, 0, 0);
+    let effects = machine.update(
+        ProfilesInput::Described(0, "default".to_owned(), Ok(description("default"))),
+        10,
+    );
+    assert_eq!(describes(&effects), ["fixture"], "{effects:?}");
+
+    // Select the parked row; its describe waits for the selection to settle.
+    let mut token = None;
+    for now in [20, 21, 22] {
+        let effects = machine.update(ProfilesInput::Key(KeyAction::Down), now);
+        if let Some(found) = effects.iter().find_map(|effect| match effect {
+            ProfilesEffect::ScheduleTick { token, .. } => Some(*token),
+            _ => None,
+        }) {
+            token = Some(found);
+        }
+    }
+    let token = token.expect("the selection schedules its describe");
+    assert_eq!(
+        machine.view().selected,
+        Some(3),
+        "the parked row is selected"
+    );
+
+    // The background answer arrives inside the settle window and reads the next row.
+    let effects = machine.update(
+        ProfilesInput::Described(0, "fixture".to_owned(), Ok(description("fixture"))),
+        30,
+    );
+    assert_eq!(describes(&effects), ["fixture-a"], "{effects:?}");
+
+    let effects = machine.update(ProfilesInput::Tick { token }, 200);
+    assert_eq!(
+        describes(&effects),
+        ["fixture-b"],
+        "the selected parked row is described when its timer fires: {effects:?}"
+    );
+}
+
 fn keys_line(machine: &ProfilesState) -> String {
     match machine.view().panel {
         Panel::Detail(detail) => detail.lines[0].clone(),

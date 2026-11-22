@@ -979,7 +979,8 @@ impl ProfilesState {
         }
         while let Some(name) = self.model_queue.pop_front() {
             if !self.requested.contains(&name) && !self.model_failed.contains(&name) {
-                self.describe(name, false, effects);
+                // Send without `describe`, which would drop the selection's pending describe.
+                self.send_describe(name, effects);
                 return;
             }
         }
@@ -1146,14 +1147,19 @@ impl ProfilesState {
             self.fresh_after.insert(name);
             return;
         }
-        if fresh || self.requested.insert(name.clone()) {
-            self.requested.insert(name.clone());
-            self.in_flight.insert(name.clone());
-            effects.push(ProfilesEffect::Describe {
-                generation: self.generation,
-                name,
-            });
+        if fresh || !self.requested.contains(&name) {
+            self.send_describe(name, effects);
         }
+    }
+
+    /// Ask the gateway to describe one profile, touching no timer.
+    fn send_describe(&mut self, name: String, effects: &mut Vec<ProfilesEffect>) {
+        self.requested.insert(name.clone());
+        self.in_flight.insert(name.clone());
+        effects.push(ProfilesEffect::Describe {
+            generation: self.generation,
+            name,
+        });
     }
 
     fn described(
