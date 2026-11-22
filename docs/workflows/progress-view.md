@@ -11,7 +11,9 @@ Run discovery and the picker become available with the runner integration.
 The tree groups journal keys under their workflow and phase, with child
 workflows and Hermes subagents nested below their parent. Subagents do not
 increase the run's agent count. Rows show the journal's model, provider,
-duration and usage; selected agents show their prompt, last tool and recent
+duration and usage; token counts, here and in the run list, read in thousands and
+millions with one decimal (`950 tokens`, `412.3k tokens`, `5.8M tokens`), while JSON
+output keeps the raw numbers; selected agents show their prompt, last tool and recent
 output. Filters cycle through all, working, needs-you and failed. The header
 names any filter other than all, and an empty list says which filter hides the
 agents and that `f` changes it.
@@ -30,8 +32,9 @@ starts), a running view adds
 view cannot read makes no claim either way. The runner journals its admission
 gate only when the gate opens or pauses, so script logs stay visible.
 
-Use the arrow keys to select and collapse rows (the run header never
-collapses), Enter to open an agent, `s` to
+Use Up and Down to select rows, Left to fold the selected phase or agent and
+Right to unfold it (the run header never folds); the key-hint row names
+`← fold · → unfold`. Use Enter to open an agent, `s` to
 steer, `x` to stop an agent, `r` to request restart on the next resume, `p` to
 pause or resume, `shift+x` to stop the run, and `f` to cycle filters. Restart
 and stop-run require a second matching key or `y` within three seconds. The

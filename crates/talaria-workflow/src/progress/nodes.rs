@@ -252,13 +252,19 @@ impl AgentNode {
         }
     }
 }
+/// A token count as people read it: whole below a thousand, then thousands and millions with
+/// one decimal ("950", "412.3k", "5.8M"). Every screen that shows a count uses this.
 pub fn format_tokens(n: u64) -> String {
+    let n = u128::from(n);
     if n < 1000 {
-        n.to_string()
-    } else {
-        let tenths = (u128::from(n) * 10 + 500) / 1000;
-        format!("{}.{}k", tenths / 10, tenths % 10)
+        return n.to_string();
     }
+    let thousands = (n * 10 + 500) / 1000;
+    if thousands < 10_000 {
+        return format!("{}.{}k", thousands / 10, thousands % 10);
+    }
+    let millions = (n * 10 + 500_000) / 1_000_000;
+    format!("{}.{}M", millions / 10, millions % 10)
 }
 pub fn format_money(n: Option<f64>) -> String {
     n.map_or_else(|| "cost unknown".into(), |n| format!("${n:.2}"))
