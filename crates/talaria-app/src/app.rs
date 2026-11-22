@@ -3312,8 +3312,16 @@ fn connectors_input(
 }
 
 /// Apply one message. No input or output: the effects say what to do.
-#[inline(never)]
+///
+/// A session or profile switch, whichever path starts it, first closes an open `/theme` or
+/// `/skin` selector and waits for any skin write in flight.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
+    let effects = update_message(state, message);
+    choice::before_switch(state, effects)
+}
+
+#[inline(never)]
+fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let queue_now_ms = match &message {
         AppMessage::Tick { now_ms } => *now_ms,
         _ => state.now_ms,
@@ -17775,6 +17783,31 @@ mod profiles_action_tests {
         assert!(
             !state.profiles.is_open(),
             "a moved connection does not reopen the list"
+        );
+    }
+
+    #[test]
+    fn connect_puts_the_previewed_skin_back_before_it_starts_on_another_profile() {
+        use super::choice::tests::{answered, open, previewing, switches, writes};
+        let mut state = loaded();
+        open(&mut state);
+        previewing(&mut state);
+        let _ = answered(&mut state, "ares");
+        key(&mut state, KeyAction::Connect);
+        let effects = key(&mut state, KeyAction::Char('y'));
+        assert!(
+            state.choice.is_none(),
+            "the selector closes before the start"
+        );
+        assert_eq!(writes(&effects), ["default"], "the restore goes to fixture");
+        assert_eq!(switches(&effects), 0, "the start waits for the restore");
+        let effects = answered(&mut state, "default");
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                AppEffect::StartInProfile { profile, .. } if profile == "default"
+            )),
+            "the start on default runs once fixture has its skin back"
         );
     }
 

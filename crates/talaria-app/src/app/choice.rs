@@ -3,9 +3,12 @@
 //! The list itself is `talaria_core::commands::ChoiceList`. A theme preview changes only what the
 //! screen resolves, in memory. Hermes has no call that shows a skin without making it the
 //! profile's skin, so a skin preview writes it once the selection has rested, and Esc or quitting
-//! writes the original back.
+//! writes the original back. Every write goes through the connection and session the selector
+//! opened on, and a session or profile switch closes the selector and waits for the writes.
 
 use std::time::Duration;
+
+use hermes_client::Client;
 
 use talaria_core::appearance::{AppearanceChange, AppearanceState, NotAppliedReason, Polarity};
 use talaria_core::commands::{ChoiceEffect, ChoiceItem, ChoiceKey, ChoiceList};
@@ -38,8 +41,18 @@ enum Kind {
         /// The `config.toml` table that keeps a file choice.
         table: String,
     },
-    /// The profile's skin when the list opened.
-    Skin(String),
+    Skin {
+        /// The profile's skin when the list opened.
+        original: String,
+        target: Target,
+    },
+}
+
+/// Where a `/skin` selector writes: the connection and session it opened on.
+#[derive(Clone)]
+struct Target {
+    client: Option<Client>,
+    session: Option<String>,
 }
 
 /// A skin preview that has written, or may write, the profile's skin.
@@ -58,6 +71,9 @@ pub struct SkinPreview {
     finish: Option<Finish>,
     /// The write in flight puts the original back.
     restoring: bool,
+    target: Target,
+    /// A session or profile switch waiting for the write in flight to answer.
+    held: Vec<AppEffect>,
 }
 
 enum Finish {
@@ -86,6 +102,8 @@ pub enum ChoiceReply {
         result: Result<SkinChoices, String>,
         /// Why the current theme shows no skin, if it does not.
         ignored: Option<NotAppliedReason>,
+        /// The profile and session the list was read for.
+        owner: (String, Option<String>),
     },
     Rested(u64),
     SkinSet {
@@ -159,6 +177,7 @@ pub(super) fn run(
                 .cloned();
             let session = session_id(state);
             let profile = state.profile.clone();
+            let owner = (profile.clone(), session.clone());
             let mut service = state.appearance.clone();
             executor.send_later(async move {
                 let Some(client) = client else {
@@ -178,6 +197,7 @@ pub(super) fn run(
                     report: (skin, lines),
                     result,
                     ignored,
+                    owner,
                 })
             });
         }
@@ -186,12 +206,10 @@ pub(super) fn run(
             AppMessage::Choice(ChoiceReply::Rested(timer))
         }),
         ChoiceWork::SetSkin(name) => {
-            let client = state
-                .service
+            let Target { client, session } = state
+                .skin_preview
                 .as_ref()
-                .and_then(SessionService::client)
-                .cloned();
-            let session = session_id(state);
+                .map_or_else(|| target(state), |preview| preview.target.clone());
             let mut service = state.appearance.clone();
             executor.send_later(async move {
                 let Some(client) = client else {
@@ -211,6 +229,18 @@ pub(super) fn run(
                 AppMessage::Choice(ChoiceReply::SkinSet { name, skin, result })
             });
         }
+    }
+}
+
+/// The connection and session in the foreground now.
+fn target(state: &AppState) -> Target {
+    Target {
+        client: state
+            .service
+            .as_ref()
+            .and_then(SessionService::client)
+            .cloned(),
+        session: session_id(state),
     }
 }
 
@@ -235,6 +265,7 @@ pub(super) fn reply(state: &mut AppState, reply: ChoiceReply) -> Vec<AppEffect> 
             report: (skin, lines),
             result,
             ignored,
+            owner,
         } => {
             let mut effects = super::update(
                 state,
@@ -244,9 +275,12 @@ pub(super) fn reply(state: &mut AppState, reply: ChoiceReply) -> Vec<AppEffect> 
                     generation: None,
                 },
             );
+            // A list read before a switch, or for another session, belongs to that one.
             if let Ok(choices) = result
                 && !choices.items.is_empty()
                 && state.draft.is_empty()
+                && !state.switching
+                && owner == (state.profile.clone(), session_id(state))
             {
                 effects.extend(close(state));
                 effects.push(open_skins(state, choices, ignored));
@@ -384,7 +418,10 @@ fn open_skins(
     list.set_note(Some(note));
     state.choice = Some(Selector {
         list,
-        kind: Kind::Skin(choices.configured),
+        kind: Kind::Skin {
+            original: choices.configured,
+            target: target(state),
+        },
     });
     AppEffect::Redraw
 }
@@ -439,7 +476,7 @@ fn preview(state: &mut AppState, id: &str) -> Vec<AppEffect> {
             state.appearance.set_theme_preview(Some(preview));
             vec![AppEffect::Appearance, AppEffect::Redraw]
         }
-        Kind::Skin(original) => {
+        Kind::Skin { original, target } => {
             let preview = state.skin_preview.get_or_insert_with(|| SkinPreview {
                 original: original.clone(),
                 applied: original.clone(),
@@ -449,6 +486,8 @@ fn preview(state: &mut AppState, id: &str) -> Vec<AppEffect> {
                 stopped: false,
                 finish: None,
                 restoring: false,
+                target: target.clone(),
+                held: Vec::new(),
             });
             if preview.stopped || preview.restoring || preview.finish.is_some() {
                 return vec![AppEffect::Redraw];
@@ -497,7 +536,7 @@ fn apply(state: &mut AppState, id: &str) -> Vec<AppEffect> {
             }
             effects
         }
-        Kind::Skin(_) => {
+        Kind::Skin { .. } => {
             let skin = AppEffect::Skin(Some(id.to_owned()));
             let Some(preview) = &mut state.skin_preview else {
                 return vec![skin, AppEffect::Redraw];
@@ -523,7 +562,7 @@ pub(super) fn close(state: &mut AppState) -> Vec<AppEffect> {
             state.appearance.set_theme_preview(None);
             vec![AppEffect::Appearance, AppEffect::Redraw]
         }
-        Kind::Skin(_) => {
+        Kind::Skin { .. } => {
             let Some(preview) = &mut state.skin_preview else {
                 return vec![AppEffect::Redraw];
             };
@@ -558,7 +597,7 @@ fn restore(state: &mut AppState) -> Vec<AppEffect> {
 fn rested(state: &mut AppState, timer: u64) -> Vec<AppEffect> {
     let open = matches!(
         state.choice.as_ref().map(|selector| &selector.kind),
-        Some(Kind::Skin(_))
+        Some(Kind::Skin { .. })
     );
     let Some(preview) = &mut state.skin_preview else {
         return Vec::new();
@@ -577,7 +616,27 @@ fn rested(state: &mut AppState, timer: u64) -> Vec<AppEffect> {
     ))]
 }
 
+/// Fold a write's answer in. A switch held for it starts once no write is in flight.
 fn skin_set(
+    state: &mut AppState,
+    name: String,
+    skin: Option<AppearanceState>,
+    result: Result<(), SkinPreviewError>,
+) -> Vec<AppEffect> {
+    let held = state
+        .skin_preview
+        .as_mut()
+        .map(|preview| std::mem::take(&mut preview.held))
+        .unwrap_or_default();
+    let mut effects = settle(state, name, skin, result);
+    match &mut state.skin_preview {
+        Some(preview) if preview.in_flight => preview.held = held,
+        _ => effects.extend(held),
+    }
+    effects
+}
+
+fn settle(
     state: &mut AppState,
     name: String,
     skin: Option<AppearanceState>,
@@ -646,7 +705,34 @@ fn skin_set(
     effects
 }
 
-/// Before Talaria exits: write the original skin back when a preview changed it.
+/// Before a session or profile switch starts: close the open selector, which puts the original
+/// look back through the connection it opened on. While a skin write is in flight the switch
+/// waits for it, so neither a late preview nor the restore can land after the switch.
+pub(super) fn before_switch(state: &mut AppState, effects: Vec<AppEffect>) -> Vec<AppEffect> {
+    let is_switch = |effect: &AppEffect| {
+        matches!(
+            effect,
+            AppEffect::Switch { .. } | AppEffect::StartInProfile { .. }
+        )
+    };
+    let writing = state
+        .skin_preview
+        .as_ref()
+        .is_some_and(|preview| preview.in_flight);
+    if !effects.iter().any(is_switch) || (state.choice.is_none() && !writing) {
+        return effects;
+    }
+    let (switches, mut effects): (Vec<_>, Vec<_>) = effects.into_iter().partition(is_switch);
+    effects.extend(close(state));
+    match &mut state.skin_preview {
+        Some(preview) if preview.in_flight => preview.held.extend(switches),
+        _ => effects.extend(switches),
+    }
+    effects
+}
+
+/// Before Talaria exits: write the original skin back when a preview changed it, through the
+/// connection and session the selector opened on.
 pub(super) async fn restore_on_exit(state: &mut AppState) {
     let Some(preview) = state.skin_preview.take() else {
         return;
@@ -654,19 +740,186 @@ pub(super) async fn restore_on_exit(state: &mut AppState) {
     if preview.applied == preview.original && !preview.in_flight {
         return;
     }
-    let Some(client) = state
-        .service
-        .as_ref()
-        .and_then(SessionService::client)
-        .cloned()
+    let Target {
+        client: Some(client),
+        session,
+    } = preview.target
     else {
         return;
     };
-    let session = session_id(state);
     let mut service = state.appearance.clone();
     let _ = tokio::time::timeout(
         RESTORE_WAIT,
         service.preview_skin(&client, &preview.original, session.as_deref()),
     )
     .await;
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::super::{UserAction, update};
+    use super::*;
+    use talaria_core::commands::ChoiceKey;
+
+    /// A `/skin` selector open on `fixture` over `default`.
+    fn selector() -> AppState {
+        let mut state = AppState::new("choice-tests");
+        state.profile = "fixture".into();
+        open(&mut state);
+        state
+    }
+
+    /// Open a `/skin` selector over `default`, offering `ares`.
+    pub(in crate::app) fn open(state: &mut AppState) {
+        let _ = open_skins(
+            state,
+            SkinChoices {
+                configured: "default".into(),
+                items: vec![
+                    ("ares".into(), "Synthetic red".into()),
+                    ("default".into(), "Synthetic gold".into()),
+                ],
+            },
+            None,
+        );
+    }
+
+    /// The skin each effect asks to write, in order.
+    pub(in crate::app) fn writes(effects: &[AppEffect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::Choice(ChoiceWork::SetSkin(name)) => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(in crate::app) fn switches(effects: &[AppEffect]) -> usize {
+        effects
+            .iter()
+            .filter(|effect| {
+                matches!(
+                    effect,
+                    AppEffect::Switch { .. } | AppEffect::StartInProfile { .. }
+                )
+            })
+            .count()
+    }
+
+    /// Move to `ares` and let the selection rest: the preview write is in flight.
+    pub(in crate::app) fn previewing(state: &mut AppState) {
+        let effects = key(state, ChoiceKey::Prev);
+        let timer = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Choice(ChoiceWork::Rest(timer)) => Some(*timer),
+                _ => None,
+            })
+            .expect("the move waits for the selection to rest");
+        assert_eq!(writes(&reply(state, ChoiceReply::Rested(timer))), ["ares"]);
+    }
+
+    pub(in crate::app) fn answered(state: &mut AppState, name: &str) -> Vec<AppEffect> {
+        update(
+            state,
+            AppMessage::Choice(ChoiceReply::SkinSet {
+                name: name.into(),
+                skin: None,
+                result: Ok(()),
+            }),
+        )
+    }
+
+    fn resume(state: &mut AppState) -> Vec<AppEffect> {
+        update(
+            state,
+            AppMessage::User(UserAction::Submit("/resume other-session".into())),
+        )
+    }
+
+    #[test]
+    fn a_switch_closes_the_skin_selector_and_waits_for_the_restore() {
+        let mut state = selector();
+        previewing(&mut state);
+        let _ = answered(&mut state, "ares");
+        // The profile now shows `ares`. A switch puts `default` back on this profile before it
+        // starts, so the next profile never receives this one's original skin.
+        let effects = resume(&mut state);
+        assert!(
+            state.choice.is_none(),
+            "the selector closes before a switch"
+        );
+        assert_eq!(writes(&effects), ["default"]);
+        assert_eq!(switches(&effects), 0, "the switch waits for the restore");
+        let effects = answered(&mut state, "default");
+        assert_eq!(
+            switches(&effects),
+            1,
+            "the switch starts once the restore answers"
+        );
+        assert!(state.skin_preview.is_none());
+    }
+
+    #[test]
+    fn a_switch_during_a_preview_write_waits_for_it_and_for_the_restore() {
+        let mut state = selector();
+        previewing(&mut state);
+        let effects = resume(&mut state);
+        assert!(state.choice.is_none());
+        assert!(writes(&effects).is_empty(), "one write at a time");
+        assert_eq!(switches(&effects), 0);
+        // The late preview answers first; only then is the original written back.
+        let effects = answered(&mut state, "ares");
+        assert_eq!(writes(&effects), ["default"]);
+        assert_eq!(switches(&effects), 0);
+        let effects = answered(&mut state, "default");
+        assert_eq!(switches(&effects), 1);
+    }
+
+    #[test]
+    fn a_switch_with_nothing_previewed_closes_the_selector_and_goes_ahead() {
+        let mut state = selector();
+        let effects = resume(&mut state);
+        assert!(state.choice.is_none());
+        assert!(writes(&effects).is_empty());
+        assert_eq!(switches(&effects), 1);
+    }
+
+    #[test]
+    fn a_skin_list_that_arrives_during_a_switch_opens_no_selector() {
+        let mut state = AppState::new("choice-tests");
+        state.profile = "fixture".into();
+        state.switching = true;
+        let _ = reply(
+            &mut state,
+            ChoiceReply::Skins {
+                report: (None, Vec::new()),
+                result: Ok(SkinChoices {
+                    configured: "default".into(),
+                    items: vec![("ares".into(), String::new())],
+                }),
+                ignored: None,
+                owner: ("fixture".into(), None),
+            },
+        );
+        assert!(state.choice.is_none(), "no selector while a switch runs");
+        state.switching = false;
+        let _ = reply(
+            &mut state,
+            ChoiceReply::Skins {
+                report: (None, Vec::new()),
+                result: Ok(SkinChoices {
+                    configured: "default".into(),
+                    items: vec![("ares".into(), String::new())],
+                }),
+                ignored: None,
+                owner: ("elsewhere".into(), None),
+            },
+        );
+        assert!(
+            state.choice.is_none(),
+            "no selector for another profile's list"
+        );
+    }
 }
