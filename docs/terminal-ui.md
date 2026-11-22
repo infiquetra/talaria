@@ -79,9 +79,10 @@ Search and reload preserve the selected route when it remains visible. The `>` s
 `★` star and `●` current-route marker have separate meanings, including in monochrome.
 
 An ordinary row has no badge. A row shows at most one, in this priority: not listed, unavailable,
-rate limited, needs setup, no effort, current. Long identifiers end in an ellipsis without splitting
-a visible character or losing the badge. The count line names the current route and its effort.
-`no effort` means the catalogue does not advertise reasoning. It does not prove how a provider
+rate limited, needs setup, effort not offered, current. Long identifiers end in an ellipsis without
+splitting a visible character or losing the badge. The count line names the current route and its
+effort. `effort not offered` means the catalogue does not advertise reasoning; the details line
+then reads `Reasoning effort: not offered` and the effort line `effort: not offered`. It does not prove how a provider
 handled a previous request. Details wrap and show only what Hermes reported. For the current route
 they show the effort Hermes actually sends, from `session.info`, and the context window, from
 `session.info`, `session.usage` or `message.complete`; for any other route they say Hermes limits

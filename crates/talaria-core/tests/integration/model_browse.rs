@@ -217,7 +217,10 @@ fn badge_priority() {
         result: catalog(),
     });
     type_filter(&mut s, "quiet");
-    assert_eq!(s.view().unwrap().rows.last().unwrap().badges, ["no effort"]);
+    assert_eq!(
+        s.view().unwrap().rows.last().unwrap().badges,
+        ["effort not offered"]
+    );
     assert!(details(&s).contains("Reasoning effort: not offered"));
     let mut limited = catalog();
     limited.providers[0].limit = Some(
@@ -857,7 +860,7 @@ mod independent {
             (false, false, true, Some(false), "not listed"),
             (true, false, true, Some(false), "unavailable"),
             (true, true, true, Some(false), "rate-limited"),
-            (true, true, false, Some(false), "no effort"),
+            (true, true, false, Some(false), "effort not offered"),
             (true, true, false, Some(true), "current"),
             (true, true, false, None, "current"),
         ] {
@@ -914,7 +917,10 @@ mod independent {
         assert!(!detail.contains("supports high"));
         drive::type_filter(&mut state, "chat-wide");
         let view = state.view().unwrap();
-        assert_eq!(view.rows[view.selected.unwrap()].badges, ["no effort"]);
+        assert_eq!(
+            view.rows[view.selected.unwrap()].badges,
+            ["effort not offered"]
+        );
         assert!(
             view.browse
                 .unwrap()

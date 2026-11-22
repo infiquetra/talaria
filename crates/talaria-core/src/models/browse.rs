@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use super::catalog::EFFORT_NOT_OFFERED;
 use super::text::token_count;
 use super::{Catalog, CatalogKind, CatalogRow, DisplayZone, Effort, PickerRow, RowKey};
 
@@ -217,7 +218,7 @@ pub(super) fn rows(
         }
         let facts = RowFacts {
             current: row.current,
-            offers_effort: !row.badges.iter().any(|b| b == "no effort"),
+            offers_effort: !row.badges.iter().any(|b| b == EFFORT_NOT_OFFERED),
             not_listed: row.badges.iter().any(|b| b == "not listed"),
             unavailable: row.badges.iter().any(|b| b == "unavailable"),
         };
@@ -230,7 +231,7 @@ pub(super) fn rows(
         } else if row.kind == CatalogKind::NotSetUp {
             "needs setup".into()
         } else if !facts.offers_effort {
-            "no effort".into()
+            EFFORT_NOT_OFFERED.into()
         } else if facts.current {
             "current".into()
         } else {

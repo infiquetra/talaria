@@ -129,7 +129,11 @@ impl ModelsState {
                     && row.provider_slug == provider
                     && row.model == model
             })
-            .map(|row| !row.badges.iter().any(|badge| badge == "no effort"))
+            .map(|row| {
+                !row.badges
+                    .iter()
+                    .any(|badge| badge == super::catalog::EFFORT_NOT_OFFERED)
+            })
     }
     pub fn new(launch_id: &str, saved: Result<SavedModels, String>) -> Self {
         Self {
@@ -688,7 +692,7 @@ impl ModelsState {
         picker.effort_text = if picker.current_effort.is_none() {
             "effort: could not be read".into()
         } else if !offers {
-            "effort: not offered by this model".into()
+            "effort: not offered".into()
         } else {
             let current = picker.current_effort.unwrap_or(Effort::Medium);
             let chosen = picker.chosen_effort.unwrap_or(current);

@@ -724,11 +724,11 @@ mod independent {
             "模型e\u{301}👩‍💻".repeat(20),
         ] {
             for width in [40, 60, 70] {
-                let row = truncate_label(&label, "no effort", width);
+                let row = truncate_label(&label, "effort not offered", width);
                 assert!(row.width() <= usize::from(width));
-                assert!(row.ends_with("no effort"), "{row}");
-                let prefix = row.strip_suffix("no effort").unwrap().trim_end();
-                if label.width() + 1 + "no effort".width() > usize::from(width) {
+                assert!(row.ends_with("effort not offered"), "{row}");
+                let prefix = row.strip_suffix("effort not offered").unwrap().trim_end();
+                if label.width() + 1 + "effort not offered".width() > usize::from(width) {
                     assert!(prefix.ends_with('…'), "{row}");
                 }
                 let kept = prefix.trim_end_matches('…');
