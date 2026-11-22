@@ -22,11 +22,11 @@ impl CellLines for PlainCellLines {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let dim = Style::default().add_modifier(Modifier::DIM);
         match cell {
-            Cell::User(user) => prefixed("> ", &user.text, bold),
+            Cell::User(user) => prefixed_wrapped("> ", &user.text, bold, width),
             Cell::Assistant(assistant) => prefixed("", &assistant.text, Style::default()),
             Cell::Reasoning(reasoning) => prefixed("", &reasoning.text, dim),
             Cell::Tool(tool) => vec![Line::from(tool_line(tool))],
-            Cell::Notice(notice) => prefixed("\u{b7} ", &notice.text, dim),
+            Cell::Notice(notice) => prefixed_wrapped("\u{b7} ", &notice.text, dim, width),
             Cell::Prompt(prompt) => vec![Line::styled(prompt_line(prompt), dim)],
             Cell::Shell(shell) => {
                 crate::side::shell_cell_lines(shell, width, &crate::side::SideTheme::default())
@@ -64,6 +64,45 @@ fn prefixed(prefix: &str, text: &str, style: Style) -> Vec<Line<'static>> {
             Line::styled(text, style)
         })
         .collect()
+}
+
+/// The text word-wrapped to `width`, the two-column prefix on the first row and a two-space
+/// hanging indent on every other row, all in one style. Rows break after a space; a token longer
+/// than a row, such as a path, still breaks mid-token. Spacing inside a row is kept as typed.
+pub(crate) fn prefixed_wrapped(
+    prefix: &str,
+    text: &str,
+    style: Style,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let inner = usize::from(width).saturating_sub(2).max(1);
+    let mut lines = Vec::new();
+    for piece in split_lines(text) {
+        let piece = sanitize(piece);
+        let rows = crate::composer::wrap::wrap(&piece, inner);
+        let last = rows.len().saturating_sub(1);
+        for (index, row) in rows.iter().enumerate() {
+            let mut body = &piece[row.start..row.end];
+            if index > 0 {
+                body = body.trim_start_matches(' ');
+            }
+            if index < last {
+                body = body.trim_end_matches(' ');
+            }
+            // Only an empty source line keeps an empty row; a row left empty by trimming,
+            // such as trailing spaces pushed onto a row of their own, is dropped.
+            if body.is_empty() && last > 0 {
+                continue;
+            }
+            let row = match (lines.is_empty(), body.is_empty()) {
+                (true, _) => format!("{prefix}{body}"),
+                (false, true) => String::new(),
+                (false, false) => format!("  {body}"),
+            };
+            lines.push(Line::styled(row, style));
+        }
+    }
+    lines
 }
 
 /// Split on `\n`, with `\r\n` counting as one break. A lone `\r` stays in the text.

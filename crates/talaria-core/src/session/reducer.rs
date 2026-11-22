@@ -608,6 +608,11 @@ fn session(
                 .filter(|text| !text.is_empty())
             {
                 state.notice(NoticeKind::System, text.to_owned(), None);
+                if is_interrupt_line(text) {
+                    // The gateway already said where the turn stopped; the generic line would
+                    // repeat it.
+                    state.interrupt_notice = true;
+                }
             }
         }
         "review.summary" => {
@@ -730,6 +735,13 @@ fn complete(state: &mut SessionState, payload: &Value) {
     state.seal_all();
     state.turn = TurnState::Finished(outcome);
     state.activity = None;
+}
+
+/// Whether a gateway print announces an interruption. Hermes prints these lines from its agent
+/// loop (`agent/turn_api_call.py`, `agent/tool_executor.py`), for example
+/// "\u{26a1} Interrupted during API call.", with an optional log prefix in front.
+fn is_interrupt_line(text: &str) -> bool {
+    text.contains('\u{26a1}') && text.to_lowercase().contains("interrupt")
 }
 
 fn interrupted_notice(state: &mut SessionState) {

@@ -2192,6 +2192,99 @@ fn recorded_agent_print_is_visible() {
             .map(|c| (&c.kind, &c.text))
             .collect::<Vec<_>>()
     );
+    let interrupt_lines = notices(&state)
+        .into_iter()
+        .filter(|cell| cell.text.contains("Interrupted"))
+        .count();
+    assert_eq!(interrupt_lines, 1, "one interruption shows one notice");
+}
+
+#[test]
+fn gateway_interrupt_line_replaces_the_generic_interrupted_notice() {
+    let (state, _) = run(vec![
+        start(),
+        Event::Interrupt,
+        ev(
+            2,
+            "agent.print",
+            json!({"text": "\u{26a1} Interrupted during API call."}),
+        ),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "interrupted", "text": ""}),
+        ),
+    ]);
+    assert_eq!(state.turn(), &TurnState::Finished(TurnOutcome::Interrupted));
+    let lines: Vec<_> = notices(&state)
+        .into_iter()
+        .filter(|cell| cell.text.contains("nterrupt"))
+        .map(|cell| (cell.kind, cell.text.clone()))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![(
+            NoticeKind::System,
+            "\u{26a1} Interrupted during API call.".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn gateway_interrupt_line_without_local_interrupt_also_counts() {
+    let (state, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "agent.print",
+            json!({"text": "\u{26a1} Interrupt: cancelling 2 pending concurrent tool(s)"}),
+        ),
+        ev(3, "message.complete", json!({"status": "interrupted"})),
+    ]);
+    assert!(
+        notices(&state)
+            .iter()
+            .all(|note| note.kind != NoticeKind::Interrupted)
+    );
+}
+
+#[test]
+fn unrelated_lightning_print_keeps_the_generic_notice() {
+    let (state, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "agent.print",
+            json!({"text": "\u{26a1} Delegating 2 tasks"}),
+        ),
+        ev(3, "message.complete", json!({"status": "interrupted"})),
+    ]);
+    let interrupted: Vec<_> = notices(&state)
+        .into_iter()
+        .filter(|note| note.kind == NoticeKind::Interrupted)
+        .collect();
+    assert_eq!(interrupted.len(), 1);
+    assert_eq!(interrupted[0].text, INTERRUPTED);
+}
+
+#[test]
+fn interrupt_line_latch_resets_for_the_next_turn() {
+    let (state, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "agent.print",
+            json!({"text": "\u{26a1} Interrupted during API call."}),
+        ),
+        ev(3, "message.complete", json!({"status": "interrupted"})),
+        ev(4, "message.start", json!({})),
+        ev(5, "message.complete", json!({"status": "interrupted"})),
+    ]);
+    let interrupted = notices(&state)
+        .into_iter()
+        .filter(|note| note.kind == NoticeKind::Interrupted && note.text == INTERRUPTED)
+        .count();
+    assert_eq!(interrupted, 1, "the second turn still says Interrupted");
 }
 
 #[test]

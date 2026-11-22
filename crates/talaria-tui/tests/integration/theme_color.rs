@@ -333,4 +333,31 @@ fn inline_user_and_notice_use_theme_colours() {
     for style in &body_line.1 {
         assert_eq!(style.fg, Some(reasoning_fg));
     }
+
+    // Long user prompts and notices wrap at spaces exactly as the plain drawer wraps them.
+    let long_user = Cell::User(UserCell {
+        id: CellId::new(9),
+        text: "please check the second draft before lunch".to_owned(),
+    });
+    let long_notice = Cell::Notice(NoticeCell {
+        id: CellId::new(10),
+        kind: NoticeKind::System,
+        text: "the gateway restarted while the model was still answering".to_owned(),
+        detail: None,
+    });
+    for (cell, style) in [(&long_user, user_text_style), (&long_notice, notice_style)] {
+        let themed = drawer.lines(cell, 24);
+        let plain = talaria_tui::history::PlainCellLines.lines(cell, 24);
+        let text = |lines: &[ratatui::text::Line<'_>]| -> Vec<String> {
+            lines
+                .iter()
+                .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+                .collect()
+        };
+        assert!(themed.len() > 1, "{:?}", text(&themed));
+        assert_eq!(text(&themed), text(&plain));
+        for line in &themed {
+            assert_eq!(line.style.fg, style.fg);
+        }
+    }
 }

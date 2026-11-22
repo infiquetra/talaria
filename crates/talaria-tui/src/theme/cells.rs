@@ -38,15 +38,7 @@ impl CellLines for ThemedCells<'_> {
                     super::surfaces::tokens::TRANSCRIPT_USER_TEXT,
                     Style::default().add_modifier(Modifier::BOLD),
                 );
-                return crate::history::split_lines(&cell.text)
-                    .enumerate()
-                    .map(|(index, line)| {
-                        Line::styled(
-                            format!("{}{line}", if index == 0 { "> " } else { "" }),
-                            style,
-                        )
-                    })
-                    .collect();
+                return crate::history::prefixed_wrapped("> ", &cell.text, style, width);
             }
             Cell::Notice(cell) if self.theme.views.active() => {
                 let token = if cell.kind == NoticeKind::Error {
@@ -58,15 +50,7 @@ impl CellLines for ThemedCells<'_> {
                     .theme
                     .views
                     .inline(token, Style::default().add_modifier(Modifier::DIM));
-                return crate::history::split_lines(&cell.text)
-                    .enumerate()
-                    .map(|(index, line)| {
-                        Line::styled(
-                            format!("{}{line}", if index == 0 { "· " } else { "" }),
-                            style,
-                        )
-                    })
-                    .collect();
+                return crate::history::prefixed_wrapped("\u{b7} ", &cell.text, style, width);
             }
             Cell::HermesCommand(cell) => {
                 return hermes_command_lines_with_options_and_theme(
