@@ -72,15 +72,16 @@ changes:
   `talaria workflow builtins install`.
 
 To stop Hermes from changing the skill again, lock it in Hermes. Talaria does not do this for
-you, because the lock lives in Hermes's own state (`skills/.usage.json`):
+you, because the lock lives in Hermes's own state (`skills/.usage.json`). Name the profile
+every time, `-p default` included: without `-p`, Hermes runs in the profile chosen with
+`hermes profile use`, which may not be the one that holds the changed skill.
 
 ```sh
-hermes curator lock talaria-workflows            # the default profile
 hermes -p <profile> curator lock talaria-workflows
 ```
 
 A locked skill stays readable and usable; the agent and the background review can no longer
-edit it. `hermes curator unlock talaria-workflows` undoes it.
+edit it. `hermes -p <profile> curator unlock talaria-workflows` undoes it.
 A missing skill on a local session asks once: `Install talaria-workflows into profile <name> now? [y/N]`. `y` installs it and prints the installer's result. Any other answer prints the install command. A session started with `--remote` does not ask; its notice says the skill must be installed on the machine that runs the gateway. Check that the skill is enabled in Hermes if it
 is installed but absent from the catalogue. A quick command, plugin, or alias that takes
 `/talaria-workflows` is refused. A project-local skill can take precedence over the installed
@@ -90,15 +91,19 @@ The toggle belongs to a stored session. Talaria saves it in `workflow-mode.json`
 folder (`$TALARIA_CONFIG_DIR`, or `~/.talaria`), keyed by the stored session id, so it is kept
 after a reconnect, after a return from another session (such as an agent's session opened from
 the workflow view), when Hermes compacts the session into a new stored id, and after a restart
-with `talaria --resume`. Sessions not opened for 30 days are dropped from the file. A `/branch`
+with `talaria --resume`. Sessions not opened for 30 days are dropped from the file. Several
+Talaria windows share the file: each save takes a lock on `workflow-mode.json.lock` beside it
+and merges that window's changes into the file, so a setting saved in one window is kept when
+another window saves. A `/branch`
 copy starts with its parent's setting and says `Ultracode stays on in this branch.` Other
 sessions keep their own setting. A session that opens with Ultracode on prints
 `Ultracode is on in this session: a plain prompt is handled as a workflow. /ultracode off to stop.`
 After you interrupt a turn in a session that has routed a prompt, Talaria prints
 `Ultracode is still on: your next plain prompt is handled as a workflow too.` The foreground
 session controls the `ultracode` status segment, shown after the model and dropped first when
-space is tight. Start interactive sessions on with `talaria --ultracode`. Print mode does not
-use this flag.
+space is tight. Start interactive sessions on with `talaria --ultracode`. The flag turns on
+the session it opens even when that session was saved as off; other sessions keep their
+saved setting. Print mode does not use this flag.
 
 Each routed prompt prints one line, `Ultracode: handling this prompt as a workflow.`, before it
 is sent. The agent then proposes a workflow and asks before it starts one. While Ultracode

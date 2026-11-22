@@ -215,8 +215,8 @@ fn a_changed_skill_says_who_changed_it_what_it_causes_and_how_to_fix_it() {
     }
     assert!(
         notice::skill_changed("default", &changes)
-            .contains("run: hermes curator lock talaria-workflows"),
-        "the default profile needs no -p"
+            .contains("run: hermes -p default curator lock talaria-workflows"),
+        "without -p Hermes uses the profile chosen with hermes profile use"
     );
     assert!(notice::skill_outdated("fixture").contains("older than the copy in this Talaria"));
     assert_eq!(

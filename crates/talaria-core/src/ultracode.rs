@@ -4,7 +4,7 @@ use crate::{
     session::SessionId,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 pub const SKILL_COMMAND: &str = "/talaria-workflows";
 /// The model-facing line in front of a routed prompt once the skill is in the conversation.
 /// It never shows on screen, live or replayed.
@@ -174,6 +174,54 @@ impl SavedModes {
         self.sessions
             .retain(|_, mode| now_ms.saturating_sub(mode.seen_ms) <= KEEP_MS);
     }
+    /// Apply one window's changes to the file as it is now. A changed setting replaces the
+    /// saved one; a session that was only opened keeps the saved setting, which another window
+    /// may have changed, and is marked seen. Every other window's entry is kept, and sessions
+    /// not seen for 30 days are dropped.
+    pub fn merge(&mut self, changes: &SavedChanges) {
+        for (stored, change) in &changes.sessions {
+            match self.sessions.get_mut(stored) {
+                Some(mode) if !change.set => mode.seen_ms = changes.now_ms,
+                _ => {
+                    self.sessions.insert(
+                        stored.clone(),
+                        SavedMode {
+                            on: change.on,
+                            seen_ms: changes.now_ms,
+                        },
+                    );
+                }
+            }
+        }
+        self.prune(changes.now_ms);
+    }
+}
+/// What one Talaria window changed since its last save, by stored session id. Several windows
+/// share the saved file, so a save merges these into the file instead of replacing it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SavedChanges {
+    sessions: BTreeMap<String, SavedChange>,
+    now_ms: i64,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SavedChange {
+    /// This window's setting for the session.
+    on: bool,
+    /// True when this window changed the setting; false when it only opened the session.
+    set: bool,
+}
+impl SavedChanges {
+    /// The stored session ids these changes touch.
+    pub fn ids(&self) -> impl Iterator<Item = &str> {
+        self.sessions.keys().map(String::as_str)
+    }
+    /// Keep only the sessions `keep` accepts.
+    pub fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        self.sessions.retain(|stored, _| keep(stored));
+    }
+    pub fn is_empty(&self) -> bool {
+        self.sessions.is_empty()
+    }
 }
 #[derive(Debug, Clone, Default)]
 pub struct UltracodeState {
@@ -186,9 +234,8 @@ pub struct UltracodeState {
     bound: HashMap<SessionId, String>,
     /// Settings by stored session id; these are saved across restarts.
     stored: BTreeMap<String, SavedMode>,
-    /// Stored ids opened or changed since the last save.
-    touched: BTreeSet<String>,
-    dirty: bool,
+    /// Stored ids opened or changed since the last save; true for a changed setting.
+    touched: BTreeMap<String, bool>,
 }
 impl UltracodeState {
     pub fn new(default_on: bool) -> Self {
@@ -223,8 +270,7 @@ impl UltracodeState {
         let seen_ms = self.stored.get(&stored).map_or(0, |mode| mode.seen_ms);
         self.stored
             .insert(stored.clone(), SavedMode { on, seen_ms });
-        self.touched.insert(stored);
-        self.dirty = true;
+        self.touched.insert(stored, true);
     }
     /// The runtime session `id` belongs to stored session `stored`: its setting is the stored
     /// session's from now on. A setting made for `id` before, such as a branch's copy of its
@@ -233,12 +279,26 @@ impl UltracodeState {
         if stored.is_empty() {
             return self.is_on(id);
         }
+        // A session compacted while Talaria showed another one comes back under a new stored
+        // id. Its setting follows from the stored id the runtime session was bound to, or from
+        // the id Talaria asked to resume, which a resume by id answers with as its runtime id.
+        let previous = self
+            .bound
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| id.as_str().to_owned());
+        let compacted = (previous != stored
+            && !self.stored.contains_key(stored)
+            && !self.sessions.contains_key(id))
+        .then(|| self.stored.get(&previous).copied())
+        .flatten();
         self.bound.insert(id.clone(), stored.to_owned());
         if let Some(on) = self.sessions.remove(id) {
             self.save(stored.to_owned(), on);
+        } else if let Some(mode) = compacted {
+            self.save(stored.to_owned(), mode.on);
         } else if self.stored.contains_key(stored) {
-            self.touched.insert(stored.to_owned());
-            self.dirty = true;
+            self.touched.entry(stored.to_owned()).or_insert(false);
         }
         self.is_on(id)
     }
@@ -255,23 +315,30 @@ impl UltracodeState {
             self.save(stored.to_owned(), mode.on);
         }
     }
-    /// The settings to save when any changed: every session opened or changed since the last
-    /// save is marked seen at `now_ms`, and sessions not seen for 30 days are dropped.
-    pub fn take_saved(&mut self, now_ms: i64) -> Option<SavedModes> {
-        if !std::mem::take(&mut self.dirty) {
+    /// The changes to save, when a session was opened or changed since the last save: each is
+    /// marked seen at `now_ms`, and sessions not seen for 30 days are dropped.
+    pub fn take_saved(&mut self, now_ms: i64) -> Option<SavedChanges> {
+        if self.touched.is_empty() {
             return None;
         }
-        for stored in std::mem::take(&mut self.touched) {
+        let mut changes = SavedChanges {
+            sessions: BTreeMap::new(),
+            now_ms,
+        };
+        for (stored, set) in std::mem::take(&mut self.touched) {
             if let Some(mode) = self.stored.get_mut(&stored) {
                 mode.seen_ms = now_ms;
+                changes
+                    .sessions
+                    .insert(stored, SavedChange { on: mode.on, set });
             }
         }
-        let mut saved = SavedModes {
+        let mut kept = SavedModes {
             sessions: std::mem::take(&mut self.stored),
         };
-        saved.prune(now_ms);
-        self.stored = saved.sessions.clone();
-        Some(saved)
+        kept.prune(now_ms);
+        self.stored = kept.sessions;
+        Some(changes)
     }
     /// Copy an explicit setting from one session to another, and say whether `to` is now on.
     pub fn carry(&mut self, from: &SessionId, to: &SessionId) -> bool {
@@ -431,12 +498,10 @@ pub mod notice {
         )
     }
     /// The Hermes command that stops agents, and Hermes's background review, changing the skill.
+    /// It always names the profile: without `-p`, Hermes runs in the profile chosen with
+    /// `hermes profile use`, which may not be the one Talaria checked.
     pub fn lock_command(profile: &str) -> String {
-        if profile == "default" {
-            "hermes curator lock talaria-workflows".into()
-        } else {
-            format!("hermes -p {profile} curator lock talaria-workflows")
-        }
+        format!("hermes -p {profile} curator lock talaria-workflows")
     }
     /// `changes` are the inspection's `changed:`, `added:` and `removed:` entries.
     pub fn skill_changed(profile: &str, changes: &[String]) -> String {

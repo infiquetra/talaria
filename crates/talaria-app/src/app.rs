@@ -2402,10 +2402,10 @@ pub enum AppEffect {
     UltracodeScan {
         since_ms: i64,
     },
-    /// Write the per-session switch file; save number `generation`.
+    /// Merge changes into the per-session switch file; save number `generation`.
     UltracodeSave {
         generation: u64,
-        text: String,
+        changes: talaria_core::ultracode::SavedChanges,
     },
     /// Run a Hermes slash command (`slash.exec`) in the background.
     RunCommand {
@@ -7564,11 +7564,11 @@ fn apply_ultracode(
 
 /// Save the per-session switch when a setting changed or a session that has one was opened.
 fn ultracode_save(state: &mut AppState) -> Option<AppEffect> {
-    let text = state.ultracode.take_saved((state.wall_s * 1000.0) as i64)?;
+    let changes = state.ultracode.take_saved((state.wall_s * 1000.0) as i64)?;
     state.ultracode_saves += 1;
     Some(AppEffect::UltracodeSave {
         generation: state.ultracode_saves,
-        text,
+        changes,
     })
 }
 
@@ -9779,8 +9779,27 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     }
                     opened.state.background_mut().observe_time(state.now_ms);
                     opened.state.queue.observe_time(state.now_ms);
+                    // A compaction while the session is in the background moves it too.
+                    let rotated = (inbound.raw.get("type").and_then(Value::as_str)
+                        == Some("session.info"))
+                    .then(|| {
+                        inbound
+                            .raw
+                            .get("payload")
+                            .and_then(|payload| payload.get("stored_session_id"))
+                            .and_then(Value::as_str)
+                            .filter(|stored| !stored.is_empty())
+                            .map(str::to_owned)
+                    })
+                    .flatten();
                     let produced =
                         apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
+                    if let Some(stored) = rotated {
+                        state
+                            .ultracode
+                            .rotate(&SessionId::new(session_id.clone()), &stored);
+                        hub_effects.extend(ultracode_save(state));
+                    }
                     let background = produced
                         .into_iter()
                         .filter_map(|effect| match effect {
@@ -14129,11 +14148,15 @@ fn apply<S: Screen>(
                 }
                 _ => {}
             },
-            AppEffect::UltracodeSave { generation, text } => {
+            AppEffect::UltracodeSave {
+                generation,
+                changes,
+            } => {
                 if let Some(file) = state.ultracode_file.clone() {
                     executor.spawn(async move {
-                        let _ = tokio::task::spawn_blocking(move || file.write(generation, &text))
-                            .await;
+                        let _ =
+                            tokio::task::spawn_blocking(move || file.write(generation, &changes))
+                                .await;
                     });
                 }
             }
@@ -19207,12 +19230,16 @@ mod ultracode_visibility_tests {
         effects
     }
 
-    /// The last copy of the saved switch file an effect asked to write.
-    fn saved(effects: &[AppEffect]) -> Option<String> {
-        effects.iter().rev().find_map(|effect| match effect {
-            AppEffect::UltracodeSave { text, .. } => Some(text.clone()),
-            _ => None,
-        })
+    /// The saved switch file after the saves `effects` asked for, starting from an empty file.
+    fn saved(effects: &[AppEffect]) -> Option<talaria_core::ultracode::SavedModes> {
+        let mut file = None;
+        for effect in effects {
+            if let AppEffect::UltracodeSave { changes, .. } = effect {
+                file.get_or_insert_with(talaria_core::ultracode::SavedModes::default)
+                    .merge(changes);
+            }
+        }
+        file
     }
 
     fn checks_setup(effects: &[AppEffect]) -> bool {
@@ -19286,9 +19313,7 @@ mod ultracode_visibility_tests {
         // `talaria --resume` in a new process opens the stored session under a new runtime id.
         let mut second = AppState::new("launch");
         second.profile = "fixture".into();
-        second
-            .ultracode
-            .restore(talaria_core::ultracode::SavedModes::from_json(&text).unwrap());
+        second.ultracode.restore(text);
         let effects = opened_session(&mut second, session("runtime-r2", "stored-s"), None);
         assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
         let effects = enter(&mut second, "lets continue the workflow");
@@ -19299,10 +19324,7 @@ mod ultracode_visibility_tests {
         let text = saved(&effects).expect("turning off saves the switch");
         let mut third = AppState::new("launch");
         third.profile = "fixture".into();
-        third.ultracode = crate::ultracode::UltracodeService::new(true);
-        third
-            .ultracode
-            .restore(talaria_core::ultracode::SavedModes::from_json(&text).unwrap());
+        third.ultracode.restore(text);
         let effects = opened_session(&mut third, session("runtime-r3", "stored-s"), None);
         assert!(
             !third
@@ -19310,6 +19332,108 @@ mod ultracode_visibility_tests {
                 .status_input(Some(&SessionId::new("runtime-r3")))
         );
         assert!(!lines(&effects).contains(&opened_line()), "{effects:?}");
+    }
+
+    #[test]
+    fn the_launch_flag_turns_on_the_session_it_opens_even_when_saved_off() {
+        let text = talaria_core::ultracode::SavedModes::from_json(
+            r#"{"version":1,"sessions":{"stored-s":{"on":false,"seen_ms":0},"stored-t":{"on":false,"seen_ms":0}}}"#,
+        )
+        .unwrap();
+        // `talaria --ultracode --resume stored-s`.
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        state.ultracode.restore(text);
+        let effects = opened_session(&mut state, session("runtime-1", "stored-s"), None);
+        assert!(
+            state
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-1")))
+        );
+        assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
+        let file = saved(&effects).expect("the launch's choice is saved");
+        assert!(
+            file.to_json().contains("\"on\": true"),
+            "{}",
+            file.to_json()
+        );
+        // Only the session the launch opened: another session saved as off keeps its setting.
+        let _ = opened_session(&mut state, session("runtime-2", "stored-t"), None);
+        assert!(
+            !state
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-2")))
+        );
+    }
+
+    #[test]
+    fn a_session_compacted_while_away_keeps_ultracode() {
+        // Back under the same runtime id, after Hermes compacted it with no frame seen.
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
+        let _ = type_ultracode_on(&mut state);
+        let _ = opened_session(&mut state, session("runtime-w1", "stored-w"), None);
+        let effects = opened_session(&mut state, session("runtime-a1", "stored-tip"), None);
+        assert!(
+            state
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-a1")))
+        );
+        assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
+        assert!(saved(&effects).is_some_and(|file| file.to_json().contains("stored-tip")));
+
+        // Back under a new runtime id: a resume by id answers with the id Talaria asked for,
+        // here the stored id saved before the restart, and names the compaction's tip.
+        let mut restarted = AppState::new("launch");
+        restarted.profile = "fixture".into();
+        restarted.ultracode.restore(
+            talaria_core::ultracode::SavedModes::from_json(
+                r#"{"version":1,"sessions":{"stored-s":{"on":true,"seen_ms":0}}}"#,
+            )
+            .unwrap(),
+        );
+        let effects = opened_session(&mut restarted, session("stored-s", "stored-tip"), None);
+        assert!(
+            restarted
+                .ultracode
+                .status_input(Some(&SessionId::new("stored-s")))
+        );
+        assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
+    }
+
+    #[test]
+    fn a_compaction_in_the_background_moves_ultracode() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
+        let _ = type_ultracode_on(&mut state);
+        let _ = opened_session(&mut state, session("runtime-w1", "stored-w"), None);
+        // A frame for the retained first session, while the agent's session is in front.
+        let raw = json!({"session_id": "runtime-a1", "replay_epoch": "epoch", "seq": 1,
+            "type": "session.info", "payload": {"stored_session_id": "stored-tip"}});
+        let effects = update(
+            &mut state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: Inbound::Event(hermes_client::channel::InboundEvent {
+                    generation: hermes_client::channel::Generation(1),
+                    frame: EventFrame::from_params(&raw).unwrap(),
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+        let file = saved(&effects).expect("the move is saved");
+        let mut restarted = AppState::new("launch");
+        restarted.profile = "fixture".into();
+        restarted.ultracode.restore(file);
+        let _ = opened_session(&mut restarted, session("runtime-2", "stored-tip"), None);
+        assert!(
+            restarted
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-2")))
+        );
     }
 
     #[test]
@@ -19326,9 +19450,7 @@ mod ultracode_visibility_tests {
         let text = saved(&effects).expect("the new stored id is saved");
         let mut restarted = AppState::new("launch");
         restarted.profile = "fixture".into();
-        restarted
-            .ultracode
-            .restore(talaria_core::ultracode::SavedModes::from_json(&text).unwrap());
+        restarted.ultracode.restore(text);
         let _ = opened_session(&mut restarted, session("runtime-2", "stored-after"), None);
         assert!(
             restarted
@@ -19362,7 +19484,7 @@ mod ultracode_visibility_tests {
             1,
             "{shown:?}"
         );
-        assert!(saved(&effects).is_some_and(|text| text.contains("stored-child")));
+        assert!(saved(&effects).is_some_and(|file| file.to_json().contains("stored-child")));
     }
 
     #[test]

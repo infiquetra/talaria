@@ -182,6 +182,15 @@ fn the_full_skill_goes_once_per_conversation_until_it_changes() {
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
+/// The saved file's text after `changes` are merged into `file`.
+fn merged(
+    mut file: talaria_core::ultracode::SavedModes,
+    changes: &talaria_core::ultracode::SavedChanges,
+) -> String {
+    file.merge(changes);
+    file.to_json()
+}
+
 #[test]
 fn the_switch_follows_the_stored_session_across_runtime_ids() {
     use talaria_core::ultracode::SavedModes;
@@ -201,7 +210,7 @@ fn the_switch_follows_the_stored_session_across_runtime_ids() {
 
     // A restart reads the saved file and restores it under yet another runtime id.
     let saved = state.take_saved(10 * DAY_MS).expect("a change is saved");
-    let text = saved.to_json();
+    let text = merged(SavedModes::default(), &saved);
     let mut restarted = UltracodeState::new(false);
     restarted.restore(SavedModes::from_json(&text).expect("the saved file reads back"));
     let c3 = SessionId::new("runtime-c3");
@@ -220,7 +229,10 @@ fn the_switch_follows_the_stored_session_across_runtime_ids() {
     let mut defaulted = UltracodeState::new(true);
     assert!(defaulted.adopt(&a1, "stored-s"));
     defaulted.set(&a1, false);
-    let text = defaulted.take_saved(DAY_MS).unwrap().to_json();
+    let text = merged(
+        SavedModes::default(),
+        &defaulted.take_saved(DAY_MS).unwrap(),
+    );
     let mut again = UltracodeState::new(true);
     again.restore(SavedModes::from_json(&text).unwrap());
     assert!(!again.adopt(&b2, "stored-s"));
@@ -237,7 +249,7 @@ fn a_setting_made_before_the_stored_id_is_known_is_kept() {
     // A branch copies the parent's setting before the child is opened.
     assert!(state.carry(&a1, &child));
     assert!(state.adopt(&child, "stored-child"));
-    let saved = state.take_saved(DAY_MS).unwrap().to_json();
+    let saved = merged(Default::default(), &state.take_saved(DAY_MS).unwrap());
     assert!(saved.contains("stored-child"), "{saved}");
 }
 
@@ -251,10 +263,10 @@ fn compaction_moves_the_switch_to_the_new_stored_id() {
     let _ = state.take_saved(DAY_MS);
     state.rotate(&a1, "stored-after");
     assert!(state.is_on(&a1));
-    let text = state
-        .take_saved(DAY_MS)
-        .expect("the move is saved")
-        .to_json();
+    let text = merged(
+        SavedModes::default(),
+        &state.take_saved(DAY_MS).expect("the move is saved"),
+    );
     let mut restarted = UltracodeState::new(false);
     restarted.restore(SavedModes::from_json(&text).unwrap());
     assert!(restarted.adopt(&SessionId::new("runtime-b2"), "stored-after"));
@@ -270,10 +282,11 @@ fn the_saved_file_drops_sessions_not_seen_for_thirty_days() {
     let (old, recent) = (SessionId::new("runtime-old"), SessionId::new("runtime-new"));
     state.adopt(&old, "stored-old");
     state.set(&old, true);
-    let _ = state.take_saved(DAY_MS);
+    let mut file = SavedModes::default();
+    file.merge(&state.take_saved(DAY_MS).unwrap());
     state.adopt(&recent, "stored-new");
     state.set(&recent, true);
-    let text = state.take_saved(35 * DAY_MS).unwrap().to_json();
+    let text = merged(file, &state.take_saved(35 * DAY_MS).unwrap());
     assert!(text.contains("stored-new"), "{text}");
     assert!(!text.contains("stored-old"), "{text}");
     // A file read at start-up is pruned the same way, against the time it is read.
@@ -284,4 +297,62 @@ fn the_saved_file_drops_sessions_not_seen_for_thirty_days() {
     assert!(!restarted.adopt(&SessionId::new("runtime-x"), "stored-new"));
     assert!(SavedModes::from_json("not json").is_err());
     assert!(SavedModes::from_json("{\"version\":2,\"sessions\":{}}").is_err());
+}
+
+#[test]
+fn two_windows_saving_in_turn_keep_each_others_settings() {
+    use talaria_core::ultracode::SavedModes;
+    // Both windows read the same empty file at start-up.
+    let (mut first, mut second) = (UltracodeState::new(false), UltracodeState::new(false));
+    let mut file = SavedModes::default();
+    let (s, t) = (SessionId::new("runtime-s"), SessionId::new("runtime-t"));
+    second.adopt(&s, "stored-s");
+    second.set(&s, true);
+    file.merge(&second.take_saved(DAY_MS).unwrap());
+    first.adopt(&t, "stored-t");
+    first.set(&t, true);
+    file.merge(&first.take_saved(2 * DAY_MS).unwrap());
+    let mut restarted = UltracodeState::new(false);
+    restarted.restore(SavedModes::from_json(&file.to_json()).unwrap());
+    assert!(restarted.adopt(&SessionId::new("runtime-1"), "stored-s"));
+    assert!(restarted.adopt(&SessionId::new("runtime-2"), "stored-t"));
+
+    // A window that only opens a session another window has since changed keeps that change.
+    let mut stale = UltracodeState::new(false);
+    stale.restore(SavedModes::from_json(&file.to_json()).unwrap());
+    second.set(&s, false);
+    file.merge(&second.take_saved(3 * DAY_MS).unwrap());
+    assert!(stale.adopt(&SessionId::new("runtime-3"), "stored-s"));
+    file.merge(&stale.take_saved(4 * DAY_MS).unwrap());
+    let mut again = UltracodeState::new(false);
+    again.restore(file);
+    assert!(!again.adopt(&SessionId::new("runtime-4"), "stored-s"));
+}
+
+#[test]
+fn a_session_compacted_while_away_keeps_its_setting() {
+    let (a1, w1) = (SessionId::new("runtime-a1"), SessionId::new("runtime-w1"));
+    let mut state = UltracodeState::new(false);
+    state.adopt(&a1, "stored-s");
+    state.set(&a1, true);
+    state.adopt(&w1, "stored-w");
+    // The same runtime session comes back with the compaction's tip as its stored id.
+    assert!(state.adopt(&a1, "stored-tip"));
+    // A stored id that already has its own setting keeps it.
+    let mut other = UltracodeState::new(false);
+    other.adopt(&a1, "stored-s");
+    other.set(&a1, true);
+    other.adopt(&w1, "stored-w");
+    other.set(&w1, false);
+    assert!(!other.adopt(&a1, "stored-w"));
+    // A resume by id answers with the id it was asked for: a stored id saved earlier.
+    let mut restarted = UltracodeState::new(false);
+    restarted.restore(
+        talaria_core::ultracode::SavedModes::from_json(
+            r#"{"version":1,"sessions":{"stored-s":{"on":true,"seen_ms":0}}}"#,
+        )
+        .unwrap(),
+    );
+    assert!(restarted.adopt(&SessionId::new("stored-s"), "stored-tip"));
+    assert!(restarted.take_saved(DAY_MS).is_some(), "the move is saved");
 }

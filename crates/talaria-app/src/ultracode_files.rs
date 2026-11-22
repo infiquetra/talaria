@@ -2,28 +2,33 @@
 //! The application runs these off its update loop and posts the results as messages.
 use crate::ultracode::{SetupFacts, SkillCheck, TierCheck};
 use std::{
+    collections::HashMap,
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use talaria_core::ultracode::SavedModes;
+use talaria_core::ultracode::{SavedChanges, SavedModes};
 use talaria_workflow::{builtins, skill, staffing::StaffingTable};
 
 /// The saved switch's file name in Talaria's home folder.
 pub const MODE_FILE: &str = "workflow-mode.json";
 
-/// The saved per-session switch. Writes are atomic, and a write older than one already made is
-/// dropped, so two saves that finish out of order leave the newer text.
+/// The saved per-session switch, shared by every Talaria window on this machine. A save holds a
+/// lock beside the file, reads the file again, merges in this window's changes and replaces the
+/// file atomically, so settings other windows saved are kept. Within one window, a session's
+/// change older than one already written is dropped, so two saves that finish out of order
+/// leave the newer setting.
 #[derive(Debug, Clone)]
 pub struct ModeFile {
     path: PathBuf,
-    written: Arc<Mutex<u64>>,
+    /// The save number last written for each stored session id.
+    written: Arc<Mutex<HashMap<String, u64>>>,
 }
 impl ModeFile {
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
-            written: Arc::new(Mutex::new(0)),
+            written: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     pub fn path(&self) -> &Path {
@@ -37,13 +42,15 @@ impl ModeFile {
             Err(error) => Err(error.kind().to_string()),
         }
     }
-    /// Replace the file with `text`, save number `generation`.
-    pub fn write(&self, generation: u64, text: &str) -> io::Result<()> {
+    /// Merge `changes`, save number `generation`, into the file. An unreadable file is replaced.
+    pub fn write(&self, generation: u64, changes: &SavedChanges) -> io::Result<()> {
         let mut written = self
             .written
             .lock()
             .map_err(|_| io::Error::other("an earlier save panicked"))?;
-        if generation <= *written {
+        let mut changes = changes.clone();
+        changes.retain(|stored| written.get(stored).is_none_or(|last| generation > *last));
+        if changes.is_empty() {
             return Ok(());
         }
         let parent = self
@@ -52,11 +59,23 @@ impl ModeFile {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(parent)?;
+        let mut lock_path = self.path.clone().into_os_string();
+        lock_path.push(".lock");
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(lock_path)?;
+        lock.lock()?;
+        let mut saved = Self::read(&self.path).unwrap_or_default();
+        saved.merge(&changes);
         let mut file = tempfile::NamedTempFile::new_in(parent)?;
-        file.write_all(text.as_bytes())?;
+        file.write_all(saved.to_json().as_bytes())?;
         file.as_file().sync_all()?;
         file.persist(&self.path).map_err(|error| error.error)?;
-        *written = generation;
+        for stored in changes.ids() {
+            written.insert(stored.to_owned(), generation);
+        }
         Ok(())
     }
 }

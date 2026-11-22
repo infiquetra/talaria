@@ -1253,9 +1253,42 @@ fn the_mode_file_round_trips_and_ignores_a_stale_write() {
     state.adopt(&id, "stored-1");
     state.set(&id, true);
     let newer = state.take_saved(1_000).unwrap();
-    file.write(2, &newer.to_json()).unwrap();
-    file.write(1, &SavedModes::default().to_json()).unwrap();
-    assert_eq!(ModeFile::read(&path).unwrap(), newer);
+    state.set(&id, false);
+    let older = state.take_saved(1_000).unwrap();
+    file.write(2, &newer).unwrap();
+    file.write(1, &older).unwrap();
+    let mut expected = SavedModes::default();
+    expected.merge(&newer);
+    assert_eq!(ModeFile::read(&path).unwrap(), expected);
+    // An unreadable file is replaced by the next save.
     std::fs::write(&path, "not json").unwrap();
     assert!(ModeFile::read(&path).is_err());
+    file.write(3, &older).unwrap();
+    assert!(ModeFile::read(&path).is_ok());
+}
+
+#[test]
+fn two_windows_saving_to_one_mode_file_keep_each_others_settings() {
+    use talaria_app::ultracode_files::ModeFile;
+    use talaria_core::ultracode::UltracodeState;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("workflow-mode.json");
+    // Two Talaria windows, each with its own state and its own handle on the shared file.
+    let (mut first, mut second) = (UltracodeState::new(false), UltracodeState::new(false));
+    let (first_file, second_file) = (ModeFile::new(path.clone()), ModeFile::new(path.clone()));
+    let (s, t) = (SessionId::new("runtime-s"), SessionId::new("runtime-t"));
+    second.adopt(&s, "stored-s");
+    second.set(&s, true);
+    second_file
+        .write(1, &second.take_saved(1_000).unwrap())
+        .unwrap();
+    first.adopt(&t, "stored-t");
+    first.set(&t, true);
+    first_file
+        .write(1, &first.take_saved(2_000).unwrap())
+        .unwrap();
+    let mut restarted = UltracodeState::new(false);
+    restarted.restore(ModeFile::read(&path).unwrap());
+    assert!(restarted.adopt(&SessionId::new("runtime-1"), "stored-s"));
+    assert!(restarted.adopt(&SessionId::new("runtime-2"), "stored-t"));
 }

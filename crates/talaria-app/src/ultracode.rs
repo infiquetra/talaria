@@ -5,8 +5,8 @@ use talaria_core::{
     commands::{CommandCatalog, CommandOutcome, ErrorView, SlashLine, describe_error},
     session::SessionId,
     ultracode::{
-        SKILL_COMMAND, SavedModes, SkillAvailability, SkillEpoch, SubmitRoute, UltracodeCommand,
-        UltracodeState, follow_up_text, notice, route_submit, skill_availability,
+        SKILL_COMMAND, SavedChanges, SavedModes, SkillAvailability, SkillEpoch, SubmitRoute,
+        UltracodeCommand, UltracodeState, follow_up_text, notice, route_submit, skill_availability,
     },
 };
 use talaria_workflow::runner::{RunStatus, RunSummary};
@@ -129,6 +129,9 @@ pub struct UltracodeService {
     routed: HashSet<SessionId>,
     /// Sessions whose next open says nothing, because a notice about the switch is already shown.
     announced: HashSet<SessionId>,
+    /// True until the first session opens when Talaria was started with Ultracode on: that
+    /// session is turned on even if it was saved as off.
+    launch_on: bool,
     remote: bool,
     watches: HashMap<SessionId, RunWatch>,
     tracked: HashMap<SessionId, RunSummary>,
@@ -153,6 +156,7 @@ impl UltracodeService {
             warned_setup: HashMap::new(),
             routed: HashSet::new(),
             announced: HashSet::new(),
+            launch_on: default_on,
             remote: false,
             watches: HashMap::new(),
             tracked: HashMap::new(),
@@ -214,7 +218,11 @@ impl UltracodeService {
     /// The runtime session belongs to stored session `stored`. True when it opens with
     /// Ultracode on and nothing has said so yet.
     pub fn adopt(&mut self, session: &SessionId, stored: &str) -> bool {
-        let on = self.state.adopt(session, stored);
+        let mut on = self.state.adopt(session, stored);
+        if std::mem::take(&mut self.launch_on) && !on {
+            self.state.set(session, true);
+            on = true;
+        }
         let announced = self.announced.remove(session);
         on && !announced
     }
@@ -226,9 +234,10 @@ impl UltracodeService {
     pub fn rotate(&mut self, session: &SessionId, stored: &str) {
         self.state.rotate(session, stored);
     }
-    /// The settings file's new text, when a setting changed or a session with one was opened.
-    pub fn take_saved(&mut self, now_ms: i64) -> Option<String> {
-        self.state.take_saved(now_ms).map(|saved| saved.to_json())
+    /// The changes to merge into the settings file, when a setting changed or a session with
+    /// one was opened.
+    pub fn take_saved(&mut self, now_ms: i64) -> Option<SavedChanges> {
+        self.state.take_saved(now_ms)
     }
     /// A read of the local setup, for a session on a local gateway.
     pub fn setup_check(&self, session: &SessionId) -> Option<Action> {
