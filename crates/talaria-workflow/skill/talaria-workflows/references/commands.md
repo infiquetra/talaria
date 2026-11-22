@@ -13,7 +13,7 @@ Options: --staffing, --budget-tokens, --budget-usd, --profile, --json. The versi
 ## Run
 
 ```sh
-@@TALARIA_COMMAND@@ workflow run --profile @@TALARIA_PROFILE@@ --json <script.js>
+@@TALARIA_COMMAND@@ workflow run --profile @@TALARIA_PROFILE@@ --json <path>
 ```
 
 Options: --detach, --json, --args, --args-file, --profile, --staffing, --cwd, --budget-tokens, --budget-usd, --on-unknown, --record, --runs-dir, --workflows-dir. JSON input flags conflict. The first line names the run folder. The final foreground object has event run_finished, run_id, outcome, one of result/error/reason, and spend with tokens, money_usd, money_source. Exit 0 completed, 1 failed, 2 refused, 3 aborted. Detach returns a run id immediately; the child appends runner.log.

@@ -20,7 +20,9 @@ First obtain the available staffing and paths:
 
 Use the command exactly as rendered, including HERMES_HOME=. Exit 2 means a tier problem: report `report.check` and stop. Exit 1 means no usable roster: report `error.message` and stop. Use only usable tiers or a model and provider listed in `report.providers`; never invent a model name.
 
-Prefer a built-in listed in `workflows`: ultracode, review-branch, research, or fix-failing-tests. Run its listed `path`. Otherwise read references/script-api.md and references/examples.md with skill_view, then write a short uniquely named script in `paths.drafts_dir`. Read references/commands.md for command details.
+Prefer a built-in listed in `workflows`: ultracode, review-branch, research, or fix-failing-tests. Run its listed `path`. Otherwise read references/script-api.md and references/examples.md with skill_view, then write a short uniquely named script in `paths.drafts_dir`, named `<name>.workflow`. Hermes checks `.js` files with `node --check` after every write, which rejects a workflow script's top-level `return` as "Illegal return statement"; the `.workflow` extension avoids that false error. If a lint error still names a draft, it is expected and does not mean the script is broken. Read references/commands.md for command details.
+
+Never write the deliverable in this session: no project files, scaffold, stubs or commits before the run, and do not build a first version yourself. This session plans, writes the script, and asks. Anything the workers must share, such as interfaces, a skeleton or a build setup, is work for the workflow's first phase.
 
 Before every run, show the phases, number of agents, tiers or models, arguments, and cost estimate. Then ask whether to start. Start only after an explicit yes for this run. A yes for an earlier run does not count. Pass the developer's budget using --budget-usd or --budget-tokens.
 
@@ -31,7 +33,7 @@ terminal(command="@@TALARIA_COMMAND@@ workflow run --profile @@TALARIA_PROFILE@@
 process_manage(action="wait", session_id="<returned process session_id>", timeout=600)
 ```
 
-Keep the returned process session_id; it differs from the conversation id. Repeat the wait while that process runs. Never launch a second run for the same task. For work that must outlive this session, add --detach and keep the printed run id.
+Keep the returned process session_id; it differs from the conversation id. If the output after a background completion is empty or cut short, read the finished run's result with `@@TALARIA_COMMAND@@ workflow resume --json <run-id>`; it prints the stored result without doing paid work again. Repeat the wait while that process runs. Never launch a second run for the same task. For work that must outlive this session, add --detach and keep the printed run id.
 
 The final foreground line is {"event":"run_finished",...}. Read its `run_id`, `outcome`, `result`, and `spend`. Report the run id, findings or changes, and spend. For a detached run, poll:
 

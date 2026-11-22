@@ -5,7 +5,7 @@ use talaria_core::{
     commands::{CommandCatalog, CommandOutcome, ErrorView, SlashLine, describe_error},
     session::SessionId,
     ultracode::{
-        SKILL_COMMAND, SkillAvailability, SkillEpoch, SubmitRoute, UltracodeCommand,
+        SKILL_COMMAND, SavedModes, SkillAvailability, SkillEpoch, SubmitRoute, UltracodeCommand,
         UltracodeState, follow_up_text, notice, route_submit, skill_availability,
     },
 };
@@ -16,6 +16,11 @@ pub enum Action {
         session: SessionId,
         profile: String,
         command: UltracodeCommand,
+    },
+    /// Read the local workflow setup: the installed skill, staffing tiers and built-ins.
+    CheckSetup {
+        session: SessionId,
+        profile: String,
     },
     RunCommand {
         session: SessionId,
@@ -33,7 +38,41 @@ pub enum Action {
         session: SessionId,
         profile: String,
     },
+    /// Replace a changed or older install with this Talaria's copy, backing it up first.
+    ReinstallSkill {
+        session: SessionId,
+        profile: String,
+    },
     Changed,
+}
+/// The installed skill compared with its install record and this Talaria's copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillCheck {
+    Unchanged,
+    /// Another program changed the files; `changes` are the inspection's entries.
+    Modified {
+        changes: Vec<String>,
+        digest: String,
+    },
+    /// An unchanged install from an older Talaria.
+    Outdated {
+        digest: String,
+    },
+    /// Not installed by Talaria, or not readable: nothing to compare.
+    Unknown,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TierCheck {
+    Present,
+    Missing,
+    Unreadable(String),
+}
+/// What a setup read found on this machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupFacts {
+    pub skill: SkillCheck,
+    pub tiers: TierCheck,
+    pub missing_builtins: Vec<String>,
 }
 pub struct Foreground<'a> {
     pub session: &'a SessionId,
@@ -80,6 +119,16 @@ pub struct UltracodeService {
     asked: HashSet<SessionId>,
     kept: HashSet<SessionId>,
     pending: HashMap<SessionId, String>,
+    /// Sessions whose pending offer is a reinstall of a changed or older skill.
+    reinstall: HashSet<SessionId>,
+    /// The skill change last reported for each profile, by digest.
+    warned_skill: HashMap<String, String>,
+    /// The missing setup last reported for each profile.
+    warned_setup: HashMap<String, String>,
+    /// Sessions that routed a prompt in this process.
+    routed: HashSet<SessionId>,
+    /// Sessions whose next open says nothing, because a notice about the switch is already shown.
+    announced: HashSet<SessionId>,
     remote: bool,
     watches: HashMap<SessionId, RunWatch>,
     tracked: HashMap<SessionId, RunSummary>,
@@ -99,6 +148,11 @@ impl UltracodeService {
             asked: HashSet::new(),
             kept: HashSet::new(),
             pending: HashMap::new(),
+            reinstall: HashSet::new(),
+            warned_skill: HashMap::new(),
+            warned_setup: HashMap::new(),
+            routed: HashSet::new(),
+            announced: HashSet::new(),
             remote: false,
             watches: HashMap::new(),
             tracked: HashMap::new(),
@@ -129,6 +183,18 @@ impl UltracodeService {
     }
     pub fn answer_install(&mut self, session: &SessionId, line: &str) -> Option<Vec<Action>> {
         let profile = self.pending.remove(session)?;
+        if self.reinstall.remove(session) {
+            let declined = Action::Notice(notice::reinstall_declined(&profile));
+            return Some(match line.trim() {
+                "y" | "Y" | "yes" => vec![Action::ReinstallSkill {
+                    session: session.clone(),
+                    profile,
+                }],
+                "" | "n" | "N" | "no" => vec![declined],
+                // A prompt typed instead of an answer is not lost.
+                _ => vec![declined, Action::RestoreComposer(line.into())],
+            });
+        }
         Some(vec![if line.trim() == "y" {
             Action::InstallSkill {
                 session: session.clone(),
@@ -140,6 +206,101 @@ impl UltracodeService {
     }
     pub fn bind(&mut self, session: &SessionId, profile: &str) {
         self.profiles.insert(session.clone(), profile.into());
+    }
+    /// Start from the settings an earlier run saved.
+    pub fn restore(&mut self, saved: SavedModes) {
+        self.state.restore(saved);
+    }
+    /// The runtime session belongs to stored session `stored`. True when it opens with
+    /// Ultracode on and nothing has said so yet.
+    pub fn adopt(&mut self, session: &SessionId, stored: &str) -> bool {
+        let on = self.state.adopt(session, stored);
+        let announced = self.announced.remove(session);
+        on && !announced
+    }
+    /// A notice about the session's switch is already shown; its next open says nothing.
+    pub fn mark_announced(&mut self, session: &SessionId) {
+        self.announced.insert(session.clone());
+    }
+    /// Hermes moved the session to a new stored id.
+    pub fn rotate(&mut self, session: &SessionId, stored: &str) {
+        self.state.rotate(session, stored);
+    }
+    /// The settings file's new text, when a setting changed or a session with one was opened.
+    pub fn take_saved(&mut self, now_ms: i64) -> Option<String> {
+        self.state.take_saved(now_ms).map(|saved| saved.to_json())
+    }
+    /// A read of the local setup, for a session on a local gateway.
+    pub fn setup_check(&self, session: &SessionId) -> Option<Action> {
+        if self.remote {
+            return None;
+        }
+        Some(Action::CheckSetup {
+            session: session.clone(),
+            profile: self
+                .profiles
+                .get(session)
+                .map_or("default", String::as_str)
+                .into(),
+        })
+    }
+    /// Report what a setup read found, each finding once until it changes. A changed or older
+    /// skill offers the reinstall through the install offer's yes-or-no answer.
+    pub fn on_setup(
+        &mut self,
+        session: &SessionId,
+        profile: &str,
+        facts: SetupFacts,
+    ) -> Vec<Action> {
+        let mut actions = vec![];
+        let tiers = match facts.tiers {
+            TierCheck::Present => None,
+            TierCheck::Missing => Some(notice::NO_TIERS.to_owned()),
+            TierCheck::Unreadable(reason) => {
+                Some(format!("staffing.toml could not be read ({reason})"))
+            }
+        };
+        if tiers.is_none() && facts.missing_builtins.is_empty() {
+            self.warned_setup.remove(profile);
+        } else {
+            let key = format!("{tiers:?}{:?}", facts.missing_builtins);
+            if self.warned_setup.get(profile) != Some(&key) {
+                self.warned_setup.insert(profile.into(), key);
+                actions.push(Action::Notice(notice::setup_missing(
+                    profile,
+                    tiers.as_deref(),
+                    &facts.missing_builtins,
+                )));
+            }
+        }
+        let (warning, digest) = match facts.skill {
+            SkillCheck::Modified { changes, digest } => {
+                (notice::skill_changed(profile, &changes), digest)
+            }
+            SkillCheck::Outdated { digest } => (notice::skill_outdated(profile), digest),
+            SkillCheck::Unchanged => {
+                self.warned_skill.remove(profile);
+                return actions;
+            }
+            SkillCheck::Unknown => return actions,
+        };
+        if self.warned_skill.get(profile) == Some(&digest) {
+            return actions;
+        }
+        self.warned_skill.insert(profile.into(), digest);
+        actions.push(Action::Notice(warning));
+        actions.push(Action::Notice(notice::reinstall_offer(profile)));
+        self.pending.insert(session.clone(), profile.into());
+        self.reinstall.insert(session.clone());
+        actions
+    }
+    /// The session routed a prompt, so an interrupt there says Ultracode is still on.
+    pub fn note_routed(&mut self, session: &SessionId) {
+        self.routed.insert(session.clone());
+    }
+    pub fn after_interrupt(&self, session: &SessionId) -> Option<Action> {
+        (self.routed.contains(session) && self.state.is_on(session))
+            .then(|| Action::Notice(notice::STILL_ON.into()))
     }
     pub fn handle_local_command(
         &mut self,

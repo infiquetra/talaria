@@ -978,3 +978,284 @@ fn remote_service_never_arms_watch() {
     assert_eq!(service.next_scan_ms(), None);
     assert_eq!(service.scan_due(0), None);
 }
+
+fn setup(skill: talaria_app::ultracode::SkillCheck) -> talaria_app::ultracode::SetupFacts {
+    talaria_app::ultracode::SetupFacts {
+        skill,
+        tiers: talaria_app::ultracode::TierCheck::Present,
+        missing_builtins: vec![],
+    }
+}
+
+fn notice_texts(actions: &[Action]) -> Vec<&str> {
+    actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::Notice(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn setup_is_checked_locally_on_turn_on_reopen_and_routed_prompts() {
+    let id = session();
+    let service = on();
+    assert_eq!(
+        service.setup_check(&id),
+        Some(Action::CheckSetup {
+            session: id.clone(),
+            profile: "fixture".into()
+        })
+    );
+    let mut remote = on();
+    remote.set_remote(true);
+    assert_eq!(
+        remote.setup_check(&id),
+        None,
+        "a remote gateway's files are not here"
+    );
+}
+
+#[test]
+fn a_changed_skill_warns_once_and_offers_the_reinstall() {
+    use talaria_app::ultracode::SkillCheck;
+    let id = session();
+    let mut service = on();
+    let changed = SkillCheck::Modified {
+        changes: vec![
+            "changed:SKILL.md".into(),
+            "added:references/extra.md".into(),
+        ],
+        digest: "digest-1".into(),
+    };
+    let actions = service.on_setup(&id, "fixture", setup(changed.clone()));
+    assert_eq!(
+        notice_texts(&actions),
+        [
+            notice::skill_changed(
+                "fixture",
+                &[
+                    "changed:SKILL.md".into(),
+                    "added:references/extra.md".into()
+                ]
+            ),
+            notice::reinstall_offer("fixture"),
+        ]
+    );
+    // The same change is reported once.
+    assert!(service.on_setup(&id, "fixture", setup(changed)).is_empty());
+    // The answer goes through the install offer's yes-or-no path.
+    assert_eq!(
+        service.answer_install(&id, "y"),
+        Some(vec![Action::ReinstallSkill {
+            session: id.clone(),
+            profile: "fixture".into()
+        }])
+    );
+    assert_eq!(service.answer_install(&id, "y"), None, "answered once");
+
+    // A further change warns again; a prompt typed instead of an answer goes back to the composer.
+    let again = SkillCheck::Modified {
+        changes: vec!["changed:SKILL.md".into()],
+        digest: "digest-2".into(),
+    };
+    assert_eq!(
+        notice_texts(&service.on_setup(&id, "fixture", setup(again))).len(),
+        2
+    );
+    assert_eq!(
+        service.answer_install(&id, "fix the parser"),
+        Some(vec![
+            Action::Notice(notice::reinstall_declined("fixture")),
+            Action::RestoreComposer("fix the parser".into()),
+        ])
+    );
+
+    // An older install from a previous Talaria offers the same update.
+    let actions = service.on_setup(
+        &id,
+        "fixture",
+        setup(SkillCheck::Outdated {
+            digest: "digest-3".into(),
+        }),
+    );
+    assert_eq!(
+        notice_texts(&actions),
+        [
+            notice::skill_outdated("fixture"),
+            notice::reinstall_offer("fixture")
+        ]
+    );
+    assert_eq!(
+        service.answer_install(&id, "n"),
+        Some(vec![Action::Notice(notice::reinstall_declined("fixture"))])
+    );
+    assert!(
+        service
+            .on_setup(&id, "fixture", setup(SkillCheck::Unchanged))
+            .is_empty()
+    );
+}
+
+#[test]
+fn missing_tiers_and_builtins_give_one_notice() {
+    use talaria_app::ultracode::{SetupFacts, SkillCheck, TierCheck};
+    let id = session();
+    let mut service = on();
+    let facts = SetupFacts {
+        skill: SkillCheck::Unchanged,
+        tiers: TierCheck::Missing,
+        missing_builtins: vec!["review-branch".into(), "research".into()],
+    };
+    let actions = service.on_setup(&id, "fixture", facts.clone());
+    assert_eq!(
+        actions,
+        vec![Action::Notice(notice::setup_missing(
+            "fixture",
+            Some(notice::NO_TIERS),
+            &["review-branch".into(), "research".into()]
+        ))]
+    );
+    assert!(
+        service.on_setup(&id, "fixture", facts).is_empty(),
+        "said once"
+    );
+    let unreadable = SetupFacts {
+        skill: SkillCheck::Unchanged,
+        tiers: TierCheck::Unreadable("staffing.toml: 3:1: expected a table".into()),
+        missing_builtins: vec![],
+    };
+    let text = notice_texts(&service.on_setup(&id, "fixture", unreadable)).join("\n");
+    assert!(text.contains("3:1: expected a table"), "{text}");
+}
+
+#[test]
+fn an_interrupt_after_a_routed_prompt_says_the_mode_is_still_on() {
+    let id = session();
+    let mut service = on();
+    assert_eq!(service.after_interrupt(&id), None, "nothing was routed yet");
+    service.note_routed(&id);
+    assert_eq!(
+        service.after_interrupt(&id),
+        Some(Action::Notice(notice::STILL_ON.into()))
+    );
+    let _ = service.handle_local_command("off", foreground(&id));
+    assert_eq!(service.after_interrupt(&id), None);
+}
+
+/// A Hermes home with a default profile and the skill installed the way the installer does it.
+fn installed_skill() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    use talaria_workflow::skill::{InstallOptions, SkillTarget, install};
+    let temp = tempfile::tempdir().unwrap();
+    let hermes = temp.path().join("hermes-home");
+    let talaria = temp.path().join("talaria-home");
+    std::fs::create_dir_all(&hermes).unwrap();
+    std::fs::create_dir_all(&talaria).unwrap();
+    let target = SkillTarget::resolve_local("default", &hermes).unwrap();
+    install(
+        &target,
+        &InstallOptions {
+            command: "talaria".into(),
+            force: false,
+            dry_run: false,
+            talaria_home: talaria.clone(),
+            now: chrono::Utc::now(),
+            lock_wait: std::time::Duration::from_secs(5),
+        },
+    )
+    .unwrap();
+    (temp, hermes, talaria)
+}
+
+#[test]
+fn setup_read_compares_the_installed_skill_with_its_install_record() {
+    use talaria_app::ultracode::{SkillCheck, TierCheck};
+    use talaria_app::ultracode_files::read_setup;
+    let (_temp, hermes, talaria) = installed_skill();
+    let facts = read_setup("default", &hermes, &talaria);
+    assert_eq!(facts.skill, SkillCheck::Unchanged);
+    assert_eq!(facts.tiers, TierCheck::Missing);
+    let mut missing = facts.missing_builtins.clone();
+    missing.sort();
+    assert_eq!(
+        missing,
+        [
+            "fix-failing-tests",
+            "research",
+            "review-branch",
+            "ultracode"
+        ]
+    );
+
+    // Another program edits the skill and adds a reference file.
+    let dir = hermes.join("skills/talaria-workflows");
+    let skill = dir.join("SKILL.md");
+    let mut text = std::fs::read_to_string(&skill).unwrap();
+    text.push_str("\nAn extra rule added by a review.\n");
+    std::fs::write(&skill, text).unwrap();
+    std::fs::write(dir.join("references/extra.md"), "extra\n").unwrap();
+    let changed = read_setup("default", &hermes, &talaria);
+    let SkillCheck::Modified { changes, digest } = &changed.skill else {
+        panic!("{:?}", changed.skill);
+    };
+    assert_eq!(changes, &["changed:SKILL.md", "added:references/extra.md"]);
+    // A further edit is a new change.
+    std::fs::write(dir.join("references/extra.md"), "extra, edited\n").unwrap();
+    let SkillCheck::Modified { digest: later, .. } = read_setup("default", &hermes, &talaria).skill
+    else {
+        panic!("still modified");
+    };
+    assert_ne!(digest, &later);
+
+    // Tiers and built-ins.
+    std::fs::write(
+        talaria.join("staffing.toml"),
+        "[tiers.builder]\nmodel = \"fixture-model\"\nprovider = \"fixture-provider\"\n",
+    )
+    .unwrap();
+    talaria_workflow::builtins::install(
+        &talaria.join("workflows"),
+        talaria_workflow::builtins::InstallMode::MissingOnly,
+    )
+    .unwrap();
+    let ready = read_setup("default", &hermes, &talaria);
+    assert_eq!(ready.tiers, TierCheck::Present);
+    assert!(
+        ready.missing_builtins.is_empty(),
+        "{:?}",
+        ready.missing_builtins
+    );
+    std::fs::write(talaria.join("staffing.toml"), "[tiers\n").unwrap();
+    assert!(matches!(
+        read_setup("default", &hermes, &talaria).tiers,
+        TierCheck::Unreadable(_)
+    ));
+
+    // No install record: nothing to compare with, so nothing to say about the skill.
+    let other = tempfile::tempdir().unwrap();
+    assert_eq!(
+        read_setup("default", &hermes, other.path()).skill,
+        SkillCheck::Unknown
+    );
+}
+
+#[test]
+fn the_mode_file_round_trips_and_ignores_a_stale_write() {
+    use talaria_app::ultracode_files::ModeFile;
+    use talaria_core::ultracode::SavedModes;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("state/workflow-mode.json");
+    assert_eq!(ModeFile::read(&path).unwrap(), SavedModes::default());
+    let file = ModeFile::new(path.clone());
+    let mut state = talaria_core::ultracode::UltracodeState::new(false);
+    let id = SessionId::new("runtime-1");
+    state.adopt(&id, "stored-1");
+    state.set(&id, true);
+    let newer = state.take_saved(1_000).unwrap();
+    file.write(2, &newer.to_json()).unwrap();
+    file.write(1, &SavedModes::default().to_json()).unwrap();
+    assert_eq!(ModeFile::read(&path).unwrap(), newer);
+    std::fs::write(&path, "not json").unwrap();
+    assert!(ModeFile::read(&path).is_err());
+}

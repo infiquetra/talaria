@@ -3,7 +3,8 @@ use crate::{
     commands::{CommandCatalog, CommandSource, SkillOrigin},
     session::SessionId,
 };
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub const SKILL_COMMAND: &str = "/talaria-workflows";
 /// The model-facing line in front of a routed prompt once the skill is in the conversation.
 /// It never shows on screen, live or replayed.
@@ -132,30 +133,149 @@ pub fn contains_keyword(text: &str) -> bool {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
         .any(|word| word.eq_ignore_ascii_case("ultracode"))
 }
+/// How long a saved setting is kept after its session was last opened or changed.
+pub const KEEP_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+/// One stored session's saved setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedMode {
+    pub on: bool,
+    /// Wall-clock milliseconds when the session was last opened or changed.
+    pub seen_ms: i64,
+}
+/// The settings saved across restarts, keyed by stored session id.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SavedModes {
+    sessions: BTreeMap<String, SavedMode>,
+}
+#[derive(Serialize, Deserialize)]
+struct SavedFile {
+    version: u32,
+    sessions: BTreeMap<String, SavedMode>,
+}
+impl SavedModes {
+    pub fn from_json(text: &str) -> Result<Self, String> {
+        let file: SavedFile = serde_json::from_str(text).map_err(|error| error.to_string())?;
+        if file.version != 1 {
+            return Err(format!("unknown version {}", file.version));
+        }
+        Ok(Self {
+            sessions: file.sessions,
+        })
+    }
+    pub fn to_json(&self) -> String {
+        let file = SavedFile {
+            version: 1,
+            sessions: self.sessions.clone(),
+        };
+        serde_json::to_string_pretty(&file).unwrap_or_default() + "\n"
+    }
+    /// Drop sessions not seen within [`KEEP_MS`] of `now_ms`.
+    pub fn prune(&mut self, now_ms: i64) {
+        self.sessions
+            .retain(|_, mode| now_ms.saturating_sub(mode.seen_ms) <= KEEP_MS);
+    }
+}
 #[derive(Debug, Clone, Default)]
 pub struct UltracodeState {
     default_on: bool,
+    /// Settings made before the session's stored id was known.
     sessions: HashMap<SessionId, bool>,
     /// Sessions whose conversation holds the whole skill, and the conversation it went into.
     skill: HashMap<SessionId, SkillEpoch>,
+    /// The stored session each runtime session id belongs to.
+    bound: HashMap<SessionId, String>,
+    /// Settings by stored session id; these are saved across restarts.
+    stored: BTreeMap<String, SavedMode>,
+    /// Stored ids opened or changed since the last save.
+    touched: BTreeSet<String>,
+    dirty: bool,
 }
 impl UltracodeState {
     pub fn new(default_on: bool) -> Self {
         Self {
             default_on,
-            sessions: HashMap::new(),
-            skill: HashMap::new(),
+            ..Self::default()
         }
     }
+    /// Start from the settings saved by an earlier run.
+    pub fn restore(&mut self, saved: SavedModes) {
+        self.stored = saved.sessions;
+    }
     pub fn is_on(&self, id: &SessionId) -> bool {
-        self.sessions.get(id).copied().unwrap_or(self.default_on)
+        self.explicit(id).unwrap_or(self.default_on)
+    }
+    /// The setting made for the session, if any.
+    fn explicit(&self, id: &SessionId) -> Option<bool> {
+        match self.bound.get(id) {
+            Some(stored) => self.stored.get(stored).map(|mode| mode.on),
+            None => self.sessions.get(id).copied(),
+        }
     }
     pub fn set(&mut self, id: &SessionId, on: bool) {
-        self.sessions.insert(id.clone(), on);
+        match self.bound.get(id).cloned() {
+            Some(stored) => self.save(stored, on),
+            None => {
+                self.sessions.insert(id.clone(), on);
+            }
+        }
+    }
+    fn save(&mut self, stored: String, on: bool) {
+        let seen_ms = self.stored.get(&stored).map_or(0, |mode| mode.seen_ms);
+        self.stored
+            .insert(stored.clone(), SavedMode { on, seen_ms });
+        self.touched.insert(stored);
+        self.dirty = true;
+    }
+    /// The runtime session `id` belongs to stored session `stored`: its setting is the stored
+    /// session's from now on. A setting made for `id` before, such as a branch's copy of its
+    /// parent's, moves to the stored session. Says whether the session is on.
+    pub fn adopt(&mut self, id: &SessionId, stored: &str) -> bool {
+        if stored.is_empty() {
+            return self.is_on(id);
+        }
+        self.bound.insert(id.clone(), stored.to_owned());
+        if let Some(on) = self.sessions.remove(id) {
+            self.save(stored.to_owned(), on);
+        } else if self.stored.contains_key(stored) {
+            self.touched.insert(stored.to_owned());
+            self.dirty = true;
+        }
+        self.is_on(id)
+    }
+    /// Hermes moved the session to a new stored id, as a compaction does: the setting follows.
+    pub fn rotate(&mut self, id: &SessionId, stored: &str) {
+        let Some(old) = self.bound.get(id).cloned() else {
+            return;
+        };
+        if old == stored || stored.is_empty() {
+            return;
+        }
+        self.bound.insert(id.clone(), stored.to_owned());
+        if let Some(mode) = self.stored.get(&old).copied() {
+            self.save(stored.to_owned(), mode.on);
+        }
+    }
+    /// The settings to save when any changed: every session opened or changed since the last
+    /// save is marked seen at `now_ms`, and sessions not seen for 30 days are dropped.
+    pub fn take_saved(&mut self, now_ms: i64) -> Option<SavedModes> {
+        if !std::mem::take(&mut self.dirty) {
+            return None;
+        }
+        for stored in std::mem::take(&mut self.touched) {
+            if let Some(mode) = self.stored.get_mut(&stored) {
+                mode.seen_ms = now_ms;
+            }
+        }
+        let mut saved = SavedModes {
+            sessions: std::mem::take(&mut self.stored),
+        };
+        saved.prune(now_ms);
+        self.stored = saved.sessions.clone();
+        Some(saved)
     }
     /// Copy an explicit setting from one session to another, and say whether `to` is now on.
     pub fn carry(&mut self, from: &SessionId, to: &SessionId) -> bool {
-        if let Some(on) = self.sessions.get(from).copied() {
+        if let Some(on) = self.explicit(from) {
             self.set(to, on);
         }
         if let Some(epoch) = self.skill.get(from).cloned() {
@@ -244,13 +364,20 @@ pub mod notice {
     use super::SkillAvailability;
     /// What Ultracode does with a prompt, in the words every notice shares.
     pub const SKILL_ROLE: &str = "With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
-    pub const ON: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
-    pub const ON_REMOTE: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
+    pub const ON: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /ultracode off to stop.";
+    pub const ON_REMOTE: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Ultracode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /ultracode off to stop.";
     /// The one line a routed prompt prints.
     pub const ROUTED: &str = "Ultracode: handling this prompt as a workflow.";
     pub const ROUTED_REMOTE: &str =
         "Ultracode: handling this prompt as a workflow on the gateway's machine.";
     pub const BRANCH_CARRIED: &str = "Ultracode stays on in this branch.";
+    /// Printed when a session opens with Ultracode on.
+    pub const OPENED_ON: &str = "Ultracode is on in this session: a plain prompt is handled as a workflow. /ultracode off to stop.";
+    /// Printed after an interrupt in a session that routed a prompt.
+    pub const STILL_ON: &str =
+        "Ultracode is still on: your next plain prompt is handled as a workflow too.";
+    /// Why the staffing tiers are missing when no table names one.
+    pub const NO_TIERS: &str = "no tiers are configured";
     pub const OFF: &str = "Ultracode off for this session.";
     pub const ONE_SHOT: &str = "Ultracode (keyword ultracode): handling this prompt as a workflow.";
     /// Names the routed request in an error Talaria words for a slash command.
@@ -302,6 +429,60 @@ pub mod notice {
         format!(
             "A quick or plugin command with the talaria-workflows skill's name in profile {profile} hides the skill, so nothing was sent. {SKILL_ROLE} Rename that command, then try again."
         )
+    }
+    /// The Hermes command that stops agents, and Hermes's background review, changing the skill.
+    pub fn lock_command(profile: &str) -> String {
+        if profile == "default" {
+            "hermes curator lock talaria-workflows".into()
+        } else {
+            format!("hermes -p {profile} curator lock talaria-workflows")
+        }
+    }
+    /// `changes` are the inspection's `changed:`, `added:` and `removed:` entries.
+    pub fn skill_changed(profile: &str, changes: &[String]) -> String {
+        let files = changes
+            .iter()
+            .map(|change| match change.split_once(':') {
+                Some((kind, path)) => format!("{kind} {path}"),
+                None => change.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "The talaria-workflows skill in profile {profile} was changed by another program after Talaria installed it ({files}). This is most often Hermes's self-improvement review, which rewrites skills it has used. With changed instructions the agent may not follow Talaria's instructions, for example by building the project itself instead of proposing a workflow. To stop Hermes changing it again after a reinstall, run: {}",
+            lock_command(profile)
+        )
+    }
+    pub fn skill_outdated(profile: &str) -> String {
+        format!(
+            "The talaria-workflows skill in profile {profile} is older than the copy in this Talaria, so the agent follows older instructions."
+        )
+    }
+    pub fn reinstall_offer(profile: &str) -> String {
+        format!(
+            "Reinstall Talaria's talaria-workflows skill into profile {profile} now? The installed copy is backed up first. [y/N]"
+        )
+    }
+    pub fn reinstall_declined(profile: &str) -> String {
+        format!(
+            "Kept the installed talaria-workflows skill. Reinstall it later with: talaria workflow skill install --force --profile {profile}"
+        )
+    }
+    /// `tiers` says why no staffing tier is usable, when none is.
+    pub fn setup_missing(profile: &str, tiers: Option<&str>, builtins: &[String]) -> String {
+        let mut text = "Workflow setup is incomplete, so the agent must write each workflow by hand and name every model itself.".to_owned();
+        if let Some(reason) = tiers {
+            text.push_str(&format!(
+                " Staffing tiers: {reason}. Add [tiers.<name>] tables with a model and provider to staffing.toml in Talaria's home folder (~/.talaria unless TALARIA_CONFIG_DIR is set), then check them with: talaria workflow roster --profile {profile}"
+            ));
+        }
+        if !builtins.is_empty() {
+            text.push_str(&format!(
+                " Built-in workflows not installed: {}. Install them with: talaria workflow builtins install",
+                builtins.join(", ")
+            ));
+        }
+        text
     }
     pub fn status(on: bool, profile: &str, skill: &SkillAvailability) -> String {
         let skill = match skill {

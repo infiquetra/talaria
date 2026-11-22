@@ -816,6 +816,10 @@ pub struct AppState {
     pub workflow_views: crate::workflow_progress::ProgressViews,
     pub ultracode: crate::ultracode::UltracodeService,
     ultracode_requests: std::collections::HashMap<SessionId, u64>,
+    /// Where the per-session switch is saved; none in tests.
+    ultracode_file: Option<crate::ultracode_files::ModeFile>,
+    /// The number of the last save of the switch file.
+    ultracode_saves: u64,
     configure: Option<talaria_core::configure::ConfigureState>,
     configure_service: Option<Arc<crate::configure::Service>>,
     configure_generation: u64,
@@ -1255,6 +1259,8 @@ impl AppState {
             skin_preview: None,
             ultracode: crate::ultracode::UltracodeService::default(),
             ultracode_requests: std::collections::HashMap::new(),
+            ultracode_file: None,
+            ultracode_saves: 0,
             commands: CommandsState::default(),
             local: LocalCommandTable::builtin(),
             picker: None,
@@ -1831,6 +1837,12 @@ pub enum AppMessage {
     UltracodeNotice {
         text: String,
     },
+    /// What a read of the local workflow setup found for a session.
+    UltracodeSetup {
+        session: SessionId,
+        profile: String,
+        facts: crate::ultracode::SetupFacts,
+    },
     /// One read of the runs folder for the sessions that wait for a workflow run.
     UltracodeRuns {
         rows: Vec<talaria_workflow::runner::RunSummary>,
@@ -2389,6 +2401,11 @@ pub enum AppEffect {
     /// Read the local runs folder for runs that started at or after `since_ms`.
     UltracodeScan {
         since_ms: i64,
+    },
+    /// Write the per-session switch file; save number `generation`.
+    UltracodeSave {
+        generation: u64,
+        text: String,
     },
     /// Run a Hermes slash command (`slash.exec`) in the background.
     RunCommand {
@@ -4260,7 +4277,13 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&profile))) {
                     state.ultracode.record_shown(&session);
                 }
-                ultracode_actions(state, actions)
+                let turned_on = command != talaria_core::ultracode::UltracodeCommand::Status
+                    && state.ultracode.status_input(Some(&session));
+                let mut effects = ultracode_actions(state, actions);
+                if turned_on && let Some(check) = state.ultracode.setup_check(&session) {
+                    effects.extend(apply_ultracode(state, vec![check], false));
+                }
+                effects
             } else {
                 Vec::new()
             }
@@ -4285,6 +4308,18 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
         }
         AppMessage::UltracodeNotice { text } => vec![notice_lines(&text)],
+        AppMessage::UltracodeSetup {
+            session,
+            profile,
+            facts,
+        } => {
+            // A session in the background hears about its setup when it is next in front.
+            if !is_foreground(state, session.as_str()) {
+                return Vec::new();
+            }
+            let actions = state.ultracode.on_setup(&session, &profile, facts);
+            apply_ultracode(state, actions, false)
+        }
         AppMessage::UltracodeRuns { rows } => ultracode_runs(state, &rows),
         AppMessage::CommandDone { typed, outcome } => command_done(state, &typed, outcome),
         AppMessage::ContextDone { block } => context_done(state, block),
@@ -7471,6 +7506,7 @@ fn apply_ultracode(
                     if talaria_core::ultracode::loads_skill(&text) {
                         state.ultracode.skill_sent(&session, epoch);
                     }
+                    state.ultracode.note_routed(&session);
                 }
                 let submission_id = state.next_submission_id();
                 effects.extend(reduce(
@@ -7488,6 +7524,9 @@ fn apply_ultracode(
                 if clear_composer {
                     clear_submitted_draft(state);
                 }
+                if let Action::RunCommand { session, .. } = &action {
+                    state.ultracode.note_routed(session);
+                }
                 effects.push(AppEffect::Ultracode {
                     action,
                     request_id: 0,
@@ -7504,13 +7543,33 @@ fn apply_ultracode(
                 };
                 effects.push(AppEffect::Ultracode { action, request_id });
             }
-            action @ Action::InstallSkill { .. } => effects.push(AppEffect::Ultracode {
-                action,
-                request_id: 0,
-            }),
+            action @ (Action::InstallSkill { .. }
+            | Action::ReinstallSkill { .. }
+            | Action::CheckSetup { .. }) => {
+                // The conversation holds the old instructions; the next routed prompt sends
+                // the reinstalled skill whole.
+                if let Action::ReinstallSkill { session, .. } = &action {
+                    state.ultracode.rearm(session);
+                }
+                effects.push(AppEffect::Ultracode {
+                    action,
+                    request_id: 0,
+                });
+            }
         }
     }
+    effects.extend(ultracode_save(state));
     effects
+}
+
+/// Save the per-session switch when a setting changed or a session that has one was opened.
+fn ultracode_save(state: &mut AppState) -> Option<AppEffect> {
+    let text = state.ultracode.take_saved((state.wall_s * 1000.0) as i64)?;
+    state.ultracode_saves += 1;
+    Some(AppEffect::UltracodeSave {
+        generation: state.ultracode_saves,
+        text,
+    })
 }
 
 /// Apply a finished command's outcome: notices into the transcript, a directive's prompt
@@ -8312,6 +8371,10 @@ fn branched(
                     let carried = parent
                         .as_ref()
                         .is_some_and(|parent| state.ultracode.carry(parent, &child));
+                    if carried {
+                        // The branch notice below says it; the open does not repeat it.
+                        state.ultracode.mark_announced(&child);
+                    }
                     effects.extend(install_session(state, install, Some(notice)));
                     if carried {
                         effects.push(notice_lines(
@@ -9088,7 +9151,14 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
                 }
                 clear_submitted_draft(state);
             }
-            return ultracode_actions(state, actions);
+            let mut effects = ultracode_actions(state, actions);
+            // A routed prompt checks the local setup on the side; the prompt does not wait.
+            if state.ultracode.status_input(Some(&session))
+                && let Some(check) = state.ultracode.setup_check(&session)
+            {
+                effects.extend(apply_ultracode(state, vec![check], false));
+            }
+            return effects;
         }
     }
     submit_prose(state, text)
@@ -9805,6 +9875,18 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 {
                     state.folder.apply_info_cwd(cwd);
                 }
+                // A compaction moves the session to a new stored id; the switch follows it.
+                if type_name == "session.info"
+                    && let Some(stored) = payload
+                        .get("stored_session_id")
+                        .and_then(Value::as_str)
+                        .filter(|stored| !stored.is_empty())
+                {
+                    state
+                        .ultracode
+                        .rotate(&SessionId::new(session_id.clone()), stored);
+                    effects.extend(ultracode_save(state));
+                }
                 if let Some(input) = rewound {
                     effects.extend(rewind_input(state, input));
                 }
@@ -10064,6 +10146,13 @@ fn opened_session(
             .ultracode
             .carry(&old, &SessionId::new(opened.session_id.clone()));
     }
+    // The switch belongs to the stored session, so a return from another session, a restart or
+    // a compaction finds it again.
+    let ultracode_session = SessionId::new(opened.session_id.clone());
+    let announce_ultracode = state
+        .ultracode
+        .adopt(&ultracode_session, &opened.stored_session_id)
+        && !same_session;
     if !same_session && let Some(old_id) = state.opened.as_ref().map(|old| old.session_id.clone()) {
         background.extend(background_event(
             state,
@@ -10266,6 +10355,14 @@ fn opened_session(
     if let Some(notice) = notice.filter(|notice| !notice.is_empty()) {
         effects.push(notice_lines(&notice));
     }
+    if announce_ultracode {
+        state.ultracode.bind(&ultracode_session, &state.profile);
+        effects.push(notice_lines(talaria_core::ultracode::notice::OPENED_ON));
+        if let Some(check) = state.ultracode.setup_check(&ultracode_session) {
+            effects.extend(apply_ultracode(state, vec![check], false));
+        }
+    }
+    effects.extend(ultracode_save(state));
     // The snapshot's `yolo` is never read: it is false after a gateway restart until the next
     // turn (#237). `install` made the state when the connection opened; a session that opens
     // without it makes it here.
@@ -10530,7 +10627,18 @@ fn interrupt_done(
     state.interrupting = false;
     let mut effects: Vec<AppEffect> = notices.iter().map(|text| notice_lines(text)).collect();
     let reason = match outcome {
-        ExecuteOutcome::Sent => return effects,
+        ExecuteOutcome::Sent => {
+            // An accidental interrupt does not end workflow mode; say so.
+            if let Some(session) = state
+                .opened
+                .as_ref()
+                .map(|opened| SessionId::new(opened.session_id.clone()))
+                && let Some(action) = state.ultracode.after_interrupt(&session)
+            {
+                effects.extend(apply_ultracode(state, vec![action], false));
+            }
+            return effects;
+        }
         ExecuteOutcome::Refused { reason } => reason,
         ExecuteOutcome::OutcomeUnknown | ExecuteOutcome::VoiceStopped => {
             "connection_dropped".to_string()
@@ -13945,7 +14053,41 @@ fn apply<S: Screen>(
                         }
                     });
                 }
-                crate::ultracode::Action::InstallSkill { profile, .. } => {
+                crate::ultracode::Action::CheckSetup { session, profile } => {
+                    let Some(talaria_home) = talaria_workflow::staffing::talaria_home() else {
+                        continue;
+                    };
+                    let hermes_home = hermes_client::default_home();
+                    executor.send_later(async move {
+                        let read_profile = profile.clone();
+                        let facts = tokio::task::spawn_blocking(move || {
+                            crate::ultracode_files::read_setup(
+                                &read_profile,
+                                &hermes_home,
+                                &talaria_home,
+                            )
+                        })
+                        .await
+                        .unwrap_or(crate::ultracode::SetupFacts {
+                            skill: crate::ultracode::SkillCheck::Unknown,
+                            tiers: crate::ultracode::TierCheck::Present,
+                            missing_builtins: Vec::new(),
+                        });
+                        AppMessage::UltracodeSetup {
+                            session,
+                            profile,
+                            facts,
+                        }
+                    });
+                }
+                action @ (crate::ultracode::Action::InstallSkill { .. }
+                | crate::ultracode::Action::ReinstallSkill { .. }) => {
+                    // A reinstall replaces a changed copy after backing it up.
+                    let (profile, force) = match action {
+                        crate::ultracode::Action::ReinstallSkill { profile, .. } => (profile, true),
+                        crate::ultracode::Action::InstallSkill { profile, .. } => (profile, false),
+                        _ => continue,
+                    };
                     executor.send_later(async move {
                         let result = async {
                             let (target, warnings) =
@@ -13958,7 +14100,7 @@ fn apply<S: Screen>(
                                 })?;
                             let options = talaria_workflow::skill::InstallOptions {
                                 command: "talaria".into(),
-                                force: false,
+                                force,
                                 dry_run: false,
                                 talaria_home: home,
                                 now: chrono::Utc::now(),
@@ -13987,6 +14129,14 @@ fn apply<S: Screen>(
                 }
                 _ => {}
             },
+            AppEffect::UltracodeSave { generation, text } => {
+                if let Some(file) = state.ultracode_file.clone() {
+                    executor.spawn(async move {
+                        let _ = tokio::task::spawn_blocking(move || file.write(generation, &text))
+                            .await;
+                    });
+                }
+            }
             AppEffect::RunCommand { session_id, typed } => {
                 let Some(commands) = &state.command_service else {
                     continue;
@@ -15923,6 +16073,19 @@ async fn run_inner<S: Screen>(
     state.ultracode = crate::ultracode::UltracodeService::new(default_ultracode);
     if setup.remote_gateway {
         state.ultracode.set_remote(true);
+    }
+    // The per-session switch saved by earlier runs; an unreadable file starts empty and is
+    // replaced by the next change.
+    if let Some(home) = talaria_workflow::staffing::talaria_home() {
+        let path = home.join(crate::ultracode_files::MODE_FILE);
+        if let Ok(mut saved) = crate::ultracode_files::ModeFile::read(&path) {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_millis() as i64);
+            saved.prune(now_ms);
+            state.ultracode.restore(saved);
+        }
+        state.ultracode_file = Some(crate::ultracode_files::ModeFile::new(path));
     }
     let voice_config = screen.voice_config();
     state.configure_voice(voice_config);
@@ -19011,6 +19174,224 @@ mod ultracode_visibility_tests {
                 .status_input(Some(&SessionId::new("runtime-3"))),
             "another stored session keeps its own setting"
         );
+    }
+
+    /// `/ultracode on` typed in the composer, answered by a catalogue that lists the skill.
+    fn type_ultracode_on(state: &mut AppState) -> Vec<AppEffect> {
+        let mut effects = submit(state, "/ultracode on".into());
+        let (request_id, session) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Ultracode {
+                    action: crate::ultracode::Action::FetchCatalog { session, .. },
+                    request_id,
+                } => Some((*request_id, session.clone())),
+                _ => None,
+            })
+            .expect("the catalogue is read");
+        let result: talaria_core::commands::CatalogResult = serde_json::from_value(json!({
+            "skills": {"/talaria-workflows": {"usage": 0, "origin": "local"}},
+            "pairs": []
+        }))
+        .unwrap();
+        effects.extend(update(
+            state,
+            AppMessage::UltracodeCatalog {
+                request_id,
+                session,
+                profile: "fixture".into(),
+                command: UltracodeCommand::On,
+                result: Ok(talaria_core::commands::CommandCatalog::from_result(&result)),
+            },
+        ));
+        effects
+    }
+
+    /// The last copy of the saved switch file an effect asked to write.
+    fn saved(effects: &[AppEffect]) -> Option<String> {
+        effects.iter().rev().find_map(|effect| match effect {
+            AppEffect::UltracodeSave { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+    }
+
+    fn checks_setup(effects: &[AppEffect]) -> bool {
+        effects.iter().any(|effect| {
+            matches!(
+                effect,
+                AppEffect::Ultracode {
+                    action: crate::ultracode::Action::CheckSetup { .. },
+                    ..
+                }
+            )
+        })
+    }
+
+    fn opened_line() -> String {
+        format!("\u{b7} {}", notice::OPENED_ON)
+    }
+
+    #[test]
+    fn ultracode_survives_return_from_another_session() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
+        let _ = type_ultracode_on(&mut state);
+        // A workflow agent's session opened from the workflow view.
+        let effects = opened_session(&mut state, session("runtime-w1", "stored-w"), None);
+        assert!(
+            !state
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-w1")))
+        );
+        assert!(!lines(&effects).contains(&opened_line()), "{effects:?}");
+        // Back to the first session, which Hermes reopens under a new runtime id.
+        let effects = opened_session(&mut state, session("runtime-b2", "stored-s"), None);
+        assert!(
+            state
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-b2")))
+        );
+        assert_eq!(
+            lines(&effects)
+                .iter()
+                .filter(|line| **line == opened_line())
+                .count(),
+            1,
+            "{effects:?}"
+        );
+        assert!(checks_setup(&effects), "a reopen checks the setup");
+        let effects = enter(&mut state, "fix the parser");
+        assert!(
+            effects.iter().any(|effect| matches!(effect,
+                AppEffect::Ultracode { action: crate::ultracode::Action::RunCommand { session, .. }, .. }
+                    if session.as_str() == "runtime-b2")),
+            "{effects:?}"
+        );
+        assert!(checks_setup(&effects), "a routed prompt checks the setup");
+        // A plain reconnect of the same runtime session repeats nothing.
+        let effects = opened_session(&mut state, session("runtime-b2", "stored-s"), None);
+        assert!(!lines(&effects).contains(&opened_line()), "{effects:?}");
+    }
+
+    #[test]
+    fn ultracode_is_restored_after_a_restart() {
+        let mut first = AppState::new("launch");
+        first.profile = "fixture".into();
+        let _ = opened_session(&mut first, session("runtime-a1", "stored-s"), None);
+        let effects = type_ultracode_on(&mut first);
+        assert!(checks_setup(&effects), "turning on checks the setup");
+        let text = saved(&effects).expect("turning on saves the switch");
+
+        // `talaria --resume` in a new process opens the stored session under a new runtime id.
+        let mut second = AppState::new("launch");
+        second.profile = "fixture".into();
+        second
+            .ultracode
+            .restore(talaria_core::ultracode::SavedModes::from_json(&text).unwrap());
+        let effects = opened_session(&mut second, session("runtime-r2", "stored-s"), None);
+        assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
+        let effects = enter(&mut second, "lets continue the workflow");
+        assert!(loads_skill(&effects), "{effects:?}");
+
+        // Off is remembered the same way.
+        let effects = submit(&mut second, "/ultracode off".into());
+        let text = saved(&effects).expect("turning off saves the switch");
+        let mut third = AppState::new("launch");
+        third.profile = "fixture".into();
+        third.ultracode = crate::ultracode::UltracodeService::new(true);
+        third
+            .ultracode
+            .restore(talaria_core::ultracode::SavedModes::from_json(&text).unwrap());
+        let effects = opened_session(&mut third, session("runtime-r3", "stored-s"), None);
+        assert!(
+            !third
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-r3")))
+        );
+        assert!(!lines(&effects).contains(&opened_line()), "{effects:?}");
+    }
+
+    #[test]
+    fn compaction_moves_ultracode_to_the_new_stored_id() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("session", "stored-before"), None);
+        let _ = type_ultracode_on(&mut state);
+        let effects = frame(
+            &mut state,
+            "session.info",
+            json!({"stored_session_id": "stored-after"}),
+        );
+        let text = saved(&effects).expect("the new stored id is saved");
+        let mut restarted = AppState::new("launch");
+        restarted.profile = "fixture".into();
+        restarted
+            .ultracode
+            .restore(talaria_core::ultracode::SavedModes::from_json(&text).unwrap());
+        let _ = opened_session(&mut restarted, session("runtime-2", "stored-after"), None);
+        assert!(
+            restarted
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-2")))
+        );
+    }
+
+    #[test]
+    fn a_branch_says_ultracode_once() {
+        let mut state = opened("parent");
+        turn_on(&mut state, "parent");
+        let install = SwitchInstall {
+            opened: session("child", "stored-child"),
+            service: SessionService::new("launch"),
+            link: None,
+        };
+        let effects = branched(
+            &mut state,
+            BranchOutcome::Branched {
+                notice: "Branched into the fixture.".into(),
+            },
+            Some(install),
+        );
+        let shown = lines(&effects);
+        assert_eq!(
+            shown
+                .iter()
+                .filter(|line| line.contains("Ultracode"))
+                .count(),
+            1,
+            "{shown:?}"
+        );
+        assert!(saved(&effects).is_some_and(|text| text.contains("stored-child")));
+    }
+
+    #[test]
+    fn interrupting_a_routed_turn_says_ultracode_is_still_on() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let effects = interrupt_done(&mut state, ExecuteOutcome::Sent, Vec::new());
+        assert_eq!(
+            lines(&effects),
+            [format!("\u{b7} {}", notice::STILL_ON)],
+            "{effects:?}"
+        );
+        let mut off = opened("session");
+        let effects = interrupt_done(&mut off, ExecuteOutcome::Sent, Vec::new());
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn a_remote_gateway_skips_the_setup_check() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.ultracode.set_remote(true);
+        let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
+        let effects = type_ultracode_on(&mut state);
+        assert!(!checks_setup(&effects), "{effects:?}");
+        let effects = enter(&mut state, "fix the parser");
+        assert!(!checks_setup(&effects), "{effects:?}");
     }
 
     #[tokio::test]

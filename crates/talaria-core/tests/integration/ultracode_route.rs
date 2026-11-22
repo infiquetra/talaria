@@ -179,3 +179,109 @@ fn the_full_skill_goes_once_per_conversation_until_it_changes() {
         "typing the command again re-arms it"
     );
 }
+
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+#[test]
+fn the_switch_follows_the_stored_session_across_runtime_ids() {
+    use talaria_core::ultracode::SavedModes;
+    let (a1, w1, b2) = (
+        SessionId::new("runtime-a1"),
+        SessionId::new("runtime-w1"),
+        SessionId::new("runtime-b2"),
+    );
+    let mut state = UltracodeState::new(false);
+    assert!(!state.adopt(&a1, "stored-s"));
+    state.set(&a1, true);
+    // Another session in between keeps its own setting.
+    assert!(!state.adopt(&w1, "stored-w"));
+    // The same stored session under a new runtime id is still on.
+    assert!(state.adopt(&b2, "stored-s"));
+    assert!(state.is_on(&b2));
+
+    // A restart reads the saved file and restores it under yet another runtime id.
+    let saved = state.take_saved(10 * DAY_MS).expect("a change is saved");
+    let text = saved.to_json();
+    let mut restarted = UltracodeState::new(false);
+    restarted.restore(SavedModes::from_json(&text).expect("the saved file reads back"));
+    let c3 = SessionId::new("runtime-c3");
+    assert!(restarted.adopt(&c3, "stored-s"));
+    assert!(!restarted.adopt(&SessionId::new("runtime-d4"), "stored-w"));
+    assert!(
+        restarted.take_saved(10 * DAY_MS).is_some(),
+        "an open refreshes when it was seen"
+    );
+    assert!(
+        restarted.take_saved(10 * DAY_MS).is_none(),
+        "nothing changed since"
+    );
+
+    // Off is remembered too, even when the launch default is on.
+    let mut defaulted = UltracodeState::new(true);
+    assert!(defaulted.adopt(&a1, "stored-s"));
+    defaulted.set(&a1, false);
+    let text = defaulted.take_saved(DAY_MS).unwrap().to_json();
+    let mut again = UltracodeState::new(true);
+    again.restore(SavedModes::from_json(&text).unwrap());
+    assert!(!again.adopt(&b2, "stored-s"));
+}
+
+#[test]
+fn a_setting_made_before_the_stored_id_is_known_is_kept() {
+    let (a1, child) = (
+        SessionId::new("runtime-a1"),
+        SessionId::new("runtime-child"),
+    );
+    let mut state = UltracodeState::new(false);
+    state.set(&a1, true);
+    // A branch copies the parent's setting before the child is opened.
+    assert!(state.carry(&a1, &child));
+    assert!(state.adopt(&child, "stored-child"));
+    let saved = state.take_saved(DAY_MS).unwrap().to_json();
+    assert!(saved.contains("stored-child"), "{saved}");
+}
+
+#[test]
+fn compaction_moves_the_switch_to_the_new_stored_id() {
+    use talaria_core::ultracode::SavedModes;
+    let a1 = SessionId::new("runtime-a1");
+    let mut state = UltracodeState::new(false);
+    state.adopt(&a1, "stored-before");
+    state.set(&a1, true);
+    let _ = state.take_saved(DAY_MS);
+    state.rotate(&a1, "stored-after");
+    assert!(state.is_on(&a1));
+    let text = state
+        .take_saved(DAY_MS)
+        .expect("the move is saved")
+        .to_json();
+    let mut restarted = UltracodeState::new(false);
+    restarted.restore(SavedModes::from_json(&text).unwrap());
+    assert!(restarted.adopt(&SessionId::new("runtime-b2"), "stored-after"));
+    // Rotating to the id it already has changes nothing.
+    state.rotate(&a1, "stored-after");
+    assert!(state.take_saved(DAY_MS).is_none());
+}
+
+#[test]
+fn the_saved_file_drops_sessions_not_seen_for_thirty_days() {
+    use talaria_core::ultracode::SavedModes;
+    let mut state = UltracodeState::new(false);
+    let (old, recent) = (SessionId::new("runtime-old"), SessionId::new("runtime-new"));
+    state.adopt(&old, "stored-old");
+    state.set(&old, true);
+    let _ = state.take_saved(DAY_MS);
+    state.adopt(&recent, "stored-new");
+    state.set(&recent, true);
+    let text = state.take_saved(35 * DAY_MS).unwrap().to_json();
+    assert!(text.contains("stored-new"), "{text}");
+    assert!(!text.contains("stored-old"), "{text}");
+    // A file read at start-up is pruned the same way, against the time it is read.
+    let mut restarted = UltracodeState::new(false);
+    let mut saved = SavedModes::from_json(&text).unwrap();
+    saved.prune(80 * DAY_MS);
+    restarted.restore(saved);
+    assert!(!restarted.adopt(&SessionId::new("runtime-x"), "stored-new"));
+    assert!(SavedModes::from_json("not json").is_err());
+    assert!(SavedModes::from_json("{\"version\":2,\"sessions\":{}}").is_err());
+}

@@ -179,3 +179,75 @@ fn run_notices_name_key_and_workflows_command() {
     );
     assert_eq!(notice::BRANCH_CARRIED, "Ultracode stays on in this branch.");
 }
+
+#[test]
+fn the_switch_is_announced_on_open_and_after_an_interrupt() {
+    assert_eq!(
+        notice::OPENED_ON,
+        "Ultracode is on in this session: a plain prompt is handled as a workflow. /ultracode off to stop."
+    );
+    assert_eq!(
+        notice::STILL_ON,
+        "Ultracode is still on: your next plain prompt is handled as a workflow too."
+    );
+    for text in [notice::ON, notice::ON_REMOTE] {
+        assert!(text.contains("resumed after a restart"), "{text}");
+    }
+}
+
+#[test]
+fn a_changed_skill_says_who_changed_it_what_it_causes_and_how_to_fix_it() {
+    let changes = [
+        "changed:SKILL.md".to_owned(),
+        "added:references/extra.md".to_owned(),
+    ];
+    let text = notice::skill_changed("fixture", &changes);
+    for phrase in [
+        "talaria-workflows skill in profile fixture",
+        "changed by another program",
+        "Hermes's self-improvement review",
+        "changed SKILL.md",
+        "added references/extra.md",
+        "may not follow Talaria's instructions",
+        "hermes -p fixture curator lock talaria-workflows",
+    ] {
+        assert!(text.contains(phrase), "{phrase:?}: {text}");
+    }
+    assert!(
+        notice::skill_changed("default", &changes)
+            .contains("run: hermes curator lock talaria-workflows"),
+        "the default profile needs no -p"
+    );
+    assert!(notice::skill_outdated("fixture").contains("older than the copy in this Talaria"));
+    assert_eq!(
+        notice::reinstall_offer("fixture"),
+        "Reinstall Talaria's talaria-workflows skill into profile fixture now? The installed copy is backed up first. [y/N]"
+    );
+    assert!(
+        notice::reinstall_declined("fixture")
+            .contains("talaria workflow skill install --force --profile fixture")
+    );
+}
+
+#[test]
+fn missing_setup_is_one_notice_with_the_commands() {
+    let both = notice::setup_missing(
+        "fixture",
+        Some("no tiers are configured"),
+        &["review-branch".to_owned(), "research".to_owned()],
+    );
+    for phrase in [
+        "Workflow setup is incomplete",
+        "Staffing tiers: no tiers are configured",
+        "staffing.toml",
+        "talaria workflow roster --profile fixture",
+        "Built-in workflows not installed: review-branch, research",
+        "talaria workflow builtins install",
+    ] {
+        assert!(both.contains(phrase), "{phrase:?}: {both}");
+    }
+    let tiers_only = notice::setup_missing("fixture", Some("no tiers are configured"), &[]);
+    assert!(!tiers_only.contains("Built-in"), "{tiers_only}");
+    let builtins_only = notice::setup_missing("fixture", None, &["research".to_owned()]);
+    assert!(!builtins_only.contains("Staffing"), "{builtins_only}");
+}
