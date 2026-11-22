@@ -321,8 +321,8 @@ fn describe_after_selection_settles_and_is_cached() {
     );
     assert_eq!(
         machine.view().rows[1].model_cell,
-        "-",
-        "undescribed stays blank"
+        "…",
+        "a served row not yet described reads as being read"
     );
 
     // The detail carries the title, the state text and the formatted lines.
@@ -1830,4 +1830,121 @@ fn typing_m_or_c_in_the_filter_or_description_stays_text() {
     }
     assert_eq!(machine.view().filter.as_deref(), Some("mc"));
     assert_eq!(machine.view().confirm, None);
+}
+
+fn describes(effects: &[ProfilesEffect]) -> Vec<String> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProfilesEffect::Describe { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn model_cell(machine: &ProfilesState, name: &str) -> String {
+    machine
+        .view()
+        .rows
+        .into_iter()
+        .find(|row| row.name_cell == name)
+        .map(|row| row.model_cell)
+        .unwrap_or_else(|| panic!("no row {name}"))
+}
+
+/// Hermes lists every profile but the default one with an empty model, so the screen
+/// reads the model of each served row in the background, one request at a time.
+#[test]
+fn served_rows_without_a_listed_model_are_described_in_the_background() {
+    let mut machine = state();
+    let _ = machine.update(ProfilesInput::Open, 0);
+    let effects = full_load(&mut machine, 0, 0);
+    assert_eq!(
+        describes(&effects),
+        ["default"],
+        "the selected row is read first and alone: {effects:?}"
+    );
+    assert_eq!(model_cell(&machine, "fixture"), "…", "a row being read");
+    assert_eq!(model_cell(&machine, "fixture-a"), "…");
+    assert_eq!(
+        model_cell(&machine, "fixture-b"),
+        "-",
+        "a parked row is not read"
+    );
+
+    let effects = machine.update(
+        ProfilesInput::Described(0, "default".to_owned(), Ok(description("default"))),
+        20,
+    );
+    assert_eq!(describes(&effects), ["fixture"], "list order: {effects:?}");
+
+    // Hide the detail panel; a background answer must not open it again.
+    let _ = machine.update(ProfilesInput::Key(KeyAction::New), 25);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Back), 25);
+    assert_eq!(machine.view().panel, Panel::None);
+
+    let mut fixture = description("fixture");
+    fixture.model_default = "fixture-model".to_owned();
+    fixture.model_provider = "fixture-provider".to_owned();
+    let effects = machine.update(
+        ProfilesInput::Described(0, "fixture".to_owned(), Ok(fixture)),
+        30,
+    );
+    assert_eq!(describes(&effects), ["fixture-a"], "{effects:?}");
+    assert_eq!(
+        model_cell(&machine, "fixture"),
+        "fixture-model · fixture-provider"
+    );
+    let view = machine.view();
+    assert_eq!(view.selected, Some(0), "the selection stays on default");
+    assert_eq!(view.panel, Panel::None, "the detail stays closed");
+
+    // A failure leaves the dash and prints no notice.
+    let effects = machine.update(
+        ProfilesInput::Described(0, "fixture-a".to_owned(), Err(CallFailure::Unknown)),
+        40,
+    );
+    assert!(effects.is_empty(), "no notice and no retry: {effects:?}");
+    assert_eq!(machine.view().notice, None);
+    assert_eq!(model_cell(&machine, "fixture-a"), "-");
+
+    // Selecting a row read in the background does not ask again.
+    for now in [50, 60] {
+        let effects = machine.update(ProfilesInput::Key(KeyAction::Down), now);
+        assert!(effects.is_empty(), "the cache answers: {effects:?}");
+    }
+    let _ = machine.update(ProfilesInput::Key(KeyAction::First), 70);
+
+    // A refresh reads the rows again, but not the one that failed in this opening.
+    let _ = machine.update(ProfilesInput::Refresh, 100);
+    let effects = full_load(&mut machine, 1, 100);
+    assert_eq!(describes(&effects), ["default"]);
+    let effects = machine.update(
+        ProfilesInput::Described(1, "default".to_owned(), Ok(description("default"))),
+        110,
+    );
+    assert_eq!(describes(&effects), ["fixture"], "{effects:?}");
+    assert_eq!(model_cell(&machine, "fixture-a"), "-");
+
+    // Closing stops the queue; a late answer is dropped and asks for nothing.
+    let _ = machine.update(ProfilesInput::Closed, 120);
+    let effects = machine.update(
+        ProfilesInput::Described(1, "fixture".to_owned(), Ok(description("fixture"))),
+        130,
+    );
+    assert!(effects.is_empty(), "{effects:?}");
+
+    // A new opening tries the failed row again.
+    let effects = machine.update(ProfilesInput::Open, 200);
+    assert_eq!(describes(&effects), Vec::<String>::new());
+    let _ = full_load(&mut machine, 2, 200);
+    let _ = machine.update(
+        ProfilesInput::Described(2, "default".to_owned(), Ok(description("default"))),
+        210,
+    );
+    let effects = machine.update(
+        ProfilesInput::Described(2, "fixture".to_owned(), Ok(description("fixture"))),
+        220,
+    );
+    assert_eq!(describes(&effects), ["fixture-a"], "{effects:?}");
 }

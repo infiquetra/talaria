@@ -498,6 +498,10 @@ pub struct ProfilesState {
     editing: Option<SoulEdit>,
     next_token: u64,
     timers: std::collections::BTreeMap<u64, Timer>,
+    /// Served rows whose model is read in the background, next first.
+    model_queue: std::collections::VecDeque<String>,
+    /// Rows whose description failed in this opening; their model stays a dash.
+    model_failed: std::collections::BTreeSet<String>,
 }
 
 const NOT_SENT: &str = "Not sent: Talaria is not connected to the gateway. Nothing changed.";
@@ -700,6 +704,8 @@ impl ProfilesState {
             editing: None,
             next_token: 0,
             timers: Default::default(),
+            model_queue: Default::default(),
+            model_failed: Default::default(),
         }
     }
 
@@ -740,6 +746,7 @@ impl ProfilesState {
         self.load = None;
         self.reading = None;
         self.timers.clear();
+        self.model_queue.clear();
     }
 
     fn refresh(&mut self, effects: &mut Vec<ProfilesEffect>) {
@@ -752,6 +759,7 @@ impl ProfilesState {
         self.requested.clear();
         self.in_flight.clear();
         self.fresh_after.clear();
+        self.model_queue.clear();
         self.reading = None;
         self.timers
             .retain(|_, timer| !matches!(timer, Timer::Describe(_)));
@@ -840,6 +848,50 @@ impl ProfilesState {
         self.ensure_selection();
         if let Some(name) = self.selected.clone() {
             self.describe(name, false, effects);
+        }
+        self.queue_models();
+        self.read_next_model(effects);
+    }
+
+    /// Whether the background reads this row's model: Hermes lists only the default
+    /// profile's model, so every other served row is described to fill its model cell.
+    fn model_unread(&self, row: &ProfileRow) -> bool {
+        row.state == ServeState::Served
+            && row.model.is_none()
+            && !self.descriptions.contains_key(&row.name)
+            && !self.model_failed.contains(&row.name)
+    }
+
+    /// Queue every row whose model is unread, rows the filter shows first, in list order.
+    fn queue_models(&mut self) {
+        let visible: Vec<String> = self.visible().iter().map(|row| row.name.clone()).collect();
+        let mut queue: Vec<String> = visible.clone();
+        queue.extend(
+            self.rows
+                .iter()
+                .map(|row| row.name.clone())
+                .filter(|name| !visible.contains(name)),
+        );
+        self.model_queue = queue
+            .into_iter()
+            .filter(|name| {
+                self.rows
+                    .iter()
+                    .any(|row| &row.name == name && self.model_unread(row))
+            })
+            .collect();
+    }
+
+    /// Describe the next queued row when no describe is in flight.
+    fn read_next_model(&mut self, effects: &mut Vec<ProfilesEffect>) {
+        if !self.open || !self.in_flight.is_empty() {
+            return;
+        }
+        while let Some(name) = self.model_queue.pop_front() {
+            if !self.requested.contains(&name) && !self.model_failed.contains(&name) {
+                self.describe(name, false, effects);
+                return;
+            }
         }
     }
 
@@ -1027,8 +1079,11 @@ impl ProfilesState {
         result: Result<Description, CallFailure>,
         effects: &mut Vec<ProfilesEffect>,
     ) {
-        if self.reading.is_none() {
+        if self.reading.is_none() && self.selected.as_ref() == Some(&name) {
             self.detail_visible = true;
+        }
+        if result.is_err() {
+            self.model_failed.insert(name.clone());
         }
         self.in_flight.remove(&name);
         if self.fresh_after.remove(&name) {
@@ -1756,6 +1811,7 @@ impl ProfilesState {
         match input {
             ProfilesInput::Open => {
                 self.open = true;
+                self.model_failed.clear();
                 self.panel = EditPanel::None;
                 self.detail_visible = true;
                 self.narrow_detail = false;
@@ -1806,6 +1862,7 @@ impl ProfilesState {
             }
             ProfilesInput::Described(generation, name, result) if self.accept(generation) => {
                 self.described(normalize_profile_name(&name), result, &mut effects);
+                self.read_next_model(&mut effects);
             }
             ProfilesInput::Key(key) if self.open => {
                 if self.confirm.is_none() {
@@ -1944,7 +2001,7 @@ impl ProfilesState {
                     name_cell: if row.display_name != row.name { format!("{} ({})", row.display_name, row.name) } else { row.name.clone() },
                     label: explanation.label.into(),
                     tone: if matches!(row.state, ServeState::Served | ServeState::Starting) { RowTone::Muted } else { RowTone::Warning },
-                    model_cell: row.model.as_ref().map_or_else(|| "-".into(), |model| row.provider.as_ref().map_or_else(|| model.clone(), |provider| format!("{model} · {provider}"))),
+                    model_cell: row.model.as_ref().map_or_else(|| if self.loaded && self.model_unread(row) { "…".into() } else { "-".into() }, |model| row.provider.as_ref().map_or_else(|| model.clone(), |provider| format!("{model} · {provider}"))),
                     next_step: explanation.next_step,
                 }
             }).collect(),
