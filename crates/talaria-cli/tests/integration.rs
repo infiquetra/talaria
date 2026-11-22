@@ -32,6 +32,8 @@ mod fleet_cmd;
 mod fleet_external_format;
 #[path = "integration/herdr_cmd.rs"]
 mod herdr_cmd;
+#[path = "integration/hivecode_launch.rs"]
+mod hivecode_launch;
 #[path = "integration/idle_after_close.rs"]
 mod idle_after_close;
 #[path = "integration/live_acp.rs"]

@@ -99,6 +99,20 @@ fn effort_values_checked() {
 }
 
 #[test]
+fn the_earlier_hivecode_flag_name_parses_but_is_not_listed() {
+    assert!(!parse(&["talaria"]).expect("plain").hivecode);
+    assert!(parse(&["talaria", "--hivecode"]).expect("current").hivecode);
+    assert!(
+        parse(&["talaria", "--ultracode"])
+            .expect("earlier")
+            .hivecode
+    );
+    let help = Cli::command().render_long_help().to_string();
+    assert!(help.contains("--hivecode"), "{help}");
+    assert!(!help.to_lowercase().contains("ultracode"), "{help}");
+}
+
+#[test]
 fn flags_help_and_neutralised_errors() {
     let help = Cli::command().render_long_help().to_string();
     for flag in [
