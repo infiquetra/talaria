@@ -56,7 +56,8 @@ use talaria_core::providers::{ProvidersEffect, ProvidersView};
 use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
 use talaria_core::review::{ReviewFocus, ReviewKey, ReviewView};
 use talaria_core::session::{
-    AssistantCell, Cell, CellId, PromptCell, PromptKind, ReasoningCell, TurnState as SessionTurn,
+    AssistantCell, Cell, CellId, PromptCell, PromptKind, ReasoningCell, SessionState,
+    TurnState as SessionTurn,
 };
 use talaria_core::subagents::{Clock as SubagentClock, FinishedBatch};
 use talaria_tui::activity::{ActivityClock, ActivityLine, ActivityStyle};
@@ -96,6 +97,7 @@ use talaria_tui::prompts::{
     PromptIntent, PromptStack,
 };
 use talaria_tui::queue::{composer_title, handle_selection_key, render_preview};
+use talaria_tui::reply_commit::{ReplyCommits, after_committed};
 use talaria_tui::review_view::draw_review_themed;
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
 use talaria_tui::session_picker::{PickerTheme, SessionPickerView};
@@ -343,6 +345,8 @@ pub struct TuiScreen {
     composer_border: BorderPreset,
     /// The theme each assistant or reasoning cell started under, until it is committed.
     captured: HashMap<CellId, Arc<Theme>>,
+    /// How much of the streaming reply is already in scrollback.
+    replies: ReplyCommits,
     /// The checklist's styles: the same choice of colour the Markdown renderer makes.
     checklist_style: ChecklistStyle,
     color: bool,
@@ -3621,6 +3625,18 @@ impl Screen for TuiScreen {
             // Only the render cache changes; local output must not disappear on refresh.
             self.workspace_renderer.clear();
             self.workspace_source_epoch = source_epoch;
+            // A reply partly in scrollback cannot finish in the state that replaced it.
+            let transcript_key = self.keymap.label(Action::TranscriptOpen);
+            let render = CapturedCells {
+                current: &self.theme,
+                captured: &self.captured,
+                tools: &self.cells,
+                transcript_key: transcript_key.as_deref(),
+            };
+            let lines = self
+                .replies
+                .replaced(&render, self.terminal.viewport().width);
+            let _ = self.terminal.commit_lines(lines);
         }
         self.workspace_committed_cells = committed_cells;
     }
@@ -4376,6 +4392,9 @@ impl Screen for TuiScreen {
             return;
         }
         let width = self.terminal.viewport().width;
+        if let Some(state) = view.state {
+            self.commit_closed_blocks(state, view, width);
+        }
         let mut tail: Vec<Line<'static>> = view
             .state
             .map(|state| {
@@ -4385,11 +4404,18 @@ impl Screen for TuiScreen {
                 let current = &self.theme;
                 let captured = &mut self.captured;
                 let tools = &self.cells;
+                let replies = &self.replies;
                 let transcript_key = self.keymap.label(Action::TranscriptOpen);
                 state
                     .live_tail()
                     .iter()
                     .flat_map(|cell| {
+                        // A reply partly in scrollback draws only its rest, after a blank row.
+                        let rest = replies.live_rest(cell);
+                        let (cell, separated) = match &rest {
+                            Some(rest) => (rest, true),
+                            None => (cell, false),
+                        };
                         if matches!(cell, Cell::Tool(_)) {
                             return match preview(cell, limit) {
                                 Some(trimmed) => tools.lines(&trimmed, width),
@@ -4406,9 +4432,14 @@ impl Screen for TuiScreen {
                             theme: &theme,
                             transcript_key: transcript_key.as_deref(),
                         };
-                        match preview(cell, limit) {
+                        let lines = match preview(cell, limit) {
                             Some(trimmed) => cells.lines(&trimmed, width),
                             None => cells.lines(cell, width),
+                        };
+                        if separated {
+                            after_committed(lines)
+                        } else {
+                            lines
                         }
                     })
                     .collect()
@@ -4863,7 +4894,10 @@ impl Screen for TuiScreen {
             tools: &self.cells,
             transcript_key: transcript_key.as_deref(),
         };
-        let _ = self.terminal.commit(cells, &render);
+        let lines = self
+            .replies
+            .final_lines(cells, &render, self.terminal.viewport().width);
+        let _ = self.terminal.commit_lines(lines);
         for id in cells.iter().filter_map(themed_cell_id) {
             self.captured.remove(&id);
         }
@@ -5027,6 +5061,37 @@ impl Screen for TuiScreen {
 }
 
 impl TuiScreen {
+    /// Commit the streaming reply's closed Markdown blocks, so a reply taller than the live
+    /// region scrolls up into scrollback instead of under the region. Only while the inline
+    /// screen shows scrollback and every final cell before the reply is committed.
+    fn commit_closed_blocks(&mut self, state: &SessionState, view: &View<'_>, width: u16) {
+        let allowed = !(view.layout.workspace_enabled() || view.layout.menu_transient)
+            && state.commit_cursor() >= state.final_prefix_len();
+        // The committed rows use the theme the reply started under, as its later rows do.
+        if let Some(id) = state.live_tail().first().and_then(themed_cell_id) {
+            self.captured
+                .entry(id)
+                .or_insert_with(|| Arc::clone(&self.theme));
+        }
+        let transcript_key = self.keymap.label(Action::TranscriptOpen);
+        let render = CapturedCells {
+            current: &self.theme,
+            captured: &self.captured,
+            tools: &self.cells,
+            transcript_key: transcript_key.as_deref(),
+        };
+        let lines = self.replies.before_frame(
+            state.cells(),
+            state.final_prefix_len(),
+            allowed,
+            &render,
+            width,
+        );
+        if !lines.is_empty() {
+            let _ = self.terminal.commit_lines(lines);
+        }
+    }
+
     fn release_terminal(&mut self) -> io::Result<()> {
         if let Some(input) = &self.input {
             input.pause()?;
@@ -5459,6 +5524,7 @@ fn session(
         menu: talaria_tui::workspace::menu::MenuState::hidden(),
         workspace_source_epoch: 0,
         workspace_committed_cells: 0,
+        replies: ReplyCommits::new(),
         workspace_renderer: talaria_tui::workspace::Workspace::default(),
         providers: crate::providers_wiring::ProvidersWiring::new(),
         providers_view: None,

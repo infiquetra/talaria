@@ -323,6 +323,28 @@ impl Terminal {
         lock(&self.parser).screen().contents()
     }
 
+    /// Every row the terminal holds, oldest first: the scrollback rows, then the screen's rows,
+    /// each trimmed on the right.
+    pub fn history_and_screen(&self) -> Vec<String> {
+        let mut parser = lock(&self.parser);
+        let screen = parser.screen_mut();
+        let (_, cols) = screen.size();
+        screen.set_scrollback(usize::MAX);
+        let held = screen.scrollback();
+        let mut rows = Vec::new();
+        // Scrolled back by `offset` rows, the first screen row shows the row that many rows
+        // above the screen.
+        for offset in (1..=held).rev() {
+            screen.set_scrollback(offset);
+            rows.push(screen.rows(0, cols).next().unwrap_or_default());
+        }
+        screen.set_scrollback(0);
+        rows.extend(screen.rows(0, cols));
+        rows.into_iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect()
+    }
+
     /// Every byte the child has written so far.
     pub fn raw_output(&self) -> Vec<u8> {
         lock(&self.raw).clone()

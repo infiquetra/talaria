@@ -78,6 +78,8 @@ mod print_process;
 mod profiles_cmd;
 #[path = "integration/remote_cli.rs"]
 mod remote_cli;
+#[path = "integration/reply_scrollback.rs"]
+mod reply_scrollback;
 #[path = "integration/stream_args.rs"]
 mod stream_args;
 #[path = "integration/stream_process.rs"]
