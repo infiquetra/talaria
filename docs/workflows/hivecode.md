@@ -50,26 +50,48 @@ In an interactive Talaria session:
 /hivecode on
 /hivecode status
 /hivecode off
+/hivecode reinstall
 ```
 
 Bare `/hivecode` toggles. Turning on and checking status read a fresh command catalogue.
+Turning on prints one notice:
+`Hivecode on for this session: a plain prompt is now handled as a multi-agent workflow the agent proposes and asks before starting. /hivecode off to stop.`
+On a `--remote` session it adds `Runs start on the gateway's machine and do not show in this
+window.` before the last sentence. Slash commands such as `/goal` still go to Hermes as typed
+(see below), a started run shows above the composer, and `/workflows` lists every run.
+
+`/hivecode reinstall` replaces the installed skill with the copy built into this Talaria, the
+same as `talaria workflow skill install --force`: the installed copy is backed up first under
+Talaria's `skills/backups/`. It confirms in one line, for example
+`Reinstalled Talaria's talaria-workflows skill in profile <name>; the old copy is in <backup folder>.`
+The next routed prompt sends the reinstalled skill whole. A `--remote` session's skill lives on
+the gateway's machine, so there the command prints the install command to run on that machine
+instead.
 
 On a local gateway Talaria also checks the workflow setup when Hivecode turns on, when a
 session opens with it on, and before each routed prompt. Each finding is reported once until it
-changes:
+changes. No finding asks a question, and nothing you type afterwards is read as an answer to it:
 
 - The installed skill files are compared by hash with the install record. When another program
   changed them, most often Hermes's background self-improvement review, which rewrites skills it
-  has used, Talaria says which files changed, that the agent may not follow Talaria's
-  instructions (for example it may build the project itself instead of proposing a workflow),
-  and asks `Reinstall Talaria's talaria-workflows skill into profile <name> now? The installed
-  copy is backed up first. [y/N]`. An install from an older Talaria gets the same question.
-  `y` reinstalls with `--force`. Any other answer keeps the installed copy and prints the
-  command; a prompt typed instead of an answer goes back to the composer.
-- Missing staffing tiers and missing built-in workflows give one notice that names what is
-  missing and the commands: add `[tiers.<name>]` tables to `staffing.toml` and check them with
+  has used, Talaria prints two notices. The first names the profile and up to three changed
+  files, says the agent may stop proposing workflows (for example it may build the project
+  itself), and names `/hivecode reinstall`:
+  `Another program changed the talaria-workflows skill in profile <name> (SKILL.md, extra.md), so the agent may stop proposing workflows. /hivecode reinstall restores Talaria's copy.`
+  More than three files end in `and <count> more`. The second gives the Hermes lock command
+  described below.
+- When Talaria's home folder holds no install record for the skill, the installed files are
+  compared by hash with the copy built into this Talaria. Equal files say nothing; different
+  ones print `The talaria-workflows skill in profile <name> differs from the copy in this
+  Talaria, so the agent may stop proposing workflows. /hivecode reinstall replaces it.`
+- An unchanged install from an older Talaria says it is older and that `/hivecode reinstall`
+  updates it.
+- Missing staffing tiers and missing built-in workflows each give their own short notice that
+  ends with its command: add `[tiers.<name>]` tables with a model and provider to
+  `staffing.toml` in Talaria's home folder and check them with
   `talaria workflow roster --profile <name>`; install the built-ins with
-  `talaria workflow builtins install`.
+  `talaria workflow builtins install`. Without tiers the agent names every model itself;
+  without the built-ins it writes each workflow itself.
 
 To stop Hermes from changing the skill again, lock it in Hermes. Talaria does not do this for
 you, because the lock lives in Hermes's own state (`skills/.usage.json`). Name the profile
@@ -94,11 +116,16 @@ the workflow view), when Hermes compacts the session into a new stored id, and a
 with `talaria --resume`. Sessions not opened for 30 days are dropped from the file. Several
 Talaria windows share the file: each save takes a lock on `workflow-mode.json.lock` beside it
 and merges that window's changes into the file, so a setting saved in one window is kept when
-another window saves. A `/branch`
+another window saves. An unreadable file (corrupt, empty, or larger than 4 MiB) is ignored, so
+every session starts with Hivecode off, and the next change replaces it with a clean file. A
+`/branch`
 copy starts with its parent's setting and says `Hivecode stays on in this branch.` Other
 sessions keep their own setting. A session that opens with Hivecode on prints
 `Hivecode is on in this session: a plain prompt is handled as a workflow. /hivecode off to stop.`
-After you interrupt a turn in a session that has routed a prompt, Talaria prints
+A `--remote` session, including one started with `--hivecode`, adds `Runs start on the
+gateway's machine and do not show in this window.` before the last sentence. An interrupted
+routed turn says Hivecode is still on at the end of the one line it leaves (see below). After
+you interrupt any other turn in a session that has routed a prompt, Talaria prints
 `Hivecode is still on: your next plain prompt is handled as a workflow too.` The foreground
 session controls the `hivecode` status segment, shown after the model and dropped first when
 space is tight. Start interactive sessions on with `talaria --hivecode`. The flag turns on
@@ -119,21 +146,27 @@ waiting for your approval (or waiting for your answer, when the agent asks befor
 is written), and running the workflow. Talaria reads them from the turn's tool calls: a write
 to a `.workflow` file or a script in the drafts folder names the script, reading it back or a
 command that names it is checking, an open question is waiting, and `talaria workflow run` is
-running. When the agent writes a script and ends its turn to ask whether to start it, your
+running. A write to a file outside the drafts folder before any script exists means the agent
+is changing the project instead of planning a workflow; the step line then says so and keeps
+the step count: `Step 1 of 5: planning the workflow · the agent is writing project files`. When the agent writes a script and ends its turn to ask whether to start it, your
 reply's turn goes on from that script at step 4 (reading your answer), and the time counts
 both turns. Once Talaria finds the run the turn started, the workflow dock takes the block's
 place. On a screen shorter than 16 rows the block is one row
-(`⚙ Hivecode · writing the workflow script · 1m 05s`). It does not move; only its seconds
+(`⚙ Hivecode · writing the workflow script · 1m 05s`, or
+`⚙ Hivecode · the agent is writing project files · 12s`). It does not move; only its seconds
 change, and the screen wakes once a second only while the block is on screen.
 
 When the turn ends, the block leaves one line in the transcript that says how it ended, for
 example `Hivecode built the workflow in 3m 20s: fix-parser is running (7 agents so far).`,
 `Hivecode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your
-approval to start it.`, or, for an interrupted turn,
+approval to start it.`, or, for an interrupted turn, after Hermes's own `Interrupted` line,
 `Hivecode stopped: interrupted while writing the workflow script (fix-parser.workflow) after
-1m 05s. No workflow started.` A turn interrupted after it sent `talaria workflow run`, before
-Talaria found the run, says the workflow may still be running. The agent proposes a workflow
-and asks before it starts one.
+1m 05s. No workflow started. Hivecode is still on.` That is the only Hivecode line an
+interrupted routed turn leaves. A turn interrupted after it sent `talaria workflow run`, before
+Talaria found the run, says the workflow may still be running. A run that ended on its budget
+reads `… fix-parser stopped by its budget (5 agents).`, in the run notice's words. On a
+`--remote` session a turn that started a run ends with `Runs start on the gateway's machine and
+do not show in this window.` The agent proposes a workflow and asks before it starts one.
 While Hivecode
 is on, a slash command that carries a prompt (`/goal`, `/bg`, `/queue`, `/steer`, `/btw` and
 `/plan`, with their aliases) still goes to Hermes as typed, after a one-line notice that names
@@ -157,10 +190,13 @@ by the prompt that asked for them, so for an hour after a routed prompt a run st
 or in another window on the same profile is also announced here and can become Alt+W's
 target, and two Talaria windows on one profile can both announce the same run. Any other run
 is reached through the run list. A session started with `--remote` runs workflows on the
-gateway's machine, so Talaria does not watch for them and the routing notice says so.
+gateway's machine, so Talaria does not watch for them. The notice printed when Hivecode turns
+on or the session opens with it on says so, and so does the line a routed turn leaves once it
+started a run.
 
 With the toggle off, the whole word `hivecode` anywhere in a plain prompt sends just that
-prompt to the talaria-workflows skill and shows a one-shot notice. Matching ignores ASCII case. Letters, digits,
+prompt to the talaria-workflows skill. It prints no separate notice: the building block shows
+as for any routed prompt. Matching ignores ASCII case. Letters, digits,
 underscore, and hyphen count as word characters: `HIVECODE:` matches, `hivecoder`,
 `pre-hivecode`, and `hivecode_x` do not. Non-ASCII letters are separators. Empty prompts,
 slash commands, and shell commands keep their existing behavior.
@@ -174,8 +210,10 @@ conversation skip the command service: they send the typed text after one model-
 saying that the workflow mode is on and the skill already loaded in the conversation applies.
 The whole skill goes again with the first routed prompt after Hermes compacts the session,
 after the session is opened under a new stored id, after a rewind or a restore, after
-`/hivecode on` is typed again, and after a prompt that carried it is removed from the queue,
-refused, or never confirmed.
+`/hivecode on` is typed again, after `/hivecode reinstall`, and after a prompt that carried it
+is removed from the queue, refused, or never confirmed. While a prompt that carried it still
+waits in the queue, a later routed prompt carries the whole skill too, because the waiting one
+may yet be removed.
 A prompt containing the keyword with the toggle off always carries the whole skill. Busy
 sessions use the existing prompt queue.
 
@@ -204,9 +242,13 @@ Each signed in provider in the report lists its usable `model_ids` and its
 `unavailable_models`; a provider that is not signed in keeps only its count. The report's
 `current` names the model and provider the lead should treat as the default and says where it
 came from: `session` when the roster was asked for with `--session-model` and
-`--session-provider`, otherwise `profile`. A routed prompt ends with a line
-`Session model: <model> on <provider>` naming the pair the session runs on, so the lead can
-pass it to those two flags and to the same flags on `workflow run`.
+`--session-provider`, otherwise `profile`. A routed prompt that carries the whole skill ends
+with a line `Session model: <model> on <provider>` naming the pair the session runs on, so the
+lead can pass it to those two flags and to the same flags on `workflow run`. A later routed
+prompt that carries the reminder ends with the same line whenever the pair differs from the one
+last sent in the conversation, for example after `/model` or once the provider becomes known.
+The line is for the model only: it never shows on screen, live or replayed, in the queue
+preview, or in an edit.
 
 The lead uses a listed built-in path or writes a draft script named `<name>.workflow` in the
 drafts folder. The `.workflow` extension keeps Hermes's file-write lint, which checks `.js`
