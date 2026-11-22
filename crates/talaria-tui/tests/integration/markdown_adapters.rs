@@ -34,6 +34,7 @@ fn cell_lines_markdown_and_delegate() {
         text: text.to_string(),
         sealed: true,
         latest_step: false,
+        no_reply: false,
     });
 
     assert_eq!(

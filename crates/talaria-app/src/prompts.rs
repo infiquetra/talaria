@@ -488,16 +488,17 @@ impl PromptService {
                 status: PromptResponseResultStatus::Resolved,
                 ..
             }) => {
-                self.answered_prompts.insert(key);
+                self.answered_prompts.insert(key.clone());
+                // The accepted answer comes first, so the session seals the prompt before a
+                // note's follow-up prompt starts.
                 Executed {
-                    events: note
-                        .into_iter()
-                        .map(|text| Event::Submit {
+                    events: std::iter::once(Event::AnswerAccepted { key })
+                        .chain(note.into_iter().map(|text| Event::Submit {
                             display: text.clone(),
                             text,
                             submission_id: (self.next_submission_id)(),
                             attachments: Vec::new(),
-                        })
+                        }))
                         .collect(),
                     notices: Vec::new(),
                 }

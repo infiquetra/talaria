@@ -14,6 +14,8 @@ use crate::connectors::{ConnectorsOpen, ConnectorsTab};
 pub enum LocalAction {
     /// Change client-owned layout preferences for the current view.
     Layout,
+    /// Draw reasoning as one line per block or in full, for the current view.
+    Thinking,
     /// View a journaled workflow run.
     Workflows,
     /// Send plain prompts to the talaria-workflows skill.
@@ -467,6 +469,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "panel|bar|menu",
         takes_argument: true,
         action: LocalAction::Layout,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "thinking",
+        aliases: &[],
+        summary: "Show reasoning as one line per block or in full in this view",
+        args_hint: "collapsed|full",
+        takes_argument: true,
+        action: LocalAction::Thinking,
         tag: "talaria",
     },
     LocalCommand {

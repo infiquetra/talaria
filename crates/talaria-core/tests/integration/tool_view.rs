@@ -4,7 +4,7 @@ use crate::bake;
 
 use serde_json::{Value, json};
 use talaria_core::session::{
-    Cell, CellId, OutcomeView, ToolCell, ToolProgress, ToolStatus, format_duration,
+    AskedQuestion, Cell, CellId, OutcomeView, ToolCell, ToolProgress, ToolStatus, format_duration,
     format_progress, tool_view,
 };
 
@@ -372,4 +372,32 @@ fn quiet_tools_have_no_body() {
         assert!(view.quiet, "{name}");
         assert!(view.output.is_none() || view.quiet);
     }
+}
+
+#[test]
+fn a_restored_question_lists_what_it_asked() {
+    // synthetic: a single `question` argument, a result whose answer is empty, and a live cell
+    let mut restored = cell("clarify", ToolStatus::Unknown);
+    restored.args = Some(json!({"question": "Ship it?"}));
+    assert_eq!(
+        tool_view(&restored).questions,
+        vec![AskedQuestion {
+            question: "Ship it?".to_string(),
+            answer: None,
+        }]
+    );
+    restored.result = Some(
+        json!({"responses": [{"question": "Ship it?", "status": "answered", "user_response": ""}]})
+            .to_string(),
+    );
+    assert_eq!(
+        tool_view(&restored).questions[0].answer.as_deref(),
+        Some("no answer")
+    );
+    let mut live = restored.clone();
+    live.status = ToolStatus::Succeeded;
+    assert!(tool_view(&live).questions.is_empty());
+    let mut other = restored;
+    other.name = "todo".to_string();
+    assert!(tool_view(&other).questions.is_empty());
 }

@@ -217,6 +217,7 @@ fn draw(file: &ThemeFile) -> vt100::Parser {
                 text: "Reasoning prose".into(),
                 sealed: true,
                 latest_step: false,
+                no_reply: false,
             }),
             100,
         ),

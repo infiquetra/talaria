@@ -38,6 +38,26 @@ pub(crate) fn apply(state: &mut SessionState, event: &Event) -> Vec<Effect> {
         }
         Event::AnswerApproval { key, choice } => (key, PromptKind::Approval, choice),
         Event::AnswerClarify { key, answer } => (key, PromptKind::Clarify, answer),
+        Event::AnswerAccepted { key } => {
+            // Hermes took the answer, so no later reply can change it: seal the prompt now and
+            // let what follows it reach scrollback while the turn runs.
+            let mut left_open = false;
+            if let Some(prompt) = prompt_mut(state, key) {
+                match &prompt.state {
+                    PromptState::Answering(value) => {
+                        prompt.state = PromptState::Settled(Settlement::Answered(value.clone()));
+                        prompt.sealed = true;
+                        left_open = true;
+                    }
+                    PromptState::Settled(Settlement::Answered(_)) => prompt.sealed = true,
+                    _ => {}
+                }
+            }
+            if left_open {
+                note_left_open(state, key);
+            }
+            return Vec::new();
+        }
         Event::AnswerFailed { key } | Event::AnswerAlreadyResolved { key } => {
             let mut left_open = false;
             if let Some(prompt) = prompt_mut(state, key)
@@ -211,6 +231,8 @@ pub(crate) fn session(state: &mut SessionState, name: &str, payload: &Value) {
                 }
                 PromptState::Answering(value) => {
                     prompt.state = PromptState::Settled(Settlement::Answered(value.clone()));
+                    // Until Hermes replies to the answer, a late `already_resolved` may still
+                    // correct it; `AnswerAccepted` seals it as soon as Hermes accepts it.
                     prompt.sealed = !running;
                 }
                 PromptState::Settled(_) => {}

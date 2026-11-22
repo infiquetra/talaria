@@ -140,6 +140,7 @@ fn sample_cells() -> [Cell; 5] {
             text: "The script repeats one step.".into(),
             sealed: true,
             latest_step: false,
+            no_reply: false,
         }),
         Cell::Tool(ToolCell {
             id: CellId::new(3),

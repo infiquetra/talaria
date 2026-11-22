@@ -348,6 +348,14 @@ fn apply_inbound(
                 None => log.undecodable += 1,
             }
         }
+        "approval.respond" | "clarify.respond"
+            if result.get("status").and_then(Value::as_str) == Some("resolved") =>
+        {
+            match prompt_key(&outbound.params) {
+                Some(key) => log.events.push(Event::AnswerAccepted { key }),
+                None => log.undecodable += 1,
+            }
+        }
         _ => log.skipped += 1,
     }
 }

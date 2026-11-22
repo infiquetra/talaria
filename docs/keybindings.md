@@ -64,7 +64,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | History search | Ctrl+R | Search saved prompt history. | `history_search` |
 | Suspend | Ctrl+Z | Suspend Talaria to the shell. | `suspend` |
 | Attach clipboard image | Ctrl+V, Alt+V | Attach an image from the clipboard. | `attach_clipboard_image` |
-| Transcript open | Ctrl+O | Open or close the transcript pager. | `transcript_open` |
+| Transcript open | Ctrl+O | Open or close the transcript pager, where reasoning shows in full. | `transcript_open` |
 | Toggle tasks | Ctrl+T | Show or hide the task checklist. | `toggle_tasks` |
 | Layout panel | Alt+D | Toggle the work panel, or reopen its dismissed overlay. | `layout_panel` |
 | Toggle menu bar | Alt+I | Toggle and focus the menu bar. | `toggle_menu_bar` |

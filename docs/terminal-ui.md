@@ -18,6 +18,18 @@ also left out while the key would do something else (the focused menu bar, an op
 slash palette, mention list or history search takes it first) and while the link to the gateway is redialling. When the
 gateway reports the session gone, or the link gives up, the turn ends and the row leaves.
 
+The model's thinking is drawn as one dim line per reasoning block. While a block streams, the
+line counts its lines in place, for example `∴ thinking… (+12 lines, Ctrl+O to view)`. When it
+ends, the line says how long it took, `∴ thought for 12s (+34 lines, Ctrl+O to view)`, or only
+its length when Talaria did not see it stream (Hermes's end-of-turn reasoning and resumed
+history). Hermes's end-of-turn reasoning in a turn that ran tools reads
+`∴ thinking, latest step (+34 lines, Ctrl+O to view)`. The transcript view shows every block in
+full. A turn whose only output is its reasoning shows it in full on the main screen too.
+`/thinking full` draws blocks in full from then on, and `/thinking collapsed` returns to one
+line; scrollback already written keeps its form. The optional workspace draws reasoning the same
+way and redraws every block when `/thinking` changes the form. `[ui] reasoning` in the
+[configuration](configuration.md#ui) sets the form at startup.
+
 The status bar's model segment shows the session's requested effort. If Hermes reports a lower
 provider level, an arrow shows both, such as `max→high`. When the model's catalogue row offers no
 effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the

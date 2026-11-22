@@ -158,6 +158,12 @@ pub const REFRESHED_NOTICE: &str = "Reconnected. The transcript was refreshed.";
 pub const STALE_SUBSCRIPTION: &str =
     "Hermes no longer knew this connection's subscription; the session is unaffected.";
 const LINK_STOPPED_NOTICE: &str = "This prompt was not sent: the connection to Hermes has stopped.";
+/// What `/thinking full` says. Scrollback cannot be redrawn, so only blocks drawn from here on
+/// change.
+const THINKING_FULL_NOTICE: &str = "Thinking now shows in full in this view. Set [ui] reasoning = \"full\" in ~/.talaria/config.toml to keep it.";
+/// What `/thinking collapsed` says.
+const THINKING_COLLAPSED_NOTICE: &str =
+    "Thinking now shows as one line per block in this view; the transcript view shows it in full.";
 pub(crate) const REFRESH_FAILED_NOTICE: &str =
     "The transcript could not be refreshed after the reconnect.";
 /// The line a prompt gets while a switch or a branch runs.
@@ -573,6 +579,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     fn menu_bar(&self) -> bool {
         false
+    }
+    /// Startup form of reasoning on the main screen; `/thinking` changes the view alone.
+    fn reasoning_display(&self) -> talaria_core::layout::ReasoningDisplay {
+        talaria_core::layout::ReasoningDisplay::Collapsed
     }
     /// Identify the source before ordered commit effects reach the screen. The
     /// counter locates the uncommitted tail; callback order locates local output.
@@ -6038,6 +6048,22 @@ fn local_effect(
                 user_action(state, UserAction::FocusMenu)
             }
             Err(notice) => vec![AppEffect::CommitLines(vec![notice])],
+        };
+    }
+    if action == LocalAction::Thinking {
+        use talaria_core::layout::ReasoningDisplay;
+        return match talaria_core::layout::parse_thinking_args(&argument, state.layout.reasoning) {
+            Ok(display) => {
+                state.layout.reasoning = display;
+                vec![
+                    notice_lines(match display {
+                        ReasoningDisplay::Full => THINKING_FULL_NOTICE,
+                        ReasoningDisplay::Collapsed => THINKING_COLLAPSED_NOTICE,
+                    }),
+                    AppEffect::Redraw,
+                ]
+            }
+            Err(notice) => vec![notice_lines(&notice)],
         };
     }
     if action == LocalAction::Kanban {
@@ -15947,6 +15973,7 @@ async fn run_inner<S: Screen>(
         state.pane_size.0,
         state.pane_size.1,
     );
+    state.layout.reasoning = screen.reasoning_display();
     sync_models(&mut state, screen);
     sync_picker(&state, screen);
     draw_current_view(&state, screen);

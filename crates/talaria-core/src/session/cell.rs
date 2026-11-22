@@ -81,6 +81,35 @@ impl Cell {
     }
 }
 
+/// Mark the reasoning that ends each completed turn among `cells` without a reply: in every
+/// turn (a run of cells up to the next one that starts a turn) that wrote no reply text, its
+/// last reasoning block, unless a tool ran after it.
+pub(crate) fn mark_unanswered_reasoning(cells: &mut [Cell]) {
+    let mut end = cells.len();
+    while end > 0 {
+        let start = cells[..end]
+            .iter()
+            .rposition(Cell::starts_turn)
+            .unwrap_or(0);
+        let turn = &mut cells[start..end];
+        let replied = turn
+            .iter()
+            .any(|cell| matches!(cell, Cell::Assistant(reply) if !reply.text.trim().is_empty()));
+        if !replied
+            && let Some(last) = turn
+                .iter()
+                .rposition(|cell| matches!(cell, Cell::Reasoning(_)))
+            && !turn[last..]
+                .iter()
+                .any(|cell| matches!(cell, Cell::Tool(_)))
+            && let Cell::Reasoning(reasoning) = &mut turn[last]
+        {
+            reasoning.no_reply = true;
+        }
+        end = start;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Cell, NoticeCell, UserCell};
@@ -144,6 +173,11 @@ pub struct ReasoningCell {
     /// Hermes's end-of-turn reasoning for a turn that ran tools. It is the latest step's
     /// thinking, shown once after that step was already drawn.
     pub latest_step: bool,
+    /// The turn completed with this block as its last output: it wrote no reply text, and no
+    /// tool ran after the block. The block is then all the turn has to show, so the main screen
+    /// draws it in full even when reasoning is collapsed. A block committed before its turn
+    /// ended, such as one sealed by an approval request, keeps the form it was committed in.
+    pub no_reply: bool,
 }
 
 /// Outcome of a tool cell.

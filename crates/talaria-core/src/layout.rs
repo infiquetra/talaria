@@ -16,6 +16,17 @@ pub struct LayoutPreferences {
     pub menu_bar: bool,
 }
 
+/// How the main screen draws reasoning. The transcript view always shows it in full, and
+/// Hermes is never asked to stop sending it: this is a display choice alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReasoningDisplay {
+    /// One line per block, naming its length and the key that opens the transcript view.
+    #[default]
+    Collapsed,
+    /// Every line of every block.
+    Full,
+}
+
 /// The current panel presentation, separate from its enabled preference.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PanelVisibility {
@@ -37,6 +48,8 @@ pub struct LayoutState {
     pub menu_dropdown: bool,
     /// The menu is visible while its preference stays off.
     pub menu_transient: bool,
+    /// How reasoning is drawn in this view; `/thinking` changes it without saving.
+    pub reasoning: ReasoningDisplay,
 }
 
 /// Pure column allocation. A later menu can use the separate row allocation.
@@ -56,6 +69,7 @@ impl LayoutState {
             menu_focused: false,
             menu_dropdown: false,
             menu_transient: false,
+            reasoning: ReasoningDisplay::default(),
         };
         state.resize(columns, rows);
         state
@@ -150,5 +164,22 @@ pub fn parse_layout_args(argument: &str) -> Result<LayoutAction, String> {
         "bar" => Ok(LayoutAction::Bar),
         "menu" => Ok(LayoutAction::Menu),
         _ => Err("Usage: /layout panel|bar|menu".into()),
+    }
+}
+
+/// Parse `/thinking`'s argument: a form to show, or nothing to switch from `current` to the
+/// other form. Anything else is a single-line usage notice.
+pub fn parse_thinking_args(
+    argument: &str,
+    current: ReasoningDisplay,
+) -> Result<ReasoningDisplay, String> {
+    match argument.trim() {
+        "" => Ok(match current {
+            ReasoningDisplay::Collapsed => ReasoningDisplay::Full,
+            ReasoningDisplay::Full => ReasoningDisplay::Collapsed,
+        }),
+        "collapsed" => Ok(ReasoningDisplay::Collapsed),
+        "full" => Ok(ReasoningDisplay::Full),
+        _ => Err("Usage: /thinking [collapsed|full]".into()),
     }
 }

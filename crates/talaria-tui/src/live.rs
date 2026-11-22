@@ -96,6 +96,34 @@ pub fn max_live_height(rows: u16) -> u16 {
     rows.saturating_sub(2)
 }
 
+/// How many of `len` rows a live tail cut to its last `max` rows does not draw: the first row
+/// kept gives way to the cut marker, so its row counts too. `None` when they all fit, or when no
+/// row is left to hold the marker.
+pub(crate) fn tail_hidden(len: usize, max: usize) -> Option<usize> {
+    (max > 0 && len > max).then(|| len - max + 1)
+}
+
+/// The text of a cut tail's first row: how many earlier rows are not in scrollback yet and the
+/// key that shows them now, or the transcript view when no key opens it. `more` says the count
+/// is a floor, because a long reply was already shortened before the cut.
+pub fn tail_cut_text(hidden: usize, more: bool, transcript_key: Option<&str>) -> String {
+    let (noun, verb, them) = if hidden == 1 && !more {
+        ("row", "is", "it")
+    } else {
+        ("rows", "are", "them")
+    };
+    let count = if more {
+        format!("more than {hidden}")
+    } else {
+        hidden.to_string()
+    };
+    let shows = match transcript_key {
+        Some(key) => format!("{key} shows {them} now"),
+        None => format!("the transcript view shows {them}"),
+    };
+    format!("\u{2191} {count} earlier {noun} {verb} not in scrollback yet \u{b7} {shows}")
+}
+
 /// Plain text split on newlines and wrapped to the width.
 pub struct PlainTextSection {
     lines: Vec<Line<'static>>,

@@ -726,6 +726,135 @@ fn completion_reasoning_in_a_tool_turn_is_the_latest_step() {
     assert_eq!(tools(&state)[0].status, ToolStatus::Succeeded);
 }
 
+/// Whether each reasoning cell is marked as the turn's only output, in order.
+fn unanswered(state: &SessionState) -> Vec<bool> {
+    reasoning(state).iter().map(|cell| cell.no_reply).collect()
+}
+
+fn tool_events(seq: u64) -> Vec<Event> {
+    vec![
+        ev(
+            seq,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "terminal"}),
+        ),
+        ev(
+            seq + 1,
+            "tool.complete",
+            json!({"tool_id": "call-1", "name": "terminal", "result": "ok"}),
+        ),
+    ]
+}
+
+#[test]
+fn a_turn_that_ends_in_reasoning_marks_it_unanswered() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "complete", "text": ""}),
+        ),
+    ]);
+    assert_eq!(unanswered(&state), vec![true]);
+    assert!(reasoning(&state)[0].sealed);
+}
+
+#[test]
+fn reasoning_followed_by_a_reply_is_answered() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(3, "message.delta", json!({"text": "done"})),
+        ev(
+            4,
+            "message.complete",
+            json!({"status": "complete", "text": "done"}),
+        ),
+    ]);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn reasoning_answered_only_by_the_completion_text_is_answered() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "complete", "text": "done"}),
+        ),
+    ]);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn reasoning_before_a_tool_is_answered() {
+    let mut events = vec![start(), ev(2, "reasoning.delta", json!({"text": "run it"}))];
+    events.extend(tool_events(3));
+    events.push(ev(
+        5,
+        "message.complete",
+        json!({"status": "complete", "text": ""}),
+    ));
+    let (state, _) = run(events);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn end_of_turn_reasoning_with_blank_text_is_unanswered() {
+    let mut events = vec![start()];
+    events.extend(tool_events(2));
+    events.push(ev(
+        4,
+        "message.complete",
+        json!({"status": "complete", "text": "", "reasoning": "last step"}),
+    ));
+    let (state, _) = run(events);
+    assert!(reasoning(&state)[0].latest_step);
+    assert_eq!(unanswered(&state), vec![true]);
+}
+
+#[test]
+fn reasoning_in_a_turn_that_already_replied_is_answered() {
+    let mut events = vec![start(), ev(2, "message.delta", json!({"text": "Plan"}))];
+    events.extend(tool_events(3));
+    events.push(ev(
+        5,
+        "message.complete",
+        json!({"status": "complete", "text": "", "reasoning": "last step"}),
+    ));
+    let (state, _) = run(events);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn an_interrupted_or_failed_turn_keeps_reasoning_collapsible() {
+    let (interrupted, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        Event::Interrupt,
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "interrupted", "text": ""}),
+        ),
+    ]);
+    assert_eq!(unanswered(&interrupted), vec![false]);
+    let (failed, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "error", "error": "boom"}),
+        ),
+    ]);
+    assert_eq!(unanswered(&failed), vec![false]);
+}
+
 #[test]
 fn completion_reasoning_that_repeats_this_turns_commentary_is_not_drawn_again() {
     let events = |reasoning: &str| {
@@ -2236,6 +2365,149 @@ fn answer_already_resolved_settles_elsewhere() {
     assert!(
         matches!(prompt.state, PromptState::Settled(Settlement::Answered(ref value)) if value == "once")
     );
+    assert!(!prompt.sealed);
+}
+
+/// A question answered and accepted while the turn runs, with `.settled` and the accepted
+/// reply in the given order, then the reply that follows.
+fn accepted_mid_turn(accepted_first: bool) -> SessionState {
+    let settled = ev(
+        5,
+        "clarify.settled",
+        json!({"prompt_id": "q1", "execution_generation": 1}),
+    );
+    let accepted = Event::AnswerAccepted { key: key("q1", 1) };
+    let (first, second) = if accepted_first {
+        (accepted, settled)
+    } else {
+        (settled, accepted)
+    };
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Here is the plan."})),
+        ev(
+            3,
+            "tool.start",
+            json!({"tool_id": "call-q1", "name": "clarify"}),
+        ),
+        ev(4, "clarify.request", clarify_request("q1", 1, "Start?")),
+        Event::AnswerClarify {
+            key: key("q1", 1),
+            answer: "skip".to_string(),
+        },
+        first,
+        second,
+        ev(
+            6,
+            "tool.complete",
+            json!({"tool_id": "call-q1", "name": "clarify"}),
+        ),
+        ev(7, "message.delta", json!({"text": "After the answer."})),
+    ]);
+    state
+}
+
+#[test]
+fn an_accepted_answer_seals_the_prompt_while_the_turn_runs() {
+    for accepted_first in [false, true] {
+        let state = accepted_mid_turn(accepted_first);
+        assert_eq!(state.turn(), &TurnState::Running);
+        let prompt = prompts(&state)[0];
+        assert!(
+            matches!(prompt.state, PromptState::Settled(Settlement::Answered(ref value)) if value == "skip"),
+            "accepted first: {accepted_first}: {:?}",
+            prompt.state
+        );
+        assert!(prompt.sealed, "accepted first: {accepted_first}");
+        // Everything before the reply that is still streaming is final, so it can reach
+        // scrollback while the turn runs.
+        let after = state
+            .cells()
+            .iter()
+            .position(
+                |cell| matches!(cell, Cell::Assistant(reply) if reply.text == "After the answer."),
+            )
+            .expect("the reply after the answer");
+        assert_eq!(
+            state.final_prefix_len(),
+            after,
+            "accepted first: {accepted_first}"
+        );
+        assert_eq!(state.open_prompts().count(), 0);
+    }
+
+    // Once accepted, a late `already_resolved` no longer rewrites the answer.
+    let mut state = accepted_mid_turn(false);
+    let _ = update(
+        &mut state,
+        Event::AnswerAlreadyResolved { key: key("q1", 1) },
+    );
+    assert!(matches!(
+        prompts(&state)[0].state,
+        PromptState::Settled(Settlement::Answered(_))
+    ));
+}
+
+#[test]
+fn an_answer_not_yet_accepted_can_still_be_corrected_late() {
+    // `already_resolved` before `.settled`: settled elsewhere, and the late `.settled`
+    // changes nothing.
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "clarify.request", clarify_request("q1", 1, "Start?")),
+        Event::AnswerClarify {
+            key: key("q1", 1),
+            answer: "skip".to_string(),
+        },
+        Event::AnswerAlreadyResolved { key: key("q1", 1) },
+        ev(
+            3,
+            "clarify.settled",
+            json!({"prompt_id": "q1", "execution_generation": 1}),
+        ),
+    ]);
+    let prompt = prompts(&state)[0];
+    assert!(matches!(
+        prompt.state,
+        PromptState::Settled(Settlement::Elsewhere)
+    ));
+    assert!(prompt.sealed);
+    assert_eq!(state.open_prompts().count(), 0);
+
+    // `.settled` with no reply to the answer yet keeps the prompt open to a correction.
+    let (mut state, _) = run(vec![
+        start(),
+        ev(2, "clarify.request", clarify_request("q1", 1, "Start?")),
+        Event::AnswerClarify {
+            key: key("q1", 1),
+            answer: "skip".to_string(),
+        },
+        ev(
+            3,
+            "clarify.settled",
+            json!({"prompt_id": "q1", "execution_generation": 1}),
+        ),
+    ]);
+    assert!(!prompts(&state)[0].sealed);
+    let _ = update(
+        &mut state,
+        Event::AnswerAlreadyResolved { key: key("q1", 1) },
+    );
+    let prompt = prompts(&state)[0];
+    assert!(matches!(
+        prompt.state,
+        PromptState::Settled(Settlement::Elsewhere)
+    ));
+    assert!(prompt.sealed);
+
+    // An accepted reply for a prompt never answered from here changes nothing.
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "clarify.request", clarify_request("q1", 1, "Start?")),
+        Event::AnswerAccepted { key: key("q1", 1) },
+    ]);
+    let prompt = prompts(&state)[0];
+    assert_eq!(prompt.state, PromptState::Open);
     assert!(!prompt.sealed);
 }
 

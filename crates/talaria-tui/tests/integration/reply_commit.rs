@@ -8,13 +8,14 @@ use ratatui::text::Line;
 use serde_json::json;
 use support::{Alac, ByteSink, probe};
 use talaria_core::session::{
-    AssistantCell, Cell, CellId, ReasoningCell, SessionId, SessionState, ToolCell, ToolStatus,
-    update,
+    AssistantCell, Cell, CellId, Event, PromptCell, ReasoningCell, SessionId, SessionState,
+    ToolCell, ToolStatus, update,
 };
 use talaria_tui::history::{CellLines, CommitLedger, PlainCellLines};
-use talaria_tui::live::{LiveSection, LiveView};
+use talaria_tui::live::{LiveSection, LiveView, PlainTextSection, tail_cut_text};
 use talaria_tui::markdown::section::MarkdownTailSection;
 use talaria_tui::markdown::{MarkdownOptions, closed_blocks_len, render_markdown};
+use talaria_tui::prompts::PromptStack;
 use talaria_tui::reply_commit::{CUT_OFF_NOTICE, REVISED_NOTICE, ReplyCommits, after_committed};
 use talaria_tui::terminal::{InlineTerminal, RestoreLink};
 
@@ -312,6 +313,7 @@ fn end_of_turn_reasoning_follows_a_reply_already_partly_in_scrollback() {
         text: "why".into(),
         sealed: true,
         latest_step: true,
+        no_reply: false,
     });
     let text = "Part one.\n\nPart two.\n";
     // Nothing committed early: the reasoning keeps its place in front of the reply.
@@ -431,19 +433,425 @@ const MAX_TAIL_ROWS: usize = 15;
 
 /// The live tail as the inline screen draws it: a partly committed reply shows only its rest,
 /// and at most `MAX_TAIL_ROWS` rows show.
-fn tail_lines(state: &SessionState, commits: &ReplyCommits) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = state
+fn tail_section(state: &SessionState, commits: &ReplyCommits) -> MarkdownTailSection {
+    tail_beside(state, commits, &PromptStack::new())
+}
+
+/// [`tail_section`] beside a stack of prompt cards, and a cut tail starts with the marker the
+/// inline screen draws.
+fn tail_beside(
+    state: &SessionState,
+    commits: &ReplyCommits,
+    cards: &PromptStack,
+) -> MarkdownTailSection {
+    MarkdownTailSection::cut_with(
+        tail_rows_beside(state, commits, cards),
+        MAX_TAIL_ROWS,
+        |hidden| Line::from(tail_cut_text(hidden, false, Some("Ctrl+O"))),
+    )
+}
+
+/// Every row of the live tail before any cut: the question on the card on top is not drawn in
+/// the tail again.
+fn tail_rows_beside(
+    state: &SessionState,
+    commits: &ReplyCommits,
+    cards: &PromptStack,
+) -> Vec<Line<'static>> {
+    state
         .live_tail()
         .iter()
-        .flat_map(|cell| match commits.live_rest(cell) {
-            Some(rest) => after_committed(MarkdownCells.lines(&rest, COLS)),
-            None => MarkdownCells.lines(cell, COLS),
+        .flat_map(|cell| {
+            if let Cell::Prompt(prompt) = cell
+                && cards.shows_prompt(&prompt.key)
+            {
+                return Vec::new();
+            }
+            match commits.live_rest(cell) {
+                Some(rest) => after_committed(MarkdownCells.lines(&rest, COLS)),
+                None => MarkdownCells.lines(cell, COLS),
+            }
         })
-        .collect();
-    if lines.len() > MAX_TAIL_ROWS {
-        lines.drain(..lines.len() - MAX_TAIL_ROWS);
+        .collect()
+}
+
+/// An inline screen fed the way the terminal feeds it, with a prompt card stack under the tail.
+struct Rig {
+    sink: ByteSink,
+    alac: Alac,
+    term: InlineTerminal<ByteSink>,
+    ledger: CommitLedger,
+    commits: ReplyCommits,
+    cards: PromptStack,
+    /// Rows drawn under the card, standing in for the checklist and the composer.
+    under: Option<String>,
+}
+
+impl Rig {
+    fn new() -> Self {
+        let sink = ByteSink::default();
+        let term = InlineTerminal::new(
+            sink.clone(),
+            (COLS, ROWS),
+            2,
+            probe(false, false, Some((0, ROWS - 1))),
+            RestoreLink::detached(),
+        )
+        .expect("inline terminal");
+        Self {
+            sink,
+            alac: Alac::new(COLS, ROWS),
+            term,
+            ledger: CommitLedger::new(),
+            commits: ReplyCommits::new(),
+            cards: PromptStack::new(),
+            under: None,
+        }
     }
-    lines
+
+    fn frame(&mut self, state: &SessionState) {
+        let ready = self.ledger.take_ready(state.cells());
+        self.term
+            .commit_lines(self.commits.final_lines(ready, &MarkdownCells, COLS))
+            .expect("commit final cells");
+        let early = self.commits.before_frame(
+            state.cells(),
+            state.final_prefix_len(),
+            true,
+            &MarkdownCells,
+            COLS,
+        );
+        self.term.commit_lines(early).expect("commit closed blocks");
+        let open: Vec<&PromptCell> = state.open_prompts().collect();
+        self.cards.sync(
+            Some(events::SESSION),
+            &open,
+            &[],
+            true,
+            std::time::Instant::now(),
+        );
+        let tail = tail_beside(state, &self.commits, &self.cards);
+        let card = self.cards.section();
+        let under = self.under.as_deref().map(PlainTextSection::new);
+        let mut sections: Vec<&dyn LiveSection> = vec![&tail];
+        if let Some(card) = &card {
+            sections.push(card);
+        }
+        if let Some(under) = &under {
+            sections.push(under);
+        }
+        self.term
+            .draw_live(&LiveView { sections })
+            .expect("draw live");
+        self.alac.absorb(&self.sink);
+    }
+
+    /// Committed history (on screen or scrolled off), then the live region's rows.
+    fn above_and_live(&self) -> (Vec<String>, Vec<String>) {
+        let rows = self.alac.history_and_screen();
+        let top = rows.len() - usize::from(ROWS) + usize::from(self.term.viewport().y);
+        let (above, live) = rows.split_at(top);
+        (above.to_vec(), live.to_vec())
+    }
+}
+
+/// Sends Hermes events with rising sequence numbers.
+struct Feed {
+    seq: u64,
+}
+
+impl Feed {
+    fn send(&mut self, state: &mut SessionState, kind: &str, payload: serde_json::Value) {
+        let _ = update(state, events::ev(self.seq, kind, payload));
+        self.seq += 1;
+    }
+}
+
+fn stream(rig: &mut Rig, feed: &mut Feed, state: &mut SessionState, text: &str) {
+    for piece in text.as_bytes().chunks(40) {
+        feed.send(
+            state,
+            "message.delta",
+            json!({"text": std::str::from_utf8(piece).expect("ascii")}),
+        );
+        rig.frame(state);
+    }
+}
+
+fn after_paragraphs(range: std::ops::RangeInclusive<u32>) -> String {
+    range
+        .map(|n| format!("\nAfter paragraph {n:02} of the reply.\n"))
+        .collect()
+}
+
+#[test]
+fn a_reply_after_an_answered_prompt_reaches_scrollback_while_the_turn_runs() {
+    for kind in ["clarify", "approval"] {
+        let mut rig = Rig::new();
+        let mut feed = Feed { seq: 1 };
+        let mut state = SessionState::empty(SessionId::new(events::SESSION.to_owned()));
+        let key = events::key("p1", 1);
+        let (tool, request, answer, row) = if kind == "clarify" {
+            (
+                "clarify",
+                events::clarify_request("p1", 1, "Start this run?"),
+                Event::AnswerClarify {
+                    key: key.clone(),
+                    answer: "skip".to_owned(),
+                },
+                "? Start this run? \u{2192} skip",
+            )
+        } else {
+            (
+                "terminal",
+                events::approval_request("p1", 1, &["once"]),
+                Event::AnswerApproval {
+                    key: key.clone(),
+                    choice: "once".to_owned(),
+                },
+                "? rm -rf .pytest_cache \u{2192} once",
+            )
+        };
+
+        feed.send(&mut state, "message.start", json!({}));
+        stream(
+            &mut rig,
+            &mut feed,
+            &mut state,
+            "Here is the plan.\n\nPlan paragraph two.\n",
+        );
+        feed.send(
+            &mut state,
+            "tool.start",
+            json!({"tool_id": "call-p1", "name": tool}),
+        );
+        feed.send(&mut state, &format!("{kind}.request"), request);
+        rig.frame(&state);
+        let _ = update(&mut state, answer);
+        feed.send(
+            &mut state,
+            &format!("{kind}.settled"),
+            json!({"prompt_id": "p1", "execution_generation": 1}),
+        );
+        let _ = update(&mut state, Event::AnswerAccepted { key: key.clone() });
+        feed.send(
+            &mut state,
+            "tool.complete",
+            json!({"tool_id": "call-p1", "name": tool}),
+        );
+        rig.frame(&state);
+
+        let first = after_paragraphs(1..=11);
+        stream(&mut rig, &mut feed, &mut state, &first);
+
+        // Mid-turn: the answered prompt and the reply's first paragraphs are in scrollback.
+        let (above, live) = rig.above_and_live();
+        for wanted in [row, "After paragraph 01 of the reply."] {
+            assert!(
+                above.iter().any(|line| line.contains(wanted)),
+                "{kind}: {wanted:?} is not above the live region while the turn runs.\n\
+                 above: {above:#?}\nlive: {live:#?}"
+            );
+            assert!(
+                live.iter().all(|line| !line.contains(wanted)),
+                "{kind}: {wanted:?} is still drawn in the live region: {live:#?}"
+            );
+        }
+
+        let rest = after_paragraphs(12..=24);
+        stream(&mut rig, &mut feed, &mut state, &rest);
+        feed.send(
+            &mut state,
+            "message.complete",
+            json!({"status": "complete", "text": format!("{first}{rest}")}),
+        );
+        rig.frame(&state);
+
+        // Every paragraph is in scrollback exactly once, after the prompt's row and in order.
+        let rows = rig.alac.history_and_screen();
+        let prompt_row = rows
+            .iter()
+            .position(|line| line.contains(row))
+            .unwrap_or_else(|| panic!("{kind}: the prompt's row: {rows:#?}"));
+        let mut last = prompt_row;
+        for n in 1..=24 {
+            let wanted = format!("After paragraph {n:02} of the reply.");
+            let found: Vec<usize> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| line.contains(&wanted))
+                .map(|(index, _)| index)
+                .collect();
+            assert_eq!(
+                found.len(),
+                1,
+                "{kind}: {wanted:?} is not in scrollback once"
+            );
+            assert!(found[0] > last, "{kind}: {wanted:?} is out of order");
+            last = found[0];
+        }
+    }
+}
+
+#[test]
+fn a_tail_held_open_by_a_running_tool_says_how_many_rows_wait() {
+    let mut rig = Rig::new();
+    let mut feed = Feed { seq: 1 };
+    let mut state = SessionState::empty(SessionId::new(events::SESSION.to_owned()));
+    feed.send(&mut state, "message.start", json!({}));
+    stream(&mut rig, &mut feed, &mut state, "Starting a long check.\n");
+    feed.send(
+        &mut state,
+        "tool.start",
+        json!({"tool_id": "call-long", "name": "terminal"}),
+    );
+    rig.frame(&state);
+    // The tool still runs, so everything after it waits in the live region.
+    stream(&mut rig, &mut feed, &mut state, &after_paragraphs(1..=12));
+
+    // The live region's first row says how many rows wait and which key shows them.
+    let (above, live) = rig.above_and_live();
+    assert!(
+        live[0].starts_with("\u{2191} ")
+            && live[0]
+                .contains(" earlier rows are not in scrollback yet \u{b7} Ctrl+O shows them now"),
+        "the live region does not start with the marker: {live:#?}"
+    );
+    let drawn = live.iter().filter(|line| !line.trim().is_empty()).count();
+    assert!(drawn <= 15, "the tail drew {drawn} rows: {live:#?}");
+    assert!(
+        live.iter()
+            .any(|line| line.contains("After paragraph 12 of the reply.")),
+        "the newest row still shows: {live:#?}"
+    );
+    assert!(
+        above.iter().all(|line| !line.contains("After paragraph")),
+        "nothing behind a running tool reaches scrollback: {above:#?}"
+    );
+}
+
+#[test]
+fn a_tail_given_fewer_rows_by_the_layout_still_starts_with_the_marker() {
+    let mut rig = Rig::new();
+    // Sections under the tail take 12 of the live region's 22 rows, leaving the tail 10.
+    let under: Vec<String> = (1..=12).map(|n| format!("under row {n:02}")).collect();
+    rig.under = Some(under.join("\n"));
+    let mut feed = Feed { seq: 1 };
+    let mut state = SessionState::empty(SessionId::new(events::SESSION.to_owned()));
+    feed.send(&mut state, "message.start", json!({}));
+    stream(&mut rig, &mut feed, &mut state, "Starting a long check.\n");
+    feed.send(
+        &mut state,
+        "tool.start",
+        json!({"tool_id": "call-long", "name": "terminal"}),
+    );
+    rig.frame(&state);
+    stream(&mut rig, &mut feed, &mut state, &after_paragraphs(1..=12));
+
+    let rows = text_of(&tail_rows_beside(&state, &rig.commits, &rig.cards));
+    let given = usize::from(ROWS) - 2 - under.len();
+    assert!(
+        rows.len() > MAX_TAIL_ROWS,
+        "the tail is cut by its cap as well"
+    );
+    let (_, live) = rig.above_and_live();
+    let hidden = rows.len() - given + 1;
+    assert_eq!(
+        live[0],
+        tail_cut_text(hidden, false, Some("Ctrl+O")),
+        "the first live row is the marker, counting every row not drawn: {live:#?}"
+    );
+    let shown: Vec<&str> = live[1..given].iter().map(|row| row.trim_end()).collect();
+    let newest: Vec<&str> = rows[rows.len() - (given - 1)..]
+        .iter()
+        .map(|row| row.trim_end())
+        .collect();
+    assert_eq!(shown, newest, "the newest tail rows follow the marker");
+    let below: Vec<&str> = live[given..]
+        .iter()
+        .map(|row| row.trim_end())
+        .filter(|row| !row.is_empty())
+        .collect();
+    assert_eq!(below, under, "the sections under the tail keep their rows");
+}
+
+#[test]
+fn an_open_question_is_drawn_once_and_its_settled_row_wraps() {
+    let question = "Start the long run with five agents, the widest effort and a cap \
+                    of four million tokens on the whole run?";
+    let mut rig = Rig::new();
+    let mut feed = Feed { seq: 1 };
+    let mut state = SessionState::empty(SessionId::new(events::SESSION.to_owned()));
+    let key = events::key("q1", 1);
+    feed.send(&mut state, "message.start", json!({}));
+    stream(&mut rig, &mut feed, &mut state, "Here is the plan.\n");
+    feed.send(
+        &mut state,
+        "tool.start",
+        json!({"tool_id": "call-q1", "name": "clarify"}),
+    );
+    feed.send(
+        &mut state,
+        "clarify.request",
+        events::clarify_request("q1", 1, question),
+    );
+    rig.frame(&state);
+
+    // The card shows the question; the live tail does not draw it a second time.
+    let screen = rig.alac.history_and_screen();
+    let shown = screen
+        .iter()
+        .filter(|line| line.contains("Start the long run"))
+        .count();
+    assert_eq!(shown, 1, "the question is drawn {shown} times: {screen:#?}");
+    assert!(
+        screen.iter().all(|line| !line.starts_with("? Start")),
+        "the tail drew the open question: {screen:#?}"
+    );
+
+    let _ = update(
+        &mut state,
+        Event::AnswerClarify {
+            key: key.clone(),
+            answer: "skip".to_owned(),
+        },
+    );
+    feed.send(
+        &mut state,
+        "clarify.settled",
+        json!({"prompt_id": "q1", "execution_generation": 1}),
+    );
+    let _ = update(&mut state, Event::AnswerAccepted { key });
+    feed.send(
+        &mut state,
+        "tool.complete",
+        json!({"tool_id": "call-q1", "name": "clarify"}),
+    );
+    rig.frame(&state);
+
+    // Settled, the row reaches scrollback whole: wrapped, not cut at the right edge.
+    let (above, _) = rig.above_and_live();
+    let start = above
+        .iter()
+        .position(|line| line.starts_with("? Start the long run"))
+        .unwrap_or_else(|| panic!("the settled row: {above:#?}"));
+    let joined = above[start..]
+        .iter()
+        .take(3)
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        joined.contains("whole run? \u{2192} skip"),
+        "the settled row was cut: {:#?}",
+        &above[start..]
+    );
+    assert!(
+        above[start..]
+            .iter()
+            .all(|line| line.chars().count() <= usize::from(COLS)),
+        "a row is wider than the screen"
+    );
 }
 
 /// A reply far taller than the screen: a table, a code fence and many unique paragraphs.
@@ -495,7 +903,7 @@ fn a_reply_taller_than_the_screen_scrolls_up_and_ends_in_scrollback_once() {
             COLS,
         );
         term.commit_lines(early).expect("commit closed blocks");
-        let tail = MarkdownTailSection::new(tail_lines(state, commits));
+        let tail = tail_section(state, commits);
         let sections: Vec<&dyn LiveSection> = vec![&tail];
         term.draw_live(&LiveView { sections }).expect("draw live");
         alac.absorb(&sink);

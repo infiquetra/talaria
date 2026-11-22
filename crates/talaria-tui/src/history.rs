@@ -31,7 +31,8 @@ impl CellLines for PlainCellLines {
             Cell::Notice(notice) => {
                 prefixed_wrapped("\u{b7} ", &notice_text(notice, None), dim, width)
             }
-            Cell::Prompt(prompt) => vec![Line::styled(prompt_line(prompt), dim)],
+            // Word-wrapped like a notice, so a long question and its answer are never cut.
+            Cell::Prompt(prompt) => prefixed_wrapped("? ", &prompt_line(prompt), dim, width),
             Cell::Shell(shell) => {
                 crate::side::shell_cell_lines(shell, width, &crate::side::SideTheme::default())
             }
@@ -233,7 +234,7 @@ fn prompt_line(prompt: &PromptCell) -> String {
         .or(prompt.question.as_deref())
         .or(prompt.description.as_deref())
         .unwrap_or("");
-    let mut line = format!("? {asked}");
+    let mut line = asked.to_owned();
     match &prompt.state {
         PromptState::Settled(Settlement::Answered(answer)) => {
             line.push_str(" \u{2192} ");
