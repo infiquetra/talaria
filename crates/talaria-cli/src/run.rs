@@ -4584,41 +4584,6 @@ impl Screen for TuiScreen {
                 interrupt: interrupt_key.as_deref(),
                 style: &activity_style,
             });
-        // The sample of the selected look shows only when it fits with the status bar, the
-        // selector, the composer and the working row; on a short screen the selector's own list
-        // still previews, and the composer is never pushed off.
-        let no_captures = HashMap::new();
-        let sample = choice
-            .as_ref()
-            .filter(|_| self.rows >= SHORT_TERMINAL_ROWS)
-            .map(|choice| {
-                let cells = CapturedCells {
-                    current: &self.theme,
-                    captured: &no_captures,
-                    tools: &self.cells,
-                    transcript_key: None,
-                };
-                (
-                    choice,
-                    MarkdownTailSection::new(sample_lines(&cells, width)),
-                )
-            })
-            .filter(|(choice, sample)| {
-                let needed = [
-                    Some(&status as &dyn LiveSection),
-                    Some(*choice as &dyn LiveSection),
-                    Some(&composer as &dyn LiveSection),
-                    activity.as_ref().map(|row| row as &dyn LiveSection),
-                    Some(sample as &dyn LiveSection),
-                ]
-                .into_iter()
-                .flatten()
-                .fold(0u32, |rows, section| {
-                    rows + u32::from(section.height(width))
-                });
-                needed <= u32::from(max_live_height(self.rows))
-            })
-            .map(|(_, sample)| sample);
         // The task checklist sits above the composer, and is one row on a short screen.
         let max_rows = if self.rows < SHORT_TERMINAL_ROWS {
             1
@@ -4671,6 +4636,45 @@ impl Screen for TuiScreen {
             },
             views: &self.theme.views,
         };
+        // The sample of the selected look shows only when it fits with every section that takes
+        // its rows before the working row and the composer: the working row itself, the
+        // composer, the voice partial line, the selector, the automation rows and the status
+        // bar. On a short screen the selector's own list still previews, and neither the
+        // composer nor the working row is pushed off.
+        let no_captures = HashMap::new();
+        let sample = choice
+            .as_ref()
+            .filter(|_| self.rows >= SHORT_TERMINAL_ROWS)
+            .map(|choice| {
+                let cells = CapturedCells {
+                    current: &self.theme,
+                    captured: &no_captures,
+                    tools: &self.cells,
+                    transcript_key: None,
+                };
+                (
+                    choice,
+                    MarkdownTailSection::new(sample_lines(&cells, width)),
+                )
+            })
+            .filter(|(choice, sample)| {
+                let needed = [
+                    Some(&status as &dyn LiveSection),
+                    Some(*choice as &dyn LiveSection),
+                    Some(&composer as &dyn LiveSection),
+                    activity.as_ref().map(|row| row as &dyn LiveSection),
+                    partial.as_ref().map(|line| line as &dyn LiveSection),
+                    Some(&automation as &dyn LiveSection),
+                    Some(sample as &dyn LiveSection),
+                ]
+                .into_iter()
+                .flatten()
+                .fold(0u32, |rows, section| {
+                    rows + u32::from(section.height(width))
+                });
+                needed <= u32::from(max_live_height(self.rows))
+            })
+            .map(|(_, sample)| sample);
         let workspace_enabled = view.layout.workspace_enabled() || view.layout.menu_transient;
         let panel_visible = workspace_enabled
             && talaria_tui::workspace::geometry(

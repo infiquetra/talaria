@@ -295,11 +295,14 @@ fn working_row_drops_the_esc_hint_while_the_link_redials() {
 /// screen: the sample of the selected look is left out when it would push them off.
 #[test]
 fn theme_sample_never_pushes_the_composer_off_a_short_screen() {
-    for (rows, cols, sample) in [
-        (16, 60, false),
-        (16, 40, false),
-        (19, 80, false),
-        (24, 80, true),
+    // The fourth value turns on fast mode, whose automation row sits under the selector and
+    // takes a row the composer and the working row would otherwise keep.
+    for (rows, cols, sample, fast) in [
+        (16, 60, false, false),
+        (16, 40, false, false),
+        (19, 80, false, false),
+        (20, 80, false, true),
+        (24, 80, true, false),
     ] {
         let home = temp_home();
         let gateway = StandaloneGateway::start(home.path());
@@ -310,6 +313,9 @@ fn theme_sample_never_pushes_the_composer_off_a_short_screen() {
         snapshot["prompts"] = json!([]);
         snapshot["running"] = json!(true);
         gateway.set_resume_snapshot(snapshot);
+        if fast {
+            gateway.set_config_value("fast", json!("fast"));
+        }
 
         let mut terminal = Launch::new(home.path())
             .args(&["attach", &id, "--profile", "fixture"])
@@ -318,7 +324,8 @@ fn theme_sample_never_pushes_the_composer_off_a_short_screen() {
             .spawn();
         assert!(
             wait_for(&terminal, Duration::from_secs(10), |screen| screen
-                .contains("✻ Working")),
+                .contains("✻ Working")
+                && (!fast || screen.contains("⚡ fast mode"))),
             "{rows}x{cols}: no working row while the turn runs:\n{}",
             terminal.screen_text()
         );
