@@ -542,8 +542,8 @@ commands containing a secret assignment are refused and excluded from prompt his
 presses within 2 seconds exit. The `completion_*` keys apply only while a list is open, and a tab
 inside pasted text is kept. `toggle_tasks` shows the task checklist; `attach_clipboard_image`
 attaches the clipboard's image. `attention_next` (Alt+A) jumps to the oldest background request
-that waits for an answer. `workflow_view` (Alt+W) opens the foreground session's latest workflow
-run, or the run list when it has none. The model picker keys are not in the block: `model_picker` Alt+P,
+that waits for an answer. `workflow_view` (Alt+W) opens the latest workflow run this window saw
+start after an Ultracode-routed prompt in the foreground session, or the run list when it saw none. The model picker keys are not in the block: `model_picker` Alt+P,
 `effort_down` and `effort_up` Left and Right, `model_scope` Ctrl+G (also new sessions),
 `model_favourite` Ctrl+F, `model_refresh` Ctrl+R, `model_chips_next` Tab,
 `model_chips_prev` Shift+Tab, and `model_details` F2 or Ctrl+E. The chips change the list view
