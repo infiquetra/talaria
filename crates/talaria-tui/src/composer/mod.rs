@@ -832,6 +832,8 @@ impl Composer {
             | Action::ProfilesNew
             | Action::ProfilesDescription
             | Action::ProfilesSoul
+            | Action::ProfilesModels
+            | Action::ProfilesConnect
             | Action::ProfilesBack
             | Action::ProvidersNextTab
             | Action::ProvidersPrevTab

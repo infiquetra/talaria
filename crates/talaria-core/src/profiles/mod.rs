@@ -194,6 +194,10 @@ pub enum KeyAction {
     EditDescription,
     /// Edit the soul.
     EditSoul,
+    /// Open the model roles page of the selected profile.
+    Models,
+    /// Start a session on the selected profile, after a confirmation.
+    Connect,
     /// Undo the innermost open thing, or close.
     Back,
     /// Insert a character in a text field.
@@ -307,6 +311,16 @@ pub enum ProfilesEffect {
     },
     /// Ask the gateway to rescan.
     Rescan,
+    /// Open the model roles page for this served profile.
+    OpenModelRoles {
+        /// The profile name.
+        name: String,
+    },
+    /// Start a new session on this served profile in the current folder.
+    StartSession {
+        /// The profile name.
+        name: String,
+    },
     /// Open the raw editor on this exact text.
     OpenEditor(String),
     /// Deliver a tick after this delay.
@@ -475,7 +489,7 @@ pub struct ProfilesState {
     narrow: bool,
     narrow_detail: bool,
     page_size: usize,
-    confirm: bool,
+    confirm: Option<Confirm>,
     creating: Option<CreateRequest>,
     create_form: Option<FormView>,
     configuring: Option<Review>,
@@ -626,6 +640,13 @@ enum ReadPurpose {
     Guard(SoulEdit),
 }
 
+/// The question the overlay is asking.
+#[derive(Debug)]
+enum Confirm {
+    Rescan,
+    Connect(String),
+}
+
 #[derive(Debug)]
 enum Timer {
     Describe(String),
@@ -670,7 +691,7 @@ impl ProfilesState {
             narrow: false,
             narrow_detail: false,
             page_size: 10,
-            confirm: false,
+            confirm: None,
             creating: None,
             create_form: None,
             configuring: None,
@@ -887,7 +908,15 @@ impl ProfilesState {
 
     fn detail(&self, row: &ProfileRow) -> DetailView {
         let explanation = self.explanation(row);
-        let mut lines = Vec::new();
+        let connected = row.name == self.connected;
+        let mut lines = vec![if row.state != ServeState::Served {
+            "Keys: e description · s soul. Models and connect need a profile this gateway serves."
+                .to_owned()
+        } else if connected {
+            "Keys: Enter or m models · e description · s soul".to_owned()
+        } else {
+            "Keys: Enter or m models · c connect · e description · s soul".to_owned()
+        }];
         if !row.in_roster && !matches!(self.descriptions.get(&row.name), Some(Ok(_))) {
             lines.push("Hermes did not list this profile's details.".into());
         }
@@ -948,7 +977,11 @@ impl ProfilesState {
             None => lines.push("Model: reading...".into()),
         }
         DetailView {
-            title: format!("{} · {}", row.name, explanation.label),
+            title: if connected {
+                format!("{} (connected) · {}", row.name, explanation.label)
+            } else {
+                format!("{} · {}", row.name, explanation.label)
+            },
             state_text: explanation.text,
             lines,
         }
@@ -1086,22 +1119,26 @@ impl ProfilesState {
     }
 
     fn key(&mut self, key: KeyAction, effects: &mut Vec<ProfilesEffect>) {
-        let key = if key == KeyAction::OpenDetail {
-            if !self.confirm && matches!(self.panel, EditPanel::None) {
+        let detail_only = key == KeyAction::OpenDetail;
+        let key = if detail_only {
+            if self.confirm.is_none() && matches!(self.panel, EditPanel::None) {
                 self.narrow_detail = true;
             }
             KeyAction::Open
         } else {
             key
         };
-        if self.confirm {
-            self.confirm = false;
+        if let Some(confirm) = self.confirm.take() {
             if key == KeyAction::Char('y') {
-                if self.rescanning {
-                    self.notice("A rescan is already running.".into(), effects);
-                } else {
-                    self.rescanning = true;
-                    effects.push(ProfilesEffect::Rescan);
+                match confirm {
+                    Confirm::Rescan if self.rescanning => {
+                        self.notice("A rescan is already running.".into(), effects);
+                    }
+                    Confirm::Rescan => {
+                        self.rescanning = true;
+                        effects.push(ProfilesEffect::Rescan);
+                    }
+                    Confirm::Connect(name) => effects.push(ProfilesEffect::StartSession { name }),
                 }
             }
             return;
@@ -1110,7 +1147,7 @@ impl ProfilesState {
             if self.rescanning {
                 self.notice("A rescan is already running.".into(), effects);
             } else {
-                self.confirm = true;
+                self.confirm = Some(Confirm::Rescan);
             }
             return;
         }
@@ -1293,6 +1330,8 @@ impl ProfilesState {
                 }
             }
             KeyAction::Enter | KeyAction::Open => {
+                // In the narrow layout the first Enter shows the detail with its keys.
+                let shown = !self.narrow || self.narrow_detail;
                 self.detail_visible = true;
                 if self.narrow {
                     self.narrow_detail = true;
@@ -1300,7 +1339,11 @@ impl ProfilesState {
                 if let Some(name) = self.selected.clone() {
                     self.describe(name, false, effects);
                 }
+                if shown && !detail_only {
+                    self.profile_action(KeyAction::Models, effects);
+                }
             }
+            KeyAction::Models | KeyAction::Connect => self.profile_action(key, effects),
             KeyAction::Up
             | KeyAction::Down
             | KeyAction::PageUp
@@ -1338,6 +1381,42 @@ impl ProfilesState {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Open the models page of the selected profile, or ask before connecting to it.
+    fn profile_action(&mut self, key: KeyAction, effects: &mut Vec<ProfilesEffect>) {
+        let Some(row) = self
+            .selected
+            .as_ref()
+            .and_then(|name| self.rows.iter().find(|row| &row.name == name))
+        else {
+            return;
+        };
+        let name = row.name.clone();
+        if row.state != ServeState::Served {
+            let explanation = self.explanation(row);
+            let mut text = format!(
+                "Talaria cannot open the models of {name} or connect to it: this gateway does not serve it ({}).",
+                explanation.label
+            );
+            if !explanation.next_step.is_empty() {
+                text.push_str(&format!(" Next: {}.", explanation.next_step));
+            }
+            self.notice(text, effects);
+            return;
+        }
+        if key == KeyAction::Models {
+            effects.push(ProfilesEffect::OpenModelRoles { name });
+        } else if name == self.connected {
+            self.notice(
+                format!(
+                    "Talaria is already connected to profile {name}. /clear starts a new session here."
+                ),
+                effects,
+            );
+        } else {
+            self.confirm = Some(Confirm::Connect(name));
         }
     }
 
@@ -1680,7 +1759,7 @@ impl ProfilesState {
                 self.panel = EditPanel::None;
                 self.detail_visible = true;
                 self.narrow_detail = false;
-                self.confirm = false;
+                self.confirm = None;
                 self.notices.clear();
                 self.refresh(&mut effects);
                 let remaining: Vec<_> = self
@@ -1729,7 +1808,7 @@ impl ProfilesState {
                 self.described(normalize_profile_name(&name), result, &mut effects);
             }
             ProfilesInput::Key(key) if self.open => {
-                if !self.confirm {
+                if self.confirm.is_none() {
                     self.notices.pop_front();
                 }
                 self.key(key, &mut effects);
@@ -1873,7 +1952,10 @@ impl ProfilesState {
             filter: self.filter.as_ref().map(|filter| filter.text.clone()),
             panel,
             notice: self.notices.front().cloned(),
-            confirm: self.confirm.then(|| "Ask the gateway to rescan profiles now? It starts serving new profiles and retries parked ones, including their messaging bots. Press y to confirm, any other key to cancel.".into()),
+            confirm: self.confirm.as_ref().map(|confirm| match confirm {
+                Confirm::Rescan => "Ask the gateway to rescan profiles now? It starts serving new profiles and retries parked ones, including their messaging bots. Press y to confirm, any other key to cancel.".into(),
+                Confirm::Connect(name) => format!("Start a new session on profile {name} in this folder? Talaria then works on that profile; the current session keeps running in Hermes and /resume returns to it. Press y to confirm, any other key to cancel."),
+            }),
         }
     }
 }

@@ -336,6 +336,7 @@ fn describe_after_selection_settles_and_is_cached() {
             assert_eq!(
                 detail.lines,
                 [
+                    "Keys: Enter or m models · c connect · e description · s soul",
                     "Model: ollama-cloud · minimax-m3.1-flash",
                     "Skills: 1 of 1 on",
                     "Toolsets: Terminal",
@@ -356,7 +357,7 @@ fn describe_after_selection_settles_and_is_cached() {
         Panel::Detail(detail) => {
             assert_eq!(detail.title, "fixture · served");
             assert_eq!(
-                detail.lines.first().map(String::as_str),
+                detail.lines.get(1).map(String::as_str),
                 Some("Model: reading...")
             );
         }
@@ -378,7 +379,10 @@ fn describe_after_selection_settles_and_is_cached() {
         Panel::Detail(detail) => {
             assert_eq!(
                 detail.lines,
-                ["Hermes refused: profile 'fixture' not found"]
+                [
+                    "Keys: Enter or m models · c connect · e description · s soul",
+                    "Hermes refused: profile 'fixture' not found"
+                ]
             );
         }
         other => panic!("the list carries its detail: {other:?}"),
@@ -1640,4 +1644,190 @@ fn rescan_confirm_and_outcomes() {
         machine.update(ProfilesInput::Key(KeyAction::Back), 510),
         vec![ProfilesEffect::Close]
     );
+}
+
+const CONNECT_CONFIRM: &str = "Start a new session on profile fixture in this folder? Talaria then works on that profile; the current session keeps running in Hermes and /resume returns to it. Press y to confirm, any other key to cancel.";
+
+/// Open and load the list, then select the named row.
+fn loaded_at(name: &str) -> ProfilesState {
+    let mut machine = state();
+    machine.set_layout(120, 10);
+    let _ = machine.update(ProfilesInput::Open, 0);
+    full_load(&mut machine, 0, 0);
+    for _ in 0..8 {
+        let view = machine.view();
+        if view
+            .selected
+            .is_some_and(|index| view.rows[index].name_cell == name)
+        {
+            return machine;
+        }
+        let _ = machine.update(ProfilesInput::Key(KeyAction::Down), 1);
+    }
+    panic!("no row named {name}");
+}
+
+fn has(effects: &[ProfilesEffect], wanted: &ProfilesEffect) -> bool {
+    effects.iter().any(|effect| effect == wanted)
+}
+
+fn sends_nothing(effects: &[ProfilesEffect]) -> bool {
+    !effects.iter().any(|effect| {
+        matches!(
+            effect,
+            ProfilesEffect::OpenModelRoles { .. } | ProfilesEffect::StartSession { .. }
+        )
+    })
+}
+
+#[test]
+fn models_key_and_enter_on_a_served_profile_open_its_model_roles() {
+    let wanted = ProfilesEffect::OpenModelRoles {
+        name: "fixture".to_owned(),
+    };
+    let mut machine = loaded_at("fixture");
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Models), 10);
+    assert!(
+        has(&effects, &wanted),
+        "m opens the models page: {effects:?}"
+    );
+
+    // Selecting a profile with Enter configures it: the same page opens.
+    let mut machine = loaded_at("fixture");
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Open), 10);
+    assert!(
+        has(&effects, &wanted),
+        "Enter opens the models page: {effects:?}"
+    );
+
+    // The connected profile's models open too.
+    let mut machine = loaded_at("default");
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Models), 10);
+    assert!(has(
+        &effects,
+        &ProfilesEffect::OpenModelRoles {
+            name: "default".to_owned()
+        }
+    ));
+}
+
+#[test]
+fn enter_in_the_narrow_layout_shows_the_detail_first() {
+    let mut machine = loaded_at("fixture");
+    machine.set_layout(80, 10);
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Open), 10);
+    assert!(sends_nothing(&effects), "{effects:?}");
+    assert!(matches!(machine.view().panel, Panel::NarrowDetail(_)));
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Open), 20);
+    assert!(has(
+        &effects,
+        &ProfilesEffect::OpenModelRoles {
+            name: "fixture".to_owned()
+        }
+    ));
+}
+
+#[test]
+fn models_and_connect_keys_on_an_unserved_profile_explain_and_send_nothing() {
+    for key in [KeyAction::Models, KeyAction::Connect, KeyAction::Open] {
+        let mut machine = loaded_at("fixture-b");
+        let effects = machine.update(ProfilesInput::Key(key.clone()), 10);
+        assert!(sends_nothing(&effects), "{key:?}: {effects:?}");
+        assert_eq!(machine.view().confirm, None, "{key:?}");
+        assert_eq!(
+            machine.view().notice.as_deref(),
+            Some(
+                "Talaria cannot open the models of fixture-b or connect to it: this gateway does not serve it (parked). Next: fix the reason, then rescan with R in /profiles."
+            ),
+            "{key:?}"
+        );
+    }
+}
+
+#[test]
+fn connect_key_asks_first_and_starts_only_on_y() {
+    let mut machine = loaded_at("fixture");
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Connect), 10);
+    assert!(sends_nothing(&effects), "{effects:?}");
+    assert_eq!(machine.view().confirm.as_deref(), Some(CONNECT_CONFIRM));
+
+    // Any other key cancels.
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Char('n')), 20);
+    assert!(sends_nothing(&effects), "{effects:?}");
+    assert_eq!(machine.view().confirm, None);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Connect), 30);
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Back), 30);
+    assert!(sends_nothing(&effects), "{effects:?}");
+    assert!(
+        machine.is_open(),
+        "Esc answers the question, not the overlay"
+    );
+
+    // `y` starts the session; the rescan is not asked for.
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Connect), 40);
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Char('y')), 40);
+    assert_eq!(
+        effects,
+        vec![ProfilesEffect::StartSession {
+            name: "fixture".to_owned()
+        }]
+    );
+    assert_eq!(machine.view().confirm, None);
+}
+
+#[test]
+fn connect_key_on_the_connected_profile_says_so_and_sends_nothing() {
+    let mut machine = loaded_at("default");
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Connect), 10);
+    assert!(sends_nothing(&effects), "{effects:?}");
+    assert_eq!(machine.view().confirm, None);
+    assert_eq!(
+        machine.view().notice.as_deref(),
+        Some("Talaria is already connected to profile default. /clear starts a new session here.")
+    );
+}
+
+#[test]
+fn detail_lists_the_actions_and_marks_the_connected_profile() {
+    let detail_of = |machine: &ProfilesState| match machine.view().panel {
+        Panel::Detail(detail) => detail,
+        other => panic!("the list carries its detail: {other:?}"),
+    };
+    let machine = loaded_at("default");
+    let detail = detail_of(&machine);
+    assert_eq!(detail.title, "default (connected) · served");
+    assert_eq!(
+        detail.lines.first().map(String::as_str),
+        Some("Keys: Enter or m models · e description · s soul")
+    );
+
+    let machine = loaded_at("fixture");
+    let detail = detail_of(&machine);
+    assert_eq!(detail.title, "fixture · served");
+    assert_eq!(
+        detail.lines.first().map(String::as_str),
+        Some("Keys: Enter or m models · c connect · e description · s soul")
+    );
+
+    let machine = loaded_at("fixture-b");
+    let detail = detail_of(&machine);
+    assert_eq!(
+        detail.lines.first().map(String::as_str),
+        Some(
+            "Keys: e description · s soul. Models and connect need a profile this gateway serves."
+        )
+    );
+}
+
+#[test]
+fn typing_m_or_c_in_the_filter_or_description_stays_text() {
+    let mut machine = loaded_at("fixture");
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Filter), 10);
+    assert!(machine.text_focus());
+    for key in [KeyAction::Char('m'), KeyAction::Char('c')] {
+        let effects = machine.update(ProfilesInput::Key(key), 10);
+        assert!(sends_nothing(&effects), "{effects:?}");
+    }
+    assert_eq!(machine.view().filter.as_deref(), Some("mc"));
+    assert_eq!(machine.view().confirm, None);
 }

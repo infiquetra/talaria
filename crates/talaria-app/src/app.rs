@@ -839,6 +839,10 @@ pub struct AppState {
     provider_pending_loads: Vec<ProvidersEffect>,
     model_roles: Option<talaria_core::model_roles::ModelRolesState>,
     model_roles_profile: String,
+    /// The connected profile when the page opened; the page closes when the connection moves.
+    model_roles_connection: String,
+    /// The page was opened from /profiles and returns there when it closes.
+    model_roles_return_to_profiles: bool,
     model_roles_service: Option<Arc<crate::model_roles::ModelRolesService>>,
     model_roles_generation: u64,
     pub mcp: talaria_core::mcp::McpState,
@@ -1148,6 +1152,8 @@ impl AppState {
             provider_pending_loads: Vec::new(),
             model_roles: None,
             model_roles_profile: String::new(),
+            model_roles_connection: String::new(),
+            model_roles_return_to_profiles: false,
             model_roles_service: None,
             model_roles_generation: 0,
             mcp: talaria_core::mcp::McpState::default(),
@@ -1406,7 +1412,7 @@ impl AppState {
             model_roles: self
                 .model_roles
                 .as_ref()
-                .filter(|_| self.model_roles_profile == self.profile)
+                .filter(|_| self.model_roles_connection == self.profile)
                 .map(talaria_core::model_roles::ModelRolesState::view),
             processes_open: self.processes_open,
             state: opened.map(|opened| &opened.state),
@@ -2386,6 +2392,11 @@ pub enum AppEffect {
     Switch {
         key: RowKey,
     },
+    /// Start a new session on another profile, then let go of the foreground session.
+    StartInProfile {
+        profile: String,
+        cwd: PathBuf,
+    },
     /// Open a new session after leaving the foreground session.
     ClearSession {
         skip_detach: bool,
@@ -2553,6 +2564,15 @@ fn profiles_input(state: &mut AppState, input: ProfilesInput) -> Vec<AppEffect> 
                     text,
                 },
             )),
+            ProfilesEffect::OpenModelRoles { name } => {
+                effects.extend(profiles_input(state, ProfilesInput::Closed));
+                effects.extend(open_model_roles_for(state, name));
+                state.model_roles_return_to_profiles = true;
+            }
+            ProfilesEffect::StartSession { name } => {
+                effects.extend(profiles_input(state, ProfilesInput::Closed));
+                effects.extend(begin_profile_start(state, name));
+            }
             effect => effects.push(AppEffect::Profiles(effect)),
         }
     }
@@ -4871,9 +4891,17 @@ fn pane_notice(state: &mut AppState, text: String) -> Vec<AppEffect> {
 
 /// Open the model roles page for the connection's profile.
 fn open_model_roles(state: &mut AppState) -> Vec<AppEffect> {
-    let (page, effects) = talaria_core::model_roles::ModelRolesState::new(state.profile.clone());
+    let profile = state.profile.clone();
+    open_model_roles_for(state, profile)
+}
+
+/// Open the model roles page for one served profile, which need not be the connected one.
+fn open_model_roles_for(state: &mut AppState, profile: String) -> Vec<AppEffect> {
+    let (page, effects) = talaria_core::model_roles::ModelRolesState::new(profile.clone());
     state.model_roles = Some(page);
-    state.model_roles_profile = state.profile.clone();
+    state.model_roles_profile = profile;
+    state.model_roles_connection = state.profile.clone();
+    state.model_roles_return_to_profiles = false;
     state.model_roles_service = None;
     state.model_roles_generation = state.model_roles_generation.wrapping_add(1);
     let mut result = model_roles_effects(state, effects);
@@ -4886,8 +4914,8 @@ fn model_roles_input(
     state: &mut AppState,
     input: talaria_core::model_roles::RolesInput,
 ) -> Vec<AppEffect> {
-    if state.model_roles_profile != state.profile {
-        // The connection moved to another profile: the page belongs to the old one.
+    if state.model_roles_connection != state.profile {
+        // The connection moved to another profile: the page was opened on the old one.
         close_model_roles(state);
         return vec![AppEffect::Redraw];
     }
@@ -4902,6 +4930,7 @@ fn model_roles_input(
 
 fn close_model_roles(state: &mut AppState) {
     state.model_roles = None;
+    state.model_roles_return_to_profiles = false;
     state.model_roles_service = None;
     state.model_roles_generation = state.model_roles_generation.wrapping_add(1);
 }
@@ -4915,7 +4944,11 @@ fn model_roles_effects(
         .iter()
         .any(|effect| matches!(effect, RolesEffect::Close))
     {
+        let back_to_profiles = state.model_roles_return_to_profiles;
         close_model_roles(state);
+        if back_to_profiles {
+            return profiles_input(state, ProfilesInput::Open);
+        }
         return Vec::new();
     }
     if effects.is_empty() {
@@ -7810,6 +7843,30 @@ fn begin_switch(state: &mut AppState, key: RowKey) -> Vec<AppEffect> {
     state.session_action = true;
     state.pending_switch = Some(key.clone());
     vec![AppEffect::Switch { key }]
+}
+
+/// Start a new session on another served profile in this folder: the guards of a switch
+/// first, then the effect the executor runs. The old session keeps running in Hermes.
+fn begin_profile_start(state: &mut AppState, profile: String) -> Vec<AppEffect> {
+    if let Some(refusal) = session_busy(state) {
+        return refusal;
+    }
+    if !state.held.is_empty() {
+        return vec![notice_lines(crate::switch::HELD_PROMPTS_TEXT)];
+    }
+    let cwd = state
+        .folder
+        .cwd
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.launch_folder.clone());
+    state.switching = true;
+    state.session_action = true;
+    state.pending_switch = Some(RowKey {
+        profile: profile.clone(),
+        session_id: String::new(),
+    });
+    vec![AppEffect::StartInProfile { profile, cwd }]
 }
 
 /// `/rename [title]`: the foreground session, over the foreground link.
@@ -13773,6 +13830,18 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            AppEffect::StartInProfile { profile, cwd } => {
+                let mut copy = state.working_copy();
+                executor.send_later(async move {
+                    let outcome = crate::switch::start_in_profile(&mut copy, profile, cwd).await;
+                    let install = copy.into_install();
+                    AppMessage::Switched {
+                        outcome,
+                        install,
+                        reason: None,
+                    }
+                });
+            }
             AppEffect::ClearSession { skip_detach, cwd } => {
                 let mut copy = state.working_copy();
                 executor.send_later(async move {
@@ -17353,6 +17422,195 @@ mod checklist_command_tests {
         assert_eq!(state.checklist.expanded(), !expanded);
         assert_eq!(effects.len(), 1);
         assert!(matches!(effects[0], AppEffect::Redraw));
+    }
+}
+
+#[cfg(test)]
+mod profiles_action_tests {
+    use super::*;
+    use talaria_core::model_roles::{RolesInput, RolesKey};
+    use talaria_core::profiles::{GatewayView, HostTopology, KeyAction};
+
+    /// Connected to `fixture` with a session open, and /profiles loaded with `default` selected.
+    fn loaded() -> AppState {
+        let recording = include_str!("../../talaria-core/tests/data/resume_snapshot.jsonl");
+        let mut snapshot = recording
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find_map(|line| line.get("frame").and_then(|f| f.get("result")).cloned())
+            .unwrap();
+        snapshot["prompts"] = serde_json::json!([]);
+        snapshot["running"] = serde_json::json!(false);
+        snapshot["info"]["cwd"] = serde_json::json!("/work");
+        let mut state = AppState::new("profiles-actions");
+        state.profile = "fixture".into();
+        state.link_state = LinkView::Connected;
+        update(
+            &mut state,
+            AppMessage::Opened {
+                opened: OpenedSession::from_snapshot(serde_json::from_value(snapshot).unwrap()),
+                notice: None,
+            },
+        );
+        profiles_input(&mut state, ProfilesInput::Open);
+        let served = ["default", "fixture"].map(String::from).to_vec();
+        profiles_input(
+            &mut state,
+            ProfilesInput::Discovered(
+                0,
+                Ok(GatewayView {
+                    served,
+                    parked: vec![("fixture-b".into(), "unusable".into())],
+                }),
+            ),
+        );
+        profiles_input(&mut state, ProfilesInput::Listed(0, Err("no".into())));
+        profiles_input(
+            &mut state,
+            ProfilesInput::Topology(
+                0,
+                Ok(HostTopology {
+                    stopped: vec![],
+                    own_gateway: Some(vec![]),
+                    gateway_mode: Some("multiplex".into()),
+                    single_reason: None,
+                }),
+            ),
+        );
+        // The connected profile is selected first; `default` sorts above it.
+        profiles_input(&mut state, ProfilesInput::Key(KeyAction::Up));
+        state
+    }
+
+    fn key(state: &mut AppState, key: KeyAction) -> Vec<AppEffect> {
+        update(
+            state,
+            AppMessage::User(UserAction::Profiles(ProfilesInput::Key(key))),
+        )
+    }
+
+    fn lines(effects: &[AppEffect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::CommitLines(lines) => Some(lines.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn roles_title(state: &AppState) -> Option<String> {
+        state.view().model_roles.map(|view| view.title)
+    }
+
+    #[test]
+    fn models_page_opened_for_another_profile_stays_open_and_returns_to_profiles() {
+        for opener in [KeyAction::Models, KeyAction::Open] {
+            let mut state = loaded();
+            let effects = key(&mut state, opener.clone());
+            assert!(!state.profiles.is_open(), "{opener:?} leaves the list");
+            assert!(
+                effects.iter().any(|effect| matches!(
+                    effect,
+                    AppEffect::ModelRoles { profile, connection_profile, .. }
+                        if profile == "default" && connection_profile == "fixture"
+                )),
+                "{opener:?} loads the page for default over the fixture connection"
+            );
+            let title = roles_title(&state).expect("the page is drawn");
+            assert!(title.ends_with("default"), "{title}");
+
+            // A reply for the page keeps it open: it belongs to default, not the connection.
+            update(
+                &mut state,
+                AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Down))),
+            );
+            assert!(roles_title(&state).is_some(), "{opener:?} keeps the page");
+
+            // Closing the page lands back in /profiles.
+            update(
+                &mut state,
+                AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Escape))),
+            );
+            assert!(roles_title(&state).is_none());
+            assert!(state.profiles.is_open(), "{opener:?} returns to /profiles");
+        }
+
+        // /models still opens the connected profile and does not return to /profiles.
+        let mut state = loaded();
+        profiles_input(&mut state, ProfilesInput::Closed);
+        open_model_roles(&mut state);
+        assert!(roles_title(&state).is_some_and(|title| title.ends_with("fixture")));
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Escape))),
+        );
+        assert!(!state.profiles.is_open());
+    }
+
+    #[test]
+    fn models_page_for_another_profile_closes_when_the_connection_moves() {
+        let mut state = loaded();
+        key(&mut state, KeyAction::Models);
+        state.profile = "elsewhere".into();
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Down))),
+        );
+        assert!(roles_title(&state).is_none());
+        assert!(
+            !state.profiles.is_open(),
+            "a moved connection does not reopen the list"
+        );
+    }
+
+    #[test]
+    fn connect_starts_a_session_on_the_profile_in_this_folder() {
+        let mut state = loaded();
+        key(&mut state, KeyAction::Connect);
+        let effects = key(&mut state, KeyAction::Char('y'));
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                AppEffect::StartInProfile { profile, cwd }
+                    if profile == "default" && cwd == Path::new("/work")
+            )),
+            "the start runs on default in the session's folder"
+        );
+        assert!(!state.profiles.is_open());
+        assert!(state.switching);
+    }
+
+    #[test]
+    fn start_is_refused_while_prompts_are_held_or_a_switch_runs() {
+        let mut state = loaded();
+        state.held.push_back("unsent words".into());
+        key(&mut state, KeyAction::Connect);
+        let effects = key(&mut state, KeyAction::Char('y'));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::StartInProfile { .. }))
+        );
+        assert!(
+            lines(&effects)
+                .iter()
+                .any(|line| line.contains(crate::switch::HELD_PROMPTS_TEXT)),
+            "{:?}",
+            lines(&effects)
+        );
+
+        let mut state = loaded();
+        state.switching = true;
+        key(&mut state, KeyAction::Connect);
+        let effects = key(&mut state, KeyAction::Char('y'));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::StartInProfile { .. }))
+        );
+        assert!(lines(&effects).contains(&SWITCHING_NOTICE.to_owned()));
     }
 }
 

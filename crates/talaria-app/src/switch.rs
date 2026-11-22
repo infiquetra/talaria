@@ -158,6 +158,77 @@ fn failed_switch(app: &mut AppState, target: &RowKey, error: &OpenError) -> Swit
     }
 }
 
+/// Start a new session on another served profile in `cwd`: a new profile-scoped link
+/// carries it, and the old session is let go only once the new one is open. The old
+/// session keeps running in Hermes, so `/resume` returns to it.
+pub async fn start_in_profile(
+    app: &mut AppState,
+    profile: String,
+    cwd: std::path::PathBuf,
+) -> SwitchOutcome {
+    let failed = |reason: &str| SwitchOutcome::Failed {
+        text: format!(
+            "Could not start a session on profile {profile}: {reason}. Still in the old session."
+        ),
+    };
+    if !app.held.is_empty() {
+        return SwitchOutcome::Failed {
+            text: HELD_PROMPTS_TEXT.to_owned(),
+        };
+    }
+    let (Some(old), Some(old_service), Some(launch)) =
+        (app.opened.clone(), app.service.clone(), app.launch.clone())
+    else {
+        return failed("Talaria is not connected to Hermes");
+    };
+    let mut other = launch;
+    other.profile = profile.clone();
+    let Ok(connection) = ConnectionService::open(&other, &app.hermes_home, None).await else {
+        return failed("Talaria could not reach Hermes for that profile");
+    };
+    let OpenConnection {
+        link,
+        inbound,
+        describe,
+        profile_name,
+        ..
+    } = connection;
+    let service = SessionService::with_client(&app.launch_id, link.client())
+        .with_create_defaults(&profile_name, &describe.session_create.parameters);
+    let request = super::launch::NewSession {
+        request_id: super::launch::new_request_id(),
+        source: super::launch::SESSION_SOURCE.into(),
+        cwd,
+        model: None,
+        provider: None,
+        reasoning: None,
+    };
+    let opened = match service.open(SessionRequest::New(request)).await {
+        Ok(opened) => opened,
+        Err(error) => {
+            link.close().await;
+            return failed(&format!("Hermes refused ({})", refusal_reason(&error)));
+        }
+    };
+    // The old session lets go on the old link; the old link closes after that.
+    stop_voice(app, &old_service, &old.session_id).await;
+    old_service.detach(&old).await;
+    let old_title = session_title(
+        old.title.as_deref(),
+        app.list_title.as_deref(),
+        old.state.cells(),
+    );
+    let notice = format!(
+        "Connected to profile {profile_name} and started a new session in this folder. Left \"{old_title}\"; it keeps running in Hermes. /resume returns to it. To start on this profile next time: talaria --profile {profile_name}"
+    );
+    app.opened = Some(opened);
+    app.service = Some(service);
+    app.link = Some(link);
+    app.profile = profile_name;
+    forward_events(app, inbound);
+    SwitchOutcome::Switched { notice }
+}
+
 /// The gateway's reason for refusing the resume.
 pub(crate) fn refusal_reason(error: &OpenError) -> String {
     match error {

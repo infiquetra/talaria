@@ -54,6 +54,8 @@ pub fn key_action(map: &KeyMap, key: &Key, text_focus: bool) -> Option<KeyAction
         Action::ProfilesNew => Some(KeyAction::New),
         Action::ProfilesDescription => Some(KeyAction::EditDescription),
         Action::ProfilesSoul => Some(KeyAction::EditSoul),
+        Action::ProfilesModels => Some(KeyAction::Models),
+        Action::ProfilesConnect => Some(KeyAction::Connect),
         Action::ProfilesBack => Some(KeyAction::Back),
         _ => None,
     }

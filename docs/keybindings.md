@@ -257,6 +257,8 @@ Typing `/` in the composer opens the slash command palette under the composer. A
 | Profiles new | N | Use profiles new. | `profiles_new` |
 | Profiles description | E | Use profiles description. | `profiles_description` |
 | Profiles soul | S | Use profiles soul. | `profiles_soul` |
+| Profiles models | M | Open the selected profile's models page; Enter does the same. | `profiles_models` |
+| Profiles connect | C | Start a session on the selected profile, after a confirmation. | `profiles_connect` |
 | Profiles back | Esc | Return to the previous view. | `profiles_back` |
 
 ## Providers keys

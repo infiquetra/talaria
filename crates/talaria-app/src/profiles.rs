@@ -184,6 +184,8 @@ impl ProfilesService {
                 ProfilesInput::RescanAnswered(result)
             }
             ProfilesEffect::OpenEditor(_)
+            | ProfilesEffect::OpenModelRoles { .. }
+            | ProfilesEffect::StartSession { .. }
             | ProfilesEffect::ScheduleTick { .. }
             | ProfilesEffect::CancelTicks
             | ProfilesEffect::Notice(_)

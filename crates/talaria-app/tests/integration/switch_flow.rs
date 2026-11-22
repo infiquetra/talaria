@@ -14,6 +14,7 @@ use talaria_app::sessions::OpenedSession;
 use talaria_app::switch::{SwitchOutcome, switch_foreground};
 use talaria_core::directory::rows::RowKey;
 use talaria_core::directory::state::{PickerAction, PickerInput};
+use talaria_core::profiles::{KeyAction, ProfilesInput};
 
 fn target(profile: &str, session_id: &str) -> RowKey {
     RowKey {
@@ -258,6 +259,123 @@ async fn other_profile_switch_opens_a_new_link_first() {
     );
     let session = locked(&log).session.clone();
     assert_eq!(session.as_deref(), Some("s-default"));
+}
+
+/// In /profiles, select `default` and connect to it, retrying until the list has loaded.
+async fn connect_to_default(
+    driver: &drive::Driver,
+    gateway: &mock_gateway::StandaloneGateway,
+    done: &str,
+) {
+    driver.submit("/profiles");
+    for _ in 0..30 {
+        settle_short().await;
+        for key in [KeyAction::Up, KeyAction::Connect, KeyAction::Char('y')] {
+            driver.send(UserAction::Profiles(ProfilesInput::Key(key)));
+        }
+        settle_short().await;
+        if gateway.requests("session.create").len() >= 2 {
+            driver.line(done).await;
+            return;
+        }
+    }
+    panic!("the start on default was never sent: {done}");
+}
+
+#[tokio::test]
+async fn profile_start_opens_a_new_session_on_a_new_link_first() {
+    let rig = drive::Rig::start();
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            connect_to_default(&driver, gateway, "Connected to profile default").await;
+            driver.submit("after the start");
+            settle_short().await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+
+    let tickets = rig.gateway.ticket_records();
+    assert_eq!(tickets.len(), 2, "the launch link and the new profile link");
+    assert_ne!(
+        tickets[1].profile_id, tickets[0].profile_id,
+        "the new link is scoped to the other profile"
+    );
+    let creates = rig.gateway.requests("session.create");
+    assert_eq!(creates.len(), 2, "the launch session and the new one");
+    assert_ne!(creates[1].connection, creates[0].connection);
+    let detaches: Vec<_> = rig
+        .gateway
+        .requests("session.detach")
+        .into_iter()
+        .filter(|detach| detach.params["session_id"] == json!("local-session-1"))
+        .collect();
+    assert_eq!(detaches.len(), 1, "the old session is let go once");
+    assert!(
+        creates[1].at < detaches[0].at,
+        "the new session opens before the old one is let go"
+    );
+    assert!(
+        tickets[1].at < detaches[0].at,
+        "the new link's ticket comes before the detach"
+    );
+    assert!(
+        detaches[0].params.get("end_reason").is_none(),
+        "it keeps running"
+    );
+
+    // Prompts afterwards travel on the new link.
+    let submits = rig.gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 1);
+    assert_eq!(submits[0].connection, creates[1].connection);
+
+    let lines = committed_text(&log);
+    let notice = lines
+        .iter()
+        .find(|line| line.contains("Connected to profile default"))
+        .expect("the notice");
+    assert!(notice.contains("/resume returns to it"), "{notice}");
+    assert!(notice.contains("talaria --profile default"), "{notice}");
+}
+
+#[tokio::test]
+async fn profile_start_failure_keeps_the_old_session() {
+    let rig = drive::Rig::start();
+    rig.gateway
+        .queue_behavior("session.create", mock_gateway::Behavior::Normal);
+    rig.gateway.queue_behavior(
+        "session.create",
+        mock_gateway::Behavior::Refuse("profile_unavailable".to_owned()),
+    );
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            connect_to_default(
+                &driver,
+                gateway,
+                "Could not start a session on profile default",
+            )
+            .await;
+            assert!(
+                gateway.requests("session.detach").is_empty(),
+                "the failed start detaches nothing"
+            );
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+
+    let lines = committed_text(&log);
+    assert!(
+        lines.iter().any(|line| line
+            == "Could not start a session on profile default: Hermes refused (profile_unavailable). Still in the old session."),
+        "the failure text: {lines:?}"
+    );
+    let session = locked(&log).session.clone();
+    assert_eq!(session.as_deref(), Some("local-session-1"));
 }
 
 #[tokio::test]

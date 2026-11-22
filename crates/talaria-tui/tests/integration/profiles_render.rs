@@ -246,7 +246,15 @@ fn header_line(view: &ProfilesView, cols: usize) -> String {
     } else if cols < 40 {
         String::new()
     } else {
-        let hints = ["r refresh", "R rescan", "n new", "e describe", "s soul"];
+        let hints = [
+            "m models",
+            "c connect",
+            "r refresh",
+            "R rescan",
+            "n new",
+            "e describe",
+            "s soul",
+        ];
         let mut keep = hints.len();
         loop {
             let text = hints[..keep].join(" · ");

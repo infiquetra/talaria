@@ -200,6 +200,8 @@ profiles_rescan = ["R"]
 profiles_new = ["n"]
 profiles_description = ["e"]
 profiles_soul = ["s"]
+profiles_models = ["m"]
+profiles_connect = ["c"]
 profiles_back = ["esc"]
 model_roles_section_main = ["1"]
 model_roles_section_fallbacks = ["2"]
@@ -643,7 +645,16 @@ The overlay refreshes when opened, on `r`, and after its own writes. `R` request
 after `y` confirms: serving new profiles can also start their messaging bots. `n` creates a
 profile after validation and review, `e` edits its description, and `s` opens its soul in the
 configured external editor. Soul edits are reviewed and checked against a fresh copy before
-saving. A concurrent change keeps the unsaved edit in memory for the next `s`. Model, skills, toolsets, and Model Context Protocol servers are shown here without edit controls.
+saving. A concurrent change keeps the unsaved edit in memory for the next `s`. Skills, toolsets, and Model Context Protocol servers are shown here without edit controls.
+
+Enter or `m` on a served profile opens its `/models` page: the main model, fallbacks, helper
+(auxiliary) models, subagents and mixture of agents of that profile, even when Talaria is
+connected to another one. Closing that page returns to `/profiles`. `c` asks first, then starts
+a new session on the selected profile in the current folder; the previous session keeps running
+in Hermes and `/resume` returns to it. The connection lasts for this run; to start on a
+profile next time, launch with `talaria --profile` and the profile's name. Both keys refuse a profile the
+gateway does not serve, and `c` refuses the profile Talaria is already connected to. The detail
+panel lists these keys and marks the connected profile.
 
 These bindings apply only inside the profiles overlay. Text fields reserve ordinary editing
 keys, Tab, Shift+Tab, and Ctrl+U; Esc leaves the innermost panel before closing the overlay.

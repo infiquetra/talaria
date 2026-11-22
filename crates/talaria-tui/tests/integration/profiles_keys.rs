@@ -8,6 +8,7 @@ use talaria_core::profiles::{
     ProfilesState, RosterEntry,
 };
 use talaria_tui::keys::{Action, Key, KeyCode, KeyContext, KeyKind, KeyMap, Mods};
+use talaria_tui::profiles::key_action;
 
 fn press(code: KeyCode, ctrl: bool, shift: bool) -> Key {
     Key {
@@ -69,6 +70,8 @@ fn keys_and_rebinding() {
         ("n", Action::ProfilesNew),
         ("e", Action::ProfilesDescription),
         ("s", Action::ProfilesSoul),
+        ("m", Action::ProfilesModels),
+        ("c", Action::ProfilesConnect),
         ("esc", Action::ProfilesBack),
     ] {
         assert_eq!(resolve(&map, text), Some(action), "{text}");
@@ -88,6 +91,33 @@ fn keys_and_rebinding() {
     assert_eq!(resolve(&map, "ctrl+g"), Some(Action::ProfilesRefresh));
     assert_eq!(resolve(&map, "r"), None, "the old chord is gone");
     assert_eq!(resolve(&map, "R"), Some(Action::ProfilesRescan));
+    let mut entries = BTreeMap::new();
+    entries.insert("profiles_models".to_owned(), vec!["x".to_owned()]);
+    entries.insert("profiles_connect".to_owned(), vec!["ctrl+g".to_owned()]);
+    let (map, notices) = KeyMap::from_entries(&entries);
+    assert!(notices.is_empty(), "{notices:?}");
+    assert_eq!(resolve(&map, "x"), Some(Action::ProfilesModels));
+    assert_eq!(resolve(&map, "ctrl+g"), Some(Action::ProfilesConnect));
+    assert_eq!(resolve(&map, "m"), None, "the old chord is gone");
+
+    // The new keys reach the state machine, and stay text while a field has focus.
+    let map = KeyMap::defaults();
+    assert_eq!(
+        key_action(&map, &key_of("m"), false),
+        Some(KeyAction::Models)
+    );
+    assert_eq!(
+        key_action(&map, &key_of("c"), false),
+        Some(KeyAction::Connect)
+    );
+    assert_eq!(
+        key_action(&map, &key_of("m"), true),
+        Some(KeyAction::Char('m'))
+    );
+    assert_eq!(
+        key_action(&map, &key_of("c"), true),
+        Some(KeyAction::Char('c'))
+    );
 
     // `/profiles` opens the overlay.
     let table = LocalCommandTable::builtin();

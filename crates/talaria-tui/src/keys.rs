@@ -949,6 +949,10 @@ pub enum Action {
     ProfilesDescription,
     /// Edit the selected profile's soul. Issue #253.
     ProfilesSoul,
+    /// Open the selected profile's model roles page.
+    ProfilesModels,
+    /// Start a session on the selected profile, after a confirmation.
+    ProfilesConnect,
     /// Undo the innermost open thing, or close the overlay. Issue #253.
     ProfilesBack,
     ProvidersNextTab,
@@ -1009,7 +1013,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 207] = [
+    pub const ALL: [Self; 209] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1190,6 +1194,8 @@ impl Action {
         Self::ProfilesNew,
         Self::ProfilesDescription,
         Self::ProfilesSoul,
+        Self::ProfilesModels,
+        Self::ProfilesConnect,
         Self::ProfilesBack,
         Self::ProvidersNextTab,
         Self::ProvidersPrevTab,
@@ -1404,6 +1410,8 @@ impl Action {
             Self::ProfilesNew => "profiles_new",
             Self::ProfilesDescription => "profiles_description",
             Self::ProfilesSoul => "profiles_soul",
+            Self::ProfilesModels => "profiles_models",
+            Self::ProfilesConnect => "profiles_connect",
             Self::ProfilesBack => "profiles_back",
             Self::ProvidersNextTab => "providers_next_tab",
             Self::ProvidersPrevTab => "providers_prev_tab",
@@ -1627,6 +1635,8 @@ impl Action {
             | Self::ProfilesNew
             | Self::ProfilesDescription
             | Self::ProfilesSoul
+            | Self::ProfilesModels
+            | Self::ProfilesConnect
             | Self::ProfilesBack => KeyContext::Profiles,
             Self::ProvidersNextTab
             | Self::ProvidersPrevTab
@@ -1846,6 +1856,8 @@ impl Action {
             Self::ProfilesNew => &["n"],
             Self::ProfilesDescription => &["e"],
             Self::ProfilesSoul => &["s"],
+            Self::ProfilesModels => &["m"],
+            Self::ProfilesConnect => &["c"],
             Self::ProfilesBack => &["esc"],
             Self::ProvidersNextTab => &["tab"],
             Self::ProvidersPrevTab => &["shift+tab"],
@@ -2904,7 +2916,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 207);
+        assert_eq!(Action::ALL.len(), 209);
         for (index, action) in Action::ALL.iter().enumerate() {
             assert_eq!(action.index(), index, "{}", action.config_name());
         }
@@ -3026,6 +3038,8 @@ mod tests {
                 | Action::ProfilesNew
                 | Action::ProfilesDescription
                 | Action::ProfilesSoul
+                | Action::ProfilesModels
+                | Action::ProfilesConnect
                 | Action::ProfilesBack => KeyContext::Profiles,
                 Action::ProvidersNextTab
                 | Action::ProvidersPrevTab
@@ -3200,6 +3214,8 @@ mod tests {
                 | Action::ProfilesNew
                 | Action::ProfilesDescription
                 | Action::ProfilesSoul
+                | Action::ProfilesModels
+                | Action::ProfilesConnect
                 | Action::ProfilesBack => KeyContext::Profiles,
                 Action::ProvidersNextTab
                 | Action::ProvidersPrevTab
@@ -3512,7 +3528,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 207);
+        assert_eq!(Action::ALL.len(), 209);
     }
 
     #[test]
