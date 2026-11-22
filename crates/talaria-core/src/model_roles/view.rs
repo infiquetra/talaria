@@ -364,10 +364,8 @@ impl ModelRolesState {
                 } => {
                     let line = if *choosable {
                         name.clone()
-                    } else if self.other_profile {
-                        format!("{name}  {}", text::NOT_SET_UP_OTHER)
                     } else {
-                        format!("{name}  {}", text::NOT_SET_UP)
+                        format!("{name}  {}", text::NOT_SET_UP_MARK)
                     };
                     Item {
                         dim: !*choosable,
@@ -408,7 +406,15 @@ impl ModelRolesState {
             match &self.catalog {
                 CatalogState::Pending => Some(text::LOADING_MODELS.to_owned()),
                 CatalogState::Failed(line) => Some(line.clone()),
-                CatalogState::Ready(_) => None,
+                CatalogState::Ready(_) => match entries.get(picker.cursor) {
+                    Some(Entry::Provider {
+                        choosable: false, ..
+                    }) if self.other_profile => Some(text::NOT_SET_UP_OTHER.to_owned()),
+                    Some(Entry::Provider {
+                        choosable: false, ..
+                    }) => Some(text::NOT_SET_UP.to_owned()),
+                    _ => None,
+                },
             }
         };
         Some(RoutePickerView {

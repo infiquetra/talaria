@@ -71,24 +71,38 @@ pub enum RouteRow {
     },
 }
 
-/// Case-insensitive substring match; the order is the catalogue's.
+/// Case-insensitive substring match. Models keep the catalogue's order; providers that are set
+/// up come first in the catalogue's order, then the rest in the same order.
 pub fn filter_routes(catalog: &RouteCatalog, step: &PickerStep, filter: &str) -> Vec<RouteRow> {
     let needle = filter.trim().to_lowercase();
     match step {
-        PickerStep::Providers => catalog
-            .providers
-            .iter()
-            .filter(|provider| {
-                needle.is_empty()
-                    || provider.name.to_lowercase().contains(&needle)
-                    || provider.slug.to_lowercase().contains(&needle)
-            })
-            .map(|provider| RouteRow::Provider {
-                slug: provider.slug.clone(),
-                name: provider.name.clone(),
-                choosable: provider.authenticated && !provider.models.is_empty(),
-            })
-            .collect(),
+        PickerStep::Providers => {
+            let mut rows: Vec<RouteRow> = catalog
+                .providers
+                .iter()
+                .filter(|provider| {
+                    needle.is_empty()
+                        || provider.name.to_lowercase().contains(&needle)
+                        || provider.slug.to_lowercase().contains(&needle)
+                })
+                .map(|provider| RouteRow::Provider {
+                    slug: provider.slug.clone(),
+                    name: provider.name.clone(),
+                    choosable: provider.authenticated && !provider.models.is_empty(),
+                })
+                .collect();
+            // A stable sort keeps the catalogue's order within each group.
+            rows.sort_by_key(|row| {
+                !matches!(
+                    row,
+                    RouteRow::Provider {
+                        choosable: true,
+                        ..
+                    }
+                )
+            });
+            rows
+        }
         PickerStep::Models { provider } => {
             let Some(row) = catalog.provider(provider) else {
                 return Vec::new();
