@@ -627,28 +627,58 @@ fn line_texts(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
     lines.iter().map(ToString::to_string).collect()
 }
 
+/// The rows a cut tail draws into `height` rows.
+fn drawn_tail(lines: Vec<ratatui::text::Line<'static>>, height: u16) -> Vec<String> {
+    let section =
+        talaria_tui::markdown::section::MarkdownTailSection::cut_with(lines, 15, |hidden| {
+            ratatui::text::Line::from(format!("marker {hidden}"))
+        });
+    let area = Rect::new(0, 0, 20, height.min(section.height(20)));
+    let mut buf = Buffer::empty(area);
+    section.render(area, &mut buf);
+    (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
+}
+
 #[test]
 fn a_tail_that_fits_is_drawn_whole_without_a_marker() {
     let lines = numbered(15);
-    let kept = talaria_tui::live::clip_tail(lines.clone(), 15, |hidden| {
-        panic!("no marker for a tail that fits, asked for {hidden} hidden rows")
-    });
-    assert_eq!(line_texts(&kept), line_texts(&lines));
+    assert_eq!(drawn_tail(lines.clone(), 22), line_texts(&lines));
 }
 
 #[test]
 fn a_cut_tail_starts_with_a_marker_counting_every_row_not_drawn() {
     let lines = numbered(40);
-    let kept = talaria_tui::live::clip_tail(lines.clone(), 15, |hidden| {
-        ratatui::text::Line::from(format!("marker {hidden}"))
-    });
+    let kept = drawn_tail(lines.clone(), 22);
     assert_eq!(
         kept.len(),
         15,
         "the cap stays at 15 rows, the marker among them"
     );
-    assert_eq!(kept[0].to_string(), "marker 26");
-    assert_eq!(line_texts(&kept[1..]), line_texts(&lines[26..]));
+    assert_eq!(kept[0], "marker 26");
+    assert_eq!(kept[1..], line_texts(&lines[26..]));
+}
+
+#[test]
+fn a_tail_the_layout_shortens_keeps_the_marker_and_counts_the_rows_it_drops() {
+    let lines = numbered(40);
+    let kept = drawn_tail(lines.clone(), 10);
+    assert_eq!(kept[0], "marker 31");
+    assert_eq!(kept[1..], line_texts(&lines[31..]));
+    // Rows that fit the cap but not the layout get the marker too.
+    let lines = numbered(12);
+    let kept = drawn_tail(lines.clone(), 10);
+    assert_eq!(kept[0], "marker 3");
+    assert_eq!(kept[1..], line_texts(&lines[3..]));
+    // One row holds only the marker.
+    assert_eq!(drawn_tail(numbered(12), 1), ["marker 12"]);
 }
 
 #[test]

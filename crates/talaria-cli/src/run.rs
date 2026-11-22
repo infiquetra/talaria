@@ -4483,7 +4483,7 @@ impl Screen for TuiScreen {
         if let Some(state) = view.state {
             self.commit_closed_blocks(state, view, width);
         }
-        let tail: Vec<Line<'static>> = view
+        let tail = view
             .state
             .map(|state| {
                 let limit = usize::from(self.terminal.viewport().height)
@@ -4547,16 +4547,17 @@ impl Screen for TuiScreen {
                         }
                     })
                     .collect();
-                // Rows cut from the top are not in scrollback yet; the first row kept says so.
-                talaria_tui::live::clip_tail(lines, MAX_TAIL_ROWS, |hidden| {
-                    let dim = Style::default().add_modifier(Modifier::DIM);
-                    let style = if current.views.active() {
-                        current
-                            .views
-                            .inline(talaria_tui::theme::surfaces::tokens::TRANSCRIPT_NOTICE, dim)
-                    } else {
-                        dim
-                    };
+                // Rows cut from the top are not in scrollback yet; the first row drawn says so,
+                // whether the cap or the rows the layout gives the tail cut them.
+                let dim = Style::default().add_modifier(Modifier::DIM);
+                let style = if current.views.active() {
+                    current
+                        .views
+                        .inline(talaria_tui::theme::surfaces::tokens::TRANSCRIPT_NOTICE, dim)
+                } else {
+                    dim
+                };
+                MarkdownTailSection::cut_with(lines, MAX_TAIL_ROWS, move |hidden| {
                     Line::styled(
                         talaria_tui::live::tail_cut_text(
                             hidden,
@@ -4567,8 +4568,7 @@ impl Screen for TuiScreen {
                     )
                 })
             })
-            .unwrap_or_default();
-        let tail = MarkdownTailSection::new(tail);
+            .unwrap_or_else(|| MarkdownTailSection::new(Vec::new()));
         let drafting = DraftingLine {
             drafted: view.state.and_then(|state| state.drafting_tool()),
             theme: &self.tool_theme,

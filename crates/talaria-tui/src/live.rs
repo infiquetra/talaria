@@ -96,23 +96,11 @@ pub fn max_live_height(rows: u16) -> u16 {
     rows.saturating_sub(2)
 }
 
-/// Cuts the live tail to its last `max` rows. When rows are cut, the first row kept gives way
-/// to `marker(hidden)`, where `hidden` counts every row not drawn, so the cut is never silent.
-pub fn clip_tail(
-    mut lines: Vec<Line<'static>>,
-    max: usize,
-    marker: impl FnOnce(usize) -> Line<'static>,
-) -> Vec<Line<'static>> {
-    if lines.len() <= max {
-        return lines;
-    }
-    if max == 0 {
-        return Vec::new();
-    }
-    let hidden = lines.len() - max + 1;
-    lines.drain(..hidden);
-    lines.insert(0, marker(hidden));
-    lines
+/// How many of `len` rows a live tail cut to its last `max` rows does not draw: the first row
+/// kept gives way to the cut marker, so its row counts too. `None` when they all fit, or when no
+/// row is left to hold the marker.
+pub(crate) fn tail_hidden(len: usize, max: usize) -> Option<usize> {
+    (max > 0 && len > max).then(|| len - max + 1)
 }
 
 /// The text of a cut tail's first row: how many earlier rows are not in scrollback yet and the

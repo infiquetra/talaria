@@ -12,7 +12,7 @@ use talaria_core::session::{
     ToolCell, ToolStatus, update,
 };
 use talaria_tui::history::{CellLines, CommitLedger, PlainCellLines};
-use talaria_tui::live::{LiveSection, LiveView, clip_tail, tail_cut_text};
+use talaria_tui::live::{LiveSection, LiveView, PlainTextSection, tail_cut_text};
 use talaria_tui::markdown::section::MarkdownTailSection;
 use talaria_tui::markdown::{MarkdownOptions, closed_blocks_len, render_markdown};
 use talaria_tui::prompts::PromptStack;
@@ -432,18 +432,32 @@ const MAX_TAIL_ROWS: usize = 15;
 
 /// The live tail as the inline screen draws it: a partly committed reply shows only its rest,
 /// and at most `MAX_TAIL_ROWS` rows show.
-fn tail_lines(state: &SessionState, commits: &ReplyCommits) -> Vec<Line<'static>> {
-    tail_lines_beside(state, commits, &PromptStack::new())
+fn tail_section(state: &SessionState, commits: &ReplyCommits) -> MarkdownTailSection {
+    tail_beside(state, commits, &PromptStack::new())
 }
 
-/// [`tail_lines`] beside a stack of prompt cards: the question on the card on top is not drawn
-/// in the tail again, and a cut tail starts with the marker the inline screen draws.
-fn tail_lines_beside(
+/// [`tail_section`] beside a stack of prompt cards, and a cut tail starts with the marker the
+/// inline screen draws.
+fn tail_beside(
+    state: &SessionState,
+    commits: &ReplyCommits,
+    cards: &PromptStack,
+) -> MarkdownTailSection {
+    MarkdownTailSection::cut_with(
+        tail_rows_beside(state, commits, cards),
+        MAX_TAIL_ROWS,
+        |hidden| Line::from(tail_cut_text(hidden, false, Some("Ctrl+O"))),
+    )
+}
+
+/// Every row of the live tail before any cut: the question on the card on top is not drawn in
+/// the tail again.
+fn tail_rows_beside(
     state: &SessionState,
     commits: &ReplyCommits,
     cards: &PromptStack,
 ) -> Vec<Line<'static>> {
-    let lines: Vec<Line<'static>> = state
+    state
         .live_tail()
         .iter()
         .flat_map(|cell| {
@@ -457,10 +471,7 @@ fn tail_lines_beside(
                 None => MarkdownCells.lines(cell, COLS),
             }
         })
-        .collect();
-    clip_tail(lines, MAX_TAIL_ROWS, |hidden| {
-        Line::from(tail_cut_text(hidden, false, Some("Ctrl+O")))
-    })
+        .collect()
 }
 
 /// An inline screen fed the way the terminal feeds it, with a prompt card stack under the tail.
@@ -471,6 +482,8 @@ struct Rig {
     ledger: CommitLedger,
     commits: ReplyCommits,
     cards: PromptStack,
+    /// Rows drawn under the card, standing in for the checklist and the composer.
+    under: Option<String>,
 }
 
 impl Rig {
@@ -491,6 +504,7 @@ impl Rig {
             ledger: CommitLedger::new(),
             commits: ReplyCommits::new(),
             cards: PromptStack::new(),
+            under: None,
         }
     }
 
@@ -515,11 +529,15 @@ impl Rig {
             true,
             std::time::Instant::now(),
         );
-        let tail = MarkdownTailSection::new(tail_lines_beside(state, &self.commits, &self.cards));
+        let tail = tail_beside(state, &self.commits, &self.cards);
         let card = self.cards.section();
+        let under = self.under.as_deref().map(PlainTextSection::new);
         let mut sections: Vec<&dyn LiveSection> = vec![&tail];
         if let Some(card) = &card {
             sections.push(card);
+        }
+        if let Some(under) = &under {
+            sections.push(under);
         }
         self.term
             .draw_live(&LiveView { sections })
@@ -712,6 +730,51 @@ fn a_tail_held_open_by_a_running_tool_says_how_many_rows_wait() {
 }
 
 #[test]
+fn a_tail_given_fewer_rows_by_the_layout_still_starts_with_the_marker() {
+    let mut rig = Rig::new();
+    // Sections under the tail take 12 of the live region's 22 rows, leaving the tail 10.
+    let under: Vec<String> = (1..=12).map(|n| format!("under row {n:02}")).collect();
+    rig.under = Some(under.join("\n"));
+    let mut feed = Feed { seq: 1 };
+    let mut state = SessionState::empty(SessionId::new(events::SESSION.to_owned()));
+    feed.send(&mut state, "message.start", json!({}));
+    stream(&mut rig, &mut feed, &mut state, "Starting a long check.\n");
+    feed.send(
+        &mut state,
+        "tool.start",
+        json!({"tool_id": "call-long", "name": "terminal"}),
+    );
+    rig.frame(&state);
+    stream(&mut rig, &mut feed, &mut state, &after_paragraphs(1..=12));
+
+    let rows = text_of(&tail_rows_beside(&state, &rig.commits, &rig.cards));
+    let given = usize::from(ROWS) - 2 - under.len();
+    assert!(
+        rows.len() > MAX_TAIL_ROWS,
+        "the tail is cut by its cap as well"
+    );
+    let (_, live) = rig.above_and_live();
+    let hidden = rows.len() - given + 1;
+    assert_eq!(
+        live[0],
+        tail_cut_text(hidden, false, Some("Ctrl+O")),
+        "the first live row is the marker, counting every row not drawn: {live:#?}"
+    );
+    let shown: Vec<&str> = live[1..given].iter().map(|row| row.trim_end()).collect();
+    let newest: Vec<&str> = rows[rows.len() - (given - 1)..]
+        .iter()
+        .map(|row| row.trim_end())
+        .collect();
+    assert_eq!(shown, newest, "the newest tail rows follow the marker");
+    let below: Vec<&str> = live[given..]
+        .iter()
+        .map(|row| row.trim_end())
+        .filter(|row| !row.is_empty())
+        .collect();
+    assert_eq!(below, under, "the sections under the tail keep their rows");
+}
+
+#[test]
 fn an_open_question_is_drawn_once_and_its_settled_row_wraps() {
     let question = "Start the long run with five agents, the widest effort and a cap \
                     of four million tokens on the whole run?";
@@ -839,7 +902,7 @@ fn a_reply_taller_than_the_screen_scrolls_up_and_ends_in_scrollback_once() {
             COLS,
         );
         term.commit_lines(early).expect("commit closed blocks");
-        let tail = MarkdownTailSection::new(tail_lines(state, commits));
+        let tail = tail_section(state, commits);
         let sections: Vec<&dyn LiveSection> = vec![&tail];
         term.draw_live(&LiveView { sections }).expect("draw live");
         alac.absorb(&sink);
