@@ -2220,6 +2220,14 @@ impl KeyChord {
         parts.join("+")
     }
 
+    /// True when a settings chooser takes this chord as an action instead of typing it into its
+    /// filter: any key but a character, or a character with Ctrl or Alt held. `route_settings`
+    /// applies the same test to a pressed key.
+    #[must_use]
+    pub fn reaches_a_chooser(&self) -> bool {
+        !matches!(self.code, KeyCode::Char(_)) || self.ctrl || self.alt
+    }
+
     /// True when a terminal can send this chord only with keyboard enhancement.
     #[must_use]
     pub fn needs_enhancement(&self) -> bool {
@@ -2387,13 +2395,18 @@ impl KeyMap {
             .collect()
     }
 
-    /// The label of the first key bound to a settings action, for a hint; `None` when unbound.
+    /// The label of the first key bound to a settings action that a chooser takes, for a chooser
+    /// hint; `None` when no bound key reaches a chooser.
     #[must_use]
     pub fn settings_label(&self, action: SettingsAction) -> Option<String> {
         SETTINGS_BINDINGS
             .iter()
             .position(|(held, _, _)| *held == action)
-            .and_then(|index| self.chords[Binding::Settings(index).index()].first())
+            .and_then(|index| {
+                self.chords[Binding::Settings(index).index()]
+                    .iter()
+                    .find(|chord| chord.reaches_a_chooser())
+            })
             .map(KeyChord::label)
     }
 

@@ -589,8 +589,8 @@ dashboard routes with the profile's own ticket, as do toolsets and skills; profi
 the ones the gateway serves. Keys that share a list, such as the two kanban keys, share its
 answer. If the list cannot be read, the row says
 `Could not load the list (<reason>). Showing built-in names. Ctrl+R retries.` and the
-chooser stays usable. These hints name the key bound to `settings_reload`, and leave it out
-when that action is unbound. Until the list arrives, a current value that no built-in name matches
+chooser stays usable. These hints name the first key bound to `settings_reload` that a chooser takes, and leave
+it out when there is none: a plain or Shift character types into the filter instead. Until the list arrives, a current value that no built-in name matches
 shows as `<value> (current)`, and the cursor stays on the same value when the list merges. In a chooser, the `settings_reload` binding (Ctrl+R) asks for its list
 again instead of reloading every setting. A list is kept while settings stay open.
 The `/configure` helper checks each proposed setting against the same lists the chooser
