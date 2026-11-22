@@ -261,15 +261,7 @@ impl ProfilesRenderer {
         }
         if !narrow_detail {
             let mut header = cut(&view.header, width);
-            let hints = [
-                "m models",
-                "c connect",
-                "r refresh",
-                "R rescan",
-                "n new",
-                "e describe",
-                "s soul",
-            ];
+            let hints = &view.hints;
             let right = if let Some(filter) = &view.filter {
                 format!("/{filter}")
             } else if width >= 40 {

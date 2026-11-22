@@ -504,6 +504,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     /// Open or close the profiles overlay before other overlay synchronizers run.
     fn sync_profiles(&mut self, _view: Option<&ProfilesView>) {}
+    /// The labels of the keys bound to the profiles actions the hints name.
+    fn profiles_key_labels(&self) -> talaria_core::profiles::KeyLabels {
+        talaria_core::profiles::KeyLabels::default()
+    }
     /// The number of profiles rows visible above notices in this terminal.
     fn profiles_page_size(&self, view: &ProfilesView) -> usize {
         let (width, height) = self.pane_size();
@@ -2510,6 +2514,7 @@ fn model_card_blocked(state: &AppState) -> bool {
 
 fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
     let (width, _) = screen.pane_size();
+    state.profiles.set_key_labels(screen.profiles_key_labels());
     let page_size = screen.profiles_page_size(&state.profiles.view());
     state.profiles.set_layout(width, page_size);
     if state.profiles.is_open() {
@@ -17867,6 +17872,63 @@ mod profiles_action_tests {
                 .any(|effect| matches!(effect, AppEffect::StartInProfile { .. }))
         );
         assert!(lines(&effects).contains(&SWITCHING_NOTICE.to_owned()));
+    }
+
+    /// A terminal whose keymap binds the models action to F5 and leaves connect unbound.
+    #[derive(Default)]
+    struct Rebound {
+        drawn: Option<ProfilesView>,
+    }
+    impl ComposerDeadline for Rebound {
+        fn tick(&mut self, _: Instant) {}
+        fn next_tick(&self) -> Option<Instant> {
+            None
+        }
+    }
+    impl StatusHost for Rebound {
+        fn on_tick(&mut self, _: Instant) {}
+        fn next_wake(&self, _: Instant) -> Option<Instant> {
+            None
+        }
+        fn shutdown(&mut self) -> impl Future<Output = ()> + Send {
+            std::future::ready(())
+        }
+    }
+    impl Screen for Rebound {
+        type Input = ();
+        fn input(&mut self, _: (), _: &View<'_>, _: Instant) -> Vec<UserAction> {
+            Vec::new()
+        }
+        fn draw(&mut self, _: &View<'_>) {}
+        fn commit_lines(&mut self, _: Vec<String>) {}
+        fn commit_context(&mut self, _block: &ContextBlock) {}
+        fn commit_cells(&mut self, _: &[Cell]) {}
+        fn load_draft(&mut self, _: &str) {}
+        fn restore(&mut self) {}
+        fn sync_profiles(&mut self, view: Option<&ProfilesView>) {
+            self.drawn = view.cloned();
+        }
+        fn profiles_key_labels(&self) -> talaria_core::profiles::KeyLabels {
+            talaria_core::profiles::KeyLabels {
+                models: Some("F5".into()),
+                connect: None,
+                ..Default::default()
+            }
+        }
+    }
+
+    #[test]
+    fn profiles_hints_use_the_terminal_key_labels() {
+        let mut state = loaded();
+        let mut screen = Rebound::default();
+        sync_models(&mut state, &mut screen);
+        let drawn = screen.drawn.expect("the profiles screen is drawn");
+        assert_eq!(drawn.hints.first().map(String::as_str), Some("F5 models"));
+        assert!(
+            !drawn.hints.iter().any(|hint| hint.ends_with("connect")),
+            "{:?}",
+            drawn.hints
+        );
     }
 }
 

@@ -2,8 +2,9 @@
 
 use talaria_core::profiles::{
     Applied, CallFailure, CreateRequest, CreatedProfile, Description, DiscoveryFailure, FormField,
-    FormView, GatewayView, HostTopology, KeyAction, Panel, ProfilesEffect, ProfilesInput,
-    ProfilesState, RawEdit, RescanFailure, RescanSummary, RosterEntry, RowTone, Section,
+    FormView, GatewayView, HostTopology, KeyAction, KeyLabels, Panel, ProfilesEffect,
+    ProfilesInput, ProfilesState, RawEdit, RescanFailure, RescanSummary, RosterEntry, RowTone,
+    Section,
 };
 
 fn state() -> ProfilesState {
@@ -1947,4 +1948,84 @@ fn served_rows_without_a_listed_model_are_described_in_the_background() {
         220,
     );
     assert_eq!(describes(&effects), ["fixture-a"], "{effects:?}");
+}
+
+fn keys_line(machine: &ProfilesState) -> String {
+    match machine.view().panel {
+        Panel::Detail(detail) => detail.lines[0].clone(),
+        other => panic!("the list carries its detail: {other:?}"),
+    }
+}
+
+/// The detail and header hints name the keys the user bound, and one word per action.
+#[test]
+fn key_hints_name_the_bound_keys() {
+    let machine = loaded_at("fixture");
+    assert_eq!(
+        machine.view().hints,
+        [
+            "m models",
+            "c connect",
+            "r refresh",
+            "R rescan",
+            "n new",
+            "e description",
+            "s soul"
+        ],
+        "the header and the detail call profiles_description the same word"
+    );
+
+    let mut machine = loaded_at("fixture");
+    machine.set_key_labels(KeyLabels {
+        models: Some("F5".to_owned()),
+        connect: None,
+        description: Some("Ctrl+E".to_owned()),
+        ..KeyLabels::default()
+    });
+    assert_eq!(
+        keys_line(&machine),
+        "Keys: Enter or F5 models · Ctrl+E description · s soul"
+    );
+    assert_eq!(
+        machine.view().hints,
+        [
+            "F5 models",
+            "r refresh",
+            "R rescan",
+            "n new",
+            "Ctrl+E description",
+            "s soul"
+        ]
+    );
+
+    // With neither Enter nor the models key bound, the hint leaves models out.
+    machine.set_key_labels(KeyLabels {
+        open: None,
+        models: None,
+        ..KeyLabels::default()
+    });
+    assert_eq!(
+        keys_line(&machine),
+        "Keys: c connect · e description · s soul"
+    );
+
+    // A row the gateway does not serve names only the keys that work on it.
+    let mut machine = loaded_at("fixture-b");
+    machine.set_key_labels(KeyLabels {
+        soul: Some("F6".to_owned()),
+        ..KeyLabels::default()
+    });
+    assert_eq!(
+        keys_line(&machine),
+        "Keys: e description · F6 soul. Models and connect need a profile this gateway serves."
+    );
+    machine.set_key_labels(KeyLabels {
+        description: None,
+        soul: None,
+        ..KeyLabels::default()
+    });
+    assert_eq!(
+        keys_line(&machine),
+        "Models and connect need a profile this gateway serves."
+    );
 }

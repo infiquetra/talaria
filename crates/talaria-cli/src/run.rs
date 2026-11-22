@@ -3908,6 +3908,10 @@ impl Screen for TuiScreen {
         });
     }
 
+    fn profiles_key_labels(&self) -> talaria_core::profiles::KeyLabels {
+        talaria_tui::profiles::key_labels(&self.keymap)
+    }
+
     fn profiles_page_size(&self, view: &ProfilesView) -> usize {
         let (width, height) = self.pane_size();
         talaria_tui::profiles::list_page_size(view, ratatui::layout::Rect::new(0, 0, width, height))

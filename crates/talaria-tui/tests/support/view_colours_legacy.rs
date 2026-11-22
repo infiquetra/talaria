@@ -474,6 +474,17 @@ fn profiles(fixtures: &mut Vec<Fixture>, resolved: &ThemeFileResolution) {
     let mut view = ProfilesView {
         loading: false,
         header: "Profiles · connected fixture".into(),
+        hints: [
+            "m models",
+            "c connect",
+            "r refresh",
+            "R rescan",
+            "n new",
+            "e description",
+            "s soul",
+        ]
+        .map(String::from)
+        .to_vec(),
         rows: vec![RowView {
             name_cell: "fixture".into(),
             label: "needs attention".into(),
@@ -1157,6 +1168,17 @@ pub fn wide_profile_divider(resolved: &ThemeFileResolution) -> Buffer {
     let view = ProfilesView {
         loading: false,
         header: "Profiles · connected fixture".into(),
+        hints: [
+            "m models",
+            "c connect",
+            "r refresh",
+            "R rescan",
+            "n new",
+            "e description",
+            "s soul",
+        ]
+        .map(String::from)
+        .to_vec(),
         rows: vec![RowView {
             name_cell: "fixture".into(),
             label: "needs attention".into(),

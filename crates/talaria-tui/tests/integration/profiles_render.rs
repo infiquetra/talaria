@@ -127,6 +127,17 @@ fn main_view() -> ProfilesView {
     ProfilesView {
         loading: false,
         header: "Profiles (7 on disk · 3 served)".to_owned(),
+        hints: [
+            "m models",
+            "c connect",
+            "r refresh",
+            "R rescan",
+            "n new",
+            "e description",
+            "s soul",
+        ]
+        .map(String::from)
+        .to_vec(),
         rows: vec![
             row(
                 "served",
@@ -246,15 +257,7 @@ fn header_line(view: &ProfilesView, cols: usize) -> String {
     } else if cols < 40 {
         String::new()
     } else {
-        let hints = [
-            "m models",
-            "c connect",
-            "r refresh",
-            "R rescan",
-            "n new",
-            "e describe",
-            "s soul",
-        ];
+        let hints = &view.hints;
         let mut keep = hints.len();
         loop {
             let text = hints[..keep].join(" · ");

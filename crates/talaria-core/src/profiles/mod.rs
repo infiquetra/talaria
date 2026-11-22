@@ -439,6 +439,46 @@ pub enum Panel {
     None,
 }
 
+/// The labels of the keys bound to the profiles actions the hints name.
+///
+/// The terminal side builds these from its keymap; `None` means the action has no key,
+/// and the hints then leave it out. The defaults match the default bindings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyLabels {
+    /// `profiles_open`: Enter opens the models of a served profile.
+    pub open: Option<String>,
+    /// `profiles_models`.
+    pub models: Option<String>,
+    /// `profiles_connect`.
+    pub connect: Option<String>,
+    /// `profiles_refresh`.
+    pub refresh: Option<String>,
+    /// `profiles_rescan`.
+    pub rescan: Option<String>,
+    /// `profiles_new`.
+    pub new: Option<String>,
+    /// `profiles_description`.
+    pub description: Option<String>,
+    /// `profiles_soul`.
+    pub soul: Option<String>,
+}
+
+impl Default for KeyLabels {
+    fn default() -> Self {
+        let label = |text: &str| Some(text.to_owned());
+        Self {
+            open: label("Enter"),
+            models: label("m"),
+            connect: label("c"),
+            refresh: label("r"),
+            rescan: label("R"),
+            new: label("n"),
+            description: label("e"),
+            soul: label("s"),
+        }
+    }
+}
+
 /// Everything the profiles screen draws.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfilesView {
@@ -446,6 +486,9 @@ pub struct ProfilesView {
     pub loading: bool,
     /// The header line.
     pub header: String,
+    /// The header key hints in order, `<key> <action>` each; the screen keeps as many
+    /// as fit.
+    pub hints: Vec<String>,
     /// The list rows.
     pub rows: Vec<RowView>,
     /// The selected row.
@@ -502,6 +545,7 @@ pub struct ProfilesState {
     model_queue: std::collections::VecDeque<String>,
     /// Rows whose description failed in this opening; their model stays a dash.
     model_failed: std::collections::BTreeSet<String>,
+    keys: KeyLabels,
 }
 
 const NOT_SENT: &str = "Not sent: Talaria is not connected to the gateway. Nothing changed.";
@@ -706,6 +750,7 @@ impl ProfilesState {
             timers: Default::default(),
             model_queue: Default::default(),
             model_failed: Default::default(),
+            keys: KeyLabels::default(),
         }
     }
 
@@ -729,6 +774,51 @@ impl ProfilesState {
         self.filter_typing
             || matches!(&self.panel, EditPanel::Description(_))
             || matches!(&self.panel, EditPanel::Create(form) if matches!(form.focus, FormField::Name | FormField::Description))
+    }
+
+    /// Set the labels of the bound keys the hints name; no keymap type enters the core.
+    pub fn set_key_labels(&mut self, keys: KeyLabels) {
+        self.keys = keys;
+    }
+
+    /// `<key> <action>` for each bound action, in the order given.
+    fn hint_parts(&self, actions: &[(&Option<String>, &str)]) -> Vec<String> {
+        actions
+            .iter()
+            .filter_map(|(key, word)| key.as_ref().map(|key| format!("{key} {word}")))
+            .collect()
+    }
+
+    /// The first detail line: the keys that act on this row.
+    fn detail_keys(&self, served: bool, connected: bool) -> String {
+        let keys = &self.keys;
+        let mut parts = Vec::new();
+        if served {
+            let models: Vec<&str> = [&keys.open, &keys.models]
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect();
+            if !models.is_empty() {
+                parts.push(format!("{} models", models.join(" or ")));
+            }
+            if !connected {
+                parts.extend(self.hint_parts(&[(&keys.connect, "connect")]));
+            }
+        }
+        parts.extend(self.hint_parts(&[(&keys.description, "description"), (&keys.soul, "soul")]));
+        let mut line = if parts.is_empty() {
+            String::new()
+        } else {
+            format!("Keys: {}", parts.join(" · "))
+        };
+        if !served {
+            if !line.is_empty() {
+                line.push_str(". ");
+            }
+            line.push_str("Models and connect need a profile this gateway serves.");
+        }
+        line
     }
 
     /// Set presentation facts used for navigation; no terminal type enters the core.
@@ -961,14 +1051,7 @@ impl ProfilesState {
     fn detail(&self, row: &ProfileRow) -> DetailView {
         let explanation = self.explanation(row);
         let connected = row.name == self.connected;
-        let mut lines = vec![if row.state != ServeState::Served {
-            "Keys: e description · s soul. Models and connect need a profile this gateway serves."
-                .to_owned()
-        } else if connected {
-            "Keys: Enter or m models · e description · s soul".to_owned()
-        } else {
-            "Keys: Enter or m models · c connect · e description · s soul".to_owned()
-        }];
+        let mut lines = vec![self.detail_keys(row.state == ServeState::Served, connected)];
         if !row.in_roster && !matches!(self.descriptions.get(&row.name), Some(Ok(_))) {
             lines.push("Hermes did not list this profile's details.".into());
         }
@@ -1995,6 +2078,15 @@ impl ProfilesState {
         ProfilesView {
             loading: !self.loaded,
             header: format!("Profiles ({} on disk · {} served)", self.roster.as_ref().map_or_else(|| "-".into(), |rows| rows.len().to_string()), self.rows.iter().filter(|row| row.state == ServeState::Served).count()),
+            hints: self.hint_parts(&[
+                (&self.keys.models, "models"),
+                (&self.keys.connect, "connect"),
+                (&self.keys.refresh, "refresh"),
+                (&self.keys.rescan, "rescan"),
+                (&self.keys.new, "new"),
+                (&self.keys.description, "description"),
+                (&self.keys.soul, "soul"),
+            ]),
             rows: visible.iter().map(|row| {
                 let explanation = self.explanation(row);
                 RowView {

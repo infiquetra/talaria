@@ -4,11 +4,11 @@ use std::collections::BTreeMap;
 
 use talaria_core::commands::local::{LocalAction, LocalCommandTable};
 use talaria_core::profiles::{
-    Description, GatewayView, HostTopology, KeyAction, Panel, ProfilesEffect, ProfilesInput,
-    ProfilesState, RosterEntry,
+    Description, GatewayView, HostTopology, KeyAction, KeyLabels, Panel, ProfilesEffect,
+    ProfilesInput, ProfilesState, RosterEntry,
 };
 use talaria_tui::keys::{Action, Key, KeyCode, KeyContext, KeyKind, KeyMap, Mods};
-use talaria_tui::profiles::key_action;
+use talaria_tui::profiles::{key_action, key_labels};
 
 fn press(code: KeyCode, ctrl: bool, shift: bool) -> Key {
     Key {
@@ -221,5 +221,39 @@ fn keys_and_rebinding() {
     assert_eq!(
         machine.update(ProfilesInput::Key(KeyAction::Back), 40),
         vec![ProfilesEffect::Close]
+    );
+}
+
+/// The hints name the keys the keymap binds: the defaults read as before, a rebound
+/// action shows its new key, and an unbound action has no label.
+#[test]
+fn hint_labels_follow_the_keymap() {
+    assert_eq!(key_labels(&KeyMap::defaults()), KeyLabels::default());
+
+    let entries: BTreeMap<String, Vec<String>> = [
+        ("profiles_models", vec!["f5"]),
+        ("profiles_connect", vec![]),
+        ("profiles_description", vec!["ctrl+e"]),
+        ("profiles_soul", vec!["shift+o"]),
+    ]
+    .into_iter()
+    .map(|(name, chords)| {
+        (
+            name.to_owned(),
+            chords.into_iter().map(str::to_owned).collect(),
+        )
+    })
+    .collect();
+    let (map, notices) = KeyMap::from_entries(&entries);
+    assert!(notices.is_empty(), "{notices:?}");
+    assert_eq!(
+        key_labels(&map),
+        KeyLabels {
+            models: Some("F5".to_owned()),
+            connect: None,
+            description: Some("Ctrl+E".to_owned()),
+            soul: Some("O".to_owned()),
+            ..KeyLabels::default()
+        }
     );
 }
