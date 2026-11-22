@@ -21,11 +21,12 @@ ended (engine ended without a journal outcome), waiting (an outstanding
 approval or clarification), stopping, running and queued. A recorded outcome
 wins over later live activity. Run states are running, completed, failed and
 aborted. A resumed execution keeps the previous outcome separately. The view
-checks the run lock on every poll. When no runner holds it, a running view adds
-`runner not running — talaria workflow resume <run-id> continues it`. Only when
-the lock cannot be read does a minute without new journal lines add
-`no live runner detected`. The runner journals its admission gate only when the
-gate opens or pauses, so script logs stay visible.
+checks the run lock on every poll. When no runner holds it and the journal has
+been quiet for ten seconds (a minute before the first record, while a new runner
+starts), a running view adds
+`runner not running — talaria workflow resume <run-id> continues it`. A lock the
+view cannot read makes no claim either way. The runner journals its admission
+gate only when the gate opens or pauses, so script logs stay visible.
 
 Use the arrow keys to select and collapse rows (the run header never
 collapses), Enter to open an agent, `s` to

@@ -211,10 +211,6 @@ impl ProgressState {
     pub fn take_diagnostics(&mut self) -> Vec<String> {
         std::mem::take(&mut self.diagnostics)
     }
-    /// The run line says this when the run lock shows no runner holds the run.
-    pub fn runner_gone(&self) -> bool {
-        self.no_live_runner && self.runner_alive == Some(false)
-    }
     pub fn select_agent(&mut self, key: &str) {
         self.selection = NodeKey::Agent(key.into());
     }
@@ -1094,11 +1090,17 @@ fn tick(s: &mut ProgressState) -> Vec<ProgressEffect> {
         }
         if let Some(request) = request {
             let age = s.now_ms - request.at_ms;
-            let runner_recent = s.runner_alive == Some(true)
-                || (s.last_journal_seen_ms > s.opened_at_ms
-                    && s.now_ms - s.last_journal_seen_ms < 10000);
+            let journal_recent = s.last_journal_seen_ms > s.opened_at_ms
+                && s.now_ms - s.last_journal_seen_ms < 10000;
+            let runner_recent = s.runner_alive == Some(true) || journal_recent;
+            // A runner journals its answer once and may then stay quiet, so without a
+            // readable lock only a journal that has not moved since the request is unanswered.
+            let unanswered = match s.runner_alive {
+                Some(alive) => !alive && !journal_recent,
+                None => s.last_journal_seen_ms < request.at_ms,
+            };
             if age >= 10000
-                && !runner_recent
+                && unanswered
                 && s.warned_controls
                     .insert(format!("{name}:{}", request.at_ms))
             {
@@ -1124,14 +1126,19 @@ fn tick(s: &mut ProgressState) -> Vec<ProgressEffect> {
     }
     effects
 }
-/// The run lock says whether a runner holds the run. Journal silence decides only when the
-/// lock could not be read.
+/// The run lock says whether a runner holds the run. A new or resuming runner takes the lock
+/// only after it loads its profile, so a free lock counts once the journal has been quiet for
+/// ten seconds, or for a minute before the first record. An unreadable lock proves nothing:
+/// a healthy runner can write nothing for minutes.
 fn runner_check(s: &mut ProgressState) {
+    let grace_ms = if s.progress.last_seq == 0 {
+        60000
+    } else {
+        10000
+    };
     let missing = s.progress.run.state == RunState::Running
-        && match s.runner_alive {
-            Some(alive) => !alive,
-            None => s.now_ms - s.last_journal_seen_ms >= 60000,
-        };
+        && s.runner_alive == Some(false)
+        && s.now_ms - s.last_journal_seen_ms >= grace_ms;
     if s.no_live_runner != missing {
         s.no_live_runner = missing;
         s.revision += 1;

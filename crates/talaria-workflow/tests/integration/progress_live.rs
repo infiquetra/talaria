@@ -378,6 +378,10 @@ fn free_lock_marks_a_running_journal_as_not_running() {
     update(&mut state, ProgressInput::Clock { now_ms: 2_000 });
     state.last_journal_seen_ms = 2_000;
     update(&mut state, ProgressInput::Runner { alive: false });
+    // A resuming runner takes the lock only after its preflight, so one free probe is not enough.
+    assert!(!state.no_live_runner, "{}", run_line(&state));
+    update(&mut state, ProgressInput::Clock { now_ms: 12_000 });
+    update(&mut state, ProgressInput::Tick);
     assert!(state.no_live_runner);
     assert!(
         run_line(&state).contains(&format!(
@@ -391,6 +395,58 @@ fn free_lock_marks_a_running_journal_as_not_running() {
     update(&mut state, ProgressInput::Runner { alive: true });
     update(&mut state, ProgressInput::Clock { now_ms: 122_000 });
     assert!(!state.no_live_runner, "{}", run_line(&state));
+}
+
+#[test]
+fn a_new_run_is_not_called_dead_before_its_runner_takes_the_lock() {
+    let mut state = ProgressState::blank(&lines::manifest());
+    assert_eq!(state.progress().last_seq, 0);
+    update(&mut state, ProgressInput::Clock { now_ms: 1_000 });
+    state.opened_at_ms = 1_000;
+    state.last_journal_seen_ms = 1_000;
+    update(&mut state, ProgressInput::Runner { alive: false });
+    assert!(!state.no_live_runner, "{}", run_line(&state));
+    update(&mut state, ProgressInput::Clock { now_ms: 30_000 });
+    update(&mut state, ProgressInput::Tick);
+    assert!(
+        !run_line(&state).contains("runner not running"),
+        "{}",
+        run_line(&state)
+    );
+    // A runner that never wrote its first record within a minute is gone.
+    update(&mut state, ProgressInput::Clock { now_ms: 61_000 });
+    update(&mut state, ProgressInput::Tick);
+    assert!(state.no_live_runner, "{}", run_line(&state));
+}
+
+#[test]
+fn an_unreadable_lock_never_calls_a_quiet_runner_dead() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(&mut state, ProgressInput::Clock { now_ms: 1_000 });
+    state.opened_at_ms = 1_000;
+    state.last_journal_seen_ms = 1_000;
+    state.pending_controls.pause = Some(talaria_workflow::progress::PendingRequest {
+        v: 1,
+        kind: "pause".into(),
+        key: None,
+        at_ms: 1_500,
+    });
+    // The runner journals the paused gate once, then stays quiet; no Runner input arrives.
+    update(&mut state, ProgressInput::Clock { now_ms: 2_000 });
+    state.last_journal_seen_ms = 2_000;
+    for now_ms in [12_000, 30_000, 130_000] {
+        update(&mut state, ProgressInput::Clock { now_ms });
+        update(&mut state, ProgressInput::Tick);
+        assert!(!state.no_live_runner, "{}", run_line(&state));
+        assert!(
+            !state
+                .footer
+                .as_deref()
+                .is_some_and(|f| f.contains("no runner answered")),
+            "{:?}",
+            state.footer
+        );
+    }
 }
 
 #[test]

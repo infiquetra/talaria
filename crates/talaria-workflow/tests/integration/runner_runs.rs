@@ -255,6 +255,25 @@ fn discover_summarises_each_status() {
     after.try_lock().unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn runner_alive_reads_a_lock_the_viewer_cannot_write() {
+    use std::os::unix::fs::PermissionsExt;
+    use talaria_workflow::runner::runs::runner_alive;
+    let temp = tempfile::tempdir().unwrap();
+    assert!(
+        !runner_alive(temp.path()).unwrap(),
+        "a missing lock is no runner"
+    );
+    let path = temp.path().join("run.lock");
+    let holder = fs::File::create(&path).unwrap();
+    holder.try_lock().unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+    assert!(runner_alive(temp.path()).unwrap(), "a held read-only lock");
+    holder.unlock().unwrap();
+    assert!(!runner_alive(temp.path()).unwrap(), "a free read-only lock");
+}
+
 #[test]
 fn discover_tolerates_unreadable_folders() {
     let temp = tempfile::tempdir().unwrap();
