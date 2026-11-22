@@ -958,6 +958,9 @@ pub struct AppState {
     pub switch_reason: Option<String>,
     /// The channel the loop reads; a new link forwards its events through it.
     pub sender: Option<mpsc::UnboundedSender<AppMessage>>,
+    /// How many times a new link has replaced the foreground link. Each link's forwarder knows
+    /// the count it was started for and stops forwarding once a later link is installed.
+    pub link_epoch: Arc<AtomicU64>,
     /// The rewind overlay and the typed rewind commands. Issue #233.
     rewind: RewindState,
     /// Session that owns the rewind state and outstanding calls.
@@ -1269,6 +1272,7 @@ impl AppState {
             pending_switch_events: Vec::new(),
             switch_reason: None,
             sender: None,
+            link_epoch: Arc::new(AtomicU64::new(0)),
             rewind: RewindState::default(),
             rewind_owner: None,
             double_esc: DoubleEsc::default(),
@@ -1555,6 +1559,7 @@ impl AppState {
         copy.launch_folder = self.launch_folder.clone();
         copy.launch = self.launch.clone();
         copy.sender = self.sender.clone();
+        copy.link_epoch = Arc::clone(&self.link_epoch);
         copy.connectors = self.connectors.clone();
         copy.connectors_open = self.connectors_open;
         copy.connectors_consent = self.connectors_consent.clone();
@@ -8311,6 +8316,91 @@ fn branch_sent(
 }
 
 /// Put the new session in front: the link, the service, the fences and the history.
+/// Forward one link's events to the loop until a later link replaces it.
+///
+/// `started_for` is the value [`AppState::link_epoch`] has while this link is the foreground
+/// link. A replaced link still reports its own closing, and the loop cannot tell which link an
+/// event came from, so without this check the status line said "disconnected" after every switch
+/// to another profile. A server request still queued on a replaced link is released, not
+/// refused, so other viewers of that session keep their prompt.
+pub(crate) fn forward_link_events(
+    epoch: Arc<AtomicU64>,
+    started_for: u64,
+    sender: mpsc::UnboundedSender<AppMessage>,
+    mut inbound: mpsc::Receiver<LinkEvent>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(event) = inbound.recv().await {
+            if epoch.load(Ordering::SeqCst) > started_for {
+                if let LinkEvent::Inbound {
+                    item: Inbound::ServerRequest(request),
+                    ..
+                } = event
+                {
+                    request.responder.ignore();
+                }
+                continue;
+            }
+            if sender.send(AppMessage::Link(event)).is_err() {
+                break;
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod link_forward_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_replaced_link_stops_forwarding_and_the_new_link_keeps_forwarding() {
+        let epoch = Arc::new(AtomicU64::new(0));
+        let (sender, mut loop_inbox) = mpsc::unbounded_channel();
+        let (old_link, old_events) = mpsc::channel(8);
+        let old = forward_link_events(Arc::clone(&epoch), 0, sender.clone(), old_events);
+        // The switch starts the new link's forwarder before the loop installs the link.
+        let (new_link, new_events) = mpsc::channel(8);
+        let new = forward_link_events(Arc::clone(&epoch), 1, sender, new_events);
+
+        old_link
+            .send(LinkEvent::State(LinkState::Connected { generation: 1 }))
+            .await
+            .unwrap();
+        assert!(matches!(
+            loop_inbox.recv().await,
+            Some(AppMessage::Link(LinkEvent::State(LinkState::Connected {
+                generation: 1
+            })))
+        ));
+
+        // The loop installs the new link, then closes the old one.
+        epoch.fetch_add(1, Ordering::SeqCst);
+        old_link
+            .send(LinkEvent::State(LinkState::Closed))
+            .await
+            .unwrap();
+        drop(old_link);
+        old.await.unwrap();
+        assert!(
+            loop_inbox.try_recv().is_err(),
+            "the replaced link's closing must not reach the loop"
+        );
+
+        new_link
+            .send(LinkEvent::State(LinkState::Connected { generation: 1 }))
+            .await
+            .unwrap();
+        drop(new_link);
+        new.await.unwrap();
+        assert!(matches!(
+            loop_inbox.try_recv(),
+            Ok(AppMessage::Link(LinkEvent::State(LinkState::Connected {
+                generation: 1
+            })))
+        ));
+    }
+}
+
 fn install_session(
     state: &mut AppState,
     install: SwitchInstall,
@@ -8343,6 +8433,9 @@ fn install_session(
         .map(Arc::new);
     state.service = Some(service);
     if let Some(link) = link {
+        // From here the replaced link's events, its own closing among them, are not this
+        // connection's: its forwarder stops passing them on.
+        state.link_epoch.fetch_add(1, Ordering::SeqCst);
         if let Some(old) = state.link.replace(link) {
             effects.push(AppEffect::CloseLink(old));
         }
@@ -14510,7 +14603,7 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
     state.gateway_version = connection.gateway_version.clone();
     let OpenConnection {
         link,
-        mut inbound,
+        inbound,
         profile_name,
         describe,
         ..
@@ -14592,14 +14685,12 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
     state.prompts = Some(Arc::new(Mutex::new(PromptService::new(Box::new(
         move || submission_id(&launch_id, counter.fetch_add(1, Ordering::SeqCst) + 1),
     )))));
-    let sender = executor.sender.clone();
-    tokio::spawn(async move {
-        while let Some(event) = inbound.recv().await {
-            if sender.send(AppMessage::Link(event)).is_err() {
-                break;
-            }
-        }
-    });
+    forward_link_events(
+        Arc::clone(&state.link_epoch),
+        state.link_epoch.load(Ordering::SeqCst),
+        executor.sender.clone(),
+        inbound,
+    );
     AppMessage::Opened { opened, notice }
 }
 

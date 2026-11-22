@@ -268,17 +268,19 @@ fn switch_notice(app: &AppState, new: &OpenedSession, old: &OpenedSession) -> St
 }
 
 /// Send the events of a new link to the loop.
-fn forward_events(app: &AppState, mut inbound: tokio::sync::mpsc::Receiver<LinkEvent>) {
+/// Forward the events of a link this switch opened. It becomes the foreground link when the
+/// loop installs the switch, which raises the link count by one.
+fn forward_events(app: &AppState, inbound: tokio::sync::mpsc::Receiver<LinkEvent>) {
     let Some(sender) = app.sender.clone() else {
         return;
     };
-    tokio::spawn(async move {
-        while let Some(event) = inbound.recv().await {
-            if sender.send(super::app::AppMessage::Link(event)).is_err() {
-                break;
-            }
-        }
-    });
+    let started_for = app.link_epoch.load(std::sync::atomic::Ordering::SeqCst) + 1;
+    super::app::forward_link_events(
+        std::sync::Arc::clone(&app.link_epoch),
+        started_for,
+        sender,
+        inbound,
+    );
 }
 
 /// Branch the foreground session on the foreground link, then switch into
