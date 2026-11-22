@@ -726,8 +726,10 @@ list shows one line such as `Deleting fixture: Hermes is stopping its gateway (1
 row reads `deleting` or `renaming`. Until Hermes answers, every key that acts on that row
 (models, connect, description, soul, rename, delete) answers with one line such as
 `fixture is being deleted. Wait until Hermes answers.` A deleted profile leaves the list at once,
-and a renamed one takes its new name; a profile that is already gone says so and the list is read
-again. The create notice drops its `Waiting for the gateway to serve it...` part as soon as the
+and a renamed one takes its new name and reads `starting` until the gateway serves it, reading the
+list again on its own as a create does; a profile that is already gone says so and the list is read
+again. In a terminal under 100 columns, the detail of a row still opens during the request and
+shows the same line at its top. The create notice drops its `Waiting for the gateway to serve it...` part as soon as the
 list shows the new profile served.
 
 Enter or `m` on a served profile opens its `/models` page: the main model, fallbacks, helper

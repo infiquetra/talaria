@@ -32,7 +32,7 @@ pub enum ServeState {
         /// The scrubbed reason.
         reason: String,
     },
-    /// Created moments ago by this process.
+    /// Created or renamed moments ago by this process.
     Starting,
     /// The gateway never discovered it.
     NeverDiscovered,
@@ -1886,11 +1886,6 @@ impl ProfilesState {
     /// Forget a profile Hermes deleted, or move it to its new name, so the list never shows
     /// it as before. A just-created name would otherwise come back as "starting".
     fn forget(&mut self, name: &str, new_name: Option<&str>) {
-        let created_at = self
-            .created
-            .iter()
-            .find(|(created, _)| created == name)
-            .map(|(_, at)| *at);
         self.created.retain(|(created, _)| created != name);
         self.descriptions.remove(name);
         self.model_queue.retain(|queued| queued != name);
@@ -1898,10 +1893,9 @@ impl ProfilesState {
             self.rows.retain(|row| row.name != name);
             return;
         };
-        if let Some(at) = created_at {
-            self.created.retain(|(created, _)| created != new_name);
-            self.created.push((new_name.to_owned(), at));
-        }
+        // The gateway has never served the new name, so it reads "starting" like a create.
+        self.created.retain(|(created, _)| created != new_name);
+        self.created.push((new_name.to_owned(), self.clock_ms));
         if self.rows.iter().any(|row| row.name == new_name) {
             self.rows.retain(|row| row.name != name);
         } else if let Some(row) = self.rows.iter_mut().find(|row| row.name == name) {
@@ -2180,6 +2174,21 @@ impl ProfilesState {
         }
     }
 
+    /// Read the list again while the gateway picks up a new name, from `first_ms` on, and
+    /// stop calling it "starting" after 40 seconds.
+    fn follow_new_name(&mut self, first_ms: u64, effects: &mut Vec<ProfilesEffect>) {
+        if !self.open {
+            return;
+        }
+        for after in [0, 5_000, 15_000, 35_000]
+            .into_iter()
+            .filter(|after| *after >= first_ms)
+        {
+            self.schedule(after, Timer::Refresh, effects);
+        }
+        self.schedule(40_000, Timer::Expire, effects);
+    }
+
     fn created_answer(
         &mut self,
         result: Result<CreatedProfile, CallFailure>,
@@ -2212,19 +2221,7 @@ impl ProfilesState {
                     });
                 }
                 self.create_form = None;
-                if self.open {
-                    for after in [0, 5_000, 15_000, 35_000, 40_000] {
-                        self.schedule(
-                            after,
-                            if after == 40_000 {
-                                Timer::Expire
-                            } else {
-                                Timer::Refresh
-                            },
-                            effects,
-                        );
-                    }
-                }
+                self.follow_new_name(0, effects);
                 format!("{}{WAITING}", created_line(&name, created.keys_copied))
             }
             Err(CallFailure::Unknown | CallFailure::Unreadable) => {
@@ -2482,6 +2479,10 @@ impl ProfilesState {
                     }
                     text
                 });
+                if result.is_ok() {
+                    // The answer refreshes at once; these follow until the gateway serves it.
+                    self.follow_new_name(5_000, &mut effects);
+                }
                 self.registry_answered(name, result, false, &mut effects);
             }
             ProfilesInput::ConfigureAnswered(name, section, result) => {
@@ -2608,13 +2609,23 @@ impl ProfilesState {
             EditPanel::Delete(edit) => Panel::Delete(self.typed_view(edit, true)),
             EditPanel::Rename(edit) => Panel::Rename(self.typed_view(edit, false)),
             EditPanel::Review { review, .. } => Panel::Review(self.review_lines(review)),
-            EditPanel::None if self.registry.is_some() => {
+            // In the narrow layout a detail the user asked for wins; it carries the line.
+            EditPanel::None
+                if self.registry.is_some()
+                    && !(self.narrow
+                        && self.narrow_detail
+                        && self.detail_visible
+                        && selected.is_some()) =>
+            {
                 Panel::Progress(self.progress_line().unwrap_or_default())
             }
             EditPanel::None => match selected.and_then(|index| visible.get(index)) {
                 Some(row) if self.detail_visible => {
-                    let detail = self.detail(row);
+                    let mut detail = self.detail(row);
                     if self.narrow_detail {
+                        if let Some(line) = self.progress_line() {
+                            detail.lines.insert(0, line);
+                        }
                         Panel::NarrowDetail(detail)
                     } else {
                         Panel::Detail(detail)

@@ -2766,6 +2766,91 @@ fn a_deleted_or_renamed_new_profile_does_not_come_back() {
     assert!(!names_of(&machine).contains(&"fixture-new".to_owned()));
 }
 
+/// Answer a refresh after `fixture` became `fixture-r`, with the new name served or not yet.
+fn answer_renamed(machine: &mut ProfilesState, effects: &[ProfilesEffect], at: u64, served: bool) {
+    let generation = effects
+        .iter()
+        .find_map(|effect| match effect {
+            ProfilesEffect::Discover { generation } => Some(*generation),
+            _ => None,
+        })
+        .expect("a refresh");
+    let mut gateway = gateway();
+    gateway.served.retain(|name| name != "fixture");
+    if served {
+        gateway.served.push("fixture-r".to_owned());
+    }
+    let mut listed = roster();
+    for entry in &mut listed {
+        if entry.name == "fixture" {
+            "fixture-r".clone_into(&mut entry.name);
+            "fixture-r".clone_into(&mut entry.display_name);
+        }
+    }
+    let _ = machine.update(ProfilesInput::Discovered(generation, Ok(gateway)), at);
+    let _ = machine.update(ProfilesInput::Listed(generation, Ok(listed)), at);
+    let _ = machine.update(ProfilesInput::Topology(generation, Ok(topo())), at);
+}
+
+/// A renamed profile reads "starting" under its new name and turns "served" once the gateway
+/// serves that name, without a key press.
+#[test]
+fn a_renamed_profile_is_followed_until_the_gateway_serves_it() {
+    let mut machine = loaded_at("fixture");
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Rename), 100_000);
+    type_text(&mut machine, "fixture-r", 100_000);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Enter), 100_000);
+    let effects = machine.update(
+        ProfilesInput::RenameAnswered("fixture".to_owned(), Ok("fixture-r".to_owned())),
+        101_000,
+    );
+    assert_eq!(row_of(&machine, "fixture-r").unwrap().0, "starting");
+    // The gateway has not rescanned yet.
+    answer_renamed(&mut machine, &effects, 101_500, false);
+    assert_eq!(row_of(&machine, "fixture-r").unwrap().0, "starting");
+    // A later refresh reads the list again on its own and finds the new name served.
+    let token = tick_after(&effects, 5_000);
+    let refresh = machine.update(ProfilesInput::Tick { token }, 106_000);
+    answer_renamed(&mut machine, &refresh, 106_200, true);
+    assert_eq!(row_of(&machine, "fixture-r").unwrap().0, "served");
+    assert_eq!(row_of(&machine, "fixture"), None);
+    // Never served: after 40 seconds the row says so instead of "starting".
+    let _ = tick_after(&effects, 15_000);
+    let _ = tick_after(&effects, 35_000);
+    let _ = tick_after(&effects, 40_000);
+}
+
+/// In the narrow layout a running delete does not hide the detail: the first Enter on another
+/// row shows its detail, which carries the progress line, and opens nothing.
+#[test]
+fn the_narrow_detail_shows_while_a_delete_runs() {
+    let mut machine = loaded_at("fixture");
+    machine.set_layout(80, 10);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Delete), 10_000);
+    type_text(&mut machine, "fixture", 10_000);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Enter), 10_000);
+    let progress = "Deleting fixture: Hermes is stopping its gateway (0 s).";
+    assert_eq!(progress_of(&machine).as_deref(), Some(progress));
+
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Down), 10_000);
+    let effects = machine.update(ProfilesInput::Key(KeyAction::Open), 10_000);
+    assert!(sends_nothing(&effects), "{effects:?}");
+    match machine.view().panel {
+        Panel::NarrowDetail(detail) => {
+            assert!(detail.title.starts_with("fixture-a"), "{detail:?}");
+            assert_eq!(detail.lines.first().map(String::as_str), Some(progress));
+        }
+        other => panic!("no narrow detail: {other:?}"),
+    }
+    // Esc goes back to the list and its progress line.
+    let _ = machine.update(ProfilesInput::Key(KeyAction::Back), 10_000);
+    assert_eq!(progress_of(&machine).as_deref(), Some(progress));
+    // The wide layout keeps the progress line in the panel.
+    machine.set_layout(120, 10);
+    let _ = machine.update(ProfilesInput::Key(KeyAction::OpenDetail), 10_000);
+    assert_eq!(progress_of(&machine).as_deref(), Some(progress));
+}
+
 /// The line that waits for the gateway goes once the list shows the new profile served.
 #[test]
 fn the_waiting_line_goes_once_the_new_profile_is_served() {
