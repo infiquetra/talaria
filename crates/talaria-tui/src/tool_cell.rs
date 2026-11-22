@@ -9,12 +9,14 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde_json::{Map, Value};
-use talaria_core::session::{Cell, CellId, OutcomeView, ToolCell, ToolStatus, ToolView, tool_view};
+use talaria_core::session::{
+    AskedQuestion, Cell, CellId, OutcomeView, ToolCell, ToolStatus, ToolView, tool_view,
+};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::diff_view::{DiffRenderOptions, diff_lines};
-use crate::history::{CellLines, sanitize};
+use crate::history::{CellLines, sanitize, word_wrapped};
 use crate::live::LiveSection;
 
 /// Compact scrollback, or the full form the transcript can show.
@@ -719,6 +721,10 @@ fn compact_body(
     ctx: &Ctx<'_>,
 ) -> Vec<Line<'static>> {
     let mut out = Vec::new();
+    if !view.questions.is_empty() {
+        push_questions(&mut out, &view.questions, ctx);
+        return out;
+    }
     if view.quiet {
         return out;
     }
@@ -773,6 +779,41 @@ fn compact_body(
         }
     }
     out
+}
+
+/// Each question word-wrapped, and under it `→ answer` with a hanging indent, when the row
+/// records the answer.
+fn push_questions(out: &mut Vec<Line<'static>>, questions: &[AskedQuestion], ctx: &Ctx<'_>) {
+    const ARROW: &str = "\u{2192} ";
+    const HANG: &str = "  ";
+    let prefixed = ctx.width > BODY_COLUMNS;
+    let avail = if prefixed {
+        ctx.width - BODY_COLUMNS
+    } else {
+        ctx.width
+    };
+    let columns = |width: usize| u16::try_from(width).unwrap_or(u16::MAX);
+    let mut first = true;
+    for asked in questions {
+        for row in word_wrapped(&asked.question, columns(avail)) {
+            out.push(body_row(first, prefixed, row, ctx.theme.output, ctx));
+            first = false;
+        }
+        let Some(answer) = &asked.answer else {
+            continue;
+        };
+        let inner = avail.saturating_sub(text_width(HANG));
+        for (index, row) in word_wrapped(answer, columns(inner)).into_iter().enumerate() {
+            let lead = if index == 0 { ARROW } else { HANG };
+            out.push(body_row(
+                false,
+                prefixed,
+                format!("{lead}{row}"),
+                ctx.theme.output,
+                ctx,
+            ));
+        }
+    }
 }
 
 fn push_failure(out: &mut Vec<Line<'static>>, text: &str, ctx: &Ctx<'_>) {

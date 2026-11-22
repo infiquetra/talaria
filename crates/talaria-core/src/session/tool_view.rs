@@ -28,6 +28,19 @@ pub struct ToolView {
     pub diff: Option<DiffModel>,
     /// Quiet tools draw no body.
     pub quiet: bool,
+    /// What a question row restored from history asked, and the answers it records. Empty for
+    /// every other cell, a live question included: its prompt cell already shows both.
+    pub questions: Vec<AskedQuestion>,
+}
+
+/// One question a restored question row asked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AskedQuestion {
+    /// The question, on one line.
+    pub question: String,
+    /// The answer, `no answer` when it was skipped or left unanswered, or `None` when the row
+    /// does not record it.
+    pub answer: Option<String>,
 }
 
 /// How the header states the outcome.
@@ -362,6 +375,69 @@ fn diff_of(cell: &ToolCell, parsed: Option<&Parsed>) -> Option<DiffModel> {
     Some(parse_diff(&strip_terminal_escapes(text))).filter(|model| !model.is_empty())
 }
 
+/// The answer one clarify response records.
+fn answer_of(response: &Value) -> String {
+    let answered = response.get("status").and_then(Value::as_str) == Some("answered");
+    let text = match response.get("user_response") {
+        Some(Value::String(text)) => one_line(text),
+        Some(Value::Array(items)) => {
+            let picked: Vec<String> = items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(one_line)
+                .collect();
+            (!picked.is_empty()).then(|| picked.join(", "))
+        }
+        _ => None,
+    };
+    text.filter(|_| answered)
+        .unwrap_or_else(|| "no answer".to_owned())
+}
+
+/// What a restored `clarify` row asked: from the stored result's `responses` when the gateway
+/// sent it, else the questions in its arguments with no answer.
+fn asked_questions(cell: &ToolCell, parsed: Option<&Parsed>) -> Vec<AskedQuestion> {
+    if cell.name != "clarify" || cell.status != ToolStatus::Unknown {
+        return Vec::new();
+    }
+    let responses = parsed
+        .and_then(|parsed| parsed.object.as_ref())
+        .and_then(|map| map.get("responses"))
+        .and_then(Value::as_array);
+    let answered: Vec<AskedQuestion> = responses
+        .into_iter()
+        .flatten()
+        .filter_map(|response| {
+            let question = response.get("question")?.as_str().and_then(one_line)?;
+            Some(AskedQuestion {
+                question,
+                answer: Some(answer_of(response)),
+            })
+        })
+        .collect();
+    if !answered.is_empty() {
+        return answered;
+    }
+    let Some(args) = cell.args.as_ref() else {
+        return Vec::new();
+    };
+    let listed = args.get("questions").and_then(Value::as_array);
+    let single = args.get("question").map(std::slice::from_ref);
+    listed
+        .map(Vec::as_slice)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("question"))
+        .chain(single.into_iter().flatten())
+        .filter_map(Value::as_str)
+        .filter_map(one_line)
+        .map(|question| AskedQuestion {
+            question,
+            answer: None,
+        })
+        .collect()
+}
+
 /// Derive the view. Issue 221.
 #[must_use]
 pub fn tool_view(cell: &ToolCell) -> ToolView {
@@ -406,6 +482,7 @@ pub fn tool_view(cell: &ToolCell) -> ToolView {
         },
         ToolStatus::Failed => failed_outcome(parsed.as_ref().unwrap_or(&Parsed::default())),
     };
+    let questions = asked_questions(cell, parsed.as_ref());
     ToolView {
         title,
         subject,
@@ -415,6 +492,7 @@ pub fn tool_view(cell: &ToolCell) -> ToolView {
         output,
         diff,
         quiet,
+        questions,
     }
 }
 

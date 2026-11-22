@@ -7,7 +7,7 @@ use talaria_core::directory::rows::RowKey;
 use talaria_core::models::ModelsInput;
 use talaria_core::permissions::PermissionsInput;
 use talaria_core::rewind::text as rewind_text;
-use talaria_core::session::{Cell, NoticeKind, PromptKind};
+use talaria_core::session::{Cell, NoticeKind, PromptKind, ToolCell, tool_view};
 use talaria_core::side::carry_over;
 use talaria_core::workspace::SessionFolder;
 
@@ -149,13 +149,26 @@ pub(crate) fn rebuild_after_rewind(
     effects
 }
 
+/// A live tool cell and its stored row are the same call when the tool, what it acted on and
+/// its result agree. A stored row has no outcome, duration or summary, and the pinned gateway
+/// leaves most results out, so a result only disagrees when both sides hold one.
+fn same_tool_call(live: &ToolCell, stored: &ToolCell) -> bool {
+    live.tool_id == stored.tool_id
+        && live.name == stored.name
+        && tool_view(live).subject == tool_view(stored).subject
+        && match (&live.result, &stored.result) {
+            (Some(live), Some(stored)) => live == stored,
+            _ => true,
+        }
+}
+
 fn same_cell_content(left: &Cell, right: &Cell) -> bool {
     let mut normalized = left.clone();
     match (&mut normalized, right) {
         (Cell::User(a), Cell::User(b)) => a.id = b.id,
         (Cell::Assistant(a), Cell::Assistant(b)) => a.id = b.id,
         (Cell::Reasoning(a), Cell::Reasoning(b)) => a.id = b.id,
-        (Cell::Tool(a), Cell::Tool(b)) => a.id = b.id,
+        (Cell::Tool(a), Cell::Tool(b)) => return same_tool_call(a, b),
         (Cell::Notice(a), Cell::Notice(b)) => a.id = b.id,
         (Cell::Prompt(a), Cell::Prompt(b)) => a.id = b.id,
         _ => {}
@@ -189,7 +202,8 @@ pub(crate) fn recovered(
     fresh.carry_background_from(&old);
     let shown = state.committed_cells.min(old.state.cells().len());
     // A snapshot draws system rows and the notices of turns Hermes wrote (those carry a body);
-    // every other notice was this client's own and has no snapshot counterpart.
+    // every other notice was this client's own and has no snapshot counterpart. A settled
+    // question or approval has none either: the stored tool row of its call stands for it.
     let canonical_prefix: Vec<_> = old.state.cells()[..shown]
         .iter()
         .filter(|cell| {
@@ -197,6 +211,7 @@ pub(crate) fn recovered(
                 if notice.kind != NoticeKind::System
                     && notice.body.is_none()
                     && notice.text != talaria_core::side::SIDE_UNKNOWN_NOTICE)
+                && !matches!(cell, Cell::Prompt(_))
         })
         .collect();
     let count = canonical_prefix.len();
