@@ -193,6 +193,10 @@ pub(super) fn code(spans: Vec<Span<'static>>, width: usize, marker: Style) -> Ve
         return vec![row(&units)];
     }
     let marker_columns = UnicodeWidthStr::width(CONTINUATION);
+    // A block too narrow for the marker and one character keeps the plain hard wrap.
+    if width <= marker_columns {
+        return hard(spans, width);
+    }
     let indent = units.iter().take_while(|unit| unit.0 == " ").count();
     let hanging = indent.min(width.saturating_sub(marker_columns) / 2);
     let indent_style = units.first().map_or(Style::default(), |unit| unit.1);
@@ -203,7 +207,7 @@ pub(super) fn code(spans: Vec<Span<'static>>, width: usize, marker: Style) -> Ve
         let room = if first {
             width
         } else {
-            width - marker_columns - hanging
+            width.saturating_sub(marker_columns + hanging).max(1)
         };
         let mut used = 0;
         let mut end = start;
@@ -218,7 +222,10 @@ pub(super) fn code(spans: Vec<Span<'static>>, width: usize, marker: Style) -> Ve
             let mut found = None;
             for (offset, unit) in units[start..end].iter().enumerate() {
                 before += unit.2;
+                // A space inside the leading indent splits no word; breaking there only
+                // leaves a row that looks blank.
                 if unit.0 == " "
+                    && start + offset >= indent
                     && before >= floor
                     && units[start + offset + 1..].iter().any(|u| u.0 != " ")
                 {
