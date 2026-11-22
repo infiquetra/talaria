@@ -65,3 +65,78 @@ fn missing_skill_offer_names_the_profile() {
     assert!(missing.contains("Install it with: talaria workflow skill install --profile fixture"));
     assert!(!missing.contains("now? [y/N]"));
 }
+
+#[test]
+fn on_notice_says_slash_commands_are_not_routed_and_where_runs_appear() {
+    for phrase in [
+        "Slash commands such as /goal still go to Hermes as typed",
+        "A started run shows above the composer",
+        "/workflows lists every run",
+        "stays on in a /branch copy",
+        "other sessions keep their own setting",
+        "/ultracode off to stop",
+    ] {
+        assert!(notice::ON.contains(phrase), "{phrase:?}: {}", notice::ON);
+    }
+}
+
+#[test]
+fn remote_on_notice_says_runs_start_on_the_gateway_machine() {
+    explains_skill_role(notice::ON_REMOTE);
+    for phrase in [
+        "Slash commands such as /goal still go to Hermes as typed",
+        "Runs start on the gateway's machine, so this window cannot show them",
+        "talaria workflow list there lists them",
+        "stays on in a /branch copy",
+        "/ultracode off to stop",
+    ] {
+        assert!(
+            notice::ON_REMOTE.contains(phrase),
+            "{phrase:?}: {}",
+            notice::ON_REMOTE
+        );
+    }
+    assert!(!notice::ON_REMOTE.contains("above the composer"));
+    assert!(!notice::ON_REMOTE.contains("/workflows lists"));
+}
+
+#[test]
+fn routed_notice_says_agent_asks_before_starting() {
+    assert_eq!(
+        notice::ROUTED,
+        "Ultracode: this prompt goes to the talaria-workflows skill. The agent proposes a workflow and asks before starting it; a started run shows above the composer."
+    );
+    assert!(notice::ROUTED_REMOTE.contains("asks before starting it"));
+    assert!(notice::ROUTED_REMOTE.contains("gateway's machine"));
+    assert!(notice::ROUTED_REMOTE.contains("talaria workflow list"));
+}
+
+#[test]
+fn bypass_notice_names_the_command_and_the_way_to_route() {
+    assert_eq!(
+        notice::bypassed("goal"),
+        "Ultracode does not apply to /goal; it goes to Hermes as typed. To run the task as a workflow, send it as a plain prompt without /goal."
+    );
+    assert!(notice::bypassed("q").contains("/q;"));
+}
+
+#[test]
+fn run_notices_name_key_and_workflows_command() {
+    assert_eq!(
+        notice::run_started("review-branch", "run-0001", Some("Alt+W")),
+        "Workflow run started: review-branch (run-0001). Press Alt+W or type /workflows to see its agents."
+    );
+    assert_eq!(
+        notice::run_started("review-branch", "run-0001", None),
+        "Workflow run started: review-branch (run-0001). Type /workflows to see its agents."
+    );
+    assert_eq!(
+        notice::run_finished("review-branch", "run-0001", "completed", Some("Alt+W")),
+        "Workflow run completed: review-branch (run-0001). Press Alt+W or type /workflows to see the result."
+    );
+    assert_eq!(
+        notice::run_finished("review-branch", "run-0001", "failed", None),
+        "Workflow run failed: review-branch (run-0001). Type /workflows to see the result."
+    );
+    assert_eq!(notice::BRANCH_CARRIED, "Ultracode stays on in this branch.");
+}

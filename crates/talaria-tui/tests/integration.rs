@@ -266,6 +266,8 @@ mod view_colours_themed;
 mod voice_view;
 #[path = "integration/work_panel_content.rs"]
 mod work_panel_content;
+#[path = "integration/workflow_dock.rs"]
+mod workflow_dock;
 #[path = "integration/workflow_view.rs"]
 mod workflow_view;
 #[path = "integration/workspace_keys.rs"]

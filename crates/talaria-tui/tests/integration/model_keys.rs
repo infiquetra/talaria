@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use talaria_tui::keys::{KeyChord, KeyContext, KeyMap, ModelAction};
 struct Action;
 impl Action {
-    const ALL: [(); 206] = [(); talaria_tui::keys::Action::ALL.len()
+    const ALL: [(); 207] = [(); talaria_tui::keys::Action::ALL.len()
         + (10 - talaria_tui::keys::ProvidersAction::ALL.len())];
 }
 
@@ -66,7 +66,7 @@ fn new_actions_resolve_only_inside_the_picker() {
         );
         assert_eq!(map.resolve_model(KeyContext::Composer, &key), None);
     }
-    assert_eq!(Action::ALL.len(), 206);
+    assert_eq!(Action::ALL.len(), 207);
 }
 
 #[test]
@@ -117,7 +117,7 @@ mod independent {
     use talaria_tui::keys::{KeyChord, KeyContext, KeyMap, ModelAction};
     struct Action;
     impl Action {
-        const ALL: [(); 206] = [(); talaria_tui::keys::Action::ALL.len()
+        const ALL: [(); 207] = [(); talaria_tui::keys::Action::ALL.len()
             + (10 - talaria_tui::keys::ProvidersAction::ALL.len())];
     }
 
@@ -126,7 +126,7 @@ mod independent {
         let map = KeyMap::defaults();
         assert_eq!(
             Action::ALL.len(),
-            206,
+            207,
             "model actions must not change the general action count"
         );
         let doc = std::fs::read_to_string(

@@ -47,6 +47,8 @@ pub struct StatusInputs {
     pub warning_count: u32,
     /// Workflow routing is enabled for the foreground session.
     pub ultracode: bool,
+    /// The foreground session's active workflow run, as its agent count.
+    pub workflow_run: Option<String>,
     /// The attach state of the link.
     pub connection: Connection,
     /// The model in use, with its provider path.
@@ -318,11 +320,7 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     let mut pieces: Vec<(Segment, String, Tone)> = Vec::new();
     add(&mut pieces, Segment::Connection, connection_segment(inputs));
     add(&mut pieces, Segment::Model, model_segment(inputs));
-    add(
-        &mut pieces,
-        Segment::Ultracode,
-        inputs.ultracode.then(|| ("ultracode".into(), Tone::Accent)),
-    );
+    add(&mut pieces, Segment::Ultracode, ultracode_segment(inputs));
     add(&mut pieces, Segment::Approvals, approvals_segment(inputs));
     add(&mut pieces, Segment::Folder, folder_segment(inputs));
     add(&mut pieces, Segment::Context, context_segment(inputs));
@@ -400,7 +398,7 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
         let index = pieces
             .iter()
             .enumerate()
-            .max_by_key(|(_, (segment, _, _))| segment.priority())
+            .max_by_key(|(_, (segment, _, _))| keep_priority(*segment, inputs))
             .map(|(index, _)| index)
             .expect("at least two pieces");
         pieces.remove(index);
@@ -411,6 +409,25 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
         notice,
         warnings,
         pieces,
+    }
+}
+
+/// A running workflow keeps its segment about as long as the failed count.
+fn keep_priority(segment: Segment, inputs: &StatusInputs) -> u8 {
+    if segment == Segment::Ultracode && inputs.workflow_run.is_some() {
+        Segment::Failed.priority()
+    } else {
+        segment.priority()
+    }
+}
+
+fn ultracode_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
+    let run = inputs.workflow_run.as_deref().map(sanitize);
+    match (inputs.ultracode, run) {
+        (true, None) => Some(("ultracode".into(), Tone::Accent)),
+        (true, Some(run)) => Some((format!("ultracode · {run}"), Tone::Accent)),
+        (false, Some(run)) => Some((format!("workflow · {run}"), Tone::Accent)),
+        (false, None) => None,
     }
 }
 

@@ -1,10 +1,10 @@
 //! Windowed alternate-screen progress presentation. Untrusted content stays literal.
-use crate::history::sanitize;
+use crate::{checklist::cut_to_width, history::sanitize};
 use ratatui::{
     Frame,
     layout::Rect,
     style::Style,
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Paragraph, Widget},
 };
 pub use talaria_workflow::progress::live::ProgressKey;
@@ -12,6 +12,7 @@ use talaria_workflow::progress::{
     format_money, format_tokens,
     live::{NodeKey, ProgressState, WaitView},
 };
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Debug)]
 pub struct WorkflowTheme {
@@ -25,6 +26,74 @@ impl Default for WorkflowTheme {
         crate::theme::legacy::workflow_theme()
     }
 }
+/// One line above the composer while a workflow run of the foreground session is active.
+pub struct WorkflowDock<'a> {
+    name: &'a str,
+    status: &'a str,
+    finished: u32,
+    total: u32,
+    open_hint: Option<&'a str>,
+    header: Style,
+    hint: Style,
+}
+impl<'a> WorkflowDock<'a> {
+    pub fn new(
+        name: &'a str,
+        status: &'a str,
+        finished: u32,
+        total: u32,
+        open_hint: Option<&'a str>,
+        header: Style,
+        hint: Style,
+    ) -> Self {
+        Self {
+            name,
+            status,
+            finished,
+            total,
+            open_hint,
+            header,
+            hint,
+        }
+    }
+    pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return vec![];
+        }
+        let base = sanitize(&format!(
+            "⚙ Workflow {} · {} · {}/{} agents",
+            self.name.replace(['\r', '\n', '\t'], " "),
+            self.status,
+            self.finished,
+            self.total
+        ))
+        .into_owned();
+        let hint = format!(
+            " · {} to open",
+            self.open_hint
+                .map_or_else(|| "/workflows".to_owned(), |key| sanitize(key).into_owned())
+        );
+        let room = usize::from(width);
+        if base.width() + hint.width() <= room {
+            return vec![Line::from(vec![
+                Span::styled(base, self.header),
+                Span::styled(hint, self.hint),
+            ])];
+        }
+        vec![Line::styled(cut_to_width(&base, width), self.header)]
+    }
+}
+impl crate::live::LiveSection for WorkflowDock<'_> {
+    fn height(&self, width: u16) -> u16 {
+        u16::try_from(self.lines(width).len()).unwrap_or(u16::MAX)
+    }
+    fn render(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        for (y, line) in (0..area.height).zip(self.lines(area.width)) {
+            buf.set_line(area.x, area.y + y, &line, area.width);
+        }
+    }
+}
+
 pub struct WorkflowView;
 impl WorkflowView {
     pub fn render_picker(
@@ -55,9 +124,21 @@ impl WorkflowView {
         let inner = block.inner(area);
         block.render(area, buf);
         if let Some(message) = picker.empty_message() {
-            Paragraph::new(message)
-                .style(theme.muted)
-                .render(inner, buf);
+            let lines = [
+                message,
+                "Runs start when Ultracode is on (/ultracode on) and you send a plain prompt,",
+                "or when the agent uses the talaria-workflows skill.",
+            ];
+            for (y, text) in (inner.y..inner.bottom()).zip(lines) {
+                Paragraph::new(text)
+                    .style(theme.muted)
+                    .render(Rect::new(inner.x, y, inner.width, 1), buf);
+            }
+            if inner.height > 0 {
+                Paragraph::new("esc close")
+                    .style(theme.muted)
+                    .render(Rect::new(inner.x, inner.bottom() - 1, inner.width, 1), buf);
+            }
             return;
         }
         let room = inner.height.saturating_sub(1) as usize;

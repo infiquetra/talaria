@@ -512,3 +512,149 @@ fn background_reply_asks_when_shown() {
     assert_eq!(twice.show_kept(&id), Some(offer));
     assert_eq!(twice.show_kept(&id), None);
 }
+
+#[test]
+fn routed_prompt_announces_routing() {
+    let id = session();
+    let service = on();
+    let actions = service.intercept_submit(&id, "fix the parser").unwrap();
+    assert_eq!(actions[0], Action::Notice(notice::ROUTED.into()));
+    assert!(matches!(&actions[1], Action::RunCommand { .. }));
+    let off = UltracodeService::new(false);
+    let keyword = off.intercept_submit(&id, "please ultracode this").unwrap();
+    assert_eq!(keyword[0], Action::Notice(notice::ONE_SHOT.into()));
+    assert!(!keyword.contains(&Action::Notice(notice::ROUTED.into())));
+    let mut remote = on();
+    remote.set_remote(true);
+    let actions = remote.intercept_submit(&id, "fix the parser").unwrap();
+    assert_eq!(actions[0], Action::Notice(notice::ROUTED_REMOTE.into()));
+}
+
+#[test]
+fn remote_on_notice_says_where_runs_appear() {
+    let id = session();
+    let mut local = UltracodeService::new(false);
+    let _ = local.handle_local_command("on", foreground(&id));
+    assert_eq!(
+        local.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(catalog()))),
+        vec![Action::Notice(notice::ON.into()), Action::Changed]
+    );
+    let mut remote = UltracodeService::new(false);
+    remote.set_remote(true);
+    let _ = remote.handle_local_command("on", foreground(&id));
+    assert_eq!(
+        remote.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(catalog()))),
+        vec![Action::Notice(notice::ON_REMOTE.into()), Action::Changed]
+    );
+    assert!(remote.status_input(Some(&id)));
+}
+
+fn run_row(
+    run_id: &str,
+    profile: &str,
+    started_at_ms: i64,
+    status: talaria_workflow::runner::RunStatus,
+    finished: u32,
+) -> talaria_workflow::runner::RunSummary {
+    talaria_workflow::runner::RunSummary {
+        run_id: run_id.into(),
+        name: "review-branch".into(),
+        profile: profile.into(),
+        started_at_ms,
+        status,
+        agents_finished: finished,
+        agents_total_known: 10,
+        parked: 0,
+        tokens_spent: None,
+        money_spent_usd: None,
+        run_dir: format!("fixture-runs/{run_id}"),
+        warning: None,
+    }
+}
+
+fn notices(actions: &[(SessionId, Action)]) -> Vec<String> {
+    actions
+        .iter()
+        .filter_map(|(_, action)| match action {
+            Action::Notice(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn runs_scan_announces_start_once_and_finish_once() {
+    use talaria_workflow::runner::RunStatus;
+    let id = session();
+    let mut service = on();
+    assert_eq!(service.next_scan_ms(), None, "nothing is watched yet");
+    assert_eq!(service.scan_due(0), None);
+    service.arm(&id, "fixture", 1_000, 50);
+    assert_eq!(service.scan_due(50), Some(1_000));
+    assert_eq!(service.scan_due(60), None, "one scan at a time");
+    let running = [run_row("run-0001", "fixture", 2_000, RunStatus::Running, 3)];
+    let first = service.on_runs(&running, 100, Some("Alt+W"));
+    assert_eq!(
+        notices(&first),
+        [
+            "Workflow run started: review-branch (run-0001). Press Alt+W or type /workflows to see its agents."
+        ]
+    );
+    assert!(first.iter().all(|(owner, _)| owner == &id));
+    assert_eq!(service.active_run(&id).map(|r| r.agents_finished), Some(3));
+    assert_eq!(service.next_scan_ms(), Some(2_100));
+    assert_eq!(service.scan_due(2_000), None, "not due yet");
+    assert_eq!(service.scan_due(2_100), Some(1_000));
+    assert!(notices(&service.on_runs(&running, 2_200, Some("Alt+W"))).is_empty());
+    let done = [run_row(
+        "run-0001",
+        "fixture",
+        2_000,
+        RunStatus::Completed,
+        10,
+    )];
+    let _ = service.scan_due(4_200);
+    let last = service.on_runs(&done, 4_300, Some("Alt+W"));
+    assert_eq!(
+        notices(&last),
+        [
+            "Workflow run completed: review-branch (run-0001). Press Alt+W or type /workflows to see the result."
+        ]
+    );
+    assert!(
+        service.active_run(&id).is_none(),
+        "a finished run is not active"
+    );
+    assert_eq!(
+        service.tracked(&id).map(|r| r.run_dir.as_str()),
+        Some("fixture-runs/run-0001"),
+        "the finished run stays the one the view key opens"
+    );
+    assert_eq!(service.next_scan_ms(), None, "the watch ends with its run");
+}
+
+#[test]
+fn runs_scan_ignores_older_runs_and_other_profiles() {
+    use talaria_workflow::runner::RunStatus;
+    let id = session();
+    let mut service = on();
+    service.arm(&id, "fixture", 5_000, 0);
+    let _ = service.scan_due(0);
+    let rows = [
+        run_row("run-old", "fixture", 4_000, RunStatus::Running, 0),
+        run_row("run-other", "fixture-other", 6_000, RunStatus::Running, 0),
+    ];
+    assert!(notices(&service.on_runs(&rows, 10, Some("Alt+W"))).is_empty());
+    assert!(service.tracked(&id).is_none());
+    assert!(service.next_scan_ms().is_some(), "still waiting for a run");
+}
+
+#[test]
+fn remote_service_never_arms_watch() {
+    let id = session();
+    let mut service = on();
+    service.set_remote(true);
+    service.arm(&id, "fixture", 0, 0);
+    assert_eq!(service.next_scan_ms(), None);
+    assert_eq!(service.scan_due(0), None);
+}

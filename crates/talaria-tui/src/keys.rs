@@ -843,6 +843,8 @@ pub enum Action {
     FleetProfilePrev,
     /// Open the subagent panel from the composer, or close it. Issue #242.
     AgentsPanel,
+    /// Open the foreground session's workflow run, or the run list when it has none.
+    WorkflowView,
     /// Move the panel selection one row up.
     AgentsUp,
     /// Move the panel selection one row down.
@@ -1007,7 +1009,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 206] = [
+    pub const ALL: [Self; 207] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1135,6 +1137,7 @@ impl Action {
         Self::FleetProfileNext,
         Self::FleetProfilePrev,
         Self::AgentsPanel,
+        Self::WorkflowView,
         Self::AgentsUp,
         Self::AgentsDown,
         Self::AgentsTail,
@@ -1348,6 +1351,7 @@ impl Action {
             Self::FleetProfileNext => "fleet_profile_next",
             Self::FleetProfilePrev => "fleet_profile_prev",
             Self::AgentsPanel => "agents_panel",
+            Self::WorkflowView => "workflow_view",
             Self::AgentsUp => "agents_up",
             Self::AgentsDown => "agents_down",
             Self::AgentsTail => "agents_tail",
@@ -1505,6 +1509,7 @@ impl Action {
             | Self::ComposerSendNow
             | Self::ComposerSteer
             | Self::AgentsPanel
+            | Self::WorkflowView
             | Self::ToggleVim
             | Self::VoiceRecord => KeyContext::Composer,
             Self::AttentionNext => KeyContext::Composer,
@@ -1788,6 +1793,7 @@ impl Action {
             Self::FleetProfileNext => &["tab"],
             Self::FleetProfilePrev => &["shift+tab"],
             Self::AgentsPanel => &["alt+s"],
+            Self::WorkflowView => &["alt+w"],
             Self::AgentsUp => &["up", "k"],
             Self::AgentsDown => &["down", "j"],
             Self::AgentsTail => &["enter"],
@@ -2898,7 +2904,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 206);
+        assert_eq!(Action::ALL.len(), 207);
         for (index, action) in Action::ALL.iter().enumerate() {
             assert_eq!(action.index(), index, "{}", action.config_name());
         }
@@ -3335,6 +3341,7 @@ mod tests {
             (Action::PickerFormatHtml, vec!["H"]),
             (Action::PickerToggleRedact, vec!["X"]),
             (Action::AgentsPanel, vec!["Alt+S"]),
+            (Action::WorkflowView, vec!["Alt+W"]),
             (Action::AgentsUp, vec!["Up", "K"]),
             (Action::AgentsDown, vec!["Down", "J"]),
             (Action::AgentsTail, vec!["Enter"]),
@@ -3505,7 +3512,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 206);
+        assert_eq!(Action::ALL.len(), 207);
     }
 
     #[test]

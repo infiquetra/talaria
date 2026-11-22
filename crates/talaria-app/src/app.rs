@@ -269,6 +269,8 @@ pub enum UserAction {
     FleetAnswerEdited,
     /// Open or close the foreground subagents panel.
     ToggleAgents,
+    /// Open the foreground session's workflow run, or the run list when it has none.
+    WorkflowView,
     /// A control from the subagents overlay.
     Subagent(crate::subagents::SubagentAction),
     /// Open the panel for another attached owner.
@@ -475,6 +477,8 @@ pub struct View<'a> {
     /// The background counters the status line shows.
     pub fleet_counts: StatusCounts,
     pub ultracode: bool,
+    /// The foreground session's active workflow run, for the dock line and the status bar.
+    pub workflow_run: Option<&'a talaria_workflow::runner::RunSummary>,
 }
 
 impl View<'_> {
@@ -669,6 +673,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     /// How the start-up notice names the jump key; `None` leaves the key out.
     fn attention_key_label(&self) -> Option<String> {
+        None
+    }
+    /// How workflow run notices name the key that opens the run; `None` leaves the key out.
+    fn workflow_key_label(&self) -> Option<String> {
         None
     }
 
@@ -992,6 +1000,8 @@ pub struct AppState {
     pub home: Option<PathBuf>,
     /// How the `/cd` refusal names the interrupt key (#237).
     pub interrupt_label: Option<String>,
+    /// How workflow run notices name the key that opens the run.
+    pub workflow_key_label: Option<String>,
     /// The folder check and the move; a new one with every connection (#237).
     workspace_service: Option<Arc<WorkspaceService>>,
     counter: Arc<AtomicU64>,
@@ -1273,6 +1283,7 @@ impl AppState {
             folder: SessionFolder::default(),
             home: None,
             interrupt_label: None,
+            workflow_key_label: None,
             workspace_service: None,
             service: None,
             link: None,
@@ -1481,6 +1492,10 @@ impl AppState {
                     .map(|s| SessionId::new(s.session_id.clone()))
                     .as_ref(),
             ),
+            workflow_run: self.opened.as_ref().and_then(|opened| {
+                self.ultracode
+                    .active_run(&SessionId::new(opened.session_id.clone()))
+            }),
         }
     }
 
@@ -1787,6 +1802,10 @@ pub enum AppMessage {
     },
     UltracodeNotice {
         text: String,
+    },
+    /// One read of the runs folder for the sessions that wait for a workflow run.
+    UltracodeRuns {
+        rows: Vec<talaria_workflow::runner::RunSummary>,
     },
     Configure {
         generation: u64,
@@ -2334,6 +2353,10 @@ pub enum AppEffect {
     Ultracode {
         action: crate::ultracode::Action,
         request_id: u64,
+    },
+    /// Read the local runs folder for runs that started at or after `since_ms`.
+    UltracodeScan {
+        since_ms: i64,
     },
     /// Run a Hermes slash command (`slash.exec`) in the background.
     RunCommand {
@@ -3288,6 +3311,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::Connectors { .. }
         | AppMessage::Tick { .. }
+        | AppMessage::UltracodeRuns { .. }
         | AppMessage::BackgroundDone { .. }
         | AppMessage::DoctorFacts(_)
         | AppMessage::DoctorRestart(_)
@@ -4195,6 +4219,16 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 let actions = state
                     .ultracode
                     .on_command_outcome(&session, &original_text, outcome);
+                if actions
+                    .iter()
+                    .any(|action| matches!(action, crate::ultracode::Action::SubmitCommand { .. }))
+                {
+                    let since_ms = (state.wall_s * 1000.0) as i64;
+                    let profile = state.profile.clone();
+                    state
+                        .ultracode
+                        .arm(&session, &profile, since_ms, state.now_ms);
+                }
                 if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&state.profile))) {
                     state.ultracode.record_shown(&session);
                 }
@@ -4206,6 +4240,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
         }
         AppMessage::UltracodeNotice { text } => vec![notice_lines(&text)],
+        AppMessage::UltracodeRuns { rows } => ultracode_runs(state, &rows),
         AppMessage::CommandDone { typed, outcome } => command_done(state, &typed, outcome),
         AppMessage::ContextDone { block } => context_done(state, block),
         AppMessage::CompactDone {
@@ -4235,6 +4270,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects.extend(review_tick(state));
             effects.extend(workflow_tick(state));
+            effects.extend(ultracode_scan(state));
             effects.extend(kanban_input(
                 state,
                 talaria_core::kanban::KanbanInput::Tick {
@@ -6681,6 +6717,15 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 talaria_workflow::progress::live::ProgressInput::Key(key),
             )
         }
+        UserAction::WorkflowView => {
+            let run = state.opened.as_ref().and_then(|opened| {
+                state
+                    .ultracode
+                    .tracked(&SessionId::new(opened.session_id.clone()))
+                    .map(|run| run.run_dir.clone())
+            });
+            workflow_command(state, run.as_deref().unwrap_or_default())
+        }
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -8126,8 +8171,24 @@ fn branched(
             // The notice follows the child's replayed history, so the copied messages do not
             // bury it.
             let mut effects = Vec::new();
+            let parent = state
+                .opened
+                .as_ref()
+                .map(|opened| SessionId::new(opened.session_id.clone()));
             match install {
-                Some(install) => effects.extend(install_session(state, install, Some(notice))),
+                Some(install) => {
+                    let child = SessionId::new(install.opened.session_id.clone());
+                    // Ultracode follows the branch, so a held prompt in the child is routed too.
+                    let carried = parent
+                        .as_ref()
+                        .is_some_and(|parent| state.ultracode.carry(parent, &child));
+                    effects.extend(install_session(state, install, Some(notice)));
+                    if carried {
+                        effects.push(notice_lines(
+                            talaria_core::ultracode::notice::BRANCH_CARRIED,
+                        ));
+                    }
+                }
                 None => effects.push(notice_lines(&notice)),
             }
             effects.extend(close_picker(state));
@@ -8654,6 +8715,35 @@ fn tasks_key(state: &AppState, key: &InputKey) -> bool {
 /// question, then slash lines, then the held-prompt rule and `prompt.submit`. Neither a command
 /// nor a side question is ever held or queued behind a turn.
 fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    let bypassed = state
+        .opened
+        .as_ref()
+        .filter(|_| !state.session_gone)
+        .and_then(|opened| {
+            let on = state
+                .ultracode
+                .status_input(Some(&SessionId::new(opened.session_id.clone())));
+            talaria_core::ultracode::bypass(&text, on)
+        });
+    let mut effects = submit_line(state, text);
+    // Only a command that went somewhere gets the notice; a refused one is back in the composer.
+    if let Some(command) = bypassed
+        && effects.iter().any(|effect| {
+            !matches!(
+                effect,
+                AppEffect::CommitLines(_) | AppEffect::LoadDraft(_) | AppEffect::Redraw
+            )
+        })
+    {
+        effects.insert(
+            0,
+            notice_lines(&talaria_core::ultracode::notice::bypassed(&command)),
+        );
+    }
+    effects
+}
+
+fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         if let Some(session) = state
             .opened
@@ -9654,6 +9744,17 @@ fn opened_session(
         .take()
         .unwrap_or_else(|| state.profile.clone());
     let same_session = old_profile == state.profile && is_open_session(state, &opened.session_id);
+    // A reconnect may reopen the same stored session under a new runtime id.
+    if let Some(old) = state.opened.as_ref().filter(|old| {
+        old_profile == state.profile
+            && old.session_id != opened.session_id
+            && old.stored_session_id == opened.stored_session_id
+    }) {
+        let old = SessionId::new(old.session_id.clone());
+        state
+            .ultracode
+            .carry(&old, &SessionId::new(opened.session_id.clone()));
+    }
     if !same_session && let Some(old_id) = state.opened.as_ref().map(|old| old.session_id.clone()) {
         background.extend(background_event(
             state,
@@ -11649,10 +11750,14 @@ fn workflow_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     if state.kanban.is_some() {
         return Some(Instant::now() + Duration::from_millis(250));
     }
-    state
-        .workflow_views
-        .next_tick_ms()
-        .and_then(|ms| executor.started.checked_add(Duration::from_millis(ms)))
+    [
+        state.workflow_views.next_tick_ms(),
+        state.ultracode.next_scan_ms(),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .and_then(|ms| executor.started.checked_add(Duration::from_millis(ms)))
 }
 
 /// When the side-tasks section next changes, while anything is pending.
@@ -12783,6 +12888,20 @@ fn apply<S: Screen>(
                 if let Some(service) = state.kanban_service.as_mut() {
                     service.execute(&board, effect, executor.sender.clone());
                 }
+            }
+            AppEffect::UltracodeScan { since_ms } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let rows = tokio::task::spawn_blocking(move || {
+                        talaria_workflow::runner::discover_runs_since(
+                            &talaria_workflow::runner::runs_dir(None),
+                            since_ms,
+                        )
+                    })
+                    .await
+                    .unwrap_or_default();
+                    let _ = sender.send(AppMessage::UltracodeRuns { rows });
+                });
             }
             AppEffect::WorkflowDiscover => {
                 let sender = executor.sender.clone();
@@ -15498,6 +15617,7 @@ async fn run_inner<S: Screen>(
     state.key_bindings = setup.keys.clone();
     state.toggle_label = screen.toggle_label();
     state.interrupt_label = screen.interrupt_label();
+    state.workflow_key_label = screen.workflow_key_label();
     state.home = std::env::var_os("HOME").map(PathBuf::from);
     state.profile = launch.profile.trim().to_lowercase();
     state.hub = AttentionHub::new(
@@ -17447,6 +17567,32 @@ fn workflow_polled(
         ),
     }
 }
+/// Read the runs folder when a session waits for a workflow run and a read is due.
+fn ultracode_scan(state: &mut AppState) -> Vec<AppEffect> {
+    state
+        .ultracode
+        .scan_due(state.now_ms)
+        .map(|since_ms| AppEffect::UltracodeScan { since_ms })
+        .into_iter()
+        .collect()
+}
+/// Announce the foreground session's run starting and ending; other sessions only update.
+fn ultracode_runs(
+    state: &mut AppState,
+    rows: &[talaria_workflow::runner::RunSummary],
+) -> Vec<AppEffect> {
+    let key = state.workflow_key_label.clone();
+    let actions = state.ultracode.on_runs(rows, state.now_ms, key.as_deref());
+    let actions = actions
+        .into_iter()
+        .filter(|(session, action)| {
+            matches!(action, crate::ultracode::Action::Changed)
+                || is_foreground(state, session.as_str())
+        })
+        .map(|(_, action)| action)
+        .collect();
+    apply_ultracode(state, actions, false)
+}
 fn workflow_tick(state: &mut AppState) -> Vec<AppEffect> {
     state.workflow_views.last_tick_ms = state.now_ms;
     let Some(run) = state.workflow_views.active.clone() else {
@@ -17743,6 +17889,279 @@ mod workflow_wake_tests {
             "connection failure must not start another connection loop"
         );
         assert!(workflow_wake(&state, &executor).is_none());
+    }
+}
+
+#[cfg(test)]
+mod ultracode_visibility_tests {
+    use super::*;
+    use talaria_core::ultracode::{UltracodeCommand, notice};
+
+    fn session(runtime: &str, stored: &str) -> OpenedSession {
+        OpenedSession {
+            state: SessionState::empty(SessionId::new(runtime)),
+            session_id: runtime.into(),
+            stored_session_id: stored.into(),
+            subscription_id: "subscription".into(),
+            title: None,
+            revision: 0,
+            execution_generation: 0,
+            launch_notices: Vec::new(),
+            effort: None,
+            info: SessionInfoSummary {
+                model: None,
+                provider: None,
+                cwd: None,
+                branch: None,
+            },
+            cursor: Cursor {
+                replay_epoch: "epoch".into(),
+                last_sequence: 0,
+            },
+        }
+    }
+
+    fn opened(runtime: &str) -> AppState {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.opened = Some(session(runtime, &format!("stored-{runtime}")));
+        state
+    }
+
+    /// Turn Ultracode on the way `/ultracode on` does once the catalogue lists the skill.
+    fn turn_on(state: &mut AppState, runtime: &str) {
+        let result: talaria_core::commands::CatalogResult = serde_json::from_value(json!({
+            "skills": {"/talaria-workflows": {"usage": 0, "origin": "local"}},
+            "pairs": []
+        }))
+        .unwrap();
+        let catalog = talaria_core::commands::CommandCatalog::from_result(&result);
+        let _ = state.ultracode.on_catalog_reply(
+            &SessionId::new(runtime),
+            "fixture",
+            UltracodeCommand::On,
+            Ok(catalog),
+        );
+        assert!(state.ultracode.status_input(Some(&SessionId::new(runtime))));
+    }
+
+    fn lines(effects: &[AppEffect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::CommitLines(lines) => Some(lines.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn summary(
+        status: talaria_workflow::runner::RunStatus,
+        finished: u32,
+    ) -> talaria_workflow::runner::RunSummary {
+        talaria_workflow::runner::RunSummary {
+            run_id: "run-0001".into(),
+            name: "review-branch".into(),
+            profile: "fixture".into(),
+            started_at_ms: 2_000_000,
+            status,
+            agents_finished: finished,
+            agents_total_known: 10,
+            parked: 0,
+            tokens_spent: None,
+            money_spent_usd: None,
+            run_dir: "fixture-runs/run-0001".into(),
+            warning: None,
+        }
+    }
+
+    #[test]
+    fn goal_with_ultracode_on_runs_command_with_notice() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let effects = submit(&mut state, "/goal build a fixture tool".into());
+        let expected = vec![format!("\u{b7} {}", notice::bypassed("goal"))];
+        assert!(
+            matches!(effects.first(), Some(AppEffect::CommitLines(first)) if *first == expected),
+            "the notice comes first: {effects:?}"
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(effect,
+                AppEffect::RunCommand { typed, .. } if typed == "/goal build a fixture tool")),
+            "the goal still goes to Hermes: {effects:?}"
+        );
+        let status = submit(&mut state, "/goal status".into());
+        assert!(lines(&status).is_empty(), "{status:?}");
+        let mut off = opened("session");
+        let effects = submit(&mut off, "/goal build a fixture tool".into());
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn routed_prompt_prints_a_routing_notice() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let effects = submit(&mut state, "fix the parser".into());
+        assert_eq!(
+            lines(&effects),
+            [format!("\u{b7} {}", notice::ROUTED)],
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn branch_child_inherits_ultracode() {
+        let mut state = opened("parent");
+        turn_on(&mut state, "parent");
+        let install = SwitchInstall {
+            opened: session("child", "stored-child"),
+            service: SessionService::new("launch"),
+            link: None,
+        };
+        let effects = branched(
+            &mut state,
+            BranchOutcome::Branched {
+                notice: "Branched into the fixture.".into(),
+            },
+            Some(install),
+        );
+        assert!(state.ultracode.status_input(Some(&SessionId::new("child"))));
+        let shown = lines(&effects);
+        let branch = shown
+            .iter()
+            .position(|line| line.contains("Branched into the fixture."))
+            .expect("branch notice");
+        let carried = shown
+            .iter()
+            .position(|line| line == &format!("\u{b7} {}", notice::BRANCH_CARRIED))
+            .unwrap_or_else(|| panic!("carried notice: {shown:?}"));
+        assert!(carried > branch, "{shown:?}");
+
+        let mut off = opened("parent");
+        let install = SwitchInstall {
+            opened: session("child", "stored-child"),
+            service: SessionService::new("launch"),
+            link: None,
+        };
+        let effects = branched(
+            &mut off,
+            BranchOutcome::Branched {
+                notice: "Branched into the fixture.".into(),
+            },
+            Some(install),
+        );
+        assert!(!off.ultracode.status_input(Some(&SessionId::new("child"))));
+        assert!(
+            !lines(&effects)
+                .iter()
+                .any(|line| line.contains("Ultracode"))
+        );
+    }
+
+    #[test]
+    fn reopen_with_same_stored_id_keeps_ultracode() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.opened = Some(session("runtime-1", "stored-1"));
+        turn_on(&mut state, "runtime-1");
+        let _ = opened_session(&mut state, session("runtime-2", "stored-1"), None);
+        assert!(
+            state
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-2")))
+        );
+        let _ = opened_session(&mut state, session("runtime-3", "stored-other"), None);
+        assert!(
+            !state
+                .ultracode
+                .status_input(Some(&SessionId::new("runtime-3"))),
+            "another stored session keeps its own setting"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_tick_schedules_ultracode_scan_only_when_armed() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.wall_s = 2_000.0;
+        let idle = update(&mut state, AppMessage::Tick { now_ms: 10 });
+        assert!(
+            !idle
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::UltracodeScan { .. }))
+        );
+        let reply = json!({"type": "skill", "name": "talaria-workflows",
+            "message": "fixture skill body", "display": "/talaria-workflows fix it"});
+        let _ = update(
+            &mut state,
+            AppMessage::UltracodeDone {
+                session: SessionId::new("session"),
+                original_text: "fix it".into(),
+                outcome: Ok(reply),
+            },
+        );
+        let armed = update(&mut state, AppMessage::Tick { now_ms: 20 });
+        assert!(
+            armed
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::UltracodeScan { .. })),
+            "{armed:?}"
+        );
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let executor = Executor::new(tx);
+        assert!(
+            workflow_wake(&state, &executor).is_none(),
+            "a scan is in flight"
+        );
+        state.workflow_key_label = Some("Alt+W".into());
+        let effects = update(
+            &mut state,
+            AppMessage::UltracodeRuns {
+                rows: vec![summary(talaria_workflow::runner::RunStatus::Running, 3)],
+            },
+        );
+        assert_eq!(
+            lines(&effects),
+            [format!(
+                "\u{b7} {}",
+                notice::run_started("review-branch", "run-0001", Some("Alt+W"))
+            )]
+        );
+        assert!(workflow_wake(&state, &executor).is_some(), "the next scan");
+        assert_eq!(
+            state.view().workflow_run.map(|run| run.agents_finished),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn alt_w_opens_tracked_run_or_picker() {
+        let mut state = opened("session");
+        let effects = update(&mut state, AppMessage::User(UserAction::WorkflowView));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::WorkflowDiscover)),
+            "{effects:?}"
+        );
+        turn_on(&mut state, "session");
+        state.wall_s = 1_000.0;
+        state
+            .ultracode
+            .arm(&SessionId::new("session"), "fixture", 1_000_000, 0);
+        let _ = state.ultracode.scan_due(0);
+        let _ = state.ultracode.on_runs(
+            &[summary(talaria_workflow::runner::RunStatus::Running, 1)],
+            0,
+            None,
+        );
+        let effects = update(&mut state, AppMessage::User(UserAction::WorkflowView));
+        assert!(
+            effects.iter().any(|effect| matches!(effect,
+                AppEffect::WorkflowOpen(path) if path == Path::new("fixture-runs/run-0001"))),
+            "{effects:?}"
+        );
     }
 }
 

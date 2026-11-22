@@ -44,6 +44,7 @@ fn full() -> StatusInputs {
         notice: None,
         warning_count: 0,
         ultracode: false,
+        workflow_run: None,
         connection: Connection::Connected,
         model: Some("opus-5.5".to_string()),
         reasoning_effort: Some("high".to_string()),

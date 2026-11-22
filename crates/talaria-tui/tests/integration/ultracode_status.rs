@@ -70,3 +70,49 @@ fn segment_snapshot() {
         assert_eq!(buffer[(x as u16, 0)].style(), expected.style());
     }
 }
+
+#[test]
+fn segment_shows_run_progress_when_tracked() {
+    let running = StatusInputs {
+        ultracode: true,
+        workflow_run: Some("3/10 agents".into()),
+        ..StatusInputs::default()
+    };
+    let text = |input: &StatusInputs| {
+        plan(input, None, 120)
+            .pieces
+            .into_iter()
+            .find(|(kind, _, _)| *kind == Segment::Ultracode)
+            .map(|(_, text, _)| text)
+    };
+    assert_eq!(text(&running).as_deref(), Some("ultracode · 3/10 agents"));
+    let keyword_run = StatusInputs {
+        ultracode: false,
+        ..running.clone()
+    };
+    assert_eq!(
+        text(&keyword_run).as_deref(),
+        Some("workflow · 3/10 agents")
+    );
+    assert_eq!(text(&StatusInputs::default()), None);
+}
+
+#[test]
+fn tracked_run_segment_survives_narrow_width() {
+    let input = StatusInputs {
+        ultracode: true,
+        workflow_run: Some("3/10 agents".into()),
+        model: Some("fixture-model-with-extra-detail".into()),
+        working_dir: Some("fixture/project/component".into()),
+        branch: Some("feature".into()),
+        context_percent: Some(34),
+        ..StatusInputs::default()
+    };
+    let narrow = shown(&input, 40);
+    assert!(
+        narrow
+            .iter()
+            .any(|row| row.contains("ultracode · 3/10 agents")),
+        "{narrow:?}"
+    );
+}

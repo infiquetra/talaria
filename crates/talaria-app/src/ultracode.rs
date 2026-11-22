@@ -9,6 +9,7 @@ use talaria_core::{
         route_submit, skill_availability,
     },
 };
+use talaria_workflow::runner::{RunStatus, RunSummary};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     FetchCatalog {
@@ -38,6 +39,25 @@ pub struct Foreground<'a> {
     pub session: &'a SessionId,
     pub profile: &'a str,
 }
+/// How often the runs folder is read while a routed prompt waits for its run.
+const SCAN_EVERY_MS: u64 = 2_000;
+/// How long a routed prompt waits for a run before the watch stops.
+const WATCH_WINDOW_MS: u64 = 60 * 60 * 1_000;
+
+/// A session's watch for the runs a routed prompt starts. Runs are matched by profile and
+/// start time, so two windows on one profile can both claim a run.
+#[derive(Debug, Clone)]
+struct RunWatch {
+    profile: String,
+    since_ms: i64,
+    armed_at_ms: u64,
+    seen: HashMap<String, RunStatus>,
+}
+
+fn is_active(status: RunStatus) -> bool {
+    matches!(status, RunStatus::Running | RunStatus::Parked)
+}
+
 pub struct UltracodeService {
     state: UltracodeState,
     profiles: HashMap<SessionId, String>,
@@ -45,6 +65,10 @@ pub struct UltracodeService {
     kept: HashSet<SessionId>,
     pending: HashMap<SessionId, String>,
     remote: bool,
+    watches: HashMap<SessionId, RunWatch>,
+    tracked: HashMap<SessionId, RunSummary>,
+    next_scan_ms: Option<u64>,
+    scanning: bool,
 }
 impl Default for UltracodeService {
     fn default() -> Self {
@@ -60,6 +84,10 @@ impl UltracodeService {
             kept: HashSet::new(),
             pending: HashMap::new(),
             remote: false,
+            watches: HashMap::new(),
+            tracked: HashMap::new(),
+            next_scan_ms: None,
+            scanning: false,
         }
     }
     pub fn state(&self) -> &UltracodeState {
@@ -148,7 +176,12 @@ impl UltracodeService {
         let text = match availability {
             SkillAvailability::Installed { .. } => {
                 self.state.set(session, true);
-                return vec![Action::Notice(notice::ON.into()), Action::Changed];
+                let text = if self.remote {
+                    notice::ON_REMOTE
+                } else {
+                    notice::ON
+                };
+                return vec![Action::Notice(text.into()), Action::Changed];
             }
             SkillAvailability::Missing if self.remote => format!(
                 "{}. The skill must be installed on the machine that runs the gateway.",
@@ -174,6 +207,10 @@ impl UltracodeService {
                 let mut actions = vec![];
                 if one_shot {
                     actions.push(Action::Notice(notice::ONE_SHOT.into()));
+                } else if self.remote {
+                    actions.push(Action::Notice(notice::ROUTED_REMOTE.into()));
+                } else {
+                    actions.push(Action::Notice(notice::ROUTED.into()));
                 }
                 actions.push(Action::RunCommand {
                     session: session.clone(),
@@ -251,5 +288,122 @@ impl UltracodeService {
     }
     pub fn status_input(&self, foreground: Option<&SessionId>) -> bool {
         foreground.is_some_and(|id| self.state.is_on(id))
+    }
+    /// Copy the toggle from one session to another; true when `to` is now on.
+    pub fn carry(&mut self, from: &SessionId, to: &SessionId) -> bool {
+        if let Some(profile) = self.profiles.get(from).cloned() {
+            self.profiles.entry(to.clone()).or_insert(profile);
+        }
+        self.state.carry(from, to)
+    }
+    /// Watch the local runs folder for a run of `profile` that starts at or after `since_ms`,
+    /// wall clock. A remote gateway starts runs on its own machine, so nothing is watched.
+    pub fn arm(&mut self, session: &SessionId, profile: &str, since_ms: i64, now_ms: u64) {
+        if self.remote {
+            return;
+        }
+        let watch = self
+            .watches
+            .entry(session.clone())
+            .or_insert_with(|| RunWatch {
+                profile: profile.into(),
+                since_ms,
+                armed_at_ms: now_ms,
+                seen: HashMap::new(),
+            });
+        watch.armed_at_ms = now_ms;
+        if !self.scanning {
+            self.next_scan_ms = Some(self.next_scan_ms.map_or(now_ms, |at| at.min(now_ms)));
+        }
+    }
+    /// When the next read of the runs folder is due, while any session is watching.
+    pub fn next_scan_ms(&self) -> Option<u64> {
+        if self.scanning || self.watches.is_empty() {
+            return None;
+        }
+        self.next_scan_ms
+    }
+    /// Start a read when one is due: the earliest start time any watch accepts.
+    pub fn scan_due(&mut self, now_ms: u64) -> Option<i64> {
+        let due = self.next_scan_ms()?;
+        if now_ms < due {
+            return None;
+        }
+        self.scanning = true;
+        self.watches.values().map(|watch| watch.since_ms).min()
+    }
+    /// Fold one read of the runs folder into every watch: a notice when a run starts and one
+    /// when it ends, each once.
+    pub fn on_runs(
+        &mut self,
+        rows: &[RunSummary],
+        now_ms: u64,
+        key: Option<&str>,
+    ) -> Vec<(SessionId, Action)> {
+        self.scanning = false;
+        let mut actions = vec![];
+        let mut ended = vec![];
+        for (session, watch) in &mut self.watches {
+            let mut changed = false;
+            for row in rows.iter().filter(|row| {
+                row.profile == watch.profile
+                    && row.started_at_ms >= watch.since_ms
+                    && row.status != RunStatus::Unreadable
+            }) {
+                let before = watch.seen.get(&row.run_id).copied();
+                // A folder whose runner has not taken its lock yet reads as interrupted.
+                if before.is_none() && row.status == RunStatus::Interrupted {
+                    continue;
+                }
+                let active = is_active(row.status);
+                if before.is_none() && active {
+                    actions.push((
+                        session.clone(),
+                        Action::Notice(notice::run_started(&row.name, &row.run_id, key)),
+                    ));
+                }
+                if !active && before.is_none_or(is_active) {
+                    actions.push((
+                        session.clone(),
+                        Action::Notice(notice::run_finished(
+                            &row.name,
+                            &row.run_id,
+                            row.status.as_str(),
+                            key,
+                        )),
+                    ));
+                }
+                watch.seen.insert(row.run_id.clone(), row.status);
+                let latest = self.tracked.get(session).is_none_or(|old| {
+                    old.run_id == row.run_id || row.started_at_ms >= old.started_at_ms
+                });
+                if latest && self.tracked.get(session) != Some(row) {
+                    self.tracked.insert(session.clone(), row.clone());
+                    changed = true;
+                }
+            }
+            if changed {
+                actions.push((session.clone(), Action::Changed));
+            }
+            let any_active = watch.seen.values().copied().any(is_active);
+            let waited_out =
+                watch.seen.is_empty() && now_ms.saturating_sub(watch.armed_at_ms) > WATCH_WINDOW_MS;
+            if (!watch.seen.is_empty() && !any_active) || waited_out {
+                ended.push(session.clone());
+            }
+        }
+        for session in ended {
+            self.watches.remove(&session);
+        }
+        self.next_scan_ms = (!self.watches.is_empty()).then(|| now_ms + SCAN_EVERY_MS);
+        actions
+    }
+    /// The latest run a session's watch found, active or finished.
+    pub fn tracked(&self, session: &SessionId) -> Option<&RunSummary> {
+        self.tracked.get(session)
+    }
+    /// The session's run while it is running or waiting for an answer.
+    pub fn active_run(&self, session: &SessionId) -> Option<&RunSummary> {
+        self.tracked(session).filter(|run| is_active(run.status))
     }
 }

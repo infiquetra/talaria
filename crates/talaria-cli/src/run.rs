@@ -1309,6 +1309,9 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
             u32::try_from(state.notices().warning_count()).unwrap_or(u32::MAX)
         }),
         ultracode: view.ultracode,
+        workflow_run: view
+            .workflow_run
+            .map(|run| format!("{}/{} agents", run.agents_finished, run.agents_total_known)),
         connection: match view.link {
             LinkView::Connecting => Connection::Connecting,
             LinkView::Connected => Connection::Connected,
@@ -2798,6 +2801,10 @@ impl TuiScreen {
                 if action == Some(Action::AgentsPanel) && !view.pager_open && view.rewind.is_none()
                 {
                     return vec![UserAction::ToggleAgents];
+                }
+                if action == Some(Action::WorkflowView) && !view.pager_open && view.rewind.is_none()
+                {
+                    return vec![UserAction::WorkflowView];
                 }
                 let focus = if self.search.is_some() {
                     talaria_tui::comfort_route::Focus::Search
@@ -4438,6 +4445,18 @@ impl Screen for TuiScreen {
                 self.rows,
             ))
         });
+        let workflow_hint = self.keymap.label(Action::WorkflowView);
+        let workflow = view.workflow_run.map(|run| {
+            talaria_tui::workflow_view::WorkflowDock::new(
+                &run.name,
+                run.status.as_str(),
+                run.agents_finished,
+                run.agents_total_known,
+                workflow_hint.as_deref(),
+                subagent_style.header,
+                subagent_style.hint,
+            )
+        });
         let automation_theme = self.theme.views.automation_theme();
         let automation = ThemedAutomation {
             section: AutomationSection {
@@ -4500,6 +4519,9 @@ impl Screen for TuiScreen {
                 && talaria_core::layout::inline_subagent_dock_visible(panel_visible)
             {
                 sections.push(subagents);
+            }
+            if let Some(workflow) = &workflow {
+                sections.push(workflow);
             }
             if let Some(side) = &side {
                 sections.push(side);
@@ -4844,6 +4866,10 @@ impl Screen for TuiScreen {
         self.keymap
             .label(Action::AttentionNext)
             .map(|label| label.to_ascii_lowercase())
+    }
+
+    fn workflow_key_label(&self) -> Option<String> {
+        self.keymap.label(Action::WorkflowView)
     }
 
     fn alert(&mut self, alert: &Alert) {

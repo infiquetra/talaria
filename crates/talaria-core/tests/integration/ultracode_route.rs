@@ -91,3 +91,52 @@ fn state_and_command_parsing() {
     let default_on = UltracodeState::new(true);
     assert!(default_on.is_on(&a));
 }
+
+#[test]
+fn bypass_flags_prompt_commands_only_when_on() {
+    use talaria_core::ultracode::bypass;
+    for (text, expected) in [
+        ("/goal build a fixture tool", Some("goal")),
+        ("  /goal   build x", Some("goal")),
+        ("/GOAL build x", Some("GOAL")),
+        ("/q fix the parser", Some("q")),
+        ("/queue fix the parser", Some("queue")),
+        ("/steer look at the tests", Some("steer")),
+        ("/s look at the tests", Some("s")),
+        ("/bg write the docs", Some("bg")),
+        ("/background write the docs", Some("background")),
+        ("/btw what is a fixture", Some("btw")),
+        ("/plan the refactor", Some("plan")),
+        ("/goal", None),
+        ("/goal status", None),
+        ("/goal pause", None),
+        ("/goal clear", None),
+        ("/goal show", None),
+        ("/queue", None),
+        ("/help", None),
+        ("/ultracode on", None),
+        ("!ls", None),
+        ("fix the parser", None),
+        ("", None),
+    ] {
+        assert_eq!(bypass(text, true).as_deref(), expected, "{text:?}");
+        assert_eq!(bypass(text, false), None, "{text:?} with Ultracode off");
+    }
+}
+
+#[test]
+fn carry_copies_explicit_state_to_child() {
+    let parent = SessionId::new("fixture-parent");
+    let child = SessionId::new("fixture-child");
+    let mut state = UltracodeState::new(false);
+    assert!(!state.carry(&parent, &child), "nothing to carry");
+    assert!(!state.is_on(&child));
+    state.set(&parent, true);
+    assert!(state.carry(&parent, &child));
+    assert!(state.is_on(&child));
+    state.set(&parent, false);
+    let mut default_on = UltracodeState::new(true);
+    default_on.set(&parent, false);
+    assert!(!default_on.carry(&parent, &child));
+    assert!(!default_on.is_on(&child), "an explicit off is carried too");
+}

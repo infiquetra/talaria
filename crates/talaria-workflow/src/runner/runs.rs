@@ -366,3 +366,38 @@ pub fn discover_runs(runs_dir: &Path) -> Vec<RunSummary> {
     });
     runs
 }
+/// The runs that started at or after `since_ms`, newest first. A folder last changed well
+/// before the cutoff is skipped without reading it, so a frequent check stays cheap.
+pub fn discover_runs_since(runs_dir: &Path, since_ms: i64) -> Vec<RunSummary> {
+    let entries = match fs::read_dir(runs_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    // A coarse file system clock may stamp a new folder slightly before the cutoff.
+    let cutoff = since_ms.saturating_sub(5_000);
+    let mut runs = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(id) = name.to_str() else { continue };
+        let path = entry.path();
+        let changed_ms = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|at| i64::try_from(at.as_millis()).unwrap_or(i64::MAX));
+        if changed_ms.is_some_and(|ms| ms < cutoff) || !is_run_folder(&path) {
+            continue;
+        }
+        let summary = summarize(&path, id);
+        if summary.started_at_ms >= since_ms {
+            runs.push(summary);
+        }
+    }
+    runs.sort_by(|a, b| {
+        b.started_at_ms
+            .cmp(&a.started_at_ms)
+            .then_with(|| a.run_id.cmp(&b.run_id))
+    });
+    runs
+}

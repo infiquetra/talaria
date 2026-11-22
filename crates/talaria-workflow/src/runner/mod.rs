@@ -20,7 +20,8 @@ pub use execute::{
 pub use execute::{run_new_with_services, run_resume_with_services};
 pub use resolver::FilesystemResolver;
 pub use runs::{
-    FindError, RunStatus, RunSummary, discover_runs, find_run, runs_dir, workflows_dir,
+    FindError, RunStatus, RunSummary, discover_runs, discover_runs_since, find_run, runs_dir,
+    workflows_dir,
 };
 pub use services::RunnerServices;
 

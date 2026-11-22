@@ -7,7 +7,9 @@ Closing a viewer leaves the runner and its agents working.
 In the terminal, `/workflows` opens the same discovery rows used by `workflow list`.
 Use the arrow keys and Enter to open a run. Escape closes only the viewer; reopening
 the picker refreshes discovery. With no runs it shows
-`no runs yet — talaria workflow run starts one`.
+`no runs yet — talaria workflow run starts one`, then says that runs start when Ultracode is
+on and you send a plain prompt, or when the agent uses the talaria-workflows skill. Alt+W
+(`workflow_view`) opens the latest run of the foreground session from the composer.
 
 ```sh
 talaria workflow run review.js --profile fixture --args '{"branch":"main"}'

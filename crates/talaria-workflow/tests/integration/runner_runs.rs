@@ -336,3 +336,26 @@ fn discover_resumed_execution_status() {
         .unwrap();
     probe.try_lock().unwrap();
 }
+
+#[test]
+fn discover_runs_since_skips_runs_started_before_cutoff() {
+    use talaria_workflow::runner::discover_runs_since;
+    let temp = tempfile::tempdir().unwrap();
+    let old = id(1);
+    folder(temp.path(), &old, 100, &[started(&old)]);
+    let new = id(2);
+    folder(
+        temp.path(),
+        &new,
+        500,
+        &[started(&new), finished("completed")],
+    );
+    let rows = discover_runs_since(temp.path(), 400);
+    assert_eq!(
+        rows.iter().map(|r| r.run_id.as_str()).collect::<Vec<_>>(),
+        [new.as_str()]
+    );
+    assert_eq!(rows[0].status, RunStatus::Completed);
+    assert_eq!(discover_runs_since(temp.path(), 0).len(), 2);
+    assert!(discover_runs_since(&temp.path().join("missing"), 0).is_empty());
+}

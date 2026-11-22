@@ -26,6 +26,42 @@ pub fn route_submit(text: &str, enabled: bool) -> SubmitRoute {
         one_shot: !enabled,
     }
 }
+/// Commands that carry a prompt to Hermes without the workflow route.
+const BYPASSING: [&str; 9] = [
+    "goal",
+    "bg",
+    "background",
+    "queue",
+    "q",
+    "steer",
+    "s",
+    "btw",
+    "plan",
+];
+/// `/goal` subcommands that manage a standing goal rather than set one.
+const GOAL_SUBCOMMANDS: [&str; 9] = [
+    "show", "draft", "gate", "pause", "resume", "clear", "status", "wait", "unwait",
+];
+/// The command name, as typed, when Ultracode is on and a slash command sends a prompt that
+/// Ultracode does not route.
+pub fn bypass(text: &str, enabled: bool) -> Option<String> {
+    if !enabled {
+        return None;
+    }
+    let line = text.trim().strip_prefix('/')?;
+    let (name, arg) = line
+        .split_once(char::is_whitespace)
+        .map_or((line, ""), |(name, arg)| (name, arg.trim()));
+    let lower = name.to_ascii_lowercase();
+    if arg.is_empty() || !BYPASSING.contains(&lower.as_str()) {
+        return None;
+    }
+    let first = arg.split_whitespace().next().unwrap_or_default();
+    if lower == "goal" && GOAL_SUBCOMMANDS.contains(&first.to_ascii_lowercase().as_str()) {
+        return None;
+    }
+    Some(name.to_owned())
+}
 pub fn contains_keyword(text: &str) -> bool {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
         .any(|word| word.eq_ignore_ascii_case("ultracode"))
@@ -47,6 +83,13 @@ impl UltracodeState {
     }
     pub fn set(&mut self, id: &SessionId, on: bool) {
         self.sessions.insert(id.clone(), on);
+    }
+    /// Copy an explicit setting from one session to another, and say whether `to` is now on.
+    pub fn carry(&mut self, from: &SessionId, to: &SessionId) -> bool {
+        if let Some(on) = self.sessions.get(from).copied() {
+            self.set(to, on);
+        }
+        self.is_on(to)
     }
     pub fn toggle(&mut self, id: &SessionId) -> bool {
         let on = !self.is_on(id);
@@ -108,11 +151,38 @@ pub fn skill_availability(catalog: &CommandCatalog) -> SkillAvailability {
 }
 pub mod notice {
     use super::SkillAvailability;
-    pub const ON: &str = "Ultracode on for this session: substantive prompts run as Talaria workflows through the talaria-workflows skill. /ultracode off to stop.";
+    pub const ON: &str = "Ultracode on for this session: substantive prompts run as Talaria workflows through the talaria-workflows skill. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
+    pub const ON_REMOTE: &str = "Ultracode on for this session: substantive prompts run as Talaria workflows through the talaria-workflows skill. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
+    pub const ROUTED: &str = "Ultracode: this prompt goes to the talaria-workflows skill. The agent proposes a workflow and asks before starting it; a started run shows above the composer.";
+    pub const ROUTED_REMOTE: &str = "Ultracode: this prompt goes to the talaria-workflows skill. The agent proposes a workflow and asks before starting it. The run starts on the gateway's machine, so this window cannot show it; talaria workflow list there lists it.";
+    pub const BRANCH_CARRIED: &str = "Ultracode stays on in this branch.";
     pub const OFF: &str = "Ultracode off for this session.";
     pub const ONE_SHOT: &str = "This prompt runs as a workflow (keyword ultracode).";
     pub const NO_SESSION: &str = "No session to set ultracode on.";
     pub const USAGE: &str = "Usage: /ultracode [on|off|status]";
+    pub fn bypassed(command: &str) -> String {
+        format!(
+            "Ultracode does not apply to /{command}; it goes to Hermes as typed. To run the task as a workflow, send it as a plain prompt without /{command}."
+        )
+    }
+    fn open_with(key: Option<&str>, what: &str) -> String {
+        match key {
+            Some(key) => format!("Press {key} or type /workflows to see {what}."),
+            None => format!("Type /workflows to see {what}."),
+        }
+    }
+    pub fn run_started(name: &str, run_id: &str, key: Option<&str>) -> String {
+        format!(
+            "Workflow run started: {name} ({run_id}). {}",
+            open_with(key, "its agents")
+        )
+    }
+    pub fn run_finished(name: &str, run_id: &str, outcome: &str, key: Option<&str>) -> String {
+        format!(
+            "Workflow run {outcome}: {name} ({run_id}). {}",
+            open_with(key, "the result")
+        )
+    }
     pub fn offer(profile: &str) -> String {
         format!("Install talaria-workflows into profile {profile} now? [y/N]")
     }

@@ -19,6 +19,22 @@ fn work_panel_action_and_default_are_documented() {
 }
 
 #[test]
+fn workflow_view_action_and_default_are_documented() {
+    let action = Action::from_config_name("workflow_view").expect("configurable workflow view");
+    assert_eq!(labels(&KeyMap::defaults(), action), ["Alt+W"]);
+    assert!(read_document().contains("workflow_view = [\"alt+w\"]"));
+    let keys = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/keybindings.md"),
+    )
+    .unwrap();
+    assert!(
+        keys.lines()
+            .any(|row| row.contains("Alt+W") && row.contains("`workflow_view`")),
+        "keybindings.md has a workflow_view row"
+    );
+}
+
+#[test]
 fn menu_bar_action_and_default_are_documented() {
     let document = read_document();
     assert!(
@@ -192,6 +208,7 @@ fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
         Action::FleetProfilePrev => &["Shift+Tab"],
         // Issue #242 adds the subagent panel keys.
         Action::AgentsPanel => &["Alt+S"],
+        Action::WorkflowView => &["Alt+W"],
         Action::AgentsOpenInPane => &["O"],
         Action::AgentsUp => &["Up", "K"],
         Action::AgentsDown => &["Down", "J"],

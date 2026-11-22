@@ -727,7 +727,9 @@ impl Composer {
             | Action::ComposerSendNow
             | Action::ComposerSteer
             // The jump key never edits the draft; it opens the fleet view.
-            | Action::AttentionNext => {}
+            | Action::AttentionNext
+            // The workflow key never edits the draft; it opens the run's view.
+            | Action::WorkflowView => {}
             // Panel actions never edit the draft; the panel owns them. Issue #242.
             Action::AgentsPanel
             | Action::AgentsUp

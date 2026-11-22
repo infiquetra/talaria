@@ -57,10 +57,30 @@ is installed but absent from the catalogue. A quick command, plugin, or alias th
 `/talaria-workflows` is refused. A project-local skill can take precedence over the installed
 copy; status shows the catalogue's reported origin.
 
-The toggle belongs to a session id and lives only in this Talaria process. The foreground
+The toggle belongs to a session and lives only in this Talaria process. A `/branch` copy
+starts with its parent's setting and says `Ultracode stays on in this branch.`; a reconnect to
+the same stored session keeps it. Other sessions keep their own setting. The foreground
 session controls the `ultracode` status segment, shown after the model and dropped first when
 space is tight. Start interactive sessions on with `talaria --ultracode`. Print mode does not
 use this flag.
+
+Each routed prompt prints `Ultracode: this prompt goes to the talaria-workflows skill.` before
+it is sent. The agent then proposes a workflow and asks before it starts one. While Ultracode
+is on, a slash command that carries a prompt (`/goal`, `/bg`, `/queue`, `/steer`, `/btw` and
+`/plan`, with their aliases) still goes to Hermes as typed, after a one-line notice that names
+the command and says to send the prompt without it to run the task as a workflow. `/goal`
+subcommands such as `/goal status` print no notice.
+
+After a routed prompt, Talaria checks the local runs folder every two seconds for a run of
+the same profile that started after the prompt. When one starts it prints
+`Workflow run started: <name> (<run id>). Press Alt+W or type /workflows to see its agents.`,
+shows a dock line above the composer (`⚙ Workflow <name> · running · 3/10 agents · Alt+W to
+open`), and adds the agent count to the status segment (`ultracode · 3/10 agents`), which is
+then kept on a narrow line. When the run ends it prints `Workflow run <outcome>: …` and the
+dock line goes away. The view never opens by itself. `workflow_view` (Alt+W) opens the latest
+run of the foreground session, or the run list when it has none. A session started with
+`--remote` runs workflows on the gateway's machine, so Talaria does not watch for them and the
+routing notice says so. Two Talaria windows on one profile can both announce the same run.
 
 With the toggle off, the whole word `ultracode` anywhere in a substantive prompt routes just
 that prompt and shows a one-shot notice. Matching ignores ASCII case. Letters, digits,
