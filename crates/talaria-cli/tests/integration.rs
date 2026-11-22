@@ -26,6 +26,8 @@ mod cli_sanitizers;
 mod configure_cmd;
 #[path = "integration/doctor_cli.rs"]
 mod doctor_cli;
+#[path = "integration/effort_scale_card.rs"]
+mod effort_scale_card;
 #[path = "integration/fleet_cmd.rs"]
 mod fleet_cmd;
 #[path = "integration/fleet_external_format.rs"]
