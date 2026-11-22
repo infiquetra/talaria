@@ -168,6 +168,9 @@ pub struct QueueState {
     pub(crate) verify: Option<Vec<AdmissionId>>,
     /// Text the person should get back, oldest first, until taken.
     pub(crate) returned: Vec<String>,
+    /// True when a prompt that carried the whole workflow skill left without starting, until
+    /// taken.
+    pub(crate) skill_dropped: bool,
     /// True once an unreadable queue frame has been noted for this session.
     pub(crate) decode_noted: bool,
     /// Counter for submission ids minted without an [`IdSource`].
@@ -402,6 +405,13 @@ impl QueueState {
     #[must_use]
     pub fn take_returned(&mut self) -> Vec<String> {
         std::mem::take(&mut self.returned)
+    }
+
+    /// True when a prompt that carried the whole workflow skill was removed, refused or never
+    /// confirmed since the last call, so the conversation may not hold the skill. Clears it.
+    #[must_use]
+    pub fn take_skill_dropped(&mut self) -> bool {
+        std::mem::take(&mut self.skill_dropped)
     }
 
     /// Rows that count toward the indicator, in sequence order.

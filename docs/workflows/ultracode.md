@@ -104,7 +104,9 @@ composer text. Inner tabs and newlines remain in the message. Later routed promp
 conversation skip the command service: they send the typed text after one model-facing line
 saying that the workflow mode is on and the skill already loaded in the conversation applies.
 The whole skill goes again with the first routed prompt after Hermes compacts the session,
-after the session is opened under a new stored id, and after `/ultracode on` is typed again.
+after the session is opened under a new stored id, after a rewind or a restore, after
+`/ultracode on` is typed again, and after a prompt that carried it is removed from the queue,
+refused, or never confirmed.
 A prompt containing the keyword with the toggle off always carries the whole skill. Busy
 sessions use the existing prompt queue.
 

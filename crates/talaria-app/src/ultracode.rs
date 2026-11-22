@@ -322,6 +322,10 @@ impl UltracodeService {
     pub fn note_epoch(&mut self, session: &SessionId, epoch: &SkillEpoch) {
         self.state.note_epoch(session, epoch);
     }
+    /// The session's conversation may have lost the skill: its next routed prompt sends it whole.
+    pub fn rearm(&mut self, session: &SessionId) {
+        self.state.rearm(session);
+    }
     pub fn status_input(&self, foreground: Option<&SessionId>) -> bool {
         foreground.is_some_and(|id| self.state.is_on(id))
     }

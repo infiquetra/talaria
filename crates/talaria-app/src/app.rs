@@ -4274,19 +4274,6 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 let actions = state
                     .ultracode
                     .on_command_outcome(&session, &original_text, outcome);
-                if actions
-                    .iter()
-                    .any(|action| matches!(action, crate::ultracode::Action::SubmitCommand { .. }))
-                {
-                    let since_ms = (state.wall_s * 1000.0) as i64;
-                    let profile = state.profile.clone();
-                    state
-                        .ultracode
-                        .arm(&session, &profile, since_ms, state.now_ms);
-                    if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
-                        state.ultracode.skill_sent(&session, epoch);
-                    }
-                }
                 if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&state.profile))) {
                     state.ultracode.record_shown(&session);
                 }
@@ -4685,6 +4672,13 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         .and_then(|opened| opened.state.queue.take_returned().into_iter().next())
     {
         effects.push(AppEffect::OfferDraft(text));
+    }
+    // A prompt that carried the whole skill never started: the next routed prompt sends it.
+    if let Some(opened) = state.opened.as_mut()
+        && opened.state.queue.take_skill_dropped()
+    {
+        let session = SessionId::new(opened.session_id.clone());
+        state.ultracode.rearm(&session);
     }
     effects.extend(connectors_effects);
     effects.extend(commit_ready(state));
@@ -7465,6 +7459,19 @@ fn apply_ultracode(
         match action {
             Action::Notice(text) => effects.push(notice_lines(&text)),
             Action::SubmitCommand { text, display, .. } => {
+                // Every routed prompt, whole skill or reminder, watches for the run it may start.
+                if let Some(opened) = state.opened.as_ref() {
+                    let session = SessionId::new(opened.session_id.clone());
+                    let epoch = skill_epoch(opened);
+                    let since_ms = (state.wall_s * 1000.0) as i64;
+                    let profile = state.profile.clone();
+                    state
+                        .ultracode
+                        .arm(&session, &profile, since_ms, state.now_ms);
+                    if talaria_core::ultracode::loads_skill(&text) {
+                        state.ultracode.skill_sent(&session, epoch);
+                    }
+                }
                 let submission_id = state.next_submission_id();
                 effects.extend(reduce(
                     state,
@@ -18799,6 +18806,141 @@ mod ultracode_visibility_tests {
                 );
             }
         }
+    }
+
+    fn scans(effects: &[AppEffect]) -> Vec<i64> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::UltracodeScan { since_ms } => Some(*since_ms),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_reply_after_the_first_hour_still_watches_for_the_run_it_starts() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.wall_s = 1_000.0;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = turn(&mut state, "complete");
+        // An hour on, the watch ends without seeing a run.
+        let late = 61 * 60 * 1_000;
+        let effects = update(&mut state, AppMessage::Tick { now_ms: late });
+        assert_eq!(scans(&effects), [1_000_000]);
+        let _ = update(&mut state, AppMessage::UltracodeRuns { rows: vec![] });
+        let effects = update(
+            &mut state,
+            AppMessage::Tick {
+                now_ms: late + 5_000,
+            },
+        );
+        assert!(scans(&effects).is_empty(), "the watch ended: {effects:?}");
+        // The answer goes with the reminder, and watches for the run it starts.
+        state.wall_s = 5_000.0;
+        let effects = enter(&mut state, "go ahead");
+        assert_eq!(
+            sent(&effects),
+            [talaria_core::ultracode::follow_up_text("go ahead")]
+        );
+        let effects = update(
+            &mut state,
+            AppMessage::Tick {
+                now_ms: late + 6_000,
+            },
+        );
+        assert_eq!(scans(&effects), [5_000_000]);
+        let mut run = summary(talaria_workflow::runner::RunStatus::Running, 0);
+        run.started_at_ms = 5_100_000;
+        let effects = update(&mut state, AppMessage::UltracodeRuns { rows: vec![run] });
+        assert_eq!(
+            lines(&effects),
+            [format!(
+                "\u{b7} {}",
+                notice::run_started("review-branch", "run-0001", None)
+            )]
+        );
+    }
+
+    #[test]
+    fn a_first_prompt_that_never_starts_leaves_the_skill_to_the_next_one() {
+        // Queued behind a running turn, then removed from the queue.
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        assert_eq!(sent(&effects), [expanded("fix the parser")]);
+        let reminded = enter(&mut state, "fix the tokenizer");
+        assert!(!loads_skill(&reminded), "{reminded:?}");
+        state.opened.as_mut().unwrap().state.queue.rows = vec![talaria_core::queue::QueuedRow {
+            admission_id: talaria_core::queue::AdmissionId("admission-1".into()),
+            input_id: talaria_core::queue::SubmissionId("input-1".into()),
+            text: expanded("fix the parser"),
+            status: talaria_core::queue::RowStatus::Queued,
+            outcome: None,
+            controls: talaria_core::queue::Controls {
+                steer: true,
+                replace: true,
+            },
+            steering: false,
+            sequence: 1,
+            execution_generation: Some(1),
+        }];
+        let cancelled = serde_json::from_value(json!({"admission_id": "admission-1",
+            "authority_epoch": 1, "execution_generation": null, "outcome": "cancelled",
+            "ref": {"profile_id": "fixture", "session_id": "session"}, "sequence": 1,
+            "status": "terminal"}))
+        .unwrap();
+        let effects = update(
+            &mut state,
+            AppMessage::PromptDone {
+                events: vec![Event::QueueCallResult {
+                    action: QueueAction::Remove,
+                    admission_id: Some(talaria_core::queue::AdmissionId("admission-1".into())),
+                    submission_id: None,
+                    result: cancelled,
+                }],
+                notices: Vec::new(),
+                masked: None,
+            },
+        );
+        assert!(
+            effects.iter().any(
+                |effect| matches!(effect, AppEffect::OfferDraft(text) if text == "fix the parser")
+            ),
+            "{effects:?}"
+        );
+        let effects = enter(&mut state, "fix the lexer");
+        assert!(loads_skill(&effects), "{effects:?}");
+
+        // Refused by Hermes.
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        let id = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Send(Effect::SendPrompt { submission_id, .. }) => {
+                    Some(submission_id.clone())
+                }
+                _ => None,
+            })
+            .expect("the whole skill is sent");
+        let _ = update(
+            &mut state,
+            AppMessage::SubmitDone {
+                submission_id: id,
+                outcome: ExecuteOutcome::Refused {
+                    reason: "invalid_params".into(),
+                },
+            },
+        );
+        let effects = enter(&mut state, "fix the lexer");
+        assert!(loads_skill(&effects), "{effects:?}");
     }
 
     #[test]

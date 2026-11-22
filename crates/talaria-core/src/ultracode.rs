@@ -37,6 +37,11 @@ pub fn typed_text(text: &str) -> Option<&str> {
             .map_or(rest, |end| &rest[..end]),
     )
 }
+/// True when `text` carries the whole skill: Hermes's expansion of a routed prompt, not the
+/// reminder that stands in for it once the skill is in the conversation.
+pub fn loads_skill(text: &str) -> bool {
+    !text.starts_with(FOLLOW_UP_REMINDER) && typed_text(text).is_some()
+}
 /// What the screen shows for text a prompt sent: what the person typed for a routed prompt,
 /// the text itself otherwise.
 pub fn shown_text(text: &str) -> &str {
