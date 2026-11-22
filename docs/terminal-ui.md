@@ -8,6 +8,13 @@ cannot run. Below 60 columns the headings collapse; below 16 rows the menu is te
 Talaria keeps finished conversation output in native terminal scrollback. Full-screen views
 temporarily cover it; closing a view restores the conversation and the draft.
 
+While a turn runs, a working row sits directly above the composer, for example
+`✻ Working · 12s · Esc to interrupt`. It shows Hermes's own activity text in place of `Working`
+when Hermes sends one, counts the turn's time, and names the bound interrupt key. A prompt card
+or the compacting row takes its place while one is shown. Under full motion a soft glow sweeps
+across the row and back; under reduced motion the row is static and only its seconds change.
+A narrow terminal drops the interrupt hint first, then shortens the activity text.
+
 The status bar's model segment shows the session's requested effort. If Hermes reports a lower
 provider level, an arrow shows both, such as `max→high`. When the model's catalogue row offers no
 effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the

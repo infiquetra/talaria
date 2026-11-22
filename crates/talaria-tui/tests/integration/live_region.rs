@@ -244,6 +244,70 @@ fn idle_draw_writes_zero_bytes() {
     assert!(fourth.drew, "control: a real change does draw");
 }
 
+#[test]
+fn activity_sweep_frame_writes_only_changed_cells() {
+    use talaria_tui::activity::{ActivityClock, ActivityLine, ActivityStyle, FRAME_MS};
+    use talaria_tui::theme::{
+        ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, Rgb,
+        TerminalColors, ThemeInputs, resolve,
+    };
+    let terminal = TerminalColors {
+        background: Some(Rgb(0, 0, 0)),
+        foreground: Some(Rgb(200, 200, 200)),
+    };
+    let theme = resolve(&ThemeInputs {
+        skin: None,
+        skipped: &[],
+        follow_hermes_skin: true,
+        polarity: (Polarity::Dark, PolaritySource::Default),
+        depth: (ColorDepth::TrueColor, DepthSource::Default),
+        motion: (Motion::Full, MotionSource::Default),
+        terminal,
+    });
+    let style = ActivityStyle::from_theme(&theme, terminal);
+    let composer = PlainTextSection::new("LIVE# composer");
+    let mut rig = Rig::new(false, 2);
+    let mut draw = |sections: Vec<&dyn LiveSection>| {
+        let stats = rig
+            .term
+            .draw_live(&LiveView { sections })
+            .expect("draw_live");
+        let bytes = rig.sink.take();
+        assert_eq!(stats.bytes, bytes.len());
+        bytes.len()
+    };
+    let row = |elapsed_ms| ActivityLine {
+        activity: None,
+        elapsed_ms,
+        interrupt: Some("Esc"),
+        style: &style,
+    };
+
+    // Idle: no row, and the same view again writes nothing and asks for no wake.
+    assert!(draw(vec![&composer]) > 0, "the first frame paints");
+    assert_eq!(draw(vec![&composer]), 0, "an idle redraw writes nothing");
+    let idle = ActivityClock::default();
+    assert_eq!(
+        idle.next_wake(Motion::Full, std::time::Instant::now()),
+        None
+    );
+
+    let start = row(500);
+    assert!(draw(vec![&start, &composer]) > 0, "the row appears");
+    assert_eq!(
+        draw(vec![&start, &composer]),
+        0,
+        "the same moment again writes nothing"
+    );
+    let next = row(500 + FRAME_MS);
+    let frame = draw(vec![&next, &composer]);
+    assert!(frame > 0, "the glow moved");
+    assert!(
+        frame < 1_200,
+        "one sweep frame rewrites only the cells near the glow: {frame} bytes"
+    );
+}
+
 /// Bytes of one single-character change after `history` committed lines, from a fresh terminal.
 fn one_character_change_bytes(history: usize) -> usize {
     let mut rig = Rig::new(false, 2);

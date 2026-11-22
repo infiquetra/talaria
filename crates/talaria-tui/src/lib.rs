@@ -1,5 +1,6 @@
 //! Terminal rendering, input and overlays projected from domain state.
 
+pub mod activity;
 pub mod automation;
 pub mod background;
 pub mod checklist;

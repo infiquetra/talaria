@@ -59,6 +59,7 @@ use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, PromptKind, ReasoningCell, TurnState as SessionTurn,
 };
 use talaria_core::subagents::{Clock as SubagentClock, FinishedBatch};
+use talaria_tui::activity::{ActivityClock, ActivityLine, ActivityStyle};
 use talaria_tui::automation::AutomationSection;
 use talaria_tui::background::{BackgroundSection, BackgroundTheme, ProcessesView};
 use talaria_tui::checklist::{
@@ -330,6 +331,8 @@ pub struct TuiScreen {
     cells: ToolCellLines,
     /// When each running tool cell was first seen, for its seconds counter.
     clock: ToolClock,
+    /// When the foreground turn started and whether its working row is on screen.
+    activity: ActivityClock,
     tool_theme: ToolTheme,
     /// The settings and start-up decisions the theme is resolved from.
     look: Look,
@@ -3517,16 +3520,21 @@ impl StatusHost for TuiScreen {
         });
     }
 
-    /// The status command's next run, or the next whole second of a running tool call. Nothing
-    /// is scheduled while no tool runs, so an idle screen draws nothing.
+    /// The status command's next run, the next whole second of a running tool call, or the
+    /// working row's next frame. Nothing is scheduled while no tool runs and no working row is
+    /// on screen, so an idle screen draws nothing.
     fn next_wake(&self, now: Instant) -> Option<Instant> {
         let status = self
             .status
             .as_ref()
             .and_then(|service| service.next_wake(now));
-        match (status, self.clock.next_tick(now)) {
+        let tick = match (status, self.clock.next_tick(now)) {
             (Some(status), Some(tick)) => Some(status.min(tick)),
             (status, tick) => status.or(tick),
+        };
+        match (tick, self.activity.next_wake(self.theme.motion, now)) {
+            (Some(tick), Some(frame)) => Some(tick.min(frame)),
+            (tick, frame) => tick.or(frame),
         }
     }
 
@@ -3972,6 +3980,14 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        // Overlays return early, so the working row counts as hidden until it is pushed below.
+        self.activity.begin_frame();
+        let turn_running = view
+            .state
+            .is_some_and(|state| matches!(state.turn(), SessionTurn::Running));
+        let turn_elapsed = self
+            .activity
+            .turn(turn_running, view.now_ms, Instant::now());
         if view.layout.workspace_enabled() || view.layout.menu_transient {
             let _ = self.terminal.enter_workspace();
         } else {
@@ -4417,6 +4433,21 @@ impl Screen for TuiScreen {
             line: view.compacting_line,
             now_ms: view.now_ms,
         };
+        // The working row sits directly above the composer for the whole running turn, except
+        // while a prompt card or the compacting row says what the turn is doing.
+        let activity_style = ActivityStyle::from_theme(&self.theme, self.look.terminal);
+        let interrupt_key = self.keymap.label(Action::Interrupt);
+        let activity = turn_elapsed
+            .filter(|_| prompts.is_none() && view.compacting_line.is_none())
+            .map(|elapsed_ms| ActivityLine {
+                activity: view.state.and_then(|state| state.activity()),
+                elapsed_ms,
+                interrupt: interrupt_key.as_deref(),
+                style: &activity_style,
+            });
+        if activity.is_some() {
+            self.activity.shown(Instant::now());
+        }
         // The task checklist sits above the composer, and is one row on a short screen.
         let max_rows = if self.rows < SHORT_TERMINAL_ROWS {
             1
@@ -4507,6 +4538,9 @@ impl Screen for TuiScreen {
             if let Some(background) = &background {
                 sections.push(background);
             }
+            if let Some(activity) = &activity {
+                sections.push(activity);
+            }
             sections.push(search);
         } else {
             sections.push(&queue);
@@ -4531,6 +4565,9 @@ impl Screen for TuiScreen {
             }
             if let Some(background) = &background {
                 sections.push(background);
+            }
+            if let Some(activity) = &activity {
+                sections.push(activity);
             }
             sections.push(&composer);
             if let Some(partial) = &partial {
@@ -5376,6 +5413,7 @@ fn session(
         palette: theme.status,
         cells: tool_cells(&theme, &keymap),
         clock: ToolClock::new(),
+        activity: ActivityClock::default(),
         tool_theme: theme.tool.clone(),
         look,
         startup_theme_files: theme_files,

@@ -37,7 +37,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use ratatui::style::{Color, Modifier, Style};
 
 pub use color::{
-    contrast_ratio, ensure_contrast, luma709, parse_color, relative_luminance, to_ansi256,
+    blend, contrast_ratio, ensure_contrast, luma709, parse_color, relative_luminance, rgb_of,
+    to_ansi256,
 };
 pub use roles::{CHAINS, RoleChain, chain};
 pub use talaria_core::appearance::{

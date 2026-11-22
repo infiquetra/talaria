@@ -96,3 +96,5 @@ mod workflow_compile_empty;
 mod workflow_live;
 #[path = "integration/workflow_skill_cli.rs"]
 mod workflow_skill_cli;
+#[path = "integration/working_row.rs"]
+mod working_row;

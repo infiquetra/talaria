@@ -153,6 +153,13 @@ The rule every component that draws follows, under reduced motion:
 Under full motion the same is recommended. Any future animation must be off under reduced motion
 and must not draw while nothing changes.
 
+The working row above the composer holds Talaria's one animation. Under full motion, while a
+turn runs, a glow sweeps across the row and back every two seconds, drawn at most about 12 times
+a second. Its colour runs from the status bar's muted colour to a colour halfway between the text
+and the accent. A 256-colour terminal shows the nearest palette colours, and a 16-colour or
+colourless terminal shows dim, normal and bold bands instead. Under reduced motion the row is
+static and redraws once a second for its elapsed time. With no turn running nothing is scheduled.
+
 ## Known limit
 
 A skin file that writes a colour with an unquoted `#` (for example `#FFD700` without quotes) is

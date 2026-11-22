@@ -18,6 +18,8 @@ mod view_colours_support;
 
 #[path = "integration/acp_fleet_render.rs"]
 mod acp_fleet_render;
+#[path = "integration/activity_line.rs"]
+mod activity_line;
 #[path = "integration/alert_bytes.rs"]
 mod alert_bytes;
 #[path = "integration/attention_keys.rs"]
