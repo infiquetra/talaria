@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn identical_goals_keep_full_text() {
-        let goal = "Run and test the demonstration of the mt10 CLI, then report.";
+        let goal = "Run and test the demonstration of the calc CLI, then report.";
         let found = labels(&[goal, goal, goal]);
         assert_eq!(found.shared, None);
         assert_eq!(found.labels, vec![goal; 3]);
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn single_goal_is_unchanged() {
-        let goal = "Run and test the demonstration of the mt10 CLI, then report.";
+        let goal = "Run and test the demonstration of the calc CLI, then report.";
         let found = labels(&[goal]);
         assert_eq!(found.shared, None);
         assert_eq!(found.labels, vec![goal]);
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn rows_that_differ_in_depth_text_still_fall_back_cleanly() {
         let goals = [
-            "Run and test the demonstration of the mt10 CLI, then report.",
+            "Run and test the demonstration of the calc CLI, then report.",
             "Read one file",
         ];
         let found = labels(&goals);

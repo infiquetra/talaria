@@ -1021,13 +1021,13 @@ const NAMES: [&str; 10] = [
 ];
 
 fn shared_goal(name: &str) -> String {
-    format!("Run and test the `{name}` demonstration of the mt10 CLI, then report the result.")
+    format!("Run and test the `{name}` demonstration of the calc CLI, then report the result.")
 }
 
 const SHORT_GOAL: &str = "Run the `riemann` demonstration and report back.";
 
 const SHARED_CAPTION: &str =
-    "Task: Run and test the … demonstration of the mt10 CLI, then report the result.";
+    "Task: Run and test the … demonstration of the calc CLI, then report the result.";
 
 /// Ten live children whose goals differ in one word, like a fan-out run.
 fn shared_goal_tree() -> SubagentTree {
@@ -1186,7 +1186,7 @@ fn panel_activity_skips_batched_progress() {
             json!("terminal"),
         ),
         "tool_preview",
-        json!("./mt10 run riemann"),
+        json!("./calc run riemann"),
     );
     apply(&mut tree, "subagent.tool", tool, 1_100);
     let batch = with(
@@ -1220,7 +1220,7 @@ fn panel_activity_skips_batched_progress() {
     assert!(
         first
             .trim_end()
-            .ends_with("terminal(\"./mt10 run riemann\")"),
+            .ends_with("terminal(\"./calc run riemann\")"),
         "{first}"
     );
     let second = lines
@@ -1274,7 +1274,7 @@ fn panel_activity_skips_batched_progress() {
     assert!(
         lines
             .iter()
-            .any(|l| l.ends_with("terminal(\"./mt10 run riemann\")")),
+            .any(|l| l.ends_with("terminal(\"./calc run riemann\")")),
         "{lines:?}"
     );
 }
