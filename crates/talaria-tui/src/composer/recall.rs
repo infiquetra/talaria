@@ -36,10 +36,10 @@ impl Recall {
         &self.entries
     }
 
-    /// Add a prompt: never blank, never equal to the one before; the oldest goes past the cap.
+    /// Add a prompt: never blank or a bare `/`, never equal to the one before; the oldest goes past the cap.
     pub fn add(&mut self, text: String) {
         self.just_added = false;
-        if text.trim().is_empty() || self.entries.last() == Some(&text) {
+        if matches!(text.trim(), "" | "/") || self.entries.last() == Some(&text) {
             return;
         }
         self.entries.push(text);
@@ -142,5 +142,15 @@ mod tests {
         assert_eq!(recall.entries(), ["first", "again"]);
         recall.forget_last("again");
         assert_eq!(recall.entries(), ["first", "again"]);
+    }
+
+    #[test]
+    fn add_ignores_a_bare_slash() {
+        let mut recall = Recall::with_entries(vec!["first".to_string(), "/".to_string()]);
+        recall.add("/".to_string());
+        recall.add("  / ".to_string());
+        assert_eq!(recall.entries(), ["first"]);
+        recall.add("/help".to_string());
+        assert_eq!(recall.entries(), ["first", "/help"]);
     }
 }

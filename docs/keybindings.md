@@ -103,7 +103,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 
 ## Slash command palette
 
-Typing `/` in the composer opens the slash command palette under the composer. A one-line slash command opens it too. A draft with a newline does not. A caret inside a word that starts with `@` does not. Down and Ctrl+N move to the next row. Up and Ctrl+P move to the previous row. Tab accepts the selected row. Esc closes the palette. Those four chords are the Completion keys above (`completion_next`, `completion_prev`, `completion_accept`, `completion_close`). Ctrl+P is the previous row. It does not open a command palette. The top menu is a different surface. Alt+I toggles and focuses it (`toggle_menu_bar`).
+Typing `/` in the composer opens the slash command palette under the composer. A one-line slash command opens it too. A draft with a newline does not. A caret inside a word that starts with `@` does not. A slash command recalled from history with Up or Down does not open it until you edit the text, so Up and Down keep walking history. Down and Ctrl+N move to the next row. Up and Ctrl+P move to the previous row. Tab accepts the selected row. Esc closes the palette. Those four chords are the Completion keys above (`completion_next`, `completion_prev`, `completion_accept`, `completion_close`). Ctrl+P is the previous row. It does not open a command palette. The top menu is a different surface. Alt+I toggles and focuses it (`toggle_menu_bar`).
 
 ## Pager keys
 

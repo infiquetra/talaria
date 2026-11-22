@@ -606,6 +606,11 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn load_draft(&mut self, text: &str);
     /// Take a draft the composer recorded on Enter back out of Up-arrow recall.
     fn unrecord_submit(&mut self, _text: &str) {}
+    /// Save a line the slash palette ran to Up-arrow recall and the history file. A notice
+    /// comes back when the file could not be written.
+    fn record_submit(&mut self, _text: &str, _has_session: bool) -> Option<String> {
+        None
+    }
     /// Hand back a prompt that left the queue: it goes into the composer only when the composer
     /// is empty and no edit is open; the transcript already shows it (#232).
     fn offer_draft(&mut self, text: &str) {
@@ -2257,6 +2262,9 @@ pub enum AppEffect {
     /// Take the draft back out of Up-arrow recall: the composer recorded it on Enter, but it
     /// was a hint or a usage notice, not a prompt.
     UnrecordSubmit(String),
+    /// Save the line the slash palette ran: the composer did not record it, since Enter only
+    /// told the palette to choose.
+    RecordSubmit(String),
     /// `prompt.submit`.
     Send(Effect),
     /// `shell.exec` or `prompt.btw`, started at once: never queued behind a prompt or a turn.
@@ -7015,13 +7023,17 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 state.attachments.on_edit(&state.draft, caret, typed, now)
             };
             let mut effects = attachment_effects(effects);
-            effects.extend(palette_input(
-                state,
+            let input = if recalled {
+                PaletteInput::Recalled {
+                    text: state.draft.clone(),
+                }
+            } else {
                 PaletteInput::DraftChanged {
                     text: state.draft.clone(),
                     caret,
-                },
-            ));
+                }
+            };
+            effects.extend(palette_input(state, input));
             effects.extend(restore_failed_attachments(state));
             effects
         }
@@ -7230,6 +7242,10 @@ fn follow(state: &mut AppState, produced: Vec<PaletteEffect>) -> Vec<AppEffect> 
                         caret: 0,
                     },
                 );
+                // Trimmed as a typed submit is, and recorded before the submit, so a later
+                // UnrecordSubmit names the same text and can take it back.
+                let line = line.trim_end().to_owned();
+                effects.push(AppEffect::RecordSubmit(line.clone()));
                 effects.extend(submit(state, line));
                 return effects;
             }
@@ -13068,6 +13084,13 @@ fn apply<S: Screen>(
             }
             AppEffect::Redraw => redraw = true,
             AppEffect::UnrecordSubmit(text) => screen.unrecord_submit(&text),
+            AppEffect::RecordSubmit(text) => {
+                if let Some(notice) = screen.record_submit(&text, state.opened.is_some())
+                    && let AppEffect::CommitLines(lines) = notice_lines(&notice)
+                {
+                    screen.commit_lines(lines);
+                }
+            }
             AppEffect::LoadDraft(text) => {
                 screen.load_draft(&text);
                 if let Some((text, caret)) = screen.draft_snapshot() {

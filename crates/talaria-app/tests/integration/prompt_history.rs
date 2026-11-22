@@ -89,6 +89,53 @@ fn leading_space_and_oversize_are_not_saved() {
 }
 
 #[test]
+fn bare_slash_blank_and_repeated_lines_are_not_written() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("talaria-home");
+    let (mut store, _) = PromptHistory::open(&dir, true, "workspace-a");
+    assert_eq!(store.append("/"), None);
+    assert_eq!(store.append("   "), None);
+    assert!(!history_file(&dir).exists(), "nothing was written");
+    assert!(store.snapshot().is_empty());
+
+    store.append("/theme");
+    store.append("/theme");
+    store.append("hello");
+    let text = std::fs::read_to_string(history_file(&dir)).unwrap();
+    let saved: Vec<String> = text
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap()["text"].to_string())
+        .collect();
+    assert_eq!(saved, ["\"/theme\"", "\"hello\""]);
+}
+
+#[test]
+fn bare_slash_and_blank_lines_are_skipped_on_load() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("talaria-home");
+    std::fs::create_dir_all(&dir).unwrap();
+    let body = ["/", "  ", "/help", " / ", "hello"]
+        .iter()
+        .map(|text| line("workspace-a", text) + "\n")
+        .collect::<String>();
+    std::fs::write(history_file(&dir), &body).unwrap();
+
+    let (store, _) = PromptHistory::open(&dir, true, "workspace-a");
+    let texts: Vec<String> = store
+        .snapshot()
+        .iter()
+        .map(|entry| entry.text.clone())
+        .collect();
+    assert_eq!(texts, ["/help", "hello"]);
+    assert_eq!(store.composer_seed(), ["/help", "hello"]);
+    assert_eq!(
+        std::fs::read_to_string(history_file(&dir)).unwrap(),
+        body,
+        "loading never rewrites the file"
+    );
+}
+
+#[test]
 fn load_reads_last_mebibyte_and_skips_bad_lines() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("talaria-home");

@@ -378,6 +378,12 @@ impl Composer {
         self.recall.forget_last(text);
     }
 
+    /// Add a line that ran without being typed as it stands, such as a command picked from the
+    /// slash list, to Up-arrow recall. Blank lines and a bare `/` are skipped.
+    pub fn remember(&mut self, text: &str) {
+        self.recall.add(text.trim_end().to_owned());
+    }
+
     /// Forget only the newest recalled submission when it is exactly this line.
     pub fn forget_newest_history(&mut self, text: &str) {
         self.recall.forget_last(text);

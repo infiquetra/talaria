@@ -90,6 +90,14 @@ impl PromptHistory {
 
     /// Record one submit, on disk and in memory.
     pub fn append(&mut self, text: &str) -> Option<String> {
+        if !worth_keeping(text) {
+            return None;
+        }
+        // A repeat of this folder's previous prompt stays in memory but is not written again.
+        let repeat = self
+            .entries
+            .last()
+            .is_some_and(|last| last.this_folder && last.text == text);
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |duration| {
@@ -100,7 +108,7 @@ impl PromptHistory {
             ts,
             this_folder: true,
         });
-        if !self.save || text.starts_with(' ') || text.chars().count() > 100_000 {
+        if !self.save || repeat || text.starts_with(' ') || text.chars().count() > 100_000 {
             return None;
         }
         let result = (|| -> std::io::Result<()> {
@@ -189,13 +197,22 @@ pub fn compact_failed_notice(reason: &str) -> String {
     format!("Prompt history could not be compacted ({reason}); it will be tried again next start.")
 }
 
+/// A blank line or a bare `/` is never a prompt worth recalling.
+fn worth_keeping(text: &str) -> bool {
+    !matches!(text.trim(), "" | "/")
+}
+
 fn decode(line: &[u8], workspace: &str) -> Option<HistoryEntry> {
     let record: serde_json::Value = serde_json::from_slice(line).ok()?;
     if record.get("v")?.as_u64()? != 1 {
         return None;
     }
+    let text = record.get("text")?.as_str()?;
+    if !worth_keeping(text) {
+        return None;
+    }
     Some(HistoryEntry {
-        text: record.get("text")?.as_str()?.to_owned(),
+        text: text.to_owned(),
         ts: record.get("ts")?.as_i64()?,
         this_folder: record.get("folder")?.as_str()? == workspace,
     })

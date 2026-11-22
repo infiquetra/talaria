@@ -410,7 +410,7 @@ render_mode = "strip"
 `[keys] <action>` takes a key or a list; `[]` leaves the action unbound. Ctrl+G edits the draft in
 `editor.command`, `$VISUAL`, `$EDITOR` or a fallback (graphical editors need a wait flag); Ctrl+R
 searches saved prompts; Ctrl+Z suspends to the shell until `fg`. History is kept owner-only in `~/.talaria/history.jsonl`; a leading space or over 100,000 characters
-keeps a prompt in memory only, and `[history] save = false` stops reading and writing it. Notification kinds are `needs_you`, `done` and `failed`; the bell and desktop
+keeps a prompt in memory only, and `[history] save = false` stops reading and writing it. A command picked from the slash palette is saved as the line that ran. A blank line or a bare `/` is never saved, a bare `/` already in the file is skipped, and a repeat of the previous prompt is not written to the file again. Notification kinds are `needs_you`, `done` and `failed`; the bell and desktop
 lists choose channels separately, and `done` waits for `done_after_seconds` (0 to 86400).
 `[herdr] report_state` (default true) sends `idle`, `working`, `blocked`, `done` and
 `error` to a Herdr terminal that answered the startup probe, and also sends

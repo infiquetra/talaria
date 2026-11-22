@@ -2237,6 +2237,9 @@ impl TuiScreen {
         let mut actions = Vec::new();
         for action in composer_key_actions(&mut self.composer, key, ctx, now) {
             match action {
+                UserAction::Submit(text) if view.palette.open => {
+                    actions.push(palette_submit(&mut self.composer, text));
+                }
                 UserAction::Submit(text) => actions.extend(
                     self.composer_action(ComposerOutcome::Submit(text), view.state.is_some()),
                 ),
@@ -4719,6 +4722,10 @@ impl Screen for TuiScreen {
         self.composer.forget_newest_history(text);
     }
 
+    fn record_submit(&mut self, text: &str, has_session: bool) -> Option<String> {
+        record_ran_line(&mut self.composer, &mut self.history, text, has_session)
+    }
+
     fn offer_draft(&mut self, text: &str) {
         if self.composer.is_empty() && self.editing.is_none() {
             self.composer.load(text.to_string());
@@ -5441,6 +5448,29 @@ fn sync_reported_draft(
     );
 }
 
+/// Enter on an open slash list only asks the list to choose. The composer's own record of the
+/// typed draft comes back out; the app records the line that runs, if one does.
+fn palette_submit(composer: &mut Composer, text: String) -> UserAction {
+    composer.forget_submitted(&text);
+    UserAction::Submit(text)
+}
+
+/// Save a line the slash list ran: to Up-arrow recall, and to the file by the same rule as a
+/// typed submit. A notice comes back when the file could not be written.
+fn record_ran_line(
+    composer: &mut Composer,
+    history: &mut PromptHistory,
+    text: &str,
+    has_session: bool,
+) -> Option<String> {
+    composer.remember(text);
+    if should_record_submission(text, has_session) {
+        talaria_app::settings::append_history(history, text)
+    } else {
+        None
+    }
+}
+
 fn should_record_submission(text: &str, has_session: bool) -> bool {
     use talaria_core::side::{Submission, btw_command, classify};
 
@@ -5470,8 +5500,9 @@ fn unix_millis() -> u64 {
 mod tests {
     use super::{
         CellLines, TuiScreen, attachment_key, composer_key_actions, confirmation_key,
-        paste_actions, picker_key, preview_text, recall_draft, reported_snapshot,
-        should_record_submission, status_inputs, sync_reported_draft, tool_cells,
+        palette_submit, paste_actions, picker_key, preview_text, recall_draft, record_ran_line,
+        reported_snapshot, should_record_submission, status_inputs, sync_reported_draft,
+        tool_cells,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use serde_json::json;
@@ -6125,6 +6156,93 @@ mod tests {
             assert_eq!(state.draft, "/help");
             assert!(!state.palette.open);
         }
+    }
+
+    /// Press one key in the composer and hand its actions to the app as the terminal does.
+    /// Keys are a second apart, so none of them is taken for a paste.
+    fn press_into(
+        composer: &mut Composer,
+        state: &mut AppState,
+        code: KeyCode,
+        clock: &mut Instant,
+    ) -> Vec<talaria_app::app::AppEffect> {
+        *clock += Duration::from_secs(1);
+        let now = *clock;
+        let palette_open = state.palette.open;
+        let actions = composer_key_actions(
+            composer,
+            Key::from(KeyEvent::new(code, KeyModifiers::NONE)),
+            ComposerContext {
+                turn_running: false,
+            },
+            now,
+        );
+        let mut effects = Vec::new();
+        for action in actions {
+            let action = match action {
+                UserAction::Submit(text) if palette_open => palette_submit(composer, text),
+                other => other,
+            };
+            effects.extend(update(state, AppMessage::ForegroundKey(action)));
+        }
+        effects
+    }
+
+    #[test]
+    fn up_arrow_walks_through_recalled_slash_commands() {
+        let mut composer = Composer::with_history(
+            KeyMap::defaults(),
+            vec!["first prompt".into(), "/theme".into()],
+        );
+        let mut state = AppState::new("history-walk");
+        let mut clock = Instant::now();
+        let _ = press_into(&mut composer, &mut state, KeyCode::Up, &mut clock);
+        assert_eq!(composer.text(), "/theme");
+        assert_eq!(state.draft, "/theme");
+        assert!(
+            !state.palette.open,
+            "the slash list stays shut, so the next Up reaches history"
+        );
+        let _ = press_into(&mut composer, &mut state, KeyCode::Up, &mut clock);
+        assert_eq!(composer.text(), "first prompt");
+        let _ = press_into(&mut composer, &mut state, KeyCode::Down, &mut clock);
+        assert_eq!(composer.text(), "/theme");
+        assert!(!state.palette.open);
+    }
+
+    #[test]
+    fn a_command_picked_from_the_slash_list_is_saved_as_it_ran() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut history, _) = talaria_app::comforts::prompt_history::PromptHistory::open(
+            home.path(),
+            true,
+            "history-pick",
+        );
+        let mut composer = Composer::new(KeyMap::defaults());
+        let mut state = AppState::new("history-pick");
+        let mut clock = Instant::now();
+        for character in "/profi".chars() {
+            let _ = press_into(
+                &mut composer,
+                &mut state,
+                KeyCode::Char(character),
+                &mut clock,
+            );
+        }
+        assert!(state.palette.open);
+        let effects = press_into(&mut composer, &mut state, KeyCode::Enter, &mut clock);
+        for effect in effects {
+            if let talaria_app::app::AppEffect::RecordSubmit(text) = effect {
+                let _ = record_ran_line(&mut composer, &mut history, &text, false);
+            }
+        }
+        assert_eq!(composer.history(), ["/profiles".to_string()]);
+        assert_eq!(history.composer_seed(), ["/profiles".to_string()]);
+
+        composer.clear();
+        let _ = press_into(&mut composer, &mut state, KeyCode::Up, &mut clock);
+        assert_eq!(composer.text(), "/profiles");
+        assert!(!state.palette.open);
     }
 
     #[test]
