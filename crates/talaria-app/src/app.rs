@@ -2454,6 +2454,8 @@ pub enum AppEffect {
     },
     /// Close a link a switch replaced.
     CloseLink(Link),
+    /// Bind the services that hold a client to the link a switch installed.
+    BindLinkServices,
     /// Close the side connection.
     CloseSide,
     /// Report the foreground pane state.
@@ -8220,6 +8222,11 @@ fn switched(
                         if state.appearance.set_file_profile(&target.profile) {
                             effects.push(AppEffect::ThemeFileCommand("reload".into()));
                         }
+                        if state.profile != target.profile {
+                            forget_profile_views(state);
+                            // Approval notices name the profile they are about.
+                            state.permissions = Some(PermissionsState::new(target.profile.clone()));
+                        }
                         state.profile = target.profile;
                     }
                     effects.extend(install_session(state, install, Some(notice)));
@@ -8439,6 +8446,8 @@ fn install_session(
         if let Some(old) = state.link.replace(link) {
             effects.push(AppEffect::CloseLink(old));
         }
+        // Before the session opens, so its first approval read goes over the new link.
+        effects.push(AppEffect::BindLinkServices);
         let counter = Arc::clone(&state.counter);
         let launch_id = state.launch_id.clone();
         state.prompts = Some(Arc::new(Mutex::new(PromptService::new(Box::new(
@@ -14114,6 +14123,7 @@ fn apply<S: Screen>(
             AppEffect::CloseLink(link) => {
                 executor.spawn(async move { link.close().await });
             }
+            AppEffect::BindLinkServices => bind_link_services(state, executor),
             AppEffect::Herdr(effect) => {
                 use talaria_core::fleet_view::{
                     FleetViewEffect, FleetViewInput, PeekStatus, ReplyOutcome, StopOutcome,
@@ -14623,63 +14633,20 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         .permissions
         .get_or_insert_with(|| PermissionsState::new(profile_name.clone()));
     if state.profile != profile_name {
-        state.memory_visible = false;
-        state.memory_profile = None;
-        state.memory_service = None;
-        state.memory = talaria_core::memory::MemoryState::new();
-        state.memory_generation = state.memory_generation.wrapping_add(1);
-        state.connectors_open = false;
-        state.connectors_profile = None;
-        state.connectors_service = None;
-        state.connectors_deadline = None;
-        state.connectors_reads.clear();
-        state.connectors_generation = state.connectors_generation.wrapping_add(1);
-        state.connectors = talaria_core::connectors::ConnectorsState::new();
+        forget_profile_views(state);
     }
     state.profile = profile_name;
     if state.appearance.set_file_profile(&state.profile) {
         run_theme_file_command(state, executor, "reload".into());
     }
-    let mut commands = CommandService::new(link.client());
-    if let Some(mut replies) = commands.take_replies() {
-        let sender = executor.sender.clone();
-        tokio::spawn(async move {
-            while let Some(reply) = replies.recv().await {
-                if sender.send(AppMessage::Commands(reply)).is_err() {
-                    break;
-                }
-            }
-        });
-    }
-    state.command_service = Some(commands);
     state.link = Some(link);
-    state.permissions_service = service
-        .client()
-        .map(|client| Arc::new(PermissionsService::new(Arc::new(client.clone()))));
-    state.workspace_service = service
-        .client()
-        .map(|client| Arc::new(WorkspaceService::new(MutationClient::new(client.clone()))));
     state.background_service = service
         .client()
         .cloned()
         .map(crate::background::BackgroundService::new)
         .map(Arc::new);
     state.service = Some(service);
-    state.provider_generation = state.provider_generation.wrapping_add(1);
-    state.provider_pending_loads.clear();
-    if let Some(service) = state.provider_service.take() {
-        executor.spawn(service.close());
-    }
-    start_provider_service(state, executor);
-    state.model_service = Some(Arc::new(crate::models::ModelService::new(
-        state
-            .service
-            .as_ref()
-            .and_then(SessionService::client)
-            .expect("an installed connection has a client")
-            .clone(),
-        crate::config::models_path().unwrap_or_default(),
-    )));
+    bind_link_services(state, executor);
     let counter = Arc::clone(&state.counter);
     let launch_id = state.launch_id.clone();
     state.prompts = Some(Arc::new(Mutex::new(PromptService::new(Box::new(
@@ -14692,6 +14659,65 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         inbound,
     );
     AppMessage::Opened { opened, notice }
+}
+
+/// Drop what the memory and connectors views hold about the profile Talaria is leaving.
+fn forget_profile_views(state: &mut AppState) {
+    state.memory_visible = false;
+    state.memory_profile = None;
+    state.memory_service = None;
+    state.memory = talaria_core::memory::MemoryState::new();
+    state.memory_generation = state.memory_generation.wrapping_add(1);
+    state.connectors_open = false;
+    state.connectors_profile = None;
+    state.connectors_service = None;
+    state.connectors_deadline = None;
+    state.connectors_reads.clear();
+    state.connectors_generation = state.connectors_generation.wrapping_add(1);
+    state.connectors = talaria_core::connectors::ConnectorsState::new();
+}
+
+/// Bind the services that hold a client to the foreground link's client: Hermes commands,
+/// the approval settings, workspace changes, the provider list and the model picker.
+///
+/// Start-up does this once. A switch to a session on another profile opens a new link, so it
+/// has to do it again; before it did, these services kept calling the closed link, and the
+/// approval setting read as unknown with "Talaria is not connected to Hermes".
+fn bind_link_services(state: &mut AppState, executor: &Executor) {
+    let Some(client) = state
+        .service
+        .as_ref()
+        .and_then(SessionService::client)
+        .cloned()
+    else {
+        return;
+    };
+    let mut commands = CommandService::new(client.clone());
+    if let Some(mut replies) = commands.take_replies() {
+        let sender = executor.sender.clone();
+        tokio::spawn(async move {
+            while let Some(reply) = replies.recv().await {
+                if sender.send(AppMessage::Commands(reply)).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    state.command_service = Some(commands);
+    state.permissions_service = Some(Arc::new(PermissionsService::new(Arc::new(client.clone()))));
+    state.workspace_service = Some(Arc::new(WorkspaceService::new(MutationClient::new(
+        client.clone(),
+    ))));
+    state.provider_generation = state.provider_generation.wrapping_add(1);
+    state.provider_pending_loads.clear();
+    if let Some(service) = state.provider_service.take() {
+        executor.spawn(service.close());
+    }
+    start_provider_service(state, executor);
+    state.model_service = Some(Arc::new(crate::models::ModelService::new(
+        client,
+        crate::config::models_path().unwrap_or_default(),
+    )));
 }
 
 fn run_theme_file_command(state: &mut AppState, executor: &Executor, argument: String) {

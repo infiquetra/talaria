@@ -257,6 +257,14 @@ async fn other_profile_switch_opens_a_new_link_first() {
         lines.iter().any(|line| line.contains("Now showing")),
         "the switch notice: {lines:?}"
     );
+    // The services that hold a client moved to the new link with the session: nothing reports
+    // a lost connection after the old link closes.
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("not connected to Hermes")),
+        "a service still called the closed link: {lines:?}"
+    );
     let session = locked(&log).session.clone();
     assert_eq!(session.as_deref(), Some("s-default"));
 }
