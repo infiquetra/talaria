@@ -4,7 +4,8 @@ use crate::directory_drive as drive;
 use crate::mock_gateway;
 
 use drive::{
-    committed_text, locked, resume_snapshot, settle_short, snapshot_of, state_with_opened,
+    committed_order, committed_text, locked, resume_snapshot, settle_short, snapshot_of,
+    state_with_opened,
 };
 use serde_json::json;
 use talaria_app::app::{AppState, UserAction};
@@ -111,6 +112,26 @@ async fn same_profile_switch_opens_first_then_lets_go() {
             .iter()
             .any(|line| line.contains("Resumed: Second work")),
         "the new separator: {lines:?}"
+    );
+
+    // The notice is the last thing on screen after the replayed history, so the replay does
+    // not bury it.
+    let order = committed_order(&log);
+    let notice = order
+        .iter()
+        .position(|entry| entry.contains("Now showing"))
+        .unwrap_or_else(|| panic!("the switch notice: {order:?}"));
+    let header = order
+        .iter()
+        .position(|entry| entry.contains("Resumed: Second work"))
+        .expect("the new separator");
+    let last_cell = order
+        .iter()
+        .rposition(|entry| entry.starts_with("cell: "))
+        .expect("the history is replayed");
+    assert!(
+        notice > header && notice > last_cell,
+        "the switch notice comes after the replayed history: {order:?}"
     );
 }
 

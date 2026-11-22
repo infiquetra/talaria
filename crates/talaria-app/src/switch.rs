@@ -213,6 +213,7 @@ fn forward_events(app: &AppState, mut inbound: tokio::sync::mpsc::Receiver<LinkE
 /// Branch the foreground session on the foreground link, then switch into
 /// the child.
 pub async fn branch_foreground(app: &mut AppState, title: Option<String>) -> BranchOutcome {
+    let name = title.clone();
     let request = match branch_request(app, title) {
         Ok(request) => request,
         Err(refused) => return refused,
@@ -240,7 +241,9 @@ pub async fn branch_foreground(app: &mut AppState, title: Option<String>) -> Bra
         }
     }
     match outcome {
-        MutationOutcome::Committed(receipt) => open_branch_child(app, &receipt).await,
+        MutationOutcome::Committed(receipt) => {
+            open_branch_child(app, &receipt, name.as_deref()).await
+        }
         outcome => branch_refusal(&outcome),
     }
 }
@@ -296,9 +299,28 @@ pub fn branch_refusal(outcome: &MutationOutcome) -> BranchOutcome {
     }
 }
 
+/// The notice a branch commits after the child's replayed history: where the operator is,
+/// where the branch came from, how to go back, and, when text followed `/branch`, that it
+/// named the branch and was not sent.
+fn branch_notice(parent: &str, child: &str, copied: u64, name: Option<&str>) -> String {
+    let mut notice = format!(
+        "Branched into \"{child}\" with {copied} earlier messages. You are now in the new session.\n\"{parent}\" is unchanged; /resume returns to it."
+    );
+    if name.is_some_and(|name| !name.trim().is_empty()) {
+        notice.push_str(
+            "\nThe text after /branch is the new session's name, not a prompt; nothing was sent.",
+        );
+    }
+    notice
+}
+
 /// Open the child a committed branch made, then let go of the parent. When the child does
 /// not open, the parent stays in front and nothing is detached.
-pub async fn open_branch_child(app: &mut AppState, receipt: &Value) -> BranchOutcome {
+pub async fn open_branch_child(
+    app: &mut AppState,
+    receipt: &Value,
+    name: Option<&str>,
+) -> BranchOutcome {
     let child_id = receipt
         .get("branched_session_id")
         .and_then(Value::as_str)
@@ -324,11 +346,10 @@ pub async fn open_branch_child(app: &mut AppState, receipt: &Value) -> BranchOut
             stop_voice(app, &service, &parent.session_id).await;
             service.detach(&parent).await;
             let title = session_title(child.title.as_deref(), None, child.state.cells());
+            let parent_title = session_title(parent.title.as_deref(), None, parent.state.cells());
             app.opened = Some(child);
             BranchOutcome::Branched {
-                notice: format!(
-                    "Branched into \"{title}\" with {copied} earlier messages. The child continues from here."
-                ),
+                notice: branch_notice(&parent_title, &title, copied, name),
             }
         }
         Err(_) => BranchOutcome::Refused {
@@ -395,5 +416,39 @@ pub(crate) async fn stop_voice(app: &mut AppState, service: &SessionService, ses
         if !warning.is_empty() {
             app.voice_warning(session_id, String::from_utf8_lossy(&warning).into_owned());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::branch_notice;
+
+    #[test]
+    fn the_branch_notice_is_two_lines_without_a_name_and_three_with_one() {
+        let plain = branch_notice("Launch title", "Launch title #2", 9, None);
+        assert_eq!(plain.lines().count(), 2, "{plain}");
+        assert!(
+            plain.contains("\"Launch title\" is unchanged; /resume returns to it."),
+            "the notice names the session it came from: {plain}"
+        );
+        assert!(
+            plain.starts_with("Branched into \"Launch title #2\""),
+            "{plain}"
+        );
+
+        let blank = branch_notice("Launch title", "Launch title #2", 9, Some("  "));
+        assert_eq!(
+            blank.lines().count(),
+            2,
+            "a blank name adds no note: {blank}"
+        );
+
+        let named = branch_notice("Launch title", "poem", 9, Some("poem"));
+        assert_eq!(named.lines().count(), 3, "{named}");
+        assert!(named.contains("not a prompt"), "{named}");
+        assert!(
+            named.contains("\"Launch title\" is unchanged"),
+            "the original, not the branch, is the unchanged one: {named}"
+        );
     }
 }

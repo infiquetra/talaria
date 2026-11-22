@@ -119,7 +119,7 @@ fn local_commands_are_registered() {
         ("rename", "Rename the current session"),
         (
             "branch",
-            "Branch the current session and switch into the child",
+            "Copy this conversation into a new session and switch to it; the original stays as it was",
         ),
         ("export", "Export a session to a file"),
     ] {
@@ -127,6 +127,9 @@ fn local_commands_are_registered() {
         assert!(entry.takes_argument, "{name} takes an argument");
         assert_eq!(entry.summary, summary);
     }
+    // The text after /branch names the new session; the hint says so.
+    let branch = table.find("branch").expect("the command is registered");
+    assert_eq!(branch.args_hint, "[<name for the new session>]");
 }
 
 #[tokio::test]

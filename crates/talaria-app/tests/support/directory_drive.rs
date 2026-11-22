@@ -50,6 +50,8 @@ pub struct ScreenLog {
     pub draw_at: Vec<Instant>,
     pub lines: Vec<String>,
     pub cells: Vec<String>,
+    /// Every committed line and cell in the order the screen received them.
+    pub order: Vec<String>,
     pub drafts: Vec<String>,
     pub session: Option<String>,
     pub running: bool,
@@ -121,11 +123,20 @@ impl Screen for Probe {
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
-        locked(&self.log).lines.extend(lines);
+        let mut log = locked(&self.log);
+        log.order
+            .extend(lines.iter().map(|line| format!("line: {line}")));
+        log.lines.extend(lines);
     }
 
     fn commit_cells(&mut self, cells: &[Cell]) {
-        locked(&self.log).cells.extend(cells.iter().map(cell_text));
+        let mut log = locked(&self.log);
+        log.order.extend(
+            cells
+                .iter()
+                .map(|cell| format!("cell: {}", cell_text(cell))),
+        );
+        log.cells.extend(cells.iter().map(cell_text));
     }
 
     fn load_draft(&mut self, text: &str) {
@@ -318,6 +329,12 @@ pub fn sorted_keys(value: &Value) -> Vec<String> {
 
 pub fn committed_text(log: &Log) -> Vec<String> {
     locked(log).lines.clone()
+}
+
+/// Every committed line and cell in the order the screen received them, as `line: <text>` and
+/// `cell: <text>`.
+pub fn committed_order(log: &Log) -> Vec<String> {
+    locked(log).order.clone()
 }
 
 pub fn state_with_opened(

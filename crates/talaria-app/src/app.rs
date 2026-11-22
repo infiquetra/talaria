@@ -2375,6 +2375,8 @@ pub enum AppEffect {
     /// Open the child a committed branch made, then let go of the parent.
     OpenBranchChild {
         receipt: Value,
+        /// The text typed after `/branch`, which Hermes took as the child's name.
+        name: Option<String>,
     },
     /// Send a rename the loop built with the one ledger, over the side connection.
     RenameRow {
@@ -8081,15 +8083,19 @@ fn switched(
             vec![AppEffect::CommitLines(lines)]
         }
         SwitchOutcome::Switched { notice } => {
-            let mut effects = vec![AppEffect::CommitLines(vec![notice])];
-            if let Some(install) = install {
-                if let Some(target) = target {
-                    if state.appearance.set_file_profile(&target.profile) {
-                        effects.push(AppEffect::ThemeFileCommand("reload".into()));
+            // The notice follows the new session's replayed history, so it is not buried.
+            let mut effects = Vec::new();
+            match install {
+                Some(install) => {
+                    if let Some(target) = target {
+                        if state.appearance.set_file_profile(&target.profile) {
+                            effects.push(AppEffect::ThemeFileCommand("reload".into()));
+                        }
+                        state.profile = target.profile;
                     }
-                    state.profile = target.profile;
+                    effects.extend(install_session(state, install, Some(notice)));
                 }
-                effects.extend(install_session(state, install));
+                None => effects.push(notice_lines(&notice)),
             }
             effects.extend(close_picker(state));
             effects
@@ -8117,9 +8123,12 @@ fn branched(
     state.session_action = false;
     match outcome {
         BranchOutcome::Branched { notice } => {
-            let mut effects = vec![AppEffect::CommitLines(vec![notice])];
-            if let Some(install) = install {
-                effects.extend(install_session(state, install));
+            // The notice follows the child's replayed history, so the copied messages do not
+            // bury it.
+            let mut effects = Vec::new();
+            match install {
+                Some(install) => effects.extend(install_session(state, install, Some(notice))),
+                None => effects.push(notice_lines(&notice)),
             }
             effects.extend(close_picker(state));
             effects
@@ -8149,13 +8158,24 @@ fn branch_sent(
         return vec![AppEffect::BranchSession { request: retry }];
     }
     match outcome {
-        MutationOutcome::Committed(receipt) => vec![AppEffect::OpenBranchChild { receipt }],
+        MutationOutcome::Committed(receipt) => {
+            let name = request
+                .payload
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            vec![AppEffect::OpenBranchChild { receipt, name }]
+        }
         outcome => branched(state, crate::switch::branch_refusal(&outcome), None),
     }
 }
 
 /// Put the new session in front: the link, the service, the fences and the history.
-fn install_session(state: &mut AppState, install: SwitchInstall) -> Vec<AppEffect> {
+fn install_session(
+    state: &mut AppState,
+    install: SwitchInstall,
+    notice: Option<String>,
+) -> Vec<AppEffect> {
     let SwitchInstall {
         opened,
         service,
@@ -8192,7 +8212,7 @@ fn install_session(state: &mut AppState, install: SwitchInstall) -> Vec<AppEffec
             move || submission_id(&launch_id, counter.fetch_add(1, Ordering::SeqCst) + 1),
         )))));
     }
-    effects.extend(opened_session(state, opened, None));
+    effects.extend(opened_session(state, opened, notice));
     effects.extend(prepare_cron(state, true));
     effects
 }
@@ -13718,10 +13738,12 @@ fn apply<S: Screen>(
                     }
                 });
             }
-            AppEffect::OpenBranchChild { receipt } => {
+            AppEffect::OpenBranchChild { receipt, name } => {
                 let mut copy = state.working_copy();
                 executor.send_later(async move {
-                    let outcome = crate::switch::open_branch_child(&mut copy, &receipt).await;
+                    let outcome =
+                        crate::switch::open_branch_child(&mut copy, &receipt, name.as_deref())
+                            .await;
                     let install = copy.into_install();
                     AppMessage::Branched { outcome, install }
                 });

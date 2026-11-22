@@ -272,8 +272,8 @@ const BUILTIN: &[LocalCommand] = &[
     LocalCommand {
         name: "branch",
         aliases: &[],
-        summary: "Branch the current session and switch into the child",
-        args_hint: "[<title>]",
+        summary: "Copy this conversation into a new session and switch to it; the original stays as it was",
+        args_hint: "[<name for the new session>]",
         takes_argument: true,
         action: LocalAction::Branch,
         tag: "talaria",

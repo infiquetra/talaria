@@ -4,8 +4,8 @@ use crate::directory_drive as drive;
 use crate::mock_gateway;
 
 use drive::{
-    committed_text, locked, resume_snapshot, settle_short, snapshot_of, sorted_keys,
-    state_with_opened,
+    committed_order, committed_text, locked, resume_snapshot, settle_short, snapshot_of,
+    sorted_keys, state_with_opened,
 };
 use hermes_client::liveness::LinkEvent;
 use hermes_client::{Decoded, Generation, Inbound, decode_frame};
@@ -268,6 +268,10 @@ async fn taken_title_is_a_gateway_error() {
 async fn branch_switches_into_the_child_and_adopts_its_fences() {
     let rig = drive::Rig::start();
     let folder = rig.folder.to_string_lossy().to_string();
+    // The parent carries a title Talaria knows, so the notice can name it.
+    let mut parent = resume_snapshot(&folder);
+    parent["info"]["title"] = json!("Launch title");
+    rig.gateway.set_resume_snapshot(parent);
     rig.gateway
         .set_mutation_state("local-session-1", 7, 3, "Launch title", false, 9);
     let mut child = resume_snapshot(&folder);
@@ -340,8 +344,9 @@ async fn branch_switches_into_the_child_and_adopts_its_fences() {
 
     let lines = committed_text(&log);
     assert!(
-        lines.iter().any(|line| line
-            == "Branched into \"Launch title #2\" with 9 earlier messages. The child continues from here."),
+        lines.iter().any(|line| line.starts_with(
+            "\u{b7} Branched into \"Launch title #2\" with 9 earlier messages. You are now in the new session."
+        )),
         "the branch notice: {lines:?}"
     );
     assert!(
@@ -350,6 +355,125 @@ async fn branch_switches_into_the_child_and_adopts_its_fences() {
             .any(|line| line.contains("Resumed: Launch title #2")),
         "the child separator: {lines:?}"
     );
+    // Without a typed name there is nothing to explain about a name.
+    assert!(
+        !lines.iter().any(|line| line.contains("not a prompt")),
+        "no name note without a name: {lines:?}"
+    );
+    // The way back is on screen, and it names the session the branch came from.
+    let way_back = lines
+        .iter()
+        .find(|line| line.contains("is unchanged"))
+        .unwrap_or_else(|| panic!("the original is said to be unchanged: {lines:?}"));
+    assert!(way_back.contains("/resume"), "the way back: {way_back}");
+    // It names the parent, not the new branch.
+    assert_eq!(
+        way_back, "\u{b7} \"Launch title\" is unchanged; /resume returns to it.",
+        "the notice names the session the branch came from"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("with 9 earlier messages") && line.contains("Branched into")),
+        "the notice names the child: {lines:?}"
+    );
+
+    // The notice is the last thing on the screen after the child's replayed history, so the
+    // copied messages do not bury it.
+    let order = committed_order(&log);
+    let notice = order
+        .iter()
+        .position(|entry| entry.contains("Branched into"))
+        .unwrap_or_else(|| panic!("the branch notice: {order:?}"));
+    let replayed_cells = order
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.starts_with("cell: "))
+        .map(|(at, _)| at)
+        .max()
+        .expect("the child's history is replayed");
+    let header = order
+        .iter()
+        .position(|entry| entry.contains("Resumed: Launch title #2"))
+        .expect("the child separator");
+    assert!(
+        notice > replayed_cells && notice > header,
+        "the notice comes after the replayed history: {order:?}"
+    );
+}
+
+#[tokio::test]
+async fn branch_name_is_not_sent_as_a_prompt() {
+    let rig = drive::Rig::start();
+    let folder = rig.folder.to_string_lossy().to_string();
+    rig.gateway
+        .set_mutation_state("local-session-1", 7, 3, "Launch title", false, 9);
+    let mut child = resume_snapshot(&folder);
+    child["session_id"] = json!("child-1");
+    child["revision"] = json!(8);
+    child["execution_generation"] = json!(3);
+    child["info"]["title"] = json!("fixture name, write a fixture");
+    rig.gateway.queue_resume_snapshot(child);
+
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            driver.submit("/branch fixture name, write a fixture");
+            driver.line("Branched into").await;
+            driver.line("not a prompt").await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+
+    let mutate = rig.gateway.requests("session.mutate");
+    assert_eq!(mutate[0].params["operation"], json!("branch"));
+    assert_eq!(
+        mutate[0].params["payload"]["title"],
+        json!("fixture name, write a fixture")
+    );
+    assert!(
+        rig.gateway.requests("prompt.submit").is_empty(),
+        "the text after /branch is a name; it is never sent to the agent"
+    );
+    let lines = committed_text(&log);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("\u{b7} Branched into")
+                && line.contains("fixture name, write a fixture")),
+        "the notice names the branch: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line
+                .contains("The text after /branch is the new session's name, not a prompt")),
+        "the notice says the text became the name: {lines:?}"
+    );
+    // The notice is three lines in a row: the branch, the original, and the name note.
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with("\u{b7} Branched into"))
+        .expect("the branch notice");
+    assert!(
+        lines[start + 1].contains("is unchanged; /resume returns to it."),
+        "the original follows the branch line: {lines:?}"
+    );
+    assert!(
+        lines[start + 2].contains("The text after /branch is the new session's name, not a prompt"),
+        "the name note is the third line: {lines:?}"
+    );
+    let order = committed_order(&log);
+    let notice = order
+        .iter()
+        .position(|entry| entry.contains("not a prompt"))
+        .expect("the name note");
+    let last_cell = order
+        .iter()
+        .rposition(|entry| entry.starts_with("cell: "))
+        .expect("the child's history is replayed");
+    assert!(notice > last_cell, "the name note is last: {order:?}");
 }
 
 #[tokio::test]
