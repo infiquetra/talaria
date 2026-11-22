@@ -70,12 +70,19 @@ pub struct EffortScaleSection {
     hivecode: String,
     save: String,
     hints: Vec<String>,
+    /// The whole terminal's rows, for the height cap.
+    terminal_rows: u16,
     views: Option<ViewStyles>,
 }
 
+/// How far the selector is cut to fit its cap, from nothing cut to the least it draws.
+const CUTS: usize = 7;
+
 impl EffortScaleSection {
+    /// `terminal_rows` is the whole terminal, used only for the height cap: a third of it, as
+    /// the slash palette and the `/theme` selector take, so the composer keeps its rows.
     #[must_use]
-    pub fn new(scale: &EffortScale, keys: ScaleKeyLabels) -> Self {
+    pub fn new(scale: &EffortScale, keys: ScaleKeyLabels, terminal_rows: u16) -> Self {
         let adjust = match (keys.lower, keys.higher) {
             (Some(lower), Some(higher)) => Some(format!("{lower}/{higher} adjust")),
             (Some(one), None) | (None, Some(one)) => Some(format!("{one} adjust")),
@@ -102,6 +109,7 @@ impl EffortScaleSection {
             hivecode: super::render::clean(&scale.hivecode_line()),
             save: super::render::clean(&scale.save_line()),
             hints,
+            terminal_rows,
             views: None,
         }
     }
@@ -162,7 +170,19 @@ impl EffortScaleSection {
             })
     }
 
+    /// The rows drawn at this width within the height cap. A short terminal drops the save
+    /// line, the note, the detail and the "Faster … Smarter" row in that order, then keeps one
+    /// hint row, then draws the compact scale and drops the Hivecode row. The title, the scale
+    /// and a hint row naming Enter and Esc always stay.
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        let cap = usize::from((self.terminal_rows / 3).max(3));
+        (0..CUTS)
+            .map(|cut| self.lines_cut(width, cut))
+            .find(|lines| lines.len() <= cap)
+            .unwrap_or_else(|| self.lines_cut(width, CUTS))
+    }
+
+    fn lines_cut(&self, width: u16, cut: usize) -> Vec<Line<'static>> {
         let columns = usize::from(width);
         let body = width
             .saturating_sub(u16::try_from(INDENT).unwrap_or(0))
@@ -179,10 +199,15 @@ impl EffortScaleSection {
             self.style(t::LIST_HEADER, Style::new().add_modifier(Modifier::BOLD)),
         )];
         let switch = format!("{}{SEPARATOR}{TOGGLE}", self.hivecode);
-        match self.layout(columns) {
+        let switch_row = cut < CUTS;
+        match self.layout(columns).filter(|_| cut < CUTS - 1) {
             Some((gap, side)) => {
-                lines.extend(self.scale_rows(gap, side));
-                if !side {
+                let [ends, rule, labels] = self.scale_rows(gap, side);
+                if cut < 4 {
+                    lines.push(ends);
+                }
+                lines.extend([rule, labels]);
+                if !side && switch_row {
                     lines.extend(wrapped(&switch, Style::new()));
                 }
             }
@@ -197,16 +222,28 @@ impl EffortScaleSection {
                     Span::styled(self.selected.as_wire(), self.chosen()),
                     Span::raw(format!(" \u{25b6}   {} of {}", at + 1, self.levels.len())),
                 ]));
-                lines.extend(wrapped(&switch, Style::new()));
+                if switch_row {
+                    lines.extend(wrapped(&switch, Style::new()));
+                }
             }
         }
-        lines.extend(wrapped(&self.detail, Style::new()));
-        if let Some(note) = &self.note {
+        if cut < 3 {
+            lines.extend(wrapped(&self.detail, Style::new()));
+        }
+        if let Some(note) = self.note.as_ref().filter(|_| cut < 2) {
             lines.extend(wrapped(note, self.muted()));
         }
-        lines.extend(wrapped(&self.save, Style::new()));
+        if cut < 1 {
+            lines.extend(wrapped(&self.save, Style::new()));
+        }
+        let hint_width = columns.saturating_sub(1).max(1);
+        let hints = if cut < 5 {
+            hint_rows(&self.hints, hint_width)
+        } else {
+            vec![essential_hint(hint_width)]
+        };
         lines.extend(
-            hint_rows(&self.hints, columns.saturating_sub(1).max(1))
+            hints
                 .into_iter()
                 .map(|row| Line::styled(format!(" {row}"), self.muted())),
         );
@@ -264,6 +301,16 @@ impl EffortScaleSection {
     }
 }
 
+/// The one hint row a short terminal keeps: the keys that apply and close the selector.
+fn essential_hint(width: usize) -> String {
+    let full = format!("Enter apply{SEPARATOR}Esc cancel");
+    if full.chars().count() <= width {
+        full
+    } else {
+        format!("Enter{SEPARATOR}Esc")
+    }
+}
+
 /// The hints joined by ` · `, breaking only between two hints.
 fn hint_rows(hints: &[String], width: usize) -> Vec<String> {
     let mut rows: Vec<String> = Vec::new();
@@ -294,7 +341,11 @@ impl LiveSection for EffortScaleSection {
                 buf[(x, y)].reset();
             }
         }
-        Paragraph::new(self.lines(area.width)).render(area, buf);
+        // A cut section keeps its bottom rows, so the hint naming Enter and Esc stays.
+        let lines = self.lines(area.width);
+        let hidden =
+            u16::try_from(lines.len().saturating_sub(usize::from(area.height))).unwrap_or(u16::MAX);
+        Paragraph::new(lines).scroll((hidden, 0)).render(area, buf);
         if let Some(views) = &self.views {
             views.finish(area, buf, t::LIST_ROW, false);
         }

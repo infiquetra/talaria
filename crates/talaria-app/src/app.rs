@@ -3384,7 +3384,9 @@ fn connectors_input(
 /// A session or profile switch, whichever path starts it, first closes an open `/theme` or
 /// `/skin` selector and waits for any skin write in flight.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
+    let cards = choice::cards(state);
     let effects = update_message(state, message);
+    let effects = choice::yield_to_card(state, cards.as_deref(), effects);
     choice::before_switch(state, effects)
 }
 

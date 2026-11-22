@@ -6,9 +6,13 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::style::Modifier;
 use talaria_core::models::{Effort, EffortScale, ScaleFacts, ScaleKey};
+use talaria_tui::composer::Composer;
 use talaria_tui::keys::KeyMap;
-use talaria_tui::live::LiveSection;
+use talaria_tui::live::{LiveSection, LiveView, max_live_height};
 use talaria_tui::palette::{EffortScaleSection, scale_key_labels};
+
+/// A terminal tall enough that the selector draws every row.
+const TALL: u16 = 60;
 
 fn scale() -> EffortScale {
     EffortScale::new(ScaleFacts {
@@ -30,7 +34,7 @@ fn moved() -> EffortScale {
 }
 
 fn section(scale: &EffortScale) -> EffortScaleSection {
-    EffortScaleSection::new(scale, scale_key_labels(&KeyMap::defaults()))
+    EffortScaleSection::new(scale, scale_key_labels(&KeyMap::defaults()), TALL)
 }
 
 fn draw(section: &EffortScaleSection, width: u16) -> (Vec<String>, Buffer) {
@@ -216,7 +220,7 @@ fn the_hints_use_the_keys_the_user_bound() {
     .collect();
     let (map, notices) = KeyMap::from_entries(&entries);
     assert!(notices.is_empty(), "{notices:?}");
-    let section = EffortScaleSection::new(&moved(), scale_key_labels(&map));
+    let section = EffortScaleSection::new(&moved(), scale_key_labels(&map), TALL);
     let (rows, _) = draw(&section, 120);
     let hint = rows.last().expect("hint row");
     assert!(hint.starts_with(" Alt+H/Alt+L adjust"), "{hint:?}");
@@ -248,5 +252,142 @@ fn names_hermes_reported_cannot_carry_control_characters_into_the_panel() {
         rows.iter()
             .any(|row| row.contains("Also save for new sessions on work")),
         "{rows:#?}"
+    );
+}
+
+/// A fixed-height stand-in for a live section.
+struct Rows(u16);
+
+impl LiveSection for Rows {
+    fn height(&self, _: u16) -> u16 {
+        self.0
+    }
+    fn render(&self, _: ratatui::layout::Rect, _: &mut Buffer) {}
+}
+
+/// The rows the selector draws in the area the live region gives it.
+fn drawn(section: &EffortScaleSection, width: u16, height: u16) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
+    terminal
+        .draw(|frame| section.render(frame.area(), frame.buffer_mut()))
+        .expect("draw");
+    let buffer = terminal.backend().buffer().clone();
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn a_short_terminal_keeps_the_composer_the_working_row_and_the_enter_and_esc_hint() {
+    // The run loop's order: the tail, the working row, the composer, the selector, the status
+    // bar. The live region is the terminal less two rows.
+    for (cols, terminal_rows) in [(80u16, 24u16), (80, 16), (80, 12), (40, 12), (20, 12)] {
+        let mut composer = Composer::new(KeyMap::defaults());
+        let composer = composer.section(cols, 10);
+        let (tail, working, status) = (Rows(3), Rows(1), Rows(1));
+        let scale = EffortScaleSection::new(
+            &moved(),
+            scale_key_labels(&KeyMap::defaults()),
+            terminal_rows,
+        );
+        let view = LiveView {
+            sections: vec![&tail, &working, &composer, &scale, &status],
+        };
+        let rects = view.layout(cols, max_live_height(terminal_rows));
+        let size = format!("{cols}x{terminal_rows}");
+        assert_eq!(rects[1].height, 1, "{size}: the working row keeps its row");
+        assert_eq!(
+            rects[2].height,
+            composer.height(cols),
+            "{size}: the composer keeps its rows"
+        );
+        assert_eq!(
+            rects[3].height,
+            scale.height(cols),
+            "{size}: the selector fits"
+        );
+        assert!(
+            scale.height(cols) <= (terminal_rows / 3).max(3),
+            "{size}: within a third of the terminal"
+        );
+        let rows = drawn(&scale, cols, rects[3].height);
+        assert!(
+            rows[0].contains("Effort"),
+            "{size}: the title stays: {rows:#?}"
+        );
+        let hint = rows.last().expect("hint row");
+        assert!(
+            hint.contains("Enter") && hint.contains("Esc"),
+            "{size}: the last row names Enter and Esc: {rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("xhigh") || row.contains('\u{25b2}')),
+            "{size}: the scale or its compact form stays: {rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn rows_go_in_order_save_note_detail_then_the_ends_row() {
+    let width = 80;
+    let rows_at = |terminal_rows: u16| {
+        let section = EffortScaleSection::new(
+            &moved(),
+            scale_key_labels(&KeyMap::defaults()),
+            terminal_rows,
+        );
+        drawn(&section, width, section.height(width))
+    };
+    // Seven rows at 21 and more: everything.
+    let full = rows_at(21);
+    assert_eq!(full.len(), 7, "{full:#?}");
+    // Six: the save line goes first.
+    let six = rows_at(18);
+    assert!(!six.iter().any(|row| row.contains("Also save")), "{six:#?}");
+    assert!(
+        six.iter().any(|row| row.contains("Extended thinking")),
+        "{six:#?}"
+    );
+    // Five: then the detail (this level has no note).
+    let five = rows_at(15);
+    assert!(
+        !five.iter().any(|row| row.contains("Extended thinking")),
+        "{five:#?}"
+    );
+    assert!(five.iter().any(|row| row.contains("Smarter")), "{five:#?}");
+    // Four: then the "Faster … Smarter" row; the hint row still names every key.
+    let four = rows_at(12);
+    assert!(!four.iter().any(|row| row.contains("Smarter")), "{four:#?}");
+    assert_eq!(four.last().map(String::as_str), Some(HINT), "{four:#?}");
+    // Three: the compact scale, with one hint row.
+    let three = rows_at(9);
+    assert_eq!(
+        three,
+        [
+            " Effort \u{b7} model-a".to_owned(),
+            "  \u{25c0} xhigh \u{25b6}   6 of 8".to_owned(),
+            " Enter apply \u{b7} Esc cancel".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn a_cut_selector_keeps_its_bottom_rows() {
+    let section = EffortScaleSection::new(&moved(), scale_key_labels(&KeyMap::defaults()), 6);
+    // The status bar took most of an 8-row terminal: two rows are left for the selector.
+    let rows = drawn(&section, 80, 2);
+    assert_eq!(
+        rows,
+        [
+            "  \u{25c0} xhigh \u{25b6}   6 of 8".to_owned(),
+            " Enter apply \u{b7} Esc cancel".to_owned(),
+        ]
     );
 }

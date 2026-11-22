@@ -170,20 +170,69 @@ fn same_tool_call(live: &ToolCell, stored: &ToolCell) -> bool {
 fn same_cell_content(left: &Cell, right: &Cell) -> bool {
     let mut normalized = left.clone();
     match (&mut normalized, right) {
-        (Cell::User(a), Cell::User(b)) => a.id = b.id,
+        // A routed Hivecode prompt shows as typed, while Hermes stores its request with every
+        // run of whitespace folded to one space, so only the words count.
+        (Cell::User(a), Cell::User(b)) => {
+            return a.text.split_whitespace().eq(b.text.split_whitespace());
+        }
         // A stored row never says it was `message.interim` commentary, so that flag is not a
         // difference.
         (Cell::Assistant(a), Cell::Assistant(b)) => {
             a.id = b.id;
             a.interim = b.interim;
         }
-        (Cell::Reasoning(a), Cell::Reasoning(b)) => a.id = b.id,
+        // A stored block never says it was the end-of-turn recap, and whether a block stands
+        // alone is a way of drawing it: only the text counts.
+        (Cell::Reasoning(a), Cell::Reasoning(b)) => {
+            a.id = b.id;
+            a.latest_step = b.latest_step;
+            a.no_reply = b.no_reply;
+        }
         (Cell::Tool(a), Cell::Tool(b)) => return same_tool_call(a, b),
         (Cell::Notice(a), Cell::Notice(b)) => a.id = b.id,
         (Cell::Prompt(a), Cell::Prompt(b)) => a.id = b.id,
         _ => {}
     }
     normalized == *right
+}
+
+/// How many fresh cells the first `count` cells of `shown` stand for, matched in order, or
+/// `None` when they differ. Hermes sends a turn's reasoning with `message.complete` for its
+/// last step only, so a turn that showed that recap never drew the reasoning stored for its
+/// earlier, tool-calling steps: those stored blocks are passed over.
+fn shown_prefix(shown: &[&Cell], count: usize, fresh: &[Cell]) -> Option<usize> {
+    let mut at = 0;
+    for (index, cell) in shown.iter().enumerate().take(count) {
+        loop {
+            if same_cell_content(cell, fresh.get(at)?) {
+                at += 1;
+                break;
+            }
+            if earlier_step_reasoning(&fresh[at..]) && recap_follows(&shown[index..]) {
+                at += 1;
+                continue;
+            }
+            return None;
+        }
+    }
+    Some(at)
+}
+
+/// The first cell is a reasoning block that a tool row follows within its turn.
+fn earlier_step_reasoning(cells: &[Cell]) -> bool {
+    matches!(cells.first(), Some(Cell::Reasoning(_)))
+        && cells[1..]
+            .iter()
+            .take_while(|cell| !cell.starts_turn())
+            .any(|cell| matches!(cell, Cell::Tool(_)))
+}
+
+/// The turn these shown cells belong to drew Hermes's end-of-turn recap at or after the first.
+fn recap_follows(cells: &[&Cell]) -> bool {
+    cells
+        .iter()
+        .take_while(|cell| !cell.starts_turn())
+        .any(|cell| matches!(cell, Cell::Reasoning(block) if block.latest_step))
 }
 
 pub(crate) fn recovered(
@@ -214,25 +263,18 @@ pub(crate) fn recovered(
     // A snapshot draws system rows and the notices of turns Hermes wrote (those carry a body);
     // every other notice was this client's own and has no snapshot counterpart. A settled
     // question or approval has none either: the stored tool row of its call stands for it.
-    let canonical_prefix: Vec<_> = old.state.cells()[..shown]
-        .iter()
-        .filter(|cell| {
-            !matches!(cell, Cell::Notice(notice)
-                if notice.kind != NoticeKind::System
-                    && notice.body.is_none()
-                    && notice.text != talaria_core::side::SIDE_UNKNOWN_NOTICE)
-                && !matches!(cell, Cell::Prompt(_))
-        })
-        .collect();
-    let count = canonical_prefix.len();
+    let canonical = |cell: &&Cell| {
+        !matches!(cell, Cell::Notice(notice)
+            if notice.kind != NoticeKind::System
+                && notice.body.is_none()
+                && notice.text != talaria_core::side::SIDE_UNKNOWN_NOTICE)
+            && !matches!(cell, Cell::Prompt(_))
+    };
+    let count = old.state.cells()[..shown].iter().filter(canonical).count();
+    let canonical_cells: Vec<_> = old.state.cells().iter().filter(canonical).collect();
     let mut effects = Vec::new();
-    let keeps_prefix = fresh.state.cells().len() >= count
-        && canonical_prefix
-            .iter()
-            .zip(&fresh.state.cells()[..count])
-            .all(|(old, fresh)| same_cell_content(old, fresh));
-    if keeps_prefix {
-        state.committed_cells = count;
+    if let Some(kept) = shown_prefix(&canonical_cells, count, fresh.state.cells()) {
+        state.committed_cells = kept;
     } else {
         let cells = fresh.state.cells();
         let total = final_prefix(cells);

@@ -2105,6 +2105,243 @@ fn gap_after_a_live_command_that_differs_reprints_the_transcript() {
         "a different command was not shown again: {effects:#?}"
     );
 }
+
+/// Plays these frames on the open session, after the snapshot's last sequence.
+fn play_live(state: &mut AppState, base: &Value, frames: Vec<(&str, Value)>) {
+    let session = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+        .unwrap_or_default();
+    for (seq, (kind, payload)) in (20_u64..).zip(frames) {
+        let raw = json!({
+            "type": kind,
+            "session_id": session,
+            "seq": seq,
+            "replay_epoch": base["replay_epoch"],
+            "authority_epoch": 1,
+            "execution_generation": 3,
+            "admission_id": "adm-live",
+            "payload": payload,
+        });
+        let frame = EventFrame::from_params(&raw).expect("contract event");
+        update(
+            state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: hermes_client::Inbound::Event(hermes_client::InboundEvent {
+                    generation: hermes_client::Generation(1),
+                    frame,
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+    }
+}
+
+fn opened_on(base: &Value) -> AppState {
+    let mut state = AppState::new(LAUNCH_ID);
+    update(
+        &mut state,
+        AppMessage::Opened {
+            opened: OpenedSession::from_snapshot(snapshot_of(base)),
+            notice: None,
+        },
+    );
+    state
+}
+
+/// Recovers from `extended` after a gap and returns whether the transcript was shown again,
+/// and the cell ranges committed, with the count of cells the fresh state holds.
+fn recover_from(
+    state: &mut AppState,
+    extended: &Value,
+) -> (bool, Vec<std::ops::Range<usize>>, usize) {
+    let effects = update(
+        state,
+        AppMessage::Recovered(Ok(OpenedSession::from_snapshot(snapshot_of(extended)))),
+    );
+    let committed = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            AppEffect::CommitCells(range) => Some(range.clone()),
+            _ => None,
+        })
+        .collect();
+    let total = state
+        .opened
+        .as_ref()
+        .map_or(0, |opened| opened.state.cells().len());
+    (transcript_refreshed(&effects), committed, total)
+}
+
+/// A routed Hivecode prompt shown live as typed (`typed`), then a gap whose snapshot holds the
+/// row Hermes stored for it (`stored`, the request as Hermes folds it).
+fn gap_after_routed_prompt(
+    typed: &str,
+    stored: &str,
+) -> (bool, Vec<std::ops::Range<usize>>, usize) {
+    let base = resume_snapshot("/work/proj");
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    // synthetic: the skill_invocation row the pinned gateway's history projection writes.
+    messages.push(json!({"role": "user", "display_kind": "skill_invocation",
+        "text": format!("/talaria-workflows {stored} Session model: m1 on p1")}));
+    messages.push(json!({"role": "assistant", "text": "Done."}));
+    messages.push(json!({"role": "user", "text": "And one more thing."}));
+    let extended = with_messages(base.clone(), messages);
+    let mut state = opened_on(&base);
+    update(
+        &mut state,
+        AppMessage::PromptDone {
+            events: vec![Event::SubmitCommand {
+                text: format!(
+                    "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill.]\nBODY\n\n\
+                     The user has provided the following instruction alongside the skill \
+                     invocation: {typed}\nSession model: m1 on p1"
+                ),
+                display: typed.to_owned(),
+                submission_id: "routed-1".into(),
+            }],
+            notices: Vec::new(),
+            masked: None,
+        },
+    );
+    play_live(
+        &mut state,
+        &base,
+        vec![
+            ("message.start", json!({})),
+            ("message.delta", json!({"text": "Done."})),
+            ("message.complete", json!({"outcome": "completed"})),
+        ],
+    );
+    let live_text = state.opened.as_ref().and_then(|opened| {
+        opened.state.cells().iter().find_map(|cell| match cell {
+            Cell::User(user) if user.text == typed => Some(()),
+            _ => None,
+        })
+    });
+    assert!(live_text.is_some(), "the live prompt shows as typed");
+    recover_from(&mut state, &extended)
+}
+
+#[test]
+fn gap_after_a_routed_prompt_hermes_folded_keeps_what_was_shown() {
+    // Hermes stores a routed request with every run of whitespace folded to one space, so a
+    // prompt typed on two lines, or with a doubled space, comes back as one line.
+    for (typed, stored) in [
+        ("Plan the parser work.", "Plan the parser work."),
+        (
+            "Plan the parser work.\nThen run the tests.",
+            "Plan the parser work. Then run the tests.",
+        ),
+        ("Plan the  parser work.", "Plan the parser work."),
+    ] {
+        let (refreshed, committed, total) = gap_after_routed_prompt(typed, stored);
+        assert!(
+            !refreshed,
+            "{typed:?}: gap recovery reprinted the transcript"
+        );
+        assert!(
+            committed
+                .iter()
+                .all(|range| range.end - range.start <= 1 && range.end == total),
+            "{typed:?}: only the new message is committed: {committed:?} of {total}"
+        );
+    }
+    // Different words are still a difference.
+    let (refreshed, _, _) = gap_after_routed_prompt(
+        "Plan the parser work.\nThen run the tests.",
+        "Plan the lexer work. Then run the tests.",
+    );
+    assert!(refreshed, "a different stored request was not shown again");
+}
+
+/// A turn that ran one command and got its reasoning only with `message.complete`, as Hermes
+/// sends it when the provider does not stream reasoning; then a gap. `earlier` is the reasoning
+/// the stored tool-calling step carries, if any.
+fn gap_after_tool_turn_with_end_of_turn_reasoning(
+    earlier: Option<&str>,
+    last: &str,
+) -> (bool, Vec<std::ops::Range<usize>>, usize) {
+    let base = resume_snapshot("/work/proj");
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(earlier) = earlier {
+        messages.push(json!({"role": "assistant", "text": "", "reasoning": earlier}));
+    }
+    messages.push(
+        json!({"role": "tool", "name": "terminal", "tool_call_id": "call-t1",
+        "context": "cargo test", "args": {"command": "cargo test"}}),
+    );
+    messages.push(json!({"role": "assistant", "text": "All tests pass.", "reasoning": last}));
+    messages.push(json!({"role": "user", "text": "And one more thing."}));
+    let extended = with_messages(base.clone(), messages);
+    let mut state = opened_on(&base);
+    play_live(
+        &mut state,
+        &base,
+        vec![
+            ("message.start", json!({})),
+            (
+                "tool.start",
+                json!({"tool_id": "call-t1", "name": "terminal", "context": "cargo test",
+                       "args": {"command": "cargo test"}}),
+            ),
+            (
+                "tool.complete",
+                json!({"tool_id": "call-t1", "name": "terminal", "duration_s": 1.5,
+                       "result": json!({"output": "3 passed", "exit_code": 0}).to_string()}),
+            ),
+            ("message.delta", json!({"text": "All tests pass."})),
+            (
+                "message.complete",
+                json!({"text": "All tests pass.",
+                       "reasoning": "The output shows three passing tests."}),
+            ),
+        ],
+    );
+    let recap = state.opened.as_ref().is_some_and(|opened| {
+        opened
+            .state
+            .cells()
+            .iter()
+            .any(|cell| matches!(cell, Cell::Reasoning(block) if block.latest_step))
+    });
+    assert!(recap, "the live reasoning is the turn's end-of-turn recap");
+    recover_from(&mut state, &extended)
+}
+
+#[test]
+fn gap_after_a_tool_turn_with_end_of_turn_reasoning_keeps_what_was_shown() {
+    for earlier in [None, Some("I should run the tests first.")] {
+        let (refreshed, committed, total) = gap_after_tool_turn_with_end_of_turn_reasoning(
+            earlier,
+            "The output shows three passing tests.",
+        );
+        assert!(
+            !refreshed,
+            "{earlier:?}: gap recovery reprinted the transcript"
+        );
+        assert!(
+            committed
+                .iter()
+                .all(|range| range.end - range.start <= 1 && range.end == total),
+            "{earlier:?}: only the new message is committed: {committed:?} of {total}"
+        );
+    }
+    // Stored reasoning that differs from the recap shown is still a difference.
+    let (refreshed, _, _) = gap_after_tool_turn_with_end_of_turn_reasoning(
+        Some("I should run the tests first."),
+        "The output shows two failing tests.",
+    );
+    assert!(refreshed, "a different stored recap was not shown again");
+}
 // ---------------------------------------------------------------------------------------------
 // Prompts
 // ---------------------------------------------------------------------------------------------

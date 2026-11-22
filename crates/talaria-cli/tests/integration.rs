@@ -26,12 +26,18 @@ mod cli_sanitizers;
 mod configure_cmd;
 #[path = "integration/doctor_cli.rs"]
 mod doctor_cli;
+#[path = "integration/effort_scale_card.rs"]
+mod effort_scale_card;
 #[path = "integration/fleet_cmd.rs"]
 mod fleet_cmd;
 #[path = "integration/fleet_external_format.rs"]
 mod fleet_external_format;
 #[path = "integration/herdr_cmd.rs"]
 mod herdr_cmd;
+#[path = "integration/hivecode_launch.rs"]
+mod hivecode_launch;
+#[path = "integration/idle_after_close.rs"]
+mod idle_after_close;
 #[path = "integration/live_acp.rs"]
 mod live_acp;
 #[path = "integration/live_attach_cmd.rs"]

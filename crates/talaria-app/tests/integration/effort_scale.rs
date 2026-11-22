@@ -297,6 +297,62 @@ fn escape_drops_everything_staged() {
     assert_eq!(state.view().effort, Some("high"));
 }
 
+/// A live session event for `s`, as the connection delivers it.
+fn session_event(seq: u64, type_name: &str, payload: serde_json::Value) -> AppMessage {
+    let raw = json!({
+        "type": type_name, "session_id": "s", "seq": seq, "replay_epoch": "",
+        "authority_epoch": 1, "execution_generation": 1, "admission_id": "adm",
+        "payload": payload,
+    });
+    let frame = hermes_contract::events::EventFrame::from_params(&raw).expect("contract event");
+    AppMessage::Link(hermes_client::liveness::LinkEvent::Inbound {
+        item: hermes_client::Inbound::Event(hermes_client::InboundEvent {
+            generation: hermes_client::Generation(1),
+            frame,
+            raw,
+        }),
+        replayed: false,
+    })
+}
+
+#[test]
+fn a_question_arriving_closes_the_scale_as_escape_does() {
+    let mut state = opened();
+    submit(&mut state, "/effort");
+    keys(&mut state, &[ScaleKey::Higher, ScaleKey::ToggleHivecode]);
+    // Other events leave it open.
+    update(&mut state, session_event(1, "message.start", json!({})));
+    assert!(
+        state.view().effort_scale.is_some(),
+        "a turn starting keeps it"
+    );
+    let effects = update(
+        &mut state,
+        session_event(
+            2,
+            "clarify.request",
+            json!({"kind": "clarify", "prompt_id": "q1", "execution_generation": 1,
+                   "question": "Which parser first?", "choices": ["fast", "strict"],
+                   "multi_select": false}),
+        ),
+    );
+    assert!(
+        state
+            .view()
+            .state
+            .is_some_and(|session| session.open_prompts().count() == 1),
+        "the question is open"
+    );
+    assert!(
+        state.view().effort_scale.is_none(),
+        "the scale closed for the card"
+    );
+    assert!(mutations(&effects).is_empty(), "nothing staged was sent");
+    assert_eq!(hivecode_work(&effects), 0);
+    assert!(!state.view().hivecode);
+    assert_eq!(state.view().effort, Some("high"));
+}
+
 #[test]
 fn enter_with_nothing_changed_closes_silently() {
     let mut state = opened();

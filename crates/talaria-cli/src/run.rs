@@ -4248,6 +4248,9 @@ impl Screen for TuiScreen {
         self.sync_prompts(view, now);
         self.sync_configure_prompts(view, now);
         self.sync_confirmation_focus(now);
+        // The `/effort` scale opened while a card was up: the card has the keys, so the scale
+        // closes as Esc would before the card takes this input.
+        let yield_scale = view.effort_scale.is_some() && self.prompts.section().is_some();
         let mut actions = match input {
             ScreenInput::ProfileEdited(result) => {
                 self.take_terminal();
@@ -4297,6 +4300,12 @@ impl Screen for TuiScreen {
             }
             ScreenInput::ComfortNotice(text) => vec![UserAction::Notice(text)],
         };
+        if yield_scale {
+            actions.insert(
+                0,
+                UserAction::EffortScale(talaria_core::models::ScaleKey::Cancel),
+            );
+        }
         self.sync_title();
         self.report_draft(&mut actions);
         self.draw(view);
@@ -4768,7 +4777,7 @@ impl Screen for TuiScreen {
             .choice
             .map(|list| ChoiceSection::new(list, self.rows).with_theme(self.theme.views.clone()));
         let effort_scale = view.effort_scale.map(|scale| {
-            EffortScaleSection::new(scale, scale_key_labels(&self.keymap))
+            EffortScaleSection::new(scale, scale_key_labels(&self.keymap), self.rows)
                 .with_theme(self.theme.views.clone())
         });
         let confirmation = if prompts.is_none() {
@@ -5042,7 +5051,11 @@ impl Screen for TuiScreen {
                 }
                 sections.push(choice);
             } else if let Some(scale) = &effort_scale {
-                sections.push(scale);
+                // A question or approval card holds the keys and closes the scale; until it
+                // does, the scale is not drawn, so the card keeps its rows.
+                if prompts.is_none() {
+                    sections.push(scale);
+                }
             } else if !composer_is_empty || prompts.is_none() {
                 sections.push(&palette);
             }
