@@ -1078,6 +1078,31 @@ fn running_tools_become_unfinished_and_repeats_change_nothing() {
 }
 
 #[test]
+fn an_abandoned_turn_ends_and_seals_what_streamed() {
+    let (mut state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Hal"})),
+        ev(
+            3,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "terminal"}),
+        ),
+    ]);
+    assert_eq!(state.turn(), &TurnState::Running);
+    state.abandon_turn();
+    assert_eq!(state.turn(), &TurnState::Idle);
+    assert!(state.activity().is_none());
+    assert!(assistants(&state)[0].sealed);
+    assert_eq!(tools(&state)[0].status, ToolStatus::Unfinished);
+    assert!(state.live_tail().is_empty(), "{:?}", state.live_tail());
+
+    // An idle session is left as it is.
+    let before = state.clone();
+    state.abandon_turn();
+    assert_eq!(state.cells(), before.cells());
+}
+
+#[test]
 fn inline_diff_is_stripped_of_escape_sequences() {
     let (coloured, _) = run(vec![
         start(),

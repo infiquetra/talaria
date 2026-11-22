@@ -7,7 +7,7 @@ use crate::mock_gateway;
 
 use std::time::{Duration, Instant};
 
-use mock_gateway::{Fixture, StandaloneGateway, fixture_event};
+use mock_gateway::{Behavior, Fixture, StandaloneGateway, fixture_event};
 use serde_json::json;
 use support::Launch;
 
@@ -117,4 +117,69 @@ fn working_row_sits_above_the_composer_until_the_turn_completes() {
     terminal.type_keys("\r");
     let screen = terminal.finish(Duration::from_secs(10));
     assert_eq!(screen.exit_code, Some(0), "{}", screen.text);
+}
+
+/// A running session whose gateway restarts and no longer knows it: the working row leaves
+/// with the turn, and the screen goes quiet.
+// Slow: the link redials after the drop, about a second.
+#[test]
+fn working_row_leaves_when_the_gateway_loses_the_session() {
+    let home = temp_home();
+    let gateway = StandaloneGateway::start(home.path());
+    let id = format!("local-5ee5a11f{}", "0".repeat(56));
+    let mut snapshot = mock_gateway::recorded_resume_snapshot();
+    snapshot["session_id"] = json!(id);
+    snapshot["stored_session_id"] = json!(id);
+    snapshot["prompts"] = json!([]);
+    snapshot["running"] = json!(true);
+    gateway.set_resume_snapshot(snapshot);
+
+    let mut terminal = Launch::new(home.path())
+        .args(&["attach", &id, "--profile", "fixture"])
+        .answer_queries()
+        .spawn();
+    assert!(
+        terminal.wait_for_text("── Resumed: ", Duration::from_secs(10)),
+        "the running session never opened"
+    );
+    assert!(
+        wait_for(&terminal, Duration::from_secs(10), |screen| {
+            working_row_and_next(screen).is_some()
+        }),
+        "no working row while the turn runs:\n{}",
+        terminal.screen_text()
+    );
+
+    // The gateway restarts: the socket drops and the re-attach finds no such session.
+    gateway.queue_behavior("session.resume", Behavior::Refuse("not_found".to_owned()));
+    gateway.block_on(gateway.kill_connection());
+    assert!(
+        terminal.wait_for_text(
+            "This session no longer exists on the gateway.",
+            Duration::from_secs(15)
+        ),
+        "the session-gone notice never showed:\n{}",
+        terminal.screen_text()
+    );
+    assert!(
+        wait_for(&terminal, Duration::from_secs(5), |screen| {
+            !screen.contains("✻ Working")
+        }),
+        "the working row stayed after the session was gone:\n{}",
+        terminal.screen_text()
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    let settled = terminal.raw_output().len();
+    std::thread::sleep(Duration::from_millis(1_000));
+    let idle = terminal.raw_output().len() - settled;
+    assert_eq!(
+        idle, 0,
+        "the screen wrote {idle} bytes in a second after the session was gone"
+    );
+
+    terminal.type_keys("/quit");
+    assert!(terminal.wait_for_text("/quit", Duration::from_secs(10)));
+    std::thread::sleep(Duration::from_millis(250));
+    terminal.type_keys("\r");
+    let _ = terminal.finish(Duration::from_secs(10));
 }

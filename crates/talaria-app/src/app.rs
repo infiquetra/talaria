@@ -9519,6 +9519,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
         event @ LinkEvent::State(LinkState::Failed { .. }) => {
             state.link_state = LinkView::Failed;
             state.link_failed = true;
+            abandon_foreground_turn(state);
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
             client_voice_link_lost(state, &mut effects);
@@ -9838,6 +9839,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             }
             let mut closing = close_processes(state);
             state.session_gone = true;
+            abandon_foreground_turn(state);
             let mut effects = link_notice(&event)
                 .map(|text| vec![notice_lines(&text)])
                 .unwrap_or_default();
@@ -9846,6 +9848,14 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             effects.append(&mut closing);
             effects
         }
+    }
+}
+
+/// The foreground session's open turn can no longer finish, so every surface that waits on a
+/// running turn (the working row, the status bar's working count, the interrupt key) lets go.
+fn abandon_foreground_turn(state: &mut AppState) {
+    if let Some(opened) = state.opened.as_mut() {
+        opened.state.abandon_turn();
     }
 }
 
@@ -9904,6 +9914,65 @@ mod link_event_prompt_tests {
     fn request_for_an_unknown_session_is_still_ignored() {
         let effects = link_event(&mut state_with_retained_session(), sudo_request("s9"));
         assert!(effects.is_empty());
+    }
+
+    fn foreground_running(state: &AppState) -> bool {
+        state
+            .opened
+            .as_ref()
+            .is_some_and(|opened| *opened.state.turn() == TurnState::Running)
+    }
+
+    #[test]
+    fn a_session_the_gateway_lost_has_no_running_turn() {
+        let mut state = state_with_retained_session();
+        assert!(foreground_running(&state), "the fixture's turn runs");
+        link_event(
+            &mut state,
+            LinkEvent::SessionGone {
+                session_id: "s2".into(),
+            },
+        );
+        assert!(state.session_gone);
+        assert!(
+            !foreground_running(&state),
+            "the turn of a session that no longer exists still runs: {:?}",
+            state.opened.as_ref().map(|opened| opened.state.turn())
+        );
+    }
+
+    #[test]
+    fn a_failed_link_leaves_no_running_turn() {
+        let mut state = state_with_retained_session();
+        link_event(
+            &mut state,
+            LinkEvent::State(LinkState::Failed {
+                reason: "the gateway closed the connection".into(),
+                next_step: "Try again.".into(),
+            }),
+        );
+        assert!(
+            !foreground_running(&state),
+            "the turn still runs after the link gave up: {:?}",
+            state.opened.as_ref().map(|opened| opened.state.turn())
+        );
+    }
+
+    #[test]
+    fn a_reconnecting_link_keeps_the_running_turn() {
+        let mut state = state_with_retained_session();
+        link_event(
+            &mut state,
+            LinkEvent::State(LinkState::Reconnecting {
+                attempt: 1,
+                retry_in: std::time::Duration::from_millis(250),
+                reason: "connection closed".into(),
+            }),
+        );
+        assert!(
+            foreground_running(&state),
+            "the gateway may still be running the turn while the link redials"
+        );
     }
 }
 

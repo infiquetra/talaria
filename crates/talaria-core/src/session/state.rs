@@ -343,6 +343,19 @@ impl SessionState {
         &self.turn
     }
 
+    /// The gateway can no longer finish the open turn: it lost the session, or the link gave up.
+    /// What streamed is sealed, running tools are marked unfinished, and no turn is left open,
+    /// so nothing waits on a turn that will never end.
+    pub fn abandon_turn(&mut self) {
+        if self.turn != TurnState::Running {
+            return;
+        }
+        self.seal_all();
+        self.advance_prefix();
+        self.turn = TurnState::Idle;
+        self.activity = None;
+    }
+
     /// Latest `thinking.delta` text. Empty text clears it.
     pub fn activity(&self) -> Option<&str> {
         self.activity.as_deref()
