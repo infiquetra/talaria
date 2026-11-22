@@ -60,6 +60,13 @@ function options(tier, label, schema, toolsets) {
   if (toolsets.includes('file') || toolsets.includes('terminal')) opts.isolation = 'worktree';
   return opts;
 }
+// The budget refusing or stopping an agent leaves its call null and ends the run early with
+// what it has; any other error still fails the run.
+let budgetStop = null;
+async function call(prompt, opts) {
+  try { return await agent(prompt, opts); }
+  catch (e) { if (e?.name !== 'BudgetExhaustedError') throw e; budgetStop = e.message; return null; }
+}
 const reviewSpec = {...REVIEW_SPEC}; delete reviewSpec.base; delete reviewSpec.head;
 const a = checkArgs({designers: [1, 5], review: reviewSpec, task: 'task', testCommand: 'command', tiers: {chooser: 'tier', designers: 'tierlist', implementer: 'tier', scout: 'tier'}}, args);
 const tiers = {...DEFAULT_TIERS, ...a.tiers}, count = a.designers ?? 3;
@@ -67,17 +74,23 @@ const scoutSchema = obj({summary: str(4000), relevant_files: arr(str(), 30), con
 const designSchema = obj({title: str(120), approach: str(3000), steps: arr(str(300), 12), files: arr(str(), 30), risks: arr(str(300), 8), tests: arr(str(300), 12)}, ['title', 'approach', 'steps']);
 const chooserSchema = obj({chosen: {type: 'integer', minimum: 0}, rationale: str(2000), plan: arr(str(300), 15), tests: arr(str(300), 12)}, ['chosen', 'rationale', 'plan']);
 const implementSchema = obj({status: {enum: ['done', 'partial', 'blocked']}, base_commit: str(), commit: {type: ['string', 'null']}, branch: str(300), files_changed: arr(str(500), 100), tests_run: arr(obj({command: str(500), exit_code: integer}), 20), summary: str(3000), blocker: str(1000)}, ['status', 'base_commit', 'commit', 'summary']);
+function stopped(design, proposals) {
+  return {status: 'budget-exhausted', task: a.task, design, proposals, implementation: null, review: null, review_error: null, next_steps: 'Nothing was merged or pushed. The run stopped early: ' + budgetStop + '.'};
+}
 phase('Understand');
-const scout = await agent('Understand this task and survey the relevant code, constraints and open questions. Do not modify any file.\nTask: ' + a.task + '\n' + SAFETY, options(tiers.scout, 'understand', scoutSchema, ['file']));
+const scout = await call('Understand this task and survey the relevant code, constraints and open questions. Do not modify any file.\nTask: ' + a.task + '\n' + SAFETY, options(tiers.scout, 'understand', scoutSchema, ['file']));
+if (budgetStop) return stopped(null, []);
 if (!scout) log('understanding failed; designing from the task text alone');
 phase('Design');
-const designs = await parallel(Array.from({length: count}, (_, i) => () => agent(`Task: ${a.task}\n${scout ? material({...scout, relevant_files: scout.relevant_files || [], constraints: scout.constraints || [], questions: scout.questions || []}) : ''}\nYou are designer ${i + 1} of ${count}. Work independently; do not try to guess what the others propose. Propose an approach, steps, files, risks and tests. Do not modify any file. ${SAFETY}`, options(tiers.designers[i % tiers.designers.length], 'design ' + (i + 1), designSchema, ['file']))));
+const designs = await parallel(Array.from({length: count}, (_, i) => () => call(`Task: ${a.task}\n${scout ? material({...scout, relevant_files: scout.relevant_files || [], constraints: scout.constraints || [], questions: scout.questions || []}) : ''}\nYou are designer ${i + 1} of ${count}. Work independently; do not try to guess what the others propose. Propose an approach, steps, files, risks and tests. Do not modify any file. ${SAFETY}`, options(tiers.designers[i % tiers.designers.length], 'design ' + (i + 1), designSchema, ['file']))));
 const proposals = designs.filter(Boolean).map(p => ({...p, files: p.files || [], risks: p.risks || [], tests: p.tests || []}));
+if (budgetStop) return stopped(null, proposals.map(p => p.title));
 if (!proposals.length) fail('every designer failed; nothing to build');
 let chosen = 0, rationale = 'only one proposal', plan = proposals[0].steps, tests = proposals[0].tests;
 if (proposals.length >= 2) {
   phase('Choose');
-  const choice = await agent('Task: ' + a.task + '\nChoose the best proposal by its zero-based index. Return a concrete plan and tests.\n' + proposals.map((p, i) => 'Proposal ' + i + '\n' + material(p)).join('\n'), options(tiers.chooser, 'choose', chooserSchema, ['todo']));
+  const choice = await call('Task: ' + a.task + '\nChoose the best proposal by its zero-based index. Return a concrete plan and tests.\n' + proposals.map((p, i) => 'Proposal ' + i + '\n' + material(p)).join('\n'), options(tiers.chooser, 'choose', chooserSchema, ['todo']));
+  if (budgetStop) return stopped(null, proposals.map(p => p.title));
   if (!choice) { rationale = 'chooser failed; took the first proposal'; log(rationale); }
   else {
     if (!Number.isInteger(choice.chosen) || choice.chosen < 0 || choice.chosen >= proposals.length) fail('the chooser picked proposal ' + choice.chosen + ', which does not exist');
@@ -86,8 +99,8 @@ if (proposals.length >= 2) {
 }
 const result = {status: 'blocked', task: a.task, design: {title: proposals[chosen].title, rationale, plan, tests}, proposals: proposals.map(p => p.title), implementation: null, review: null, review_error: null, next_steps: 'Nothing was merged or pushed. The implementer produced no reviewable commit.'};
 phase('Implement');
-const implemented = await agent(`Task: ${a.task}\n${material({plan, tests})}\n${a.testCommand ? 'Test command hint: ' + a.testCommand : ''}\nWrite the tests first and run them to see them fail; then write the code until they pass; then run the whole test suite. Before you change anything, run git rev-parse HEAD and record the full 40-character lowercase hexadecimal SHA as base_commit. Commit your work on your current branch (one or more commits), then run git rev-parse HEAD and git branch --show-current and set commit to that exact 40-character lowercase hexadecimal SHA (never a short hash) and branch to that exact current branch name (never null). Never push, never amend, never switch, create or delete branches. ${SAFETY}`, options(tiers.implementer, 'implement', implementSchema, ['file', 'terminal']));
-if (!implemented) return result;
+const implemented = await call(`Task: ${a.task}\n${material({plan, tests})}\n${a.testCommand ? 'Test command hint: ' + a.testCommand : ''}\nWrite the tests first and run them to see them fail; then write the code until they pass; then run the whole test suite. Before you change anything, run git rev-parse HEAD and record the full 40-character lowercase hexadecimal SHA as base_commit. Commit your work on your current branch (one or more commits), then run git rev-parse HEAD and git branch --show-current and set commit to that exact 40-character lowercase hexadecimal SHA (never a short hash) and branch to that exact current branch name (never null). Never push, never amend, never switch, create or delete branches. ${SAFETY}`, options(tiers.implementer, 'implement', implementSchema, ['file', 'terminal']));
+if (!implemented) return budgetStop ? stopped(result.design, result.proposals) : result;
 result.implementation = {status: implemented.status, branch: implemented.branch ?? null, base_commit: implemented.base_commit, commit: implemented.commit, files_changed: implemented.files_changed || [], tests_run: implemented.tests_run || [], summary: implemented.summary, blocker: implemented.blocker ?? null};
 if (!['done', 'partial'].includes(implemented.status) || ![implemented.commit, implemented.base_commit].every(s => typeof s === 'string' && COMMIT.test(s)) || implemented.commit === implemented.base_commit) {
   if (!result.implementation.blocker) result.implementation.blocker = implemented.status === 'blocked' ? 'implementer reported blocked without a reason' : 'implementer reported no valid commit';

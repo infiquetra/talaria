@@ -60,6 +60,13 @@ function options(tier, label, schema, toolsets) {
   if (toolsets.includes('file') || toolsets.includes('terminal')) opts.isolation = 'worktree';
   return opts;
 }
+// The budget refusing or stopping an agent leaves its call null and ends the run early with
+// what it has; any other error still fails the run.
+let budgetStop = null;
+async function call(prompt, opts) {
+  try { return await agent(prompt, opts); }
+  catch (e) { if (e?.name !== 'BudgetExhaustedError') throw e; budgetStop = e.message; return null; }
+}
 const a = checkArgs({code: 'bool', docs: 'bool', maxReads: [1, 10], question: 'question', tiers: {'code-reader': 'tier', 'code-searcher': 'tier', planner: 'tier', synthesizer: 'tier', 'web-reader': 'tier', 'web-searcher': 'tier'}, web: 'bool'}, args);
 const enabled = {web: a.web ?? true, code: a.code ?? true, docs: a.docs ?? true};
 if (!enabled.web && !enabled.code && !enabled.docs) fail('at least one of web, code and docs must be true');
@@ -68,8 +75,11 @@ const plannerSchema = obj({web_queries: arr(str(200), 3), code_queries: arr(str(
 const searchSchema = obj({available: boolean, sources: arr(obj({kind: {enum: ['web', 'code', 'doc']}, location: str(500), title: str(200), claim: str(500), quote: str(500)}, ['kind', 'location', 'claim']), 8)});
 const readSchema = obj({accessible: boolean, summary: str(4000), supports: arr(str(500), 10), contradicts: arr(str(500), 10)}, ['accessible', 'summary']);
 const synthesisSchema = obj({answer: str(6000), claims: arr(obj({text: str(500), sources: arr(str(), 5)}), 20), open_questions: arr(str(300), 5)}, ['answer', 'claims']);
+const result = {status: 'no-sources', question: a.question, answer: null, claims: [], removed_claims: [], open_questions: [], sources_read: [], sources_unread: [], unavailable: []};
+function stopped() { result.status = 'budget-exhausted'; return result; }
 phase('Plan');
-const plan = await agent('Plan up to three queries each for web, code and official documentation research. Question: ' + a.question, options(tiers.planner, 'plan', plannerSchema, ['todo']));
+const plan = await call('Plan up to three queries each for web, code and official documentation research. Question: ' + a.question, options(tiers.planner, 'plan', plannerSchema, ['todo']));
+if (budgetStop) return stopped();
 if (!plan) log('planner failed; searching with the question as the only query');
 function queries(key) { return plan?.[key]?.length ? plan[key].slice(0, 3).map(q => q.slice(0, 200)) : [a.question.slice(0, 200)]; }
 const searches = [];
@@ -77,10 +87,9 @@ if (enabled.web) queries('web_queries').forEach((q, i) => searches.push({kind: '
 if (enabled.docs) searches.push({kind: 'doc', label: 'search: docs', queries: queries('doc_queries')});
 if (enabled.code) searches.push({kind: 'code', label: 'search: code', queries: queries('code_queries')});
 phase('Sweep');
-const found = await parallel(searches.map(s => () => agent(`Question: ${a.question}\n${s.kind === 'doc' ? 'Search official documentation.' : 'Search ' + s.kind + ' sources.'}\n${s.queries.map(q => material(q, 200)).join('\n')}\nReturn up to 8 sources. For each, give where it is (a URL, or path:line for code), a title, the claim it supports in one sentence, and a short quote. If your search tools are not available, return available: false and no sources. ${s.kind === 'code' ? SAFETY + ' Do not modify any file.' : ''}`, options(tiers[s.kind === 'code' ? 'code-searcher' : 'web-searcher'], s.label, searchSchema, s.kind === 'code' ? ['file'] : ['web']))));
-const result = {status: 'no-sources', question: a.question, answer: null, claims: [], removed_claims: [], open_questions: [], sources_read: [], sources_unread: [], unavailable: []};
-if ((enabled.web || enabled.docs) && found.every((r, i) => searches[i].kind === 'code' || !r?.available)) result.unavailable.push('web');
-if (enabled.code && found.every((r, i) => searches[i].kind !== 'code' || !r?.available)) result.unavailable.push('code');
+const found = await parallel(searches.map(s => () => call(`Question: ${a.question}\n${s.kind === 'doc' ? 'Search official documentation.' : 'Search ' + s.kind + ' sources.'}\n${s.queries.map(q => material(q, 200)).join('\n')}\nReturn up to 8 sources. For each, give where it is (a URL, or path:line for code), a title, the claim it supports in one sentence, and a short quote. If your search tools are not available, return available: false and no sources. ${s.kind === 'code' ? SAFETY + ' Do not modify any file.' : ''}`, options(tiers[s.kind === 'code' ? 'code-searcher' : 'web-searcher'], s.label, searchSchema, s.kind === 'code' ? ['file'] : ['web']))));
+if (!budgetStop && (enabled.web || enabled.docs) && found.every((r, i) => searches[i].kind === 'code' || !r?.available)) result.unavailable.push('web');
+if (!budgetStop && enabled.code && found.every((r, i) => searches[i].kind !== 'code' || !r?.available)) result.unavailable.push('code');
 function location(s) { s = s.trim(); if (/^https?:\/\//i.test(s)) s = s.split('#')[0].replace(/\/$/, ''); return s; }
 const merged = new Map();
 found.forEach((response, searchIndex) => {
@@ -96,16 +105,24 @@ found.forEach((response, searchIndex) => {
 const sources = [...merged.values()].sort((a, b) => b.searchers.size - a.searchers.size || cmp(a.kind, b.kind) || cmp(a.location, b.location));
 const selected = sources.slice(0, maxReads);
 result.sources_unread = sources.slice(maxReads).map(s => ({location: s.location, kind: s.kind}));
+if (budgetStop) { result.sources_unread = sources.map(s => ({location: s.location, kind: s.kind})); return stopped(); }
 if (selected.length) phase('Read');
 const reports = await pipeline(selected, async (source, item, i) => {
-  const reader = await agent(`Question: ${a.question}\nSource location and attributed claims:\n${material(source.location, 500)}\n${material(source.claims)}\nOpen this source and read it. Say whether it supports, contradicts or does not address each claim. If you cannot open it, or your tools for it are not available, set accessible to false. ${source.kind === 'code' ? SAFETY + ' Do not modify any file.' : ''}`, options(tiers[source.kind === 'code' ? 'code-reader' : 'web-reader'], 'read: ' + (i + 1), readSchema, source.kind === 'code' ? ['file'] : ['web']));
+  const reader = await call(`Question: ${a.question}\nSource location and attributed claims:\n${material(source.location, 500)}\n${material(source.claims)}\nOpen this source and read it. Say whether it supports, contradicts or does not address each claim. If you cannot open it, or your tools for it are not available, set accessible to false. ${source.kind === 'code' ? SAFETY + ' Do not modify any file.' : ''}`, options(tiers[source.kind === 'code' ? 'code-reader' : 'web-reader'], 'read: ' + (i + 1), readSchema, source.kind === 'code' ? ['file'] : ['web']));
+  if (!reader && budgetStop) return null;
   return {location: source.location, kind: source.kind, accessible: reader?.accessible ?? false, summary: reader?.summary ?? null, supports: reader?.supports || [], contradicts: reader?.contradicts || []};
 });
+if (budgetStop) {
+  result.sources_read = reports.filter(Boolean);
+  result.sources_unread = [...selected.filter((_, i) => !reports[i]).map(s => ({location: s.location, kind: s.kind})), ...result.sources_unread];
+  return stopped();
+}
 result.sources_read = reports.map((r, i) => r || {location: selected[i].location, kind: selected[i].kind, accessible: false, summary: null, supports: [], contradicts: []});
 const accessible = result.sources_read.filter(r => r.accessible);
 if (!accessible.length) return result;
 phase('Synthesize');
-const synthesis = await agent('Question: ' + a.question + '\nAnswer it from these accessible reports. Cite source locations for every claim.\n' + accessible.map(r => material({location: r.location, summary: r.summary, supports: r.supports, contradicts: r.contradicts})).join('\n'), options(tiers.synthesizer, 'synthesize', synthesisSchema, ['todo']));
+const synthesis = await call('Question: ' + a.question + '\nAnswer it from these accessible reports. Cite source locations for every claim.\n' + accessible.map(r => material({location: r.location, summary: r.summary, supports: r.supports, contradicts: r.contradicts})).join('\n'), options(tiers.synthesizer, 'synthesize', synthesisSchema, ['todo']));
+if (!synthesis && budgetStop) return stopped();
 if (!synthesis) fail('synthesizer failed; no answer produced');
 result.status = 'answered'; result.answer = synthesis.answer; result.open_questions = synthesis.open_questions || [];
 for (const claim of synthesis.claims) {

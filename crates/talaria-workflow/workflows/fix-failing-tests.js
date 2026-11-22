@@ -60,13 +60,21 @@ function options(tier, label, schema, toolsets) {
   if (toolsets.includes('file') || toolsets.includes('terminal')) opts.isolation = 'worktree';
   return opts;
 }
+// The budget refusing or stopping an agent leaves its call null and ends the run early with
+// what it has; any other error still fails the run.
+let budgetStop = null;
+async function call(prompt, opts) {
+  try { return await agent(prompt, opts); }
+  catch (e) { if (e?.name !== 'BudgetExhaustedError') throw e; budgetStop = e.message; return null; }
+}
 const a = checkArgs({maxFixes: [1, 10], testCommand: 'command', tiers: {finder: 'tier', fixer: 'tier', verifier: 'tier'}}, args);
 const tiers = {...DEFAULT_TIERS, ...a.tiers};
 const finderSchema = obj({test_command: str(500), exit_code: integer, failing: arr(obj({id: str(200), file: str(500), run_one: str(500), excerpt: str(1500)}, ['id', 'run_one']), 50), total_failing: {type: 'integer', minimum: 0}, output_tail: str(2000)});
 const fixerSchema = obj({status: {enum: ['fixed', 'not-fixed']}, commit: {type: ['string', 'null']}, branch: str(300), files_changed: arr(str(), 50), test_edited: boolean, summary: str(2000)}, ['status', 'commit', 'summary']);
 const verifierSchema = obj({fast_forwarded: boolean, target_passed: boolean, suite_completed: boolean, suite_exit_code: integer, still_failing: arr(str(200), 50), output_tail: str(2000)}, ['fast_forwarded', 'target_passed', 'suite_completed', 'suite_exit_code', 'still_failing']);
 phase('Find');
-const found = await agent(`Run the test suite with ${a.testCommand || 'the command this project normally uses; look at its build files'}. Do not modify any file. Report the command you ran, its exit code, every failing test with a command that runs only that test, and the last 2000 characters of the output. ${SAFETY}`, options(tiers.finder, 'find', finderSchema, ['file', 'terminal']));
+const found = await call(`Run the test suite with ${a.testCommand || 'the command this project normally uses; look at its build files'}. Do not modify any file. Report the command you ran, its exit code, every failing test with a command that runs only that test, and the last 2000 characters of the output. ${SAFETY}`, options(tiers.finder, 'find', finderSchema, ['file', 'terminal']));
+if (budgetStop) return {status: 'budget-exhausted', test_command: a.testCommand ?? null, exit_code: null, excerpt: null, failing_total: 0, baseline: [], attempted: [], not_attempted: [], next_steps: 'Nothing was merged or pushed. The run stopped early: ' + budgetStop + '.'};
 if (!found) fail('could not run the tests (the finder agent failed)');
 const result = {status: 'no-failures', test_command: a.testCommand ?? found.test_command, exit_code: found.exit_code, excerpt: null, failing_total: 0, baseline: [], attempted: [], not_attempted: [], next_steps: 'Nothing was merged or pushed. Review each verified fix with git log -p on its branch, then merge the ones you accept.'};
 if (!found.failing.length) {
@@ -86,26 +94,26 @@ function label(prefix, i, id) {
   return start + (chars.length + start.length <= 100 ? chars.join('') : chars.slice(0, 99 - start.length).join('') + '…');
 }
 function record(t, i, fixer) {
-  return {id: t.id, label: label('fix', i, t.id), run_one: t.run_one, status: !fixer ? 'failed' : 'not-fixed', reason: !fixer ? 'fixer failed' : fixer.status !== 'fixed' ? 'fixer could not fix the test' : 'fixer reported fixed without a commit', branch: fixer?.branch ?? null, commit: null, files_changed: fixer?.files_changed || [], test_edited: fixer?.test_edited ?? false, summary: fixer?.summary ?? null};
+  return {id: t.id, label: label('fix', i, t.id), run_one: t.run_one, status: !fixer ? 'failed' : 'not-fixed', reason: !fixer ? (budgetStop ? 'stopped by the budget' : 'fixer failed') : fixer.status !== 'fixed' ? 'fixer could not fix the test' : 'fixer reported fixed without a commit', branch: fixer?.branch ?? null, commit: null, files_changed: fixer?.files_changed || [], test_edited: fixer?.test_edited ?? false, summary: fixer?.summary ?? null};
 }
 const command = a.testCommand ?? 'the test_command in the material above';
 function testMaterial(test) { return material({...test, ...(a.testCommand ? {} : {test_command: found.test_command})}); }
 let verifyPhase = false;
 phase('Fix');
 const attempts = await pipeline(selected, async (test, item, i) => {
-  const fixed = await agent(`${testMaterial(test)}\nFind the cause and fix it. Change the code under test, not the test, unless the test itself is wrong; if you change a test, say so. Run the run_one command in the material above until it passes, then run ${command}. Commit your change on your current branch with the message fix: followed by the test's id in the material above, then run git rev-parse HEAD and git branch --show-current and set commit to that exact 40-character lowercase hexadecimal SHA (never a short hash) and branch to that exact current branch name (never null). Never push, never amend, never switch, create or delete branches. If you cannot fix it, leave the folder as it is and report not-fixed. ${SAFETY}`, options(tiers.fixer, label('fix', i, test.id), fixerSchema, ['file', 'terminal']));
+  const fixed = await call(`${testMaterial(test)}\nFind the cause and fix it. Change the code under test, not the test, unless the test itself is wrong; if you change a test, say so. Run the run_one command in the material above until it passes, then run ${command}. Commit your change on your current branch with the message fix: followed by the test's id in the material above, then run git rev-parse HEAD and git branch --show-current and set commit to that exact 40-character lowercase hexadecimal SHA (never a short hash) and branch to that exact current branch name (never null). Never push, never amend, never switch, create or delete branches. If you cannot fix it, leave the folder as it is and report not-fixed. ${SAFETY}`, options(tiers.fixer, label('fix', i, test.id), fixerSchema, ['file', 'terminal']));
   const entry = record(test, i, fixed);
   if (fixed?.status === 'fixed' && typeof fixed.commit === 'string' && COMMIT.test(fixed.commit)) { entry.commit = fixed.commit; entry.status = 'unverified'; entry.reason = null; }
   return entry;
 }, async (entry, test, i) => {
   if (!entry.commit) return entry;
   if (!verifyPhase) { phase('Verify'); verifyPhase = true; }
-  const verified = await agent(`${testMaterial(test)}\nBring this folder to commit ${entry.commit} with git merge --ff-only ${entry.commit}. Do not use any other way to change branches. If that fails, report fast_forwarded: false and stop. Otherwise run the run_one command in the material above, then ${command}, and report whether the suite ran to completion. suite_completed is false for a crash, timeout, collection or build error, or blocked command. Report its exit code and every failing test id; use an empty list when none did. Do not modify any file. ${SAFETY}`, options(tiers.verifier, label('verify', i, test.id), verifierSchema, ['file', 'terminal']));
+  const verified = await call(`${testMaterial(test)}\nBring this folder to commit ${entry.commit} with git merge --ff-only ${entry.commit}. Do not use any other way to change branches. If that fails, report fast_forwarded: false and stop. Otherwise run the run_one command in the material above, then ${command}, and report whether the suite ran to completion. suite_completed is false for a crash, timeout, collection or build error, or blocked command. Report its exit code and every failing test id; use an empty list when none did. Do not modify any file. ${SAFETY}`, options(tiers.verifier, label('verify', i, test.id), verifierSchema, ['file', 'terminal']));
   const newIds = [...new Set((verified?.still_failing || []).filter(id => !result.baseline.includes(id)))].sort(cmp);
-  const reason = !verified ? 'verifier failed' : !verified.fast_forwarded ? 'fast-forward failed' : !verified.target_passed || verified.still_failing.includes(test.id) ? 'target test still fails' : !verified.suite_completed ? 'suite did not complete' : verified.suite_exit_code !== 0 && !verified.still_failing.length ? 'suite failed without naming failing tests' : newIds.length ? 'new failures: ' + newIds.join(', ') : null;
+  const reason = !verified ? (budgetStop ? 'stopped by the budget' : 'verifier failed') : !verified.fast_forwarded ? 'fast-forward failed' : !verified.target_passed || verified.still_failing.includes(test.id) ? 'target test still fails' : !verified.suite_completed ? 'suite did not complete' : verified.suite_exit_code !== 0 && !verified.still_failing.length ? 'suite failed without naming failing tests' : newIds.length ? 'new failures: ' + newIds.join(', ') : null;
   return {...entry, status: reason ? 'unverified' : 'verified', reason};
 });
 result.attempted = attempts.map((entry, i) => entry || {...record(selected[i], i, null), reason: 'agent call threw'});
 const verifiedCount = result.attempted.filter(e => e.status === 'verified').length;
-result.status = verifiedCount === selected.length && !result.not_attempted.length ? 'fixed-all' : verifiedCount ? 'partial' : 'none-fixed';
+result.status = budgetStop ? 'budget-exhausted' : verifiedCount === selected.length && !result.not_attempted.length ? 'fixed-all' : verifiedCount ? 'partial' : 'none-fixed';
 return result;

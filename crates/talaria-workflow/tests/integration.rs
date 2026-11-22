@@ -28,6 +28,8 @@ mod accounting;
 mod agent_call;
 #[path = "integration/budget.rs"]
 mod budget;
+#[path = "integration/builtins_budget.rs"]
+mod builtins_budget;
 #[path = "integration/builtins_fix_failing_tests.rs"]
 mod builtins_fix_failing_tests;
 #[path = "integration/builtins_hivecode.rs"]
