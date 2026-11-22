@@ -235,4 +235,13 @@ async fn fix_failing_tests_returns_what_it_has_when_the_budget_stops_an_agent() 
         verifier.result["attempted"][0]["reason"],
         "stopped by the budget"
     );
+
+    // Wherever the budget stops it, the next steps say the run stopped early.
+    for stopped in [&finder, &fixer, &verifier] {
+        let next = stopped.result["next_steps"].as_str().unwrap();
+        assert!(
+            next.starts_with("Nothing was merged or pushed. The run stopped early: "),
+            "{next}"
+        );
+    }
 }

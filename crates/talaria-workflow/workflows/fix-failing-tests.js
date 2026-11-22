@@ -116,4 +116,5 @@ const attempts = await pipeline(selected, async (test, item, i) => {
 result.attempted = attempts.map((entry, i) => entry || {...record(selected[i], i, null), reason: 'agent call threw'});
 const verifiedCount = result.attempted.filter(e => e.status === 'verified').length;
 result.status = budgetStop ? 'budget-exhausted' : verifiedCount === selected.length && !result.not_attempted.length ? 'fixed-all' : verifiedCount ? 'partial' : 'none-fixed';
+if (budgetStop) result.next_steps = 'Nothing was merged or pushed. The run stopped early: ' + budgetStop + '. Review each verified fix with git log -p on its branch, then merge the ones you accept.';
 return result;
