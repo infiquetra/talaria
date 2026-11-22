@@ -152,3 +152,122 @@ fn parse_input_by_kind() {
     );
     assert!(parse_input(&ValueKind::Choice, &choice, "unknown", None).is_err());
 }
+
+fn keyed(key: &str, kind: FieldKind, options: Option<Vec<Value>>) -> FieldView {
+    FieldView {
+        key: key.into(),
+        options,
+        ..field(kind)
+    }
+}
+
+#[test]
+fn a_string_key_with_a_built_in_list_becomes_a_choice() {
+    let text = keyed("browser.dialog_policy", FieldKind::String, None);
+    assert_eq!(
+        value_kind(&text, Some(&json!("must_respond")), None, None),
+        ValueKind::Choice
+    );
+    let nullable = keyed("computer_use.no_overlay", FieldKind::String, None);
+    assert_eq!(
+        value_kind(&nullable, Some(&Value::Null), Some(&Value::Null), None),
+        ValueKind::Choice
+    );
+}
+
+#[test]
+fn plain_string_key_without_spec_stays_text() {
+    let region = keyed("bedrock.region", FieldKind::String, None);
+    assert_eq!(
+        value_kind(&region, Some(&json!("example-region")), None, None),
+        ValueKind::Text
+    );
+}
+
+#[test]
+fn modal_mode_command_accepts_direct_and_refuses_sandbox() {
+    let modal = keyed(
+        "terminal.modal_mode",
+        FieldKind::Select,
+        Some(vec![json!("sandbox"), json!("function")]),
+    );
+    assert_eq!(
+        parse_input(&ValueKind::Choice, &modal, "direct", Some(&json!("auto"))).unwrap(),
+        json!("direct")
+    );
+    let refused = parse_input(&ValueKind::Choice, &modal, "sandbox", Some(&json!("auto")));
+    assert_eq!(
+        refused.unwrap_err().message,
+        "Choose one of: auto, managed, direct."
+    );
+}
+
+#[test]
+fn the_current_value_is_accepted_even_when_unlisted() {
+    let backup = keyed("updates.pre_update_backup", FieldKind::String, None);
+    assert_eq!(
+        parse_input(
+            &ValueKind::Choice,
+            &backup,
+            "legacy",
+            Some(&json!("legacy"))
+        )
+        .unwrap(),
+        json!("legacy")
+    );
+    assert!(parse_input(&ValueKind::Choice, &backup, "legacy", Some(&json!("off"))).is_err());
+}
+
+#[test]
+fn context_engine_accepts_compressor_and_a_plugin_name() {
+    let engine = keyed(
+        "context.engine",
+        FieldKind::Select,
+        Some(vec![json!("default"), json!("custom")]),
+    );
+    assert_eq!(
+        parse_input(&ValueKind::Choice, &engine, "compressor", None).unwrap(),
+        json!("compressor")
+    );
+    assert_eq!(
+        parse_input(&ValueKind::Choice, &engine, "example-engine", None).unwrap(),
+        json!("example-engine")
+    );
+}
+
+#[test]
+fn null_default_choice_saves_json() {
+    let overlay = keyed("computer_use.no_overlay", FieldKind::String, None);
+    assert_eq!(
+        parse_input(&ValueKind::Choice, &overlay, "true", None).unwrap(),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        parse_input(&ValueKind::Choice, &overlay, "false", None).unwrap(),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        parse_input(&ValueKind::Choice, &overlay, "", None).unwrap(),
+        Value::Null
+    );
+    let effort = keyed("x_search.reasoning_effort", FieldKind::String, None);
+    assert_eq!(
+        parse_input(&ValueKind::Choice, &effort, "high", None).unwrap(),
+        json!("high")
+    );
+}
+
+#[test]
+fn schema_options_merge_with_the_built_in_list() {
+    let provider = keyed(
+        "tts.provider",
+        FieldKind::Select,
+        Some(vec![json!("edge"), json!("example-command")]),
+    );
+    for name in ["deepinfra", "example-command", "edge"] {
+        assert_eq!(
+            parse_input(&ValueKind::Choice, &provider, name, None).unwrap(),
+            json!(name)
+        );
+    }
+}

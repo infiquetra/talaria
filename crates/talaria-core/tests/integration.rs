@@ -305,6 +305,8 @@ mod session_replay;
 mod session_rules;
 #[path = "integration/session_snapshot.rs"]
 mod session_snapshot;
+#[path = "integration/settings_choices.rs"]
+mod settings_choices;
 #[path = "integration/settings_command.rs"]
 mod settings_command;
 #[path = "integration/settings_diff.rs"]

@@ -401,3 +401,61 @@ fn no_frames_when_idle() {
     );
     assert!(sink.take().is_empty());
 }
+
+#[test]
+fn chooser_draws_descriptions_and_marks() {
+    use talaria_core::settings::{
+        ConfigSchemaView, EditKey, FieldKind, FieldView, SettingsAction, SettingsInput,
+        SettingsKey, SettingsSnapshot, SettingsState,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![FieldView {
+                key: "approvals.mode".into(),
+                kind: FieldKind::Select,
+                description: "Dangerous command approval mode".into(),
+                category: "security".into(),
+                options: Some(vec![json!("manual"), json!("smart"), json!("off")]),
+                searchable: false,
+                clearable: false,
+            }],
+            category_order: vec!["security".into()],
+        },
+        effective: json!({"approvals": {"mode": "smart"}}),
+        raw: json!({"approvals": {"mode": "smart"}}),
+        defaults: json!({"approvals": {"mode": "manual"}}),
+    }));
+    state.update(SettingsInput::Key(SettingsKey::Action(
+        SettingsAction::Edit,
+    )));
+    let (mut term, sink, mut vt) = rig(100, 20);
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    for expected in [
+        "> smart (current)",
+        "An auxiliary model approves low-risk commands",
+        "manual (default)",
+        "Always ask before a dangerous command runs.",
+        "Never ask (the same as --yolo).",
+        "type to filter",
+        "Enter choose · Esc cancel",
+        "approvals.mode",
+    ] {
+        assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
+    }
+    for ch in "yolo".chars() {
+        state.update(SettingsInput::Key(SettingsKey::Char(ch)));
+    }
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    assert!(screen.contains("filter: yolo"), "{screen}");
+    assert!(screen.contains("> off"), "{screen}");
+    assert!(!screen.contains("manual (default)"), "{screen}");
+    state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Esc)));
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    assert!(!screen.contains("type to filter"), "{screen}");
+}

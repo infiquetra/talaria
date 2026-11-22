@@ -532,3 +532,288 @@ fn reveal_is_one_shot() {
         }
     }
 }
+
+fn choice_field(key: &str, kind: FieldKind, options: Option<Vec<Value>>) -> FieldView {
+    FieldView {
+        options,
+        ..field(key, kind, "general")
+    }
+}
+fn chooser(field: FieldView, effective: Value, defaults: Value) -> SettingsState {
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![field],
+            category_order: vec!["general".into()],
+        },
+        effective,
+        raw: json!({}),
+        defaults,
+    }));
+    assert!(action(&mut state, SettingsAction::Edit).is_empty());
+    assert_eq!(state.view().screen, Screen::Choosing);
+    state
+}
+fn choice_names(state: &SettingsState) -> Vec<String> {
+    state.view().choices.into_iter().map(|c| c.name).collect()
+}
+fn selected_choice(state: &SettingsState) -> String {
+    let view = state.view();
+    view.choices[view.choice_cursor].name.clone()
+}
+fn edit_key(state: &mut SettingsState, key: EditKey) {
+    state.update(SettingsInput::Key(SettingsKey::Edit(key)));
+}
+fn busy_input(current: &str) -> SettingsState {
+    chooser(
+        choice_field(
+            "display.busy_input_mode",
+            FieldKind::Select,
+            Some(vec![json!("interrupt"), json!("queue"), json!("steer")]),
+        ),
+        json!({"display": {"busy_input_mode": current}}),
+        json!({"display": {"busy_input_mode": "interrupt"}}),
+    )
+}
+
+#[test]
+fn chooser_opens_on_the_current_value() {
+    let state = busy_input("queue");
+    assert_eq!(selected_choice(&state), "queue (current)");
+    assert_eq!(
+        state.view().footer,
+        "type to filter · ↑↓ move · PgUp PgDn page · Enter choose · Esc cancel"
+    );
+}
+
+#[test]
+fn chooser_marks_current_and_default_and_describes_every_row() {
+    let state = busy_input("steer");
+    let view = state.view();
+    let rows: Vec<(String, String)> = view
+        .choices
+        .iter()
+        .map(|c| (c.name.clone(), c.description.clone()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                "interrupt (default)".to_owned(),
+                "Enter while a turn runs stops it and sends the new message.".to_owned()
+            ),
+            (
+                "queue".to_owned(),
+                "Enter while a turn runs waits and sends after the turn ends.".to_owned()
+            ),
+            (
+                "steer (current)".to_owned(),
+                "Enter while a turn runs adds the message to the running turn.".to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn chooser_filters_by_description_and_saves_the_choice() {
+    let mut state = busy_input("interrupt");
+    for ch in "running turn".chars() {
+        ch_key(&mut state, ch);
+    }
+    assert_eq!(choice_names(&state), ["steer"]);
+    assert_eq!(state.view().choice_filter, "running turn");
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(marker(&state, "display.busy_input_mode"), "*");
+}
+
+fn ch_key(state: &mut SettingsState, key: char) {
+    state.update(SettingsInput::Key(SettingsKey::Char(key)));
+}
+
+#[test]
+fn chooser_shows_an_unlisted_current_value() {
+    let mut state = chooser(
+        choice_field("updates.pre_update_backup", FieldKind::String, None),
+        json!({"updates": {"pre_update_backup": false}}),
+        json!({"updates": {"pre_update_backup": "quick"}}),
+    );
+    assert_eq!(
+        choice_names(&state),
+        [
+            "quick (default)",
+            "full",
+            "off",
+            "false (current, not in the list)"
+        ]
+    );
+    assert_eq!(selected_choice(&state), "false (current, not in the list)");
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(marker(&state, "updates.pre_update_backup"), "");
+    let row = state.view().rows[0].value.clone();
+    assert!(row.contains("(not in the list)"), "{row}");
+}
+
+#[test]
+fn blank_value_uses_the_spec_label_and_merges_schema_options() {
+    let state = chooser(
+        choice_field(
+            "memory.provider",
+            FieldKind::Select,
+            Some(vec![json!(""), json!("example-memory")]),
+        ),
+        json!({"memory": {"provider": ""}}),
+        json!({"memory": {"provider": ""}}),
+    );
+    let names = choice_names(&state);
+    assert_eq!(
+        names,
+        ["Built-in only (current) (default)", "example-memory"]
+    );
+    assert!(!names.iter().any(|n| n.contains("(clear)")));
+}
+
+#[test]
+fn a_corrected_list_replaces_the_schema_list() {
+    let mut state = chooser(
+        choice_field(
+            "terminal.modal_mode",
+            FieldKind::Select,
+            Some(vec![json!("sandbox"), json!("function")]),
+        ),
+        json!({"terminal": {"modal_mode": "auto"}}),
+        json!({"terminal": {"modal_mode": "auto"}}),
+    );
+    assert_eq!(
+        choice_names(&state),
+        ["auto (current) (default)", "managed", "direct"]
+    );
+    let detail = state.view().detail;
+    assert!(detail.contains("options auto, managed, direct"), "{detail}");
+    assert!(!detail.contains("sandbox"), "{detail}");
+    escape(&mut state);
+    let row = state.view().rows[0].value.clone();
+    assert!(!row.contains("not in the list"), "{row}");
+}
+
+#[test]
+fn type_a_value_opens_the_text_editor() {
+    let mut state = chooser(
+        choice_field(
+            "context.engine",
+            FieldKind::Select,
+            Some(vec![json!("default"), json!("custom")]),
+        ),
+        json!({"context": {"engine": "compressor"}}),
+        json!({"context": {"engine": "compressor"}}),
+    );
+    assert_eq!(
+        choice_names(&state),
+        ["compressor (current) (default)", "Type a value…"]
+    );
+    for ch in "example-engine".chars() {
+        ch_key(&mut state, ch);
+    }
+    assert_eq!(choice_names(&state), ["Type a value…"]);
+    enter(&mut state);
+    let view = state.view();
+    assert_eq!(view.screen, Screen::Editing);
+    assert_eq!(view.editor.unwrap().text, "example-engine");
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(marker(&state, "context.engine"), "*");
+    assert!(state.view().rows[0].value.contains("example-engine"));
+}
+
+#[test]
+fn page_keys_and_wrapping_move_through_a_long_list() {
+    let zones: Vec<Value> = (0..30)
+        .map(|i| json!(format!("Zone/Place{i:02}")))
+        .collect();
+    let mut field = choice_field("timezone", FieldKind::Select, Some(zones));
+    field.clearable = true;
+    field.searchable = true;
+    let mut state = chooser(field, json!({"timezone": ""}), json!({"timezone": ""}));
+    assert_eq!(
+        selected_choice(&state),
+        "System time zone (current) (default)"
+    );
+    edit_key(&mut state, EditKey::PageDown);
+    assert_eq!(selected_choice(&state), "Zone/Place09");
+    edit_key(&mut state, EditKey::End);
+    assert_eq!(selected_choice(&state), "Zone/Place29");
+    edit_key(&mut state, EditKey::PageDown);
+    assert_eq!(selected_choice(&state), "Zone/Place29");
+    edit_key(&mut state, EditKey::Down);
+    assert_eq!(
+        selected_choice(&state),
+        "System time zone (current) (default)"
+    );
+    edit_key(&mut state, EditKey::Up);
+    assert_eq!(selected_choice(&state), "Zone/Place29");
+    edit_key(&mut state, EditKey::PageUp);
+    assert_eq!(selected_choice(&state), "Zone/Place19");
+    edit_key(&mut state, EditKey::Home);
+    assert_eq!(
+        selected_choice(&state),
+        "System time zone (current) (default)"
+    );
+}
+
+#[test]
+fn null_default_choice_marks_and_saves_json() {
+    let mut state = chooser(
+        choice_field("computer_use.no_overlay", FieldKind::String, None),
+        json!({"computer_use": {"no_overlay": null}}),
+        json!({"computer_use": {"no_overlay": null}}),
+    );
+    assert_eq!(
+        choice_names(&state),
+        ["Automatic (current) (default)", "true", "false"]
+    );
+    edit_key(&mut state, EditKey::Down);
+    enter(&mut state);
+    assert_eq!(state.view().rows[0].value, "true");
+}
+
+#[test]
+fn config_command_sets_modal_mode_direct() {
+    let mut state = chooser(
+        choice_field(
+            "terminal.modal_mode",
+            FieldKind::Select,
+            Some(vec![json!("sandbox"), json!("function")]),
+        ),
+        json!({"terminal": {"modal_mode": "auto"}}),
+        json!({"terminal": {"modal_mode": "auto"}}),
+    );
+    escape(&mut state);
+    review(&mut state, "terminal.modal_mode=direct");
+    let rows = state.view().review_rows;
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].new.contains("direct"), "{}", rows[0].new);
+    let mut refused = chooser(
+        choice_field(
+            "terminal.modal_mode",
+            FieldKind::Select,
+            Some(vec![json!("sandbox"), json!("function")]),
+        ),
+        json!({"terminal": {"modal_mode": "auto"}}),
+        json!({"terminal": {"modal_mode": "auto"}}),
+    );
+    escape(&mut refused);
+    refused.update(SettingsInput::Command {
+        profile: "fixture".into(),
+        args: "terminal.modal_mode=sandbox".into(),
+    });
+    assert_eq!(
+        banner(&refused),
+        "terminal.modal_mode: Choose one of: auto, managed, direct."
+    );
+}
