@@ -1191,3 +1191,545 @@ fn the_cursor_stays_on_the_current_value_when_its_list_arrives() {
         "example-zzz-skin (current, not in the list)"
     );
 }
+
+/// What applying the staged changes would send, read through the review screen.
+fn staged_patch(state: &mut SettingsState, effective: Value) -> Value {
+    action(state, SettingsAction::Review);
+    assert_eq!(enter(state), vec![SettingsEffect::FetchFresh]);
+    match state.update(SettingsInput::Fresh(effective)).as_slice() {
+        [SettingsEffect::Write { patch }] => patch.clone(),
+        other => panic!("expected a write, got {other:?}"),
+    }
+}
+fn nested(key: &str, value: Value) -> Value {
+    key.rsplit('.')
+        .fold(value, |inner, part| json!({ part: inner }))
+}
+fn many_chooser(key: &str, kind: FieldKind, current: Value) -> (SettingsState, Value) {
+    let doc = nested(key, current);
+    (
+        chooser(choice_field(key, kind, None), doc.clone(), doc.clone()),
+        doc,
+    )
+}
+fn move_to(state: &mut SettingsState, name: &str) {
+    for _ in 0..60 {
+        if selected_choice(state) == name {
+            return;
+        }
+        edit_key(state, EditKey::Down);
+    }
+    panic!("no row {name:?} in {:?}", choice_names(state));
+}
+fn space(state: &mut SettingsState) {
+    ch_key(state, ' ');
+}
+
+#[test]
+fn space_toggles_and_enter_stages_the_set() {
+    let (mut state, doc) = many_chooser("display.status_bar.fields", FieldKind::List, json!([]));
+    let names = choice_names(&state);
+    assert_eq!(names.len(), 22, "{names:?}");
+    assert_eq!(names[0], "[x] Default set (empty list)");
+    assert_eq!(names[1], "[ ] model");
+    assert_eq!(names[12], "[ ] git_branch");
+    assert!(
+        state.view().footer.contains("Space tick"),
+        "{}",
+        state.view().footer
+    );
+    move_to(&mut state, "[ ] model");
+    space(&mut state);
+    move_to(&mut state, "[ ] git_branch");
+    space(&mut state);
+    let names = choice_names(&state);
+    assert_eq!(names[0], "[ ] Default set (empty list)");
+    assert_eq!(names[1], "[x] model");
+    assert_eq!(names[12], "[x] git_branch");
+    assert_eq!(state.view().screen, Screen::Choosing);
+    // Nothing is staged until Enter.
+    assert_eq!(marker(&state, "display.status_bar.fields"), "");
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(marker(&state, "display.status_bar.fields"), "*");
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"display": {"status_bar": {"fields": ["model", "git_branch"]}}})
+    );
+}
+
+#[test]
+fn a_status_bar_set_is_written_in_the_listed_order_whatever_order_it_was_ticked_in() {
+    let (mut state, doc) = many_chooser("display.status_bar.fields", FieldKind::List, json!([]));
+    move_to(&mut state, "[ ] git_branch");
+    space(&mut state);
+    move_to(&mut state, "[ ] model");
+    space(&mut state);
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"display": {"status_bar": {"fields": ["model", "git_branch"]}}})
+    );
+}
+
+#[test]
+fn ordered_many_appends_new_picks_and_unticking_removes() {
+    let (mut state, doc) = many_chooser(
+        "display.runtime_footer.fields",
+        FieldKind::List,
+        json!(["model", "context_pct", "cwd"]),
+    );
+    assert_eq!(
+        choice_names(&state),
+        [
+            "[x] model",
+            "[x] context_pct",
+            "[x] cwd",
+            "[ ] latency",
+            "[ ] served_model",
+            "Edit as text…"
+        ]
+    );
+    move_to(&mut state, "[ ] latency");
+    space(&mut state);
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc.clone()),
+        json!({"display": {"runtime_footer": {"fields": ["model", "context_pct", "cwd", "latency"]}}})
+    );
+    action(&mut state, SettingsAction::Edit);
+    move_to(&mut state, "[x] context_pct");
+    space(&mut state);
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"display": {"runtime_footer": {"fields": ["model", "cwd", "latency"]}}})
+    );
+}
+
+#[test]
+fn edit_as_text_reorders_an_ordered_list() {
+    let (mut state, doc) = many_chooser(
+        "display.runtime_footer.fields",
+        FieldKind::List,
+        json!(["model", "context_pct", "cwd"]),
+    );
+    move_to(&mut state, "Edit as text…");
+    enter(&mut state);
+    let view = state.view();
+    assert_eq!(view.screen, Screen::Editing);
+    assert_eq!(view.editor.unwrap().text, "model, context_pct, cwd");
+    edit_key(&mut state, EditKey::ClearLine);
+    for c in "cwd, model".chars() {
+        ch_key(&mut state, c);
+    }
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"display": {"runtime_footer": {"fields": ["cwd", "model"]}}})
+    );
+}
+
+#[test]
+fn default_set_row_clears_the_list() {
+    let current = json!(["model", "goal"]);
+    let (mut state, doc) = many_chooser(
+        "display.status_bar.fields",
+        FieldKind::List,
+        current.clone(),
+    );
+    assert_eq!(choice_names(&state)[0], "[ ] Default set (empty list)");
+    space(&mut state);
+    let names = choice_names(&state);
+    assert_eq!(names[0], "[x] Default set (empty list)");
+    assert!(
+        !names.iter().any(|n| n.starts_with("[x] model")),
+        "{names:?}"
+    );
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc.clone()),
+        json!({"display": {"status_bar": {"fields": []}}})
+    );
+    // Enter on the row itself chooses it too.
+    let (mut state, doc) = many_chooser("display.status_bar.fields", FieldKind::List, current);
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"display": {"status_bar": {"fields": []}}})
+    );
+}
+
+#[test]
+fn comma_store_keeps_string_type() {
+    let (mut state, doc) = many_chooser("discord.server_actions", FieldKind::String, json!(""));
+    let names = choice_names(&state);
+    assert_eq!(names[0], "[x] All actions");
+    assert_eq!(names[1], "[ ] list_guilds");
+    assert_eq!(names.len(), 15);
+    move_to(&mut state, "[ ] list_guilds");
+    space(&mut state);
+    move_to(&mut state, "[ ] server_info");
+    space(&mut state);
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"discord": {"server_actions": "list_guilds, server_info"}})
+    );
+}
+
+#[test]
+fn a_listed_set_in_another_order_is_not_a_change() {
+    let (mut state, _) = many_chooser(
+        "display.status_bar.fields",
+        FieldKind::List,
+        json!(["goal", "model"]),
+    );
+    move_to(&mut state, "[ ] latency");
+    space(&mut state);
+    space(&mut state);
+    enter(&mut state);
+    assert_eq!(marker(&state, "display.status_bar.fields"), "");
+}
+
+#[test]
+fn a_stored_name_the_list_lacks_stays_ticked_and_survives() {
+    let (mut state, doc) = many_chooser(
+        "display.status_bar.fields",
+        FieldKind::List,
+        json!(["model", "future_field"]),
+    );
+    let names = choice_names(&state);
+    assert!(
+        names.contains(&"[x] future_field (not in the list)".to_owned()),
+        "{names:?}"
+    );
+    enter(&mut state);
+    assert_eq!(marker(&state, "display.status_bar.fields"), "");
+    action(&mut state, SettingsAction::Edit);
+    move_to(&mut state, "[x] model");
+    space(&mut state);
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"display": {"status_bar": {"fields": ["future_field"]}}})
+    );
+}
+
+#[test]
+fn escape_discards_the_ticks() {
+    let (mut state, _) = many_chooser(
+        "display.status_bar.fields",
+        FieldKind::List,
+        json!(["model"]),
+    );
+    move_to(&mut state, "[ ] goal");
+    space(&mut state);
+    escape(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(marker(&state, "display.status_bar.fields"), "");
+    action(&mut state, SettingsAction::Edit);
+    assert!(choice_names(&state).contains(&"[ ] goal".to_owned()));
+}
+
+#[test]
+fn typing_filters_a_many_list_but_space_still_ticks() {
+    let (mut state, _) = many_chooser("display.status_bar.fields", FieldKind::List, json!([]));
+    for c in "bg_".chars() {
+        ch_key(&mut state, c);
+    }
+    assert_eq!(
+        choice_names(&state),
+        ["[ ] bg_tasks", "[ ] bg_processes", "[ ] bg_subagents"]
+    );
+    space(&mut state);
+    assert_eq!(state.view().choice_filter, "bg_");
+    assert_eq!(choice_names(&state)[0], "[x] bg_tasks");
+}
+
+#[test]
+fn config_command_sets_a_multiple_choice_key() {
+    let (mut state, _) = many_chooser("display.status_bar.fields", FieldKind::List, json!([]));
+    escape(&mut state);
+    review(&mut state, "display.status_bar.fields=model,goal");
+    let rows = state.view().review_rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].new, "[model, goal]");
+}
+
+fn mixed_chooser(key: &str, current: Value, default: Value) -> (SettingsState, Value) {
+    let doc = nested(key, current);
+    (
+        chooser(
+            choice_field(key, FieldKind::String, None),
+            doc.clone(),
+            nested(key, default),
+        ),
+        doc,
+    )
+}
+
+#[test]
+fn a_word_or_own_list_chooser_lists_the_words_then_an_own_row() {
+    let (mut state, doc) =
+        mixed_chooser("agent.tool_use_enforcement", json!("auto"), json!("auto"));
+    let view = state.view();
+    let rows: Vec<(String, String)> = view
+        .choices
+        .iter()
+        .map(|c| (c.name.clone(), c.description.clone()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                "auto (current) (default)".to_owned(),
+                "Only for GPT and Codex models.".to_owned()
+            ),
+            ("true".to_owned(), "For every model.".to_owned()),
+            ("false".to_owned(), "Never.".to_owned()),
+            (
+                "Own list…".to_owned(),
+                "Model names to match, separated by commas, for example gpt, codex.".to_owned()
+            ),
+        ]
+    );
+    move_to(&mut state, "false");
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"agent": {"tool_use_enforcement": false}})
+    );
+}
+
+#[test]
+fn the_own_list_row_opens_the_text_editor_and_saves_an_array() {
+    let (mut state, doc) =
+        mixed_chooser("agent.tool_use_enforcement", json!("auto"), json!("auto"));
+    move_to(&mut state, "Own list…");
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Editing);
+    assert_eq!(state.view().editor.unwrap().text, "");
+    for c in "gpt, codex".chars() {
+        ch_key(&mut state, c);
+    }
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"agent": {"tool_use_enforcement": ["gpt", "codex"]}})
+    );
+}
+
+#[test]
+fn a_current_own_list_shows_as_custom_and_opens_for_editing() {
+    let (mut state, _) = mixed_chooser(
+        "agent.tool_use_enforcement",
+        json!(["gpt", "codex"]),
+        json!("auto"),
+    );
+    assert_eq!(selected_choice(&state), "custom: gpt, codex (current)");
+    enter(&mut state);
+    assert_eq!(marker(&state, "agent.tool_use_enforcement"), "");
+    action(&mut state, SettingsAction::Edit);
+    move_to(&mut state, "Own list…");
+    enter(&mut state);
+    assert_eq!(state.view().editor.unwrap().text, "gpt, codex");
+}
+
+#[test]
+fn memory_high_mb_chooser_takes_a_number_of_megabytes() {
+    let (mut state, doc) = mixed_chooser(
+        "agent.agent_cache.memory_high_mb",
+        json!("auto"),
+        json!("auto"),
+    );
+    assert_eq!(
+        choice_names(&state),
+        ["auto (current) (default)", "off", "Number of MB…"]
+    );
+    move_to(&mut state, "Number of MB…");
+    enter(&mut state);
+    for c in "2048".chars() {
+        ch_key(&mut state, c);
+    }
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"agent": {"agent_cache": {"memory_high_mb": 2048}}})
+    );
+}
+
+#[test]
+fn a_number_of_megabytes_already_stored_shows_as_custom() {
+    let (state, _) = mixed_chooser(
+        "agent.agent_cache.memory_high_mb",
+        json!(1024),
+        json!("auto"),
+    );
+    assert_eq!(selected_choice(&state), "custom: 1024 (current)");
+}
+
+#[test]
+fn approvers_offer_the_wildcard_the_requester_only_row_and_an_own_list() {
+    let (mut state, doc) = mixed_chooser("approvals.approvers", json!(["*"]), json!(["*"]));
+    assert_eq!(
+        choice_names(&state),
+        [
+            "* (current) (default)",
+            "Requester and admins only",
+            "Own list…"
+        ]
+    );
+    move_to(&mut state, "Requester and admins only");
+    enter(&mut state);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"approvals": {"approvers": []}})
+    );
+}
+
+fn number_editor(key: &str, kind: FieldKind, current: Value) -> SettingsState {
+    let (mut state, _) = mixed_number(key, kind, current);
+    assert!(action(&mut state, SettingsAction::Edit).is_empty());
+    assert_eq!(state.view().screen, Screen::Editing);
+    state
+}
+fn mixed_number(key: &str, kind: FieldKind, current: Value) -> (SettingsState, Value) {
+    let doc = nested(key, current);
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![field(key, kind, "general")],
+            category_order: vec!["general".into()],
+        },
+        effective: doc.clone(),
+        raw: json!({}),
+        defaults: doc.clone(),
+    }));
+    (state, doc)
+}
+fn editor_text(state: &SettingsState) -> String {
+    state.view().editor.expect("editor").text
+}
+
+#[test]
+fn up_and_down_move_a_ranged_number_one_step_and_stop_at_the_ends() {
+    let mut state = number_editor("wake_word.sensitivity", FieldKind::Number, json!(0.6));
+    assert_eq!(editor_text(&state), "0.6");
+    edit_key(&mut state, EditKey::Up);
+    assert_eq!(editor_text(&state), "0.65");
+    edit_key(&mut state, EditKey::Down);
+    edit_key(&mut state, EditKey::Down);
+    assert_eq!(editor_text(&state), "0.55");
+    edit_key(&mut state, EditKey::ClearLine);
+    for c in "1.0".chars() {
+        ch_key(&mut state, c);
+    }
+    edit_key(&mut state, EditKey::Up);
+    assert_eq!(editor_text(&state), "1.0");
+    edit_key(&mut state, EditKey::ClearLine);
+    ch_key(&mut state, '0');
+    edit_key(&mut state, EditKey::Down);
+    assert_eq!(editor_text(&state), "0.0");
+}
+
+#[test]
+fn a_whole_number_steps_by_one_and_a_blank_one_starts_at_its_lowest() {
+    let mut state = number_editor("compression.max_attempts", FieldKind::Number, json!(3));
+    edit_key(&mut state, EditKey::Up);
+    assert_eq!(editor_text(&state), "4");
+    for _ in 0..20 {
+        edit_key(&mut state, EditKey::Up);
+    }
+    assert_eq!(editor_text(&state), "10");
+    let mut blank = number_editor("agent.max_turns", FieldKind::String, Value::Null);
+    assert_eq!(editor_text(&blank), "");
+    edit_key(&mut blank, EditKey::Up);
+    assert_eq!(editor_text(&blank), "1");
+    edit_key(&mut blank, EditKey::Down);
+    assert_eq!(editor_text(&blank), "1");
+    let mut ratio = number_editor("agent.budget_warning_ratio", FieldKind::String, Value::Null);
+    edit_key(&mut ratio, EditKey::Up);
+    assert_eq!(editor_text(&ratio), "0.05");
+}
+
+#[test]
+fn the_number_editor_says_its_range_step_and_unit() {
+    let state = number_editor("wake_word.sensitivity", FieldKind::Number, json!(0.6));
+    let view = state.view();
+    assert!(
+        view.detail
+            .contains("range 0.0 to 1.0 · step 0.05 · threshold"),
+        "{}",
+        view.detail
+    );
+    assert_eq!(
+        view.footer,
+        "Enter save edit · ↑↓ change by 0.05 · Esc cancel"
+    );
+    let state = number_editor("agent.run_budget_seconds", FieldKind::String, Value::Null);
+    let detail = state.view().detail;
+    assert!(detail.contains("whole number of seconds"), "{detail}");
+    assert!(detail.contains("blank = off"), "{detail}");
+    // A number with no stated range keeps the plain editor.
+    let state = number_editor("agent.agent_cache.max_size", FieldKind::Number, json!(128));
+    assert_eq!(state.view().footer, "Enter save edit · Esc cancel");
+    assert!(
+        !state.view().detail.contains("range"),
+        "{}",
+        state.view().detail
+    );
+}
+
+#[test]
+fn an_out_of_range_number_keeps_the_editor_open_with_the_range() {
+    let mut state = number_editor("compression.threshold", FieldKind::Number, json!(0.5));
+    edit_key(&mut state, EditKey::ClearLine);
+    for c in "1.5".chars() {
+        ch_key(&mut state, c);
+    }
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Editing);
+    assert_eq!(banner(&state), "Enter a number from 0.0 to 1.0.");
+    edit_key(&mut state, EditKey::ClearLine);
+    for c in "0.8".chars() {
+        ch_key(&mut state, c);
+    }
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(marker(&state, "compression.threshold"), "*");
+}
+
+#[test]
+fn a_blank_number_saves_null() {
+    let (mut state, doc) = mixed_number("agent.run_budget_seconds", FieldKind::String, json!(300));
+    action(&mut state, SettingsAction::Edit);
+    edit_key(&mut state, EditKey::ClearLine);
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(
+        staged_patch(&mut state, doc),
+        json!({"agent": {"run_budget_seconds": null}})
+    );
+}
+
+#[test]
+fn delegation_behaviour_keys_open_an_editor_and_route_keys_do_not() {
+    let (mut state, _) = mixed_number(
+        "delegation.max_concurrent_children",
+        FieldKind::Number,
+        json!(10),
+    );
+    action(&mut state, SettingsAction::Edit);
+    assert_eq!(state.view().screen, Screen::Editing);
+    let (mut state, _) = mixed_number("delegation.model", FieldKind::String, json!("example"));
+    action(&mut state, SettingsAction::Edit);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert!(!state.view().banner.is_empty());
+}

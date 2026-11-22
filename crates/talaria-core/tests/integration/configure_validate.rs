@@ -82,12 +82,12 @@ fn set_rows_follow_the_schema() {
     assert!(!boolean[0].destructive);
     let mut ctx = context();
     let mut owned = field();
-    owned.key = "delegation.test".into();
+    owned.key = "delegation.model".into();
     owned.kind = FieldKind::Boolean;
     ctx.schema.fields.push(owned);
-    ctx.effective["delegation"] = json!({"test":false});
+    ctx.effective["delegation"] = json!({"model":false});
     let result = validate(
-        &proposal(vec![set("delegation.test", json!(true))]),
+        &proposal(vec![set("delegation.model", json!(true))]),
         &ctx,
         detect,
     )
@@ -536,4 +536,63 @@ fn proposal_limits_and_profile() {
             matches!(&validate(&proposal(vec![change]), &ctx, detect).unwrap()[0].status, RowStatus::Invalid(s) if s.contains("could not read"))
         );
     }
+}
+
+#[test]
+fn proposals_for_list_word_and_ranged_number_keys_are_checked_against_their_specs() {
+    let mut ctx = context();
+    for (key, kind) in [
+        ("display.status_bar.fields", FieldKind::List),
+        ("agent.tool_use_enforcement", FieldKind::String),
+        ("agent.run_budget_seconds", FieldKind::String),
+        ("compression.threshold", FieldKind::Number),
+    ] {
+        let mut added = field();
+        added.key = key.into();
+        added.kind = kind;
+        added.options = None;
+        ctx.schema.fields.push(added);
+    }
+    ctx.effective["display"]["status_bar"] = json!({"fields": []});
+    ctx.effective["agent"] = json!({"tool_use_enforcement": "auto", "run_budget_seconds": 60});
+    ctx.effective["compression"] = json!({"threshold": 0.5});
+    let status = |changes: Vec<Change>| {
+        validate(&proposal(changes), &ctx, detect)
+            .unwrap()
+            .remove(0)
+            .status
+    };
+    assert_eq!(
+        status(vec![set(
+            "display.status_bar.fields",
+            json!(["model", "goal"])
+        )]),
+        RowStatus::Ready
+    );
+    assert!(matches!(
+        status(vec![set("display.status_bar.fields", json!(["sparkle"]))]),
+        RowStatus::Invalid(_)
+    ));
+    for value in [json!(true), json!("auto"), json!(["gpt", "codex"])] {
+        assert_eq!(
+            status(vec![set("agent.tool_use_enforcement", value.clone())]),
+            if value == json!("auto") {
+                RowStatus::NoChange
+            } else {
+                RowStatus::Ready
+            }
+        );
+    }
+    assert_eq!(
+        status(vec![set("agent.run_budget_seconds", Value::Null)]),
+        RowStatus::Ready
+    );
+    assert_eq!(
+        status(vec![set("compression.threshold", json!(0.8))]),
+        RowStatus::Ready
+    );
+    assert!(matches!(
+        status(vec![set("compression.threshold", json!(1.5))]),
+        RowStatus::Invalid(_)
+    ));
 }

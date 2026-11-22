@@ -509,3 +509,97 @@ fn chooser_draws_the_list_failure_across_the_row() {
         assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
     }
 }
+
+#[test]
+fn a_multiple_choice_list_draws_its_ticks_and_its_footer() {
+    use talaria_core::settings::{
+        ConfigSchemaView, EditKey, FieldKind, FieldView, SettingsAction, SettingsInput,
+        SettingsKey, SettingsSnapshot, SettingsState,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![FieldView {
+                key: "display.runtime_footer.fields".into(),
+                kind: FieldKind::List,
+                description: "Fields in the footer".into(),
+                category: "display".into(),
+                options: None,
+                searchable: false,
+                clearable: false,
+            }],
+            category_order: vec!["display".into()],
+        },
+        effective: json!({"display": {"runtime_footer": {"fields": ["model", "cwd"]}}}),
+        raw: json!({}),
+        defaults: json!({"display": {"runtime_footer": {"fields": ["model", "context_pct", "cwd"]}}}),
+    }));
+    state.update(SettingsInput::Key(SettingsKey::Action(
+        SettingsAction::Edit,
+    )));
+    let (mut term, sink, mut vt) = rig(100, 20);
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    for expected in [
+        "> [x] model",
+        "[ ] context_pct",
+        "[x] cwd",
+        "[ ] latency",
+        "Edit as text…",
+        "Space tick",
+    ] {
+        assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
+    }
+    state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Down)));
+    state.update(SettingsInput::Key(SettingsKey::Char(' ')));
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    assert!(screen.contains("> [x] context_pct"), "{screen}");
+}
+
+#[test]
+fn a_ranged_number_editor_draws_its_range_and_the_arrow_hint() {
+    use talaria_core::settings::{
+        ConfigSchemaView, EditKey, FieldKind, FieldView, SettingsAction, SettingsInput,
+        SettingsKey, SettingsSnapshot, SettingsState,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![FieldView {
+                key: "wake_word.sensitivity".into(),
+                kind: FieldKind::Number,
+                description: "Wake word threshold".into(),
+                category: "voice".into(),
+                options: None,
+                searchable: false,
+                clearable: false,
+            }],
+            category_order: vec!["voice".into()],
+        },
+        effective: json!({"wake_word": {"sensitivity": 0.6}}),
+        raw: json!({}),
+        defaults: json!({"wake_word": {"sensitivity": 0.6}}),
+    }));
+    state.update(SettingsInput::Key(SettingsKey::Action(
+        SettingsAction::Edit,
+    )));
+    state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Up)));
+    let (mut term, sink, mut vt) = rig(100, 20);
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    for expected in [
+        "range 0.0 to 1.0 · step 0.05 · threshold",
+        "> 0.65",
+        "↑↓ change by 0.05",
+    ] {
+        assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
+    }
+}

@@ -2,7 +2,10 @@
 //! pinned Hermes source by `tools/contract-gen/contract_gen.py config-choices`.
 use serde_json::Value;
 use std::collections::BTreeSet;
-use talaria_core::settings::{RuntimeList, SaveAs, SchemaList, choice_spec, choice_specs};
+use talaria_core::settings::{
+    ManyStore, OwnKind, Pick, RuntimeList, SaveAs, SchemaList, choice_spec, choice_specs,
+    number_spec, number_specs,
+};
 
 const PROOF: &str = include_str!("../../../../tools/contract-gen/config-choices.json");
 const PINNED: &str = include_str!("../../../hermes-contract/PINNED");
@@ -262,4 +265,146 @@ fn replace_specs_still_differ_from_the_schema() {
             spec.key
         );
     }
+}
+
+#[test]
+fn multiple_choice_keys_list_every_value_their_comment_names() {
+    let status = choice_spec("display.status_bar.fields").unwrap();
+    assert_eq!(
+        status.pick,
+        Pick::Many {
+            ordered: false,
+            empty_label: Some("Default set (empty list)"),
+            store: ManyStore::List
+        }
+    );
+    assert_eq!(
+        values("display.status_bar.fields"),
+        [
+            "model",
+            "context_detail",
+            "context_pct",
+            "cache_hit",
+            "latency",
+            "tps",
+            "compressions",
+            "bg_tasks",
+            "bg_processes",
+            "bg_subagents",
+            "goal",
+            "git_branch",
+            "duration",
+            "prompt_elapsed",
+            "idle_since",
+            "focus",
+            "yolo",
+            "stash",
+            "battery",
+            "title",
+            "total_tokens"
+        ]
+    );
+    // The footer's order is the order shown, so it keeps the order picked.
+    assert_eq!(
+        choice_spec("display.runtime_footer.fields").unwrap().pick,
+        Pick::Many {
+            ordered: true,
+            empty_label: None,
+            store: ManyStore::List
+        }
+    );
+    assert_eq!(
+        values("display.runtime_footer.fields"),
+        ["model", "context_pct", "cwd", "latency", "served_model"]
+    );
+    // Hermes types this key as a string, so the picks save as one comma string.
+    assert_eq!(
+        choice_spec("discord.server_actions").unwrap().pick,
+        Pick::Many {
+            ordered: false,
+            empty_label: Some("All actions"),
+            store: ManyStore::CommaString
+        }
+    );
+    assert_eq!(values("discord.server_actions").len(), 14);
+}
+
+#[test]
+fn word_or_own_entry_keys_offer_their_words_and_say_what_an_own_entry_is() {
+    for key in [
+        "agent.tool_use_enforcement",
+        "agent.execution_guidance",
+        "agent.intent_ack_continuation",
+    ] {
+        let spec = choice_spec(key).unwrap();
+        assert_eq!(
+            spec.pick,
+            Pick::Mixed {
+                own_label: "Own list…",
+                own: OwnKind::List
+            },
+            "{key}"
+        );
+        assert_eq!(values(key), ["auto", "true", "false"], "{key}");
+        assert_eq!(spec.save, SaveAs::Json, "{key}");
+        assert!(spec.custom.is_some(), "{key}");
+    }
+    let memory = choice_spec("agent.agent_cache.memory_high_mb").unwrap();
+    assert_eq!(
+        memory.pick,
+        Pick::Mixed {
+            own_label: "Number of MB…",
+            own: OwnKind::Number
+        }
+    );
+    assert_eq!(values("agent.agent_cache.memory_high_mb"), ["auto", "off"]);
+    let approvers = choice_spec("approvals.approvers").unwrap();
+    assert_eq!(approvers.save, SaveAs::List);
+    assert_eq!(approvers.items[0].value, "*");
+    assert_eq!(approvers.items[1].value, "");
+    assert_eq!(approvers.items[1].label, Some("Requester and admins only"));
+    assert_eq!(approvers.saved("*"), serde_json::json!(["*"]));
+    assert_eq!(approvers.saved(""), serde_json::json!([]));
+}
+
+#[test]
+fn delegation_gateway_mode_lists_its_three_modes() {
+    assert_eq!(
+        values("delegation.gateway_mode"),
+        ["inline", "background", "auto"]
+    );
+}
+
+#[test]
+fn number_specs_state_a_range_a_step_and_a_unit() {
+    let mut seen = BTreeSet::new();
+    for spec in number_specs() {
+        assert!(seen.insert(spec.key), "{} twice", spec.key);
+        assert!(spec.step > 0.0, "{}", spec.key);
+        assert!(!spec.unit.is_empty(), "{} has no unit", spec.key);
+        if let (Some(min), Some(max)) = (spec.min, spec.max) {
+            assert!(min <= max, "{}", spec.key);
+        }
+        assert!(
+            choice_spec(spec.key).is_none(),
+            "{} is both a list and a number",
+            spec.key
+        );
+    }
+    let threshold = number_spec("compression.threshold").unwrap();
+    assert_eq!((threshold.min, threshold.max), (Some(0.0), Some(1.0)));
+    assert!((threshold.step - 0.05).abs() < f64::EPSILON);
+    let ratio = number_spec("agent.budget_warning_ratio").unwrap();
+    assert!(ratio.exclusive);
+    assert_eq!(ratio.blank, Some("off"));
+    let attempts = number_spec("compression.max_attempts").unwrap();
+    assert_eq!((attempts.min, attempts.max), (Some(1.0), Some(10.0)));
+    // A number Hermes states no range for has no spec, so nothing is invented.
+    assert!(number_spec("agent.agent_cache.max_size").is_none());
+    let blank_keys: Vec<_> = number_specs()
+        .iter()
+        .filter(|spec| spec.blank.is_some())
+        .map(|spec| spec.key)
+        .collect();
+    assert_eq!(blank_keys.len(), 13, "{blank_keys:?}");
 }
