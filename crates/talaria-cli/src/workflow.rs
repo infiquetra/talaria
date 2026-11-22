@@ -443,6 +443,40 @@ impl Renderer {
                     ));
                 }
             }
+            "budget_exhausted" => {
+                // The script returned, but the budget refused or stopped some of its agents.
+                #[derive(Serialize)]
+                struct Exhausted<'a> {
+                    event: &'static str,
+                    run_id: &'a str,
+                    outcome: &'a str,
+                    result: &'a Value,
+                    reason: &'a str,
+                    summary: &'a Value,
+                    spend: &'a SpendView,
+                }
+                let result = result.unwrap_or(&Value::Null);
+                let reason = saved["reason"].as_str().unwrap_or("budget exhausted");
+                if self.json {
+                    self.json(&Exhausted {
+                        event: "run_finished",
+                        run_id,
+                        outcome,
+                        result,
+                        reason,
+                        summary: &saved["summary"],
+                        spend,
+                    });
+                } else {
+                    self.text(&format!(
+                        "Budget exhausted: {}. Agents refused: {}, stopped: {}.\nResult:\n{}\n",
+                        safe(reason),
+                        saved["summary"]["refused"].as_u64().unwrap_or(0),
+                        saved["summary"]["stopped"].as_u64().unwrap_or(0),
+                        serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
+                    ));
+                }
+            }
             "failed" => {
                 if self.json {
                     self.json(&Failed {

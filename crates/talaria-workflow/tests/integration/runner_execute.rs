@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use talaria_workflow::{
-    hermes::{PortConfig, Wire, WireError, WireEvent, WireFactory, wire::Cursor},
+    hermes::{EventFrame, PortConfig, Wire, WireError, WireEvent, WireFactory, wire::Cursor},
     journal::{JournalReader, OnUnknown, Resolution, RunDir},
     progress::{
         AgentState, ControlId, ControlOutcome, ControlRequest, ProgressEffect, RunControl,
@@ -119,6 +119,10 @@ fn receipt(session_id: &str, session: &Session, status: &str, include_result: bo
         value["result"] = json!({"final_response":"READY","completed":!session.stopped,"failed":session.stopped,
             "turn_exit_reason":outcome,"estimated_cost_usd":0.2,"cost_status":"estimated","cost_source":"fixture"});
         value["usage"] = json!({"input_tokens":8,"output_tokens":2,"total_tokens":10});
+        if session.prompt.contains("billing") {
+            // The answer arrives, but the provider reports the account out of credit.
+            value["result"]["failure_reason"] = json!("billing");
+        }
     }
     value
 }
@@ -131,6 +135,7 @@ impl Wire for CountingWire {
     ) -> BoxFuture<'static, Result<Value, WireError>> {
         let inner = self.inner.clone();
         let hold_stop = self.hold_stop.clone();
+        let events = self._event_sender.clone();
         Box::pin(async move {
             while matches!(method, "session.interrupt" | "prompt.cancel")
                 && hold_stop.load(Ordering::SeqCst)
@@ -183,6 +188,23 @@ impl Wire for CountingWire {
                         "started"
                     }
                     .into();
+                    // A prompt naming `usage:N` streams a cumulative session.usage of N tokens.
+                    if let Some(tokens) = session
+                        .prompt
+                        .split("usage:")
+                        .nth(1)
+                        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+                        .and_then(|digits| digits.parse::<u64>().ok())
+                    {
+                        let frame = EventFrame::from_params(&json!({"type":"session.usage","session_id":id,
+                            "payload":{"input_tokens":tokens - 1,"output_tokens":1,"prompt_tokens":tokens - 1,
+                            "completion_tokens":1,"total_tokens":tokens,"api_calls":1}}))
+                        .unwrap();
+                        let _ = events.try_send(WireEvent::Event {
+                            session_id: id.into(),
+                            frame,
+                        });
+                    }
                     receipt(id, session, &session.status, false)
                 }
                 "prompt.resolve_unknown" => {
@@ -937,6 +959,193 @@ fn budgets_and_manifest_fields() {
 }
 
 #[test]
+fn token_budget_stops_running_agents_and_refuses_new_ones() {
+    // Worker one streams 1,000 tokens of live usage before its turn settles; the budget is 500.
+    // Worker two waits at the admission gate (one agent at a time) and never reaches Hermes.
+    let h = Harness::new(
+        "const results = await parallel([1, 2].map(i => () => agent(`hold usage:1000 worker ${i}`, {label:`worker-${i}`}).catch(e => `${e.name}: ${e.message}`)));
+         let late; try { await agent('late work', {label:'late'}); late = 'ran'; } catch (e) { late = `${e.name}: ${e.message}`; }
+         return {results, late, spent: budget.spent()};",
+    );
+    let mut req = h.request();
+    req.budget_tokens = Some(500);
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
+    let exhausted = "BudgetExhaustedError: token budget exhausted (spent 1000 of 500)";
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "budget_exhausted");
+    assert_eq!(
+        finished["result"],
+        json!({"results":[exhausted, exhausted],"late":exhausted,"spent":1000})
+    );
+    assert_eq!(finished["spend"]["tokens"], 1000);
+    for (label, state) in [
+        ("worker-1", "stopped"),
+        ("worker-2", "stopped"),
+        ("late", "refused"),
+    ] {
+        assert!(
+            events.iter().any(|e| e["event"] == "agent_finished"
+                && e["label"] == label
+                && e["state"] == state),
+            "{label} {state}: {events:?}"
+        );
+    }
+
+    // Only the first worker reached Hermes, and the runner interrupted its running turn.
+    let frames = h.wire.frames();
+    assert_eq!(
+        frames
+            .iter()
+            .filter(|f| f.method == "prompt.submit")
+            .count(),
+        1
+    );
+    assert_eq!(
+        frames
+            .iter()
+            .filter(|f| f.method == "session.interrupt")
+            .count(),
+        1
+    );
+
+    // Each refusal and each stop is its own journal record with the reason.
+    let journal = records(&folder);
+    let refused: Vec<_> = journal
+        .iter()
+        .filter(|r| r["t"] == "engine" && r["event"]["event"] == "agent_refused")
+        .collect();
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0]["event"]["label"], "late");
+    assert_eq!(
+        refused[0]["event"]["reason"],
+        "token budget exhausted (spent 1000 of 500)"
+    );
+    let stopped: Vec<_> = journal
+        .iter()
+        .filter(|r| r["t"] == "call_finished" && r["outcome"]["kind"] == "stopped")
+        .collect();
+    assert_eq!(stopped.len(), 2);
+    assert!(
+        stopped
+            .iter()
+            .all(|r| r["outcome"]["reason"] == "token budget exhausted (spent 1000 of 500)")
+    );
+    assert!(journal.iter().any(|r| {
+        r["t"] == "engine"
+            && r["event"]["event"] == "log"
+            && r["event"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("no new agents start")
+    }));
+    let finish = journal.iter().find(|r| r["t"] == "run_finished").unwrap();
+    assert_eq!(finish["outcome"], "budget_exhausted");
+    assert_eq!(finish["summary"]["refused"], 1);
+    assert_eq!(finish["summary"]["stopped"], 2);
+
+    // The stored outcome keeps the script's result and says why the run did not complete.
+    let outcome: Value =
+        serde_json::from_slice(&fs::read(folder.join("outcome.json")).unwrap()).unwrap();
+    assert_eq!(outcome["outcome"], "budget_exhausted");
+    assert_eq!(
+        outcome["reason"],
+        "token budget exhausted (spent 1000 of 500)"
+    );
+    assert_eq!(outcome["result"]["late"], exhausted);
+    assert_eq!(outcome["summary"]["refused"], 1);
+    assert_eq!(outcome["summary"]["stopped"], 2);
+
+    // The workflow view's header says the budget ended the run.
+    let (_, view, _) = progress_view(&folder);
+    let header = talaria_workflow::progress::text::run_line(&view);
+    for text in ["budget exhausted", "1 refused", "2 stopped"] {
+        assert!(header.contains(text), "{header}");
+    }
+    assert!(!header.contains("failed"), "{header}");
+    let summary = talaria_workflow::runner::runs::discover_runs(&h.runs);
+    assert_eq!(summary[0].status.as_str(), "budget_exhausted");
+}
+
+#[test]
+fn budget_exhausted_run_resumes_with_a_larger_budget() {
+    let h = Harness::new(
+        "const first = await agent('first', {label:'first'}); let second; try { second = await agent('second', {label:'second'}); } catch (e) { second = e.name; } return [first, second];",
+    );
+    let mut req = h.request();
+    req.budget_tokens = Some(10);
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
+    assert_eq!(
+        events
+            .iter()
+            .find(|e| e["event"] == "run_finished")
+            .unwrap()["result"],
+        json!(["READY", "BudgetExhaustedError"])
+    );
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let mut resume = h.resume(&target);
+    resume.budget_tokens = Some(100);
+    let (exit, events) = Worker::start(Start::Resume(resume), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "completed");
+    assert_eq!(finished["result"], json!(["READY", "READY"]));
+    // The completed agent is reused; only the refused one reaches Hermes on resume.
+    assert_eq!(
+        h.wire
+            .frames()
+            .iter()
+            .filter(|f| f.method == "prompt.submit")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn agent_without_live_usage_is_noted_once() {
+    let h = Harness::new(
+        "await agent('first quiet', {label:'quiet'}); return await agent('second quiet', {label:'quiet-too'});",
+    );
+    let mut req = h.request();
+    req.budget_tokens = Some(100_000);
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let notes: Vec<String> = records(&folder)
+        .iter()
+        .filter(|r| r["t"] == "engine" && r["event"]["event"] == "log")
+        .filter_map(|r| r["event"]["message"].as_str().map(str::to_owned))
+        .filter(|m| m.contains("streamed no token usage"))
+        .collect();
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(notes[0].contains("agent quiet "), "{notes:?}");
+    assert!(notes[1].contains("agent quiet-too "), "{notes:?}");
+
+    // Without a token budget the note would only be noise.
+    let h = Harness::new("return await agent('quiet', {label:'quiet'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    assert_eq!(worker.finish().0.code, 0);
+    assert!(!records(&folder).iter().any(|r| {
+        r["event"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("streamed no token usage"))
+    }));
+}
+
+#[test]
 fn resume_after_script_edit_keeps_latest() {
     let h = Harness::new("return await agent('hold original', {label:'original'});");
     fs::write(
@@ -1010,16 +1219,16 @@ fn view_write(effects: Vec<ProgressEffect>, expected: &ControlRequest) -> Contro
 
 #[test]
 fn progress_restart_waits_for_resume() {
+    // An out-of-credit report from the kept agent skips the queued call. A budget would now
+    // also stop the running agent that this test stops by hand.
     let h = Harness::new(
-        "const [a,b,c]=await parallel([() => agent('hold kept',{label:'kept'}), () => agent('hold restart',{label:'retry'}), () => agent('skipped',{label:'skipped'})]); if(b===null) throw Error('retry required'); return [a,b,c];",
+        "const [a,b,c]=await parallel([() => agent('hold kept billing',{label:'kept'}), () => agent('hold restart',{label:'retry'}), () => agent('skipped',{label:'skipped'})]); if(b===null) throw Error('retry required'); return [a,b,c];",
     );
     let staffing = fs::read_to_string(&h.staffing)
         .unwrap()
         .replace("max_in_flight = 1", "max_in_flight = 2");
     fs::write(&h.staffing, staffing).unwrap();
-    let mut request = h.request();
-    request.budget_tokens = Some(10);
-    let worker = Worker::start(Start::New(request), services(&h.wire, true));
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
     let folder = run_folder(&worker);
     wait_for(|| {
         records(&folder)
@@ -1030,7 +1239,7 @@ fn progress_restart_waits_for_resume() {
     });
     let kept = key_for(&folder, "kept");
     let retry = key_for(&folder, "retry");
-    h.wire.release("hold kept");
+    h.wire.release("hold kept billing");
     wait_for(|| {
         let entries = records(&folder);
         entries.iter().any(|r| {
@@ -1126,9 +1335,8 @@ fn progress_restart_waits_for_resume() {
 
     h.wire.release("hold restart");
     let target = folder.file_name().unwrap().to_string_lossy().into_owned();
-    let mut request = h.resume(&target);
-    request.budget_tokens = Some(100);
-    let (exit, _) = Worker::start(Start::Resume(request), services(&h.wire, true)).finish();
+    let (exit, _) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true)).finish();
     assert_eq!(exit.code, 0);
     assert!(!restart_file.exists());
     let after = h.wire.frames();

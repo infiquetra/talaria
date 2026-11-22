@@ -391,7 +391,11 @@ impl UltracodeService {
                         Action::Notice(notice::run_finished(
                             &row.name,
                             &row.run_id,
-                            row.status.as_str(),
+                            if row.status == RunStatus::BudgetExhausted {
+                                "stopped by its budget"
+                            } else {
+                                row.status.as_str()
+                            },
                             key,
                         )),
                     ));

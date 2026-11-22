@@ -109,6 +109,8 @@ fn round_trip_every_record_type() {
                 skipped: 0,
                 parked: 0,
                 unfinished: 0,
+                refused: 0,
+                stopped: 0,
             },
         },
     ];

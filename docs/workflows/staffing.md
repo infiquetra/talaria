@@ -120,9 +120,41 @@ Hermes version. A money budget warns about that accounting gap without refusing
 the provider. Estimates with token budgets show the cheapest-to-dearest known
 range plus any unpriced tiers; an all-unpriced roster is `unknown`.
 
-Budgets stop new admissions and retries; running work finishes. Queued calls are
-skipped when a budget is reached. Resume restores spend, frozen prices and width
-reductions silently, without restoring billing pauses or cooldowns.
+Token spend also counts work in progress. Hermes streams a `session.usage` event
+with each agent session's cumulative token count after every model call. The
+runner adds each session's latest reading beyond what that session has already
+settled, so a settled turn replaces its live share instead of adding to it, and a
+lower reading never takes spend back. Money is counted only when a turn settles.
+
+When counted spend reaches a budget:
+
+- No new agent starts. The engine refuses the `agent()` call and journals an
+  `agent_refused` engine event with the label, phase and reason; calls waiting at
+  the admission gate end as stopped without reaching Hermes.
+- Running agents are stopped through the same interrupt the operator's stop uses.
+  Their turns settle, so their usage is still journaled, and each call finishes
+  with a `stopped` outcome whose reason names what was spent. A turn that had
+  already finished with an answer keeps it, and no agent starts a correction turn.
+- The runner journals one log line when the budget is reached, and the run ends
+  as `budget_exhausted` with refused and stopped counts in its summary when the
+  script returns.
+
+What the budget guarantees: no agent starts once counted spend reaches it, and
+every agent still running is told to stop as soon as the runner counts it. What it
+cannot guarantee: a hard ceiling. Spend can pass the budget by the model calls
+already in flight when it is reached: Hermes reports a session's usage only after
+each model call returns, and the runner cannot take back a call already running. A provider that streams
+no usage leaves its agents counted only when their turns settle; the runner
+journals `streamed no token usage` once for each such agent while a token budget
+is set, and that agent is held only by the check made before it starts. After a
+gateway restart a session's counter can start again from zero, so its live share
+is counted again only once it passes what has settled. The money budget is
+checked from settled turns only.
+
+Retries stop when a budget is reached. Resume restores spend, frozen prices and
+width reductions silently, without restoring billing pauses or cooldowns. Resuming
+a `budget_exhausted` run with a larger budget reruns its stopped and refused
+agents and reuses the completed ones.
 
 Snapshots omit provider endpoint URLs, environment-key names, warnings and account
 identities or labels. Reports replace controls and bidirectional formatting

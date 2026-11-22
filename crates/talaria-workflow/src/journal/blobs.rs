@@ -118,6 +118,9 @@ pub(crate) fn outcome(
             reason: reason.clone(),
         }),
         CallOutcome::Skipped => Ok(AgentOutcome::Skipped),
+        CallOutcome::Stopped { reason } => Ok(AgentOutcome::Stopped {
+            reason: reason.clone(),
+        }),
     }
 }
 pub(crate) fn event(

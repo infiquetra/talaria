@@ -66,6 +66,7 @@ struct State {
     seen_failures: BTreeSet<(String, u32, u32)>,
     halved: bool,
     budgets: BTreeSet<BudgetKind>,
+    unmetered: BTreeSet<String>,
     subscribers: Vec<mpsc::UnboundedSender<TimedEvent>>,
     journal_error: Option<String>,
 }
@@ -131,6 +132,7 @@ impl Scheduler {
                 seen_failures: BTreeSet::new(),
                 halved: false,
                 budgets: BTreeSet::new(),
+                unmetered: BTreeSet::new(),
                 subscribers: vec![],
                 journal_error: None,
             }),
@@ -166,6 +168,17 @@ impl Scheduler {
         }
         self.inner.snapshot(&s)
     }
+    /// Count a session's cumulative live token reading before its turn settles. Reaching a
+    /// budget here refuses waiting calls at once.
+    pub fn observe_usage(&self, session_id: &str, cumulative_tokens: u64) {
+        let mut s = self.inner.lock();
+        if s.accounting.observe(session_id, cumulative_tokens) {
+            self.inner.budget_events(&mut s);
+            self.inner.drain(&mut s);
+            drop(s);
+            self.inner.wake.notify_one();
+        }
+    }
     pub fn status(&self) -> SchedulerStatus {
         let s = self.inner.lock();
         SchedulerStatus {
@@ -189,7 +202,7 @@ impl Scheduler {
                     pause_cause: l.pause.as_ref().map(|(_, c)| *c),
                 })
                 .collect(),
-            spend: s.accounting.spend.clone(),
+            spend: s.accounting.current(),
         }
     }
 }
@@ -219,7 +232,7 @@ impl Inner {
     fn snapshot(&self, s: &State) -> BudgetSnapshot {
         BudgetSnapshot {
             tokens_total: self.cfg.budget.tokens,
-            tokens_spent: s.accounting.spend.tokens,
+            tokens_spent: s.accounting.current().tokens,
             money_total: self.cfg.budget.money_usd,
             money_spent: s.accounting.spend.money_usd,
         }
@@ -229,7 +242,7 @@ impl Inner {
             .cfg
             .budget
             .tokens
-            .is_some_and(|t| s.accounting.spend.tokens >= t)
+            .is_some_and(|t| s.accounting.current().tokens >= t)
         {
             Some(BudgetKind::Tokens)
         } else if self
@@ -244,13 +257,10 @@ impl Inner {
         }
     }
     fn budget_events(&self, s: &mut State) {
+        let tokens = s.accounting.current().tokens;
         for kind in [BudgetKind::Tokens, BudgetKind::Money] {
             let reached = match kind {
-                BudgetKind::Tokens => self
-                    .cfg
-                    .budget
-                    .tokens
-                    .is_some_and(|t| s.accounting.spend.tokens >= t),
+                BudgetKind::Tokens => self.cfg.budget.tokens.is_some_and(|t| tokens >= t),
                 BudgetKind::Money => self
                     .cfg
                     .budget
@@ -262,7 +272,7 @@ impl Inner {
                     s,
                     SchedulerEvent::BudgetReached {
                         kind,
-                        tokens_spent: s.accounting.spend.tokens,
+                        tokens_spent: tokens,
                         tokens_total: self.cfg.budget.tokens,
                         money_spent_usd: s.accounting.spend.money_usd,
                         money_total_usd: self.cfg.budget.money_usd,
@@ -343,6 +353,34 @@ impl Inner {
             );
         }
     }
+    /// Report once per session when a token budget is set and a turn settled before the
+    /// session streamed any usage: that agent is counted only when its turns settle.
+    fn unmetered(&self, s: &mut State, key: &str, attempt: u32, silent: bool) {
+        let identity = (key.to_owned(), attempt);
+        let Some(session) = s.accounting.sessions.get(&identity).cloned() else {
+            return;
+        };
+        if silent
+            || self.cfg.budget.tokens.is_none()
+            || s.accounting.live.contains_key(&session)
+            || !s.unmetered.insert(session)
+        {
+            return;
+        }
+        let label = s
+            .accounting
+            .labels
+            .get(&identity)
+            .cloned()
+            .unwrap_or_default();
+        self.event(
+            s,
+            SchedulerEvent::UsageUnmetered {
+                key: key.into(),
+                label,
+            },
+        );
+    }
     fn fold(&self, s: &mut State, silent: bool) -> Result<(), String> {
         let (records, offset) =
             JournalReader::read_from(&self.path, s.offset).map_err(|e| e.to_string())?;
@@ -352,9 +390,19 @@ impl Inner {
                     key,
                     attempt,
                     launch,
+                    label,
                     ..
                 } => {
+                    s.accounting.labels.insert((key.clone(), attempt), label);
                     s.accounting.launches.insert((key, attempt), launch);
+                }
+                Record::SessionBound {
+                    key,
+                    attempt,
+                    session_id,
+                    ..
+                } => {
+                    s.accounting.sessions.insert((key, attempt), session_id);
                 }
                 Record::TurnSettled {
                     key,
@@ -366,6 +414,7 @@ impl Inner {
                 } => {
                     s.accounting
                         .settle(&key, attempt, turn, usage.as_ref(), &self.cfg.prices);
+                    self.unmetered(s, &key, attempt, silent);
                     if let Some(l) = s.accounting.launches.get(&(key.clone(), attempt)).cloned() {
                         self.failure(
                             s,

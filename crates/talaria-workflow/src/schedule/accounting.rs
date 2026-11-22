@@ -6,6 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) struct Accounting {
     pub spend: Spend,
     pub launches: BTreeMap<(String, u32), ResolvedLaunch>,
+    pub labels: BTreeMap<(String, u32), String>,
+    pub sessions: BTreeMap<(String, u32), String>,
+    /// Settled tokens and the latest cumulative live reading, per Hermes session.
+    settled: BTreeMap<String, u64>,
+    pub live: BTreeMap<String, u64>,
     last: BTreeMap<(String, u32), f64>,
     seen: BTreeSet<(String, u32, u32)>,
     hermes: bool,
@@ -31,6 +36,10 @@ impl Accounting {
             .or_else(|| input.zip(output).map(|(i, o)| i.saturating_add(o)));
         if let Some(n) = tokens {
             self.spend.tokens = self.spend.tokens.saturating_add(n);
+            if let Some(session) = self.sessions.get(&(key.into(), attempt)) {
+                let settled = self.settled.entry(session.clone()).or_default();
+                *settled = settled.saturating_add(n);
+            }
         } else {
             self.spend.tokens_unknown_turns = self.spend.tokens_unknown_turns.saturating_add(1);
         }
@@ -78,6 +87,26 @@ impl Accounting {
             (false, true) => MoneySource::Pricing,
             _ => MoneySource::None,
         };
+    }
+    /// Keep the highest cumulative reading; returns whether spend grew.
+    pub fn observe(&mut self, session: &str, cumulative: u64) -> bool {
+        let reading = self.live.entry(session.into()).or_default();
+        let grew = cumulative > *reading;
+        *reading = (*reading).max(cumulative);
+        grew
+    }
+    /// Settled spend plus each session's live reading beyond what has settled. A session's
+    /// readings are cumulative, so a settled turn replaces its live share instead of adding to it.
+    pub fn current(&self) -> Spend {
+        let live = self
+            .live
+            .iter()
+            .map(|(s, n)| n.saturating_sub(self.settled.get(s).copied().unwrap_or(0)))
+            .fold(0u64, u64::saturating_add);
+        Spend {
+            tokens: self.spend.tokens.saturating_add(live),
+            ..self.spend.clone()
+        }
     }
     fn add(&mut self, amount: f64) {
         self.spend.money_usd = (self.spend.money_usd + amount).min(f64::MAX);

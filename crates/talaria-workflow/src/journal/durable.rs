@@ -131,6 +131,14 @@ fn abort_journal(e: JournalError) -> AgentOutcome {
     }
 }
 impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P, T, L, G> {
+    /// A gate refusal ends the call as stopped when the budget caused it.
+    fn skipped(&self) -> AgentOutcome {
+        self.gate
+            .budget_stop()
+            .map_or(AgentOutcome::Skipped, |reason| AgentOutcome::Stopped {
+                reason,
+            })
+    }
     async fn finish_call(
         &self,
         key: &str,
@@ -212,7 +220,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     h.last().map(|r| &r.record),
                     Some(
                         Record::CallFinished {
-                            outcome: CallOutcome::Failed { .. },
+                            outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
                             ..
                         } | Record::CallRetryFinished { .. }
                     )
@@ -276,9 +284,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 permit = match decision {
                     GateDecision::Proceed(p) => Some(p),
                     GateDecision::Skip => {
-                        return self
-                            .finish_call(&key, attempt, 0, AgentOutcome::Skipped)
-                            .await;
+                        return self.finish_call(&key, attempt, 0, self.skipped()).await;
                     }
                     GateDecision::Abort { reason } => return Ok(AgentOutcome::Abort { reason }),
                 };
@@ -477,9 +483,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     GateDecision::Proceed(p) => permit = Some(p),
                     GateDecision::Abort { reason } => return Ok(AgentOutcome::Abort { reason }),
                     GateDecision::Skip if reason == GateReason::Fresh => {
-                        return self
-                            .finish_call(&key, attempt, 0, AgentOutcome::Skipped)
-                            .await;
+                        return self.finish_call(&key, attempt, 0, self.skipped()).await;
                     }
                     GateDecision::Skip => {
                         return Ok(AgentOutcome::Abort {
@@ -519,6 +523,12 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     }
                 }
                 Record::SessionBound { .. } => {
+                    if let Some(reason) = self.gate.budget_stop() {
+                        drop(permit.take());
+                        return self
+                            .finish_call(&key, attempt, 0, AgentOutcome::Stopped { reason })
+                            .await;
+                    }
                     let text = self.policy.first_turn(&request, stored_launch);
                     self.turn_intent(&key, attempt, 0, text).await?;
                     Ok(())
@@ -654,7 +664,22 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 }
                 Record::TurnSettled { .. } => {
                     let turns = h.turns(self.journal.dir().path())?;
-                    match self.policy.after_turn(&request, &turns) {
+                    let next = self.policy.after_turn(&request, &turns);
+                    // A finished answer is kept; anything else would spend past the budget.
+                    if !matches!(next, NextStep::Finish(AgentOutcome::Completed(_)))
+                        && let Some(reason) = self.gate.budget_stop()
+                    {
+                        drop(permit.take());
+                        return self
+                            .finish_call(
+                                &key,
+                                attempt,
+                                turns.len() as u32,
+                                AgentOutcome::Stopped { reason },
+                            )
+                            .await;
+                    }
+                    match next {
                         NextStep::Finish(outcome) => {
                             if matches!(outcome, AgentOutcome::Failed { .. })
                                 && !self.retried.lock().map_err(io_error)?.contains(&key)

@@ -146,9 +146,17 @@ impl std::fmt::Display for CallId {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum AgentOutcome {
     Completed(Value),
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
     Skipped,
-    Abort { reason: String },
+    /// Ended because the run's budget ran out; the call rejects with `BudgetExhaustedError`.
+    Stopped {
+        reason: String,
+    },
+    Abort {
+        reason: String,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct BudgetSnapshot {
@@ -156,6 +164,23 @@ pub struct BudgetSnapshot {
     pub tokens_spent: u64,
     pub money_total: Option<f64>,
     pub money_spent: f64,
+}
+/// Why a budget refuses new work, naming what was spent; `None` while work may continue.
+pub fn exhausted(b: &BudgetSnapshot) -> Option<String> {
+    if let Some(total) = b.tokens_total.filter(|total| b.tokens_spent >= *total) {
+        return Some(format!(
+            "token budget exhausted (spent {} of {total})",
+            b.tokens_spent
+        ));
+    }
+    b.money_total
+        .filter(|total| b.money_spent >= *total)
+        .map(|total| {
+            format!(
+                "money budget exhausted (spent {} of {total})",
+                b.money_spent
+            )
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -243,6 +268,12 @@ pub enum EngineEvent {
         request: AgentRequest,
         replayed: bool,
     },
+    AgentRefused {
+        label: String,
+        phase: Option<String>,
+        workflow_path: Vec<String>,
+        reason: String,
+    },
     AgentFinished {
         call_id: CallId,
         completion_seq: Option<u64>,
@@ -270,6 +301,7 @@ pub enum OutcomeKind {
     Completed,
     Failed { reason: String },
     Skipped,
+    Stopped { reason: String },
     Aborted,
     Abandoned,
 }
@@ -277,6 +309,8 @@ pub enum OutcomeKind {
 #[serde(rename_all = "snake_case")]
 pub enum RunOutcomeKind {
     Completed,
+    /// The script returned, but the budget refused or stopped at least one agent.
+    BudgetExhausted,
     Failed,
     Aborted,
 }

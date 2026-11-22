@@ -151,6 +151,10 @@ pub trait AdmissionGate: Send + Sync + 'static {
         reason: GateReason,
     ) -> BoxFuture<'static, GateDecision>;
     fn budget(&self) -> BudgetSnapshot;
+    /// Why the budget ends calls that have not completed; `None` while work may continue.
+    fn budget_stop(&self) -> Option<String> {
+        crate::engine::exhausted(&self.budget())
+    }
     fn retry_after_failure(
         &self,
         _request: &AgentRequest,

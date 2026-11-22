@@ -605,6 +605,138 @@ async fn budget_skips_queued_and_resumed_fresh_calls_but_reattach_proceeds() {
     };
     assert!(!s.retry_after_failure(&request(4), &l, &last, 0));
 }
+async fn bind(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, session: &str) {
+    let key = journal_key(&q.call_id, l);
+    let dir = c.journal.dir();
+    c.journal
+        .append(Record::CallIntent {
+            key: key.clone(),
+            attempt: 0,
+            call_id: q.call_id.clone(),
+            label: q.label.clone(),
+            phase: None,
+            workflow_path: vec![],
+            launch: l.clone(),
+            request_id: request_id(dir.run_id(), &key, 0),
+        })
+        .await
+        .unwrap();
+    c.journal
+        .append(Record::SessionBound {
+            key,
+            attempt: 0,
+            session_id: session.into(),
+            stored_session_id: session.into(),
+        })
+        .await
+        .unwrap();
+}
+async fn settle(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, tokens: u64) {
+    let key = journal_key(&q.call_id, l);
+    let dir = c.journal.dir();
+    c.journal
+        .append(Record::TurnIntent {
+            key: key.clone(),
+            attempt: 0,
+            turn: 0,
+            submission_id: submission_id(dir.run_id(), &key, 0, 0),
+            text: Some("test".into()),
+            text_ref: None,
+        })
+        .await
+        .unwrap();
+    for record in [
+        Record::TurnAdmitted {
+            key: key.clone(),
+            attempt: 0,
+            turn: 0,
+            admission_id: "admission".into(),
+            status: AdmissionState::Started,
+            outcome: None,
+            execution_generation: Some(1),
+            authority_epoch: 1,
+        },
+        Record::TurnSettled {
+            key,
+            attempt: 0,
+            turn: 0,
+            admission_id: "admission".into(),
+            outcome: "completed".into(),
+            final_text: Some("ok".into()),
+            final_text_ref: None,
+            result_meta: json!({}),
+            usage: Some(json!({"total_tokens":tokens})),
+        },
+    ] {
+        c.journal.append(record).await.unwrap();
+    }
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn live_usage_counts_toward_the_token_budget_before_a_turn_settles() {
+    let mut c = Context::new(data(), 1).await;
+    c.table.budget.tokens = Some(1000);
+    let (s, mut events) = c.start().await;
+    let l = launch("fixture", "alpha");
+    let p = permit(s.acquire(&request(0), &l, GateReason::Fresh).await);
+    bind(&c, &request(0), &l, "s-live").await;
+    let mut queued = s.acquire(&request(1), &l, GateReason::Fresh);
+    assert!(poll!(&mut queued).is_pending());
+    s.observe_usage("s-live", 600);
+    assert_eq!(s.budget().tokens_spent, 600);
+    assert_eq!(s.budget_stop(), None);
+    // A lower or repeated reading never takes spend back.
+    s.observe_usage("s-live", 400);
+    assert_eq!(s.budget().tokens_spent, 600);
+    s.observe_usage("s-live", 1200);
+    assert_eq!(s.budget().tokens_spent, 1200);
+    assert_eq!(
+        s.budget_stop().as_deref(),
+        Some("token budget exhausted (spent 1200 of 1000)")
+    );
+    // The waiting call is refused without its holder releasing the gate.
+    assert!(matches!(queued.await, GateDecision::Skip));
+    assert!(
+        std::iter::from_fn(|| events.0.try_recv().ok()).any(|e| matches!(
+            e.event,
+            SchedulerEvent::BudgetReached {
+                kind: BudgetKind::Tokens,
+                tokens_spent: 1200,
+                ..
+            }
+        ))
+    );
+    // Settling the turn replaces its live reading instead of adding to it.
+    settle(&c, &request(0), &l, 1300).await;
+    drop(p);
+    settle_tasks().await;
+    assert_eq!(s.budget().tokens_spent, 1300);
+    assert_eq!(s.status().spend.tokens, 1300);
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_turn_that_settles_without_live_usage_is_reported_once() {
+    let mut c = Context::new(data(), 1).await;
+    c.table.budget.tokens = Some(1_000_000);
+    let (s, mut events) = c.start().await;
+    let l = launch("fixture", "alpha");
+    let p = permit(s.acquire(&request(0), &l, GateReason::Fresh).await);
+    bind(&c, &request(0), &l, "s-quiet").await;
+    settle(&c, &request(0), &l, 50).await;
+    drop(p);
+    let p = permit(s.acquire(&request(1), &l, GateReason::Fresh).await);
+    bind(&c, &request(1), &l, "s-metered").await;
+    s.observe_usage("s-metered", 40);
+    settle(&c, &request(1), &l, 50).await;
+    drop(p);
+    settle_tasks().await;
+    let unmetered: Vec<_> = std::iter::from_fn(|| events.0.try_recv().ok())
+        .filter_map(|e| match e.event {
+            SchedulerEvent::UsageUnmetered { label, .. } => Some(label),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(unmetered, ["call-0"]);
+    assert_eq!(s.budget().tokens_spent, 100);
+}
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn events_are_flat_timed_and_lossless_for_slow_subscribers() {
     let c = Context::new(data(), 10).await;

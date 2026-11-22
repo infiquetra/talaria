@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,10 +13,13 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::{
     engine::{self, CallId, EngineEvent, OutcomeKind, ParsedScript, RunOutcome, RunOutcomeKind},
-    hermes::{ExplicitLaunch, HermesPort, LaunchDefaults, SchemaTurnPolicy},
+    hermes::{
+        AgentFeedItem, AgentFeedReceiver, ExplicitLaunch, HermesPort, LaunchDefaults,
+        SchemaTurnPolicy,
+    },
     journal::{
-        AdmissionState, GatewayPort, JournalNotice, JournaledBackend, NewManifest, OnUnknown,
-        RetryPolicy, RunDir, RunJournal,
+        AdmissionGate, AdmissionState, GatewayPort, JournalNotice, JournaledBackend, NewManifest,
+        OnUnknown, RetryPolicy, RunDir, RunJournal,
     },
     progress::RunControl,
     schedule::{MoneySource, Scheduler, SchedulerConfig, Spend},
@@ -855,7 +858,7 @@ async fn execute_inner(
         output.diagnostic(format!("journal warning: {warning:?}"));
     }
     output.started(&dir);
-    let port = services.port(&dir.manifest().profile).await?;
+    let (port, feed) = services.port(&dir.manifest().profile).await?;
     let records = control::read_records(dir.path()).map_err(|e| e.to_string())?;
     for target in control::stop_targets(&records).map_err(|e| e.to_string())? {
         // The durable backend handles a failed attachment through its recovery policy.
@@ -989,6 +992,9 @@ async fn execute_inner(
         }
     }));
     tasks.handles.push(signal_task(tx.clone()));
+    tasks
+        .handles
+        .push(tokio::spawn(count_live_usage(feed, scheduler.clone())));
     drop(tx);
     let mut labels = BTreeMap::<CallId, String>::new();
     let mut engine_outcome = None;
@@ -997,6 +1003,10 @@ async fn execute_inner(
     let mut stop_requested = false;
     // The gate starts open; only a change is journaled, so script logs stay in view.
     let mut journaled_paused = false;
+    // Calls the budget refused or stopped, the latest reason, and turns already told to stop.
+    let (mut refused, mut budget_stopped) = (0_usize, 0_usize);
+    let mut budget_reason: Option<String> = None;
+    let mut stop_sent = BTreeSet::<String>::new();
     let outcome = loop {
         tokio::select! {
             unsettled=async {match stopping.as_mut(){Some(f)=>f.await,None=>std::future::pending().await}},if stopping.is_some()=>{stopped=Some(unsettled);stopping=None;},
@@ -1011,15 +1021,30 @@ async fn execute_inner(
                             labels.insert(request.call_id,request.label.clone());
                             (output.out)(&RunnerEvent::AgentStarted{label:request.label,model:request.model.unwrap_or_else(||request.tier.map_or_else(||"profile default".into(),|tier|format!("tier:{tier}"))),provider:request.provider.unwrap_or_else(||"profile default".into())});
                         }
+                        EngineEvent::AgentRefused{label,reason,..}=>{
+                            refused+=1;
+                            output.diagnostic(format!("agent {label} refused: {reason}"));
+                            budget_reason=Some(reason);
+                            (output.out)(&RunnerEvent::AgentFinished{label,state:"refused".into()});
+                        }
                         EngineEvent::AgentFinished{call_id,outcome,..}=>{
-                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::Failed{reason}=>{output.diagnostic(reason);"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
-                            (output.out)(&RunnerEvent::AgentFinished{label:labels.remove(&call_id).unwrap_or_default(),state:state.into()});
+                            let label=labels.remove(&call_id).unwrap_or_default();
+                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::Failed{reason}=>{output.diagnostic(reason);"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
+                            (output.out)(&RunnerEvent::AgentFinished{label,state:state.into()});
                         }
                         _=>{},
                     }
                 }
                 Some(Input::Outcome(outcome))=>{if !stop_requested{break outcome;}engine_outcome=Some(outcome);}
-                Some(Input::Scheduler(event))=>(output.out)(&RunnerEvent::Scheduler(event)),
+                Some(Input::Scheduler(event))=>{
+                    if let Some(message)=budget_note(&event,||gate.budget_stop()) {
+                        journal.record_engine_event(&EngineEvent::Log{message,workflow_path:vec![]}).await.map_err(|e| e.to_string())?;
+                    }
+                    if event["event"]=="budget_reached" && !stop_requested {
+                        stop_for_budget(&port,dir.path(),&mut stop_sent,&mut tasks.handles);
+                    }
+                    (output.out)(&RunnerEvent::Scheduler(event));
+                }
                 Some(Input::Notice(JournalNotice::NeedsOperator{key,label,attempt,episode,..}))=>(output.out)(&RunnerEvent::Parked{run_id:dir.run_id().as_str().into(),label,key,attempt,episode}),
                 Some(Input::Notice(JournalNotice::Warning(warning)))=>output.diagnostic(format!("journal warning: {warning:?}")),
                 Some(Input::Notice(_))=>{},
@@ -1038,6 +1063,10 @@ async fn execute_inner(
                         stop_requested = true;
                         gate.set_paused(true);
                         cancel.cancel();
+                    }
+                    // A turn admitted after the budget ran out is stopped on the next tick.
+                    if !stop_requested && gate.budget_stop().is_some() {
+                        stop_for_budget(&port,dir.path(),&mut stop_sent,&mut tasks.handles);
                     }
                 }
                 Some(Input::Failure(error))=>{cancel.cancel();return Err(error);}
@@ -1065,7 +1094,18 @@ async fn execute_inner(
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
+    let exhausted = refused + budget_stopped > 0;
     let mut file = match outcome {
+        // The script returned, but not every agent it asked for ran to the end.
+        RunOutcome::Completed { result } if exhausted => OutcomeFile {
+            v: 1,
+            outcome: "budget_exhausted".into(),
+            result: Some(result),
+            error: None,
+            reason: gate.budget_stop().or(budget_reason),
+            finished_at_ms: 0,
+            summary: Value::Null,
+        },
         RunOutcome::Completed { result } => OutcomeFile {
             v: 1,
             outcome: "completed".into(),
@@ -1118,6 +1158,7 @@ async fn execute_inner(
     };
     let kind = match file.outcome.as_str() {
         "completed" => RunOutcomeKind::Completed,
+        "budget_exhausted" => RunOutcomeKind::BudgetExhausted,
         "failed" => RunOutcomeKind::Failed,
         _ => RunOutcomeKind::Aborted,
     };
@@ -1139,9 +1180,65 @@ async fn execute_inner(
     });
     Ok(match file.outcome.as_str() {
         "completed" => 0,
+        "budget_exhausted" => 4,
         "failed" => 1,
         _ => 3,
     })
+}
+
+/// Count each agent session's streamed usage toward the run's budget as it arrives.
+async fn count_live_usage(mut feed: AgentFeedReceiver, scheduler: Scheduler) {
+    while let Some(item) = feed.recv().await {
+        if let AgentFeedItem::Event {
+            session_id, frame, ..
+        } = item
+            && let hermes_contract::events::Notification::SessionUsage(p) = frame.notification
+            && let Some(tokens) = p
+                .total_tokens
+                .or_else(|| p.prompt_tokens?.checked_add(p.completion_tokens?))
+                .or_else(|| p.input_tokens?.checked_add(p.output_tokens?))
+                .and_then(|n| u64::try_from(n).ok())
+        {
+            scheduler.observe_usage(&session_id, tokens);
+        }
+    }
+}
+/// The journal line for a budget event the scheduler reported, if it needs one.
+fn budget_note(event: &Value, stop: impl FnOnce() -> Option<String>) -> Option<String> {
+    match event["event"].as_str()? {
+        "budget_reached" => Some(format!(
+            "budget: {}; no new agents start and running agents are being stopped",
+            stop().unwrap_or_else(|| "budget reached".into())
+        )),
+        "usage_unmetered" => Some(format!(
+            "budget: agent {} streamed no token usage before its turn settled; its tokens count only when its turns settle",
+            event["label"].as_str().unwrap_or_default()
+        )),
+        _ => None,
+    }
+}
+/// Interrupt every admitted turn once, through the same stop the operator's stop uses. The
+/// interrupted calls settle and end as stopped for the budget.
+fn stop_for_budget(
+    port: &HermesPort,
+    dir: &Path,
+    sent: &mut BTreeSet<String>,
+    handles: &mut Vec<tokio::task::JoinHandle<()>>,
+) {
+    let Ok(targets) = control::read_records(dir)
+        .map_err(|e| e.to_string())
+        .and_then(|records| control::stop_targets(&records).map_err(|e| e.to_string()))
+    else {
+        return;
+    };
+    for target in targets {
+        if sent.insert(target.admission_id.clone()) {
+            let port = port.clone();
+            handles.push(tokio::spawn(async move {
+                let _ = port.stop(&target.profile, &target.session_id).await;
+            }));
+        }
+    }
 }
 
 async fn verify_restarts(

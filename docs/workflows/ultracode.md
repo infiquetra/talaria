@@ -82,7 +82,8 @@ a fresh hour and forgets runs that already ended. When one starts it prints
 shows a dock line above the composer (`⚙ Workflow <name> · running · 3/10 agents · Alt+W to
 open`), and adds the agent count to the status segment (`ultracode · 3/10 agents`), which is
 then kept on a narrow line. When the run ends it prints `Workflow run <outcome>: …` and the
-dock line goes away. The view never opens by itself. `workflow_view` (Alt+W) opens the latest
+dock line goes away; a run whose budget refused or stopped any agent prints
+`Workflow run stopped by its budget: …`. The view never opens by itself. `workflow_view` (Alt+W) opens the latest
 run that this Talaria window saw start after an Ultracode-routed prompt in the foreground
 session, or the run list when it saw none. Runs are matched by profile and start time, not
 by the prompt that asked for them, so for an hour after a routed prompt a run started by hand

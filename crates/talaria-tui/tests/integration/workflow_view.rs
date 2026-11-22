@@ -115,6 +115,8 @@ fn review_lines() -> Vec<RecordLine> {
                 skipped: 0,
                 parked: 0,
                 unfinished: 0,
+                refused: 0,
+                stopped: 0,
             },
         },
     ];

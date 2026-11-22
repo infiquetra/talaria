@@ -43,10 +43,13 @@ pub fn run_line(s: &ProgressState) -> String {
     for (n, name) in [
         (c.running, "running"),
         (c.needs_you, "needs you"),
-        (c.failed, "failed"),
+        // An agent the budget stopped is counted once, as stopped.
+        (c.failed.saturating_sub(r.budget_stopped), "failed"),
         (c.queued, "queued"),
         (c.skipped, "skipped"),
         (c.ended, "ended"),
+        (r.refused, "refused"),
+        (r.budget_stopped, "stopped"),
     ] {
         if n > 0 {
             line.push_str(&format!(" · {n} {name}"));

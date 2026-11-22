@@ -19,8 +19,10 @@ agents and that `f` changes it.
 Agent states are done, failed, skipped, unknown (unresolved journal attention),
 ended (engine ended without a journal outcome), waiting (an outstanding
 approval or clarification), stopping, running and queued. A recorded outcome
-wins over later live activity. Run states are running, completed, failed and
-aborted. A resumed execution keeps the previous outcome separately. The view
+wins over later live activity. Run states are running, completed, budget
+exhausted, failed and aborted. Agents the budget stopped count as `stopped` in the
+header instead of failed, calls it refused count as `refused`, and each refusal
+adds an `agent <label> refused: <reason>` line to the log. A resumed execution keeps the previous outcome separately. The view
 checks the run lock on every poll. When no runner holds it and the journal has
 been quiet for ten seconds (a minute before the first record, while a new runner
 starts), a running view adds

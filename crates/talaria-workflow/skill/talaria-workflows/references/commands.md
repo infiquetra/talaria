@@ -16,7 +16,7 @@ Options: --staffing, --budget-tokens, --budget-usd, --profile, --json. The versi
 @@TALARIA_COMMAND@@ workflow run --profile @@TALARIA_PROFILE@@ --json <script.js>
 ```
 
-Options: --detach, --json, --args, --args-file, --profile, --staffing, --cwd, --budget-tokens, --budget-usd, --on-unknown, --record, --runs-dir, --workflows-dir. JSON input flags conflict. The first line names the run folder. The final foreground object has event run_finished, run_id, outcome, one of result/error/reason, and spend with tokens, money_usd, money_source. Exit 0 completed, 1 failed, 2 refused, 3 aborted. Detach returns a run id immediately; the child appends runner.log.
+Options: --detach, --json, --args, --args-file, --profile, --staffing, --cwd, --budget-tokens, --budget-usd, --on-unknown, --record, --runs-dir, --workflows-dir. JSON input flags conflict. The first line names the run folder. The final foreground object has event run_finished, run_id, outcome, one of result/error/reason, and spend with tokens, money_usd, money_source. Outcome budget_exhausted means the script returned but the budget refused or stopped agents; that object has result, reason and summary with refused and stopped counts. Exit 0 completed, 1 failed, 2 refused, 3 aborted, 4 budget exhausted. Detach returns a run id immediately; the child appends runner.log.
 
 ## Resume
 

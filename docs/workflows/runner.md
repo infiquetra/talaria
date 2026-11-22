@@ -42,7 +42,7 @@ Each run folder holds:
 | `journal.jsonl`, `run.lock` | Durable records and the journal's single-writer lock. |
 | `scripts/`, `blobs/`, `resolutions/` | Journal-owned content and parked-call answers. |
 | `launch.json` | Original script path and folder, absolute working folder, and saved-workflow folder. |
-| `outcome.json` | Latest completed execution's result, failure detail, or abort reason. |
+| `outcome.json` | Latest completed execution's result, failure detail, or abort reason; a `budget_exhausted` run keeps its result and the budget reason. |
 | `runner.json` | Detached child's process id; discovery does not trust it as liveness evidence. |
 | `runner.log` | Detached child's appended human output. |
 | `control/` | Shared pause, stop, and next-resume restart requests. |
@@ -90,8 +90,8 @@ runner. Use `resolve` to answer its parked calls while it remains alive.
 A completed execution replays its stored `outcome.json` result without connecting to the
 gateway or executing the script. If a completed run predates that file, the runner reports
 the missing result and the journal's finish summary; it never reruns paid work to recover a
-display value. Failed, aborted, and interrupted runs open a new execution. Their unchanged
-completed calls remain reusable through journal replay.
+display value. Failed, aborted, interrupted, and budget-exhausted runs open a new execution.
+Their unchanged completed calls remain reusable through journal replay.
 Before admitting new work, resume reattaches the unfinished sessions recorded in the
 journal. Their terminal results still come from receipts through the backend.
 An explicit pending restart of a failed key requests a new execution even when the previous
@@ -170,10 +170,13 @@ unknown. File-only discovery never reprices tokens.
 Foreground output names the run folder, shows phases, logs, agents, and scheduler events,
 then prints the result. `--json` emits compact JSON lines and one final `run_finished`
 object. That object has exactly one of `result`, `error`, or `reason`, together with token
-and money spend. Diagnostic and refusal lines go to standard error. Detached children
+and money spend; a `budget_exhausted` object has both `result` and `reason`, plus the
+journal's finish `summary` with its `refused` and `stopped` counts. Agents the budget
+refused or stopped appear as `agent_finished` lines with state `refused` or `stopped`. Diagnostic and refusal lines go to standard error. Detached children
 always write human output to `runner.log`; the parent prints one detached-run object or line.
 
-Exit codes are 0 completed, 1 failed or unconfirmed, 2 usage or refusal, and 3 aborted.
+Exit codes are 0 completed, 1 failed or unconfirmed, 2 usage or refusal, 3 aborted, and 4
+budget exhausted (the script returned, but the budget refused or stopped at least one agent).
 
 ## Integration and verification
 
