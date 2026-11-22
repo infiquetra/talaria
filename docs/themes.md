@@ -132,8 +132,9 @@ surfaces do not paint backgrounds.
   filters the list, Up and Down move, Enter keeps the selected skin as `/skin <name>` does, and
   Esc closes the list. Hermes cannot show a skin without making it the profile's skin, so once
   the selection rests for about 300 ms Talaria sets it for the profile to preview it; Esc, or
-  quitting while the list is open, sets the original skin again. Other Hermes windows on the
-  profile change with each preview.
+  quitting while the list is open, sets the original skin again. A switch to another session or
+  profile closes the list first and starts once the original skin is set again. Other Hermes
+  windows on the profile change with each preview.
 - `/skin <name>` sets the profile's Hermes skin (`display.skin`), as Hermes's own `/skin` does,
   so other Hermes windows on the profile change too.
 - `/theme` shows the skin, the background, the colour depth and the motion setting, each with
@@ -144,12 +145,13 @@ surfaces do not paint backgrounds.
   backgrounds, each with a description and the current ones marked. Moving the selection
   previews it at once, in memory; Enter selects it for this session, as `/theme use <id>` or
   `/theme light|dark|auto` does, and prints the `config.toml` line that keeps it; Esc puts back
-  what was in force. Lines already in scrollback keep their colours, so both selectors draw a
-  short sample of transcript rows in the selected look above the list, when the screen has
-  room for it beside the composer and the status bar; on a short screen the list alone
-  previews. In either selector,
-  typing `/` closes the list as Esc does and starts a new command in the composer; a selector
-  whose list arrives after you have started typing stays closed.
+  what was in force. Lines already in scrollback keep their colours, and lines that reach
+  scrollback while the list is open take the look in force, not the preview, so both selectors
+  draw a short sample of transcript rows in the selected look above the list, when the screen
+  has room for it beside the composer and the status bar; on a short screen the list alone
+  previews. In either selector, typing `/` or pasting text closes the list as Esc does and hands
+  the composer the key or the text; a selector whose list arrives after you have started typing
+  stays closed.
 - `/theme use <id>` selects a file for this session. `/theme use` returns to the configured
   selection. `/theme reload` rereads the active file. When a file is selected, `/theme` also
   reports its identifier, base, skin participation, per-field sources and warnings. Without a
