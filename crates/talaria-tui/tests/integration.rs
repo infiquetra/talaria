@@ -226,6 +226,8 @@ mod status_notice;
 mod status_pr_segment;
 #[path = "integration/status_probe.rs"]
 mod status_probe;
+#[path = "integration/status_profile_segment.rs"]
+mod status_profile_segment;
 #[path = "integration/status_record.rs"]
 mod status_record;
 #[path = "integration/subagent_view.rs"]

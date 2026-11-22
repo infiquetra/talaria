@@ -20,6 +20,11 @@ provider level, an arrow shows both, such as `max→high`. When the model's cata
 effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the
 catalogue or provider level is unavailable, the requested level is shown without a claim about it.
 
+When Talaria is connected to a Hermes profile other than `default`, the status bar names it
+before the model, as `profile <name>`. It appears after `talaria --profile <name>`, after a
+connect from `/profiles`, and after `/resume` opens a session on another profile. On a narrow
+terminal it is kept longer than the context and folder segments.
+
 The optional work panel shows the status row's attention count, the focused session's goal,
 turn and explicit verdict, its task checklist, and its agents. The waiting requests come from
 the fleet queue used by Alt+A; running and queued agents come from the focused session's tree.

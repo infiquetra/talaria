@@ -38,7 +38,7 @@ fn current_notice_uses_the_level_tone() {
         assert_eq!(*notice_tone_actual, expected_tone, "level={level}");
     }
 
-    assert_eq!(Segment::ALL.len(), 14);
+    assert_eq!(Segment::ALL.len(), 15);
     assert_eq!(Segment::ALL.last().copied(), Some(Segment::Ultracode));
 }
 

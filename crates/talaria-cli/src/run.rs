@@ -1352,6 +1352,7 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
             u32::try_from(state.notices().warning_count()).unwrap_or(u32::MAX)
         }),
         ultracode: view.ultracode,
+        profile: (view.profile != "default").then(|| view.profile.to_owned()),
         workflow_run: view
             .workflow_run
             .map(|run| format!("{}/{} agents", run.agents_finished, run.agents_total_known)),
