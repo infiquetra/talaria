@@ -95,14 +95,4 @@ fn roster_current_is_the_session_model_when_the_session_is_known() {
         "{}",
         report.to_text()
     );
-    // A prompt that names no model or tier is staffed with the session's model.
-    let resolver = talaria_workflow::staffing::StaffingResolver::new(
-        std::sync::Arc::new(table()),
-        std::sync::Arc::new(session),
-    );
-    let route = resolver.route(&staffing_support::request()).unwrap();
-    assert_eq!(
-        (route.model.as_str(), route.provider.as_str()),
-        ("m-large", "alpha-cloud")
-    );
 }

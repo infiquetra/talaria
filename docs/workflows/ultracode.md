@@ -124,7 +124,7 @@ Each signed in provider in the report lists its usable `model_ids` and its
 came from: `session` when the roster was asked for with `--session-model` and
 `--session-provider`, otherwise `profile`. A routed prompt ends with a line
 `Session model: <model> on <provider>` naming the pair the session runs on, so the lead can
-pass it to those two flags.
+pass it to those two flags and to the same flags on `workflow run`.
 
 The lead uses a listed built-in path or writes a draft script. It runs foreground workflows
 in a background terminal with completion notification and waits using that process's returned

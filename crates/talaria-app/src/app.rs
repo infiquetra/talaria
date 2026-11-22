@@ -8945,6 +8945,16 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     effects
 }
 
+/// The model and provider the open session runs on, for an Ultracode-routed prompt; the model
+/// the user switched to wins over the one the session started with.
+fn session_model(state: &AppState) -> Option<(String, String)> {
+    state
+        .model
+        .clone()
+        .or_else(|| state.opened.as_ref().and_then(|o| o.info.model.clone()))
+        .zip(state.opened.as_ref().and_then(|o| o.info.provider.clone()))
+}
+
 fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         if let Some(session) = state
@@ -9053,11 +9063,7 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
         if let Some(actions) = state.ultracode.answer_install(&session, &text) {
             return ultracode_actions(state, actions);
         }
-        let session_model = state
-            .model
-            .clone()
-            .or_else(|| state.opened.as_ref().and_then(|o| o.info.model.clone()))
-            .zip(state.opened.as_ref().and_then(|o| o.info.provider.clone()));
+        let session_model = session_model(state);
         if let Some(actions) = state.ultracode.intercept_submit_with_model(
             &session,
             &text,
@@ -10273,7 +10279,14 @@ fn opened_session(
                 effects.extend(apply_ultracode(state, actions, false));
                 continue;
             }
-            if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
+            let session_model = session_model(state);
+            if let Some(actions) = state.ultracode.intercept_submit_with_model(
+                &session,
+                &text,
+                session_model
+                    .as_ref()
+                    .map(|(model, provider)| (model.as_str(), provider.as_str())),
+            ) {
                 if state
                     .held_attachments
                     .front()
@@ -11087,6 +11100,32 @@ mod attachment_tests {
         assert_eq!(state.caret, 10);
         assert!(state.held.is_empty());
         assert!(state.held_attachments.is_empty());
+    }
+
+    #[test]
+    fn held_workflow_prompt_names_the_model_the_opened_session_runs_on() {
+        let mut state = AppState::new("cold-start");
+        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        let _ = submit(&mut state, "review the parser".into());
+        assert_eq!(state.held.len(), 1);
+        let mut session = opened().opened.take().unwrap();
+        session.info.model = Some("session-model".into());
+        session.info.provider = Some("provider-a".into());
+        let effects = opened_session(&mut state, session, None);
+        let lines: Vec<_> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::Ultracode {
+                    action: crate::ultracode::Action::RunCommand { command_line, .. },
+                    ..
+                } => Some(command_line.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            ["/talaria-workflows review the parser\nSession model: session-model on provider-a"]
+        );
     }
 
     #[test]

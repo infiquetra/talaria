@@ -16,6 +16,15 @@ fn skill_names_only_real_commands_and_flags() {
             ],
         ),
         (
+            vec!["workflow", "run"],
+            vec![
+                "--profile",
+                "--session-model",
+                "--session-provider",
+                "--json",
+            ],
+        ),
+        (
             vec!["workflow", "skill", "install"],
             vec!["--profile", "--command", "--force", "--dry-run", "--json"],
         ),

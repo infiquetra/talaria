@@ -56,8 +56,9 @@ in the tightest live window produces a warning.
 
 A call naming a model and provider uses them. A model alone needs exactly one
 signed-in provider offering it. A provider without a model is an error. Otherwise
-the named tier, the default tier, or the profile's current model is used, in that
-order. A call's effort overrides its tier's effort. Explicit models ignore an
+the named tier, the default tier, or the roster's current model is used, in that
+order. The current model is the profile's configured one unless the run was started with
+`--session-model` and `--session-provider`. A call's effort overrides its tier's effort. Explicit models ignore an
 accompanying tier, with one warning per tier per execution. Model-only and
 profile-default resolution for a sibling profile require an explicit model and
 provider or a tier, since that sibling's roster was not frozen at run start.

@@ -53,10 +53,13 @@ an interrupted run look active.
 
 ## Starting and detaching
 
-`run` accepts `--args <json>` or `--args-file <path>`, `--profile`, `--staffing`, `--cwd`,
-`--budget-tokens`, `--budget-usd`, `--on-unknown wait|fail`, `--record`, the location flags,
-`--json`, and `--detach`. Arguments are validated before the script; the script's literal
-metadata is parsed before staffing or gateway work. Token budgets must be positive integers;
+`run` accepts `--args <json>` or `--args-file <path>`, `--profile`, `--session-model` with
+`--session-provider`, `--staffing`, `--cwd`, `--budget-tokens`, `--budget-usd`,
+`--on-unknown wait|fail`, `--record`, the location flags, `--json`, and `--detach`. The session
+pair replaces the profile's configured model as the roster's current model, which a call
+naming no model or tier runs on; the manifest's roster snapshot records it with
+`"source":"session"`, and resume and a detached child keep it. Arguments are validated
+before the script; the script's literal metadata is parsed before staffing or gateway work. Token budgets must be positive integers;
 money budgets must be finite positive amounts in US dollars.
 
 Preflight loads staffing, applies command-line budget overrides, fetches the roster, reports

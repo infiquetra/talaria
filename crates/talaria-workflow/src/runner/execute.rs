@@ -43,6 +43,9 @@ pub struct RunRequest {
     pub script: PathBuf,
     pub args: Value,
     pub profile: String,
+    /// The model and provider the calling session runs on, as `(model, provider)`; it stands in
+    /// for the profile's configured model wherever a call names no model or tier.
+    pub session_model: Option<(String, String)>,
     pub staffing: Option<PathBuf>,
     pub cwd: PathBuf,
     pub budget_tokens: Option<u64>,
@@ -197,6 +200,7 @@ async fn preflight(
     tokens: Option<u64>,
     usd: Option<f64>,
     profile: &str,
+    session_model: Option<&(String, String)>,
     services: &RunnerServices,
     output: &mut Output<'_>,
 ) -> Result<Preflight, i32> {
@@ -208,6 +212,7 @@ async fn preflight(
         });
         1
     })?;
+    let roster = session_roster(roster, session_model);
     let check = check_tiers(&table, &roster, &budget, services.clock.now());
     for warning in check.warnings {
         output.diagnostic(warning);
@@ -227,6 +232,15 @@ async fn preflight(
         roster,
         snapshot,
     })
+}
+/// The roster with the session's model as its current pair, when the run has one.
+fn session_roster(roster: Arc<Roster>, session_model: Option<&(String, String)>) -> Arc<Roster> {
+    match session_model {
+        Some((model, provider)) => {
+            Arc::new(Roster::clone(&roster).with_session_model(model, provider))
+        }
+        None => roster,
+    }
 }
 fn read_script(path: &Path, output: &mut Output<'_>) -> Result<(String, ParsedScript), i32> {
     let source = fs::read_to_string(path).map_err(|e| {
@@ -259,6 +273,7 @@ async fn prepare(
         req.budget_tokens,
         req.budget_usd,
         &req.profile,
+        req.session_model.as_ref(),
         &services,
         output,
     )
@@ -602,6 +617,7 @@ async fn resume(
             req.budget_tokens,
             req.budget_usd,
             &dir.manifest().profile,
+            Roster::session_model_in(&dir.manifest().roster).as_ref(),
             &services,
             &mut output,
         )
@@ -713,6 +729,7 @@ pub async fn run_child_with_options(
                 1
             })?;
         let snapshot = dir.manifest().roster.clone();
+        let roster = session_roster(roster, Roster::session_model_in(&snapshot).as_ref());
         Ok(PreparedRun {
             dir,
             parsed,

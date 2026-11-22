@@ -332,6 +332,7 @@ impl Harness {
             script: self.source.clone(),
             args: Value::Null,
             profile: "fixture".into(),
+            session_model: None,
             staffing: Some(self.staffing.clone()),
             cwd: self.root.clone(),
             budget_tokens: None,
@@ -606,6 +607,93 @@ fn script_with_an_unknown_model_is_refused_before_any_agent_starts() {
     );
     let (exit, _) = Worker::start(Start::New(h.request()), services(&h.wire, true)).finish();
     assert_eq!(exit.code, 0, "{:?}", exit.problems);
+}
+
+/// A run whose staffing has no default tier, so a call naming no model or tier takes the
+/// roster's current pair.
+fn session_harness(body: &str) -> (Harness, RunRequest) {
+    let h = Harness::new(body);
+    fs::write(&h.staffing, "version = 1\n[limits]\nmax_in_flight = 1\n").unwrap();
+    let mut req = h.request();
+    req.session_model = Some(("alternate-model".into(), "scripted".into()));
+    (h, req)
+}
+
+#[test]
+fn a_call_without_model_or_tier_runs_on_the_session_model() {
+    let (h, req) = session_harness("return await agent('review', {label:'review'});");
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let creates: Vec<_> = h
+        .wire
+        .frames()
+        .into_iter()
+        .filter(|f| f.method == "session.create")
+        .collect();
+    assert_eq!(creates.len(), 1);
+    assert_eq!(
+        (&creates[0].params["model"], &creates[0].params["provider"]),
+        (&json!("alternate-model"), &json!("scripted"))
+    );
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(folder.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["roster"]["current"],
+        json!({"model":"alternate-model","provider":"scripted","source":"session"})
+    );
+    // Without the session pair the same call runs on the profile's configured model.
+    let (h, mut req) = session_harness("return await agent('review', {label:'review'});");
+    req.session_model = None;
+    let (exit, _) = Worker::start(Start::New(req), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let create = h
+        .wire
+        .frames()
+        .into_iter()
+        .find(|f| f.method == "session.create")
+        .unwrap();
+    assert_eq!(create.params["model"], "scripted-model");
+}
+
+#[test]
+fn resume_keeps_the_session_model_the_run_started_with() {
+    let (h, req) = session_harness(
+        "const a=await agent('first', {label:'first'}); const b=await agent('hold second', {label:'second'}); return [a,b];",
+    );
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| {
+        let r = records(&folder);
+        r.iter()
+            .find(|v| v["t"] == "call_intent" && v["label"] == "second")
+            .is_some_and(|intent| {
+                r.iter()
+                    .any(|v| v["t"] == "turn_admitted" && v["key"] == intent["key"])
+            })
+    });
+    let first = key_for(&folder, "first");
+    let before = h.wire.frames();
+    worker.kill();
+    h.wire.release("hold second");
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let (exit, _) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    // Staffing the resume from the profile's model would change the first call's key and run
+    // it again.
+    let after = h.wire.frames();
+    assert_eq!(
+        count_for(&after, "session.create", &first),
+        count_for(&before, "session.create", &first)
+    );
+    assert!(
+        after
+            .iter()
+            .filter(|f| f.method == "session.create")
+            .all(|f| f.params["model"] == "alternate-model")
+    );
 }
 
 #[test]
