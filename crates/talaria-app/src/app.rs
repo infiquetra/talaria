@@ -485,6 +485,8 @@ pub struct View<'a> {
     pub ultracode: bool,
     /// The foreground session's active workflow run, for the dock line and the status bar.
     pub workflow_run: Option<&'a talaria_workflow::runner::RunSummary>,
+    /// The building block, while a routed turn builds a workflow and no run it started shows.
+    pub authoring: Option<talaria_core::ultracode::authoring::AuthoringView>,
 }
 
 impl View<'_> {
@@ -1528,6 +1530,13 @@ impl AppState {
             workflow_run: self.opened.as_ref().and_then(|opened| {
                 self.ultracode
                     .active_run(&SessionId::new(opened.session_id.clone()))
+            }),
+            authoring: self.opened.as_ref().and_then(|opened| {
+                self.ultracode.authoring_view(
+                    &SessionId::new(opened.session_id.clone()),
+                    opened.state.cells(),
+                    self.now_ms,
+                )
             }),
         }
     }
@@ -4723,6 +4732,7 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
     }
     effects.extend(checklist_effects(state));
+    effects.extend(authoring_effects(state));
     redraw |= kanban_before != state.kanban.as_ref().map(|s| s.frame());
     redraw |= background_version
         != state
@@ -4846,6 +4856,24 @@ fn checklist_effects(state: &mut AppState) -> Vec<AppEffect> {
         effects.push(AppEffect::Redraw);
     }
     effects
+}
+
+/// Follow a routed turn that builds a workflow; when it ends, commit the one line it leaves.
+fn authoring_effects(state: &mut AppState) -> Vec<AppEffect> {
+    let Some(opened) = state.opened.as_ref() else {
+        return Vec::new();
+    };
+    let session = SessionId::new(opened.session_id.clone());
+    state
+        .ultracode
+        .observe_authoring(
+            &session,
+            opened.state.cells(),
+            opened.state.turn(),
+            state.now_ms,
+        )
+        .map(|line| vec![notice_lines(&line), AppEffect::Redraw])
+        .unwrap_or_default()
 }
 
 fn attention_snapshot(state: &AppState) -> crate::comforts::AttentionSnapshot {
@@ -7507,6 +7535,10 @@ fn apply_ultracode(
                         state.ultracode.skill_sent(&session, epoch);
                     }
                     state.ultracode.note_routed(&session);
+                    let cells = opened.state.cells().len();
+                    state
+                        .ultracode
+                        .begin_authoring(&session, &display, cells, since_ms);
                 }
                 let submission_id = state.next_submission_id();
                 effects.extend(reduce(
@@ -18800,15 +18832,12 @@ mod ultracode_visibility_tests {
     }
 
     #[test]
-    fn routed_prompt_prints_a_routing_notice() {
+    fn routed_prompt_prints_no_interim_line() {
+        // The building block above the composer says the prompt is handled as a workflow.
         let mut state = opened("session");
         turn_on(&mut state, "session");
         let effects = submit(&mut state, "fix the parser".into());
-        assert_eq!(
-            lines(&effects),
-            [format!("\u{b7} {}", notice::ROUTED)],
-            "{effects:?}"
-        );
+        assert!(lines(&effects).is_empty(), "{effects:?}");
     }
 
     /// A frame from Hermes for the open session, numbered after the last one.
@@ -18904,6 +18933,139 @@ mod ultracode_visibility_tests {
         effects
     }
 
+    const DRAFT: &str = "/home/fixture/.talaria/drafts/fix-parser.workflow";
+
+    fn tool_start(state: &mut AppState, id: &str, name: &str, args: Value) -> Vec<AppEffect> {
+        frame(
+            state,
+            "tool.start",
+            json!({"tool_id": id, "name": name, "args": args, "context": name}),
+        )
+    }
+
+    fn stage(state: &AppState) -> Option<talaria_core::ultracode::authoring::AuthoringStage> {
+        state.view().authoring.map(|block| block.progress.stage)
+    }
+
+    #[test]
+    fn a_routed_turn_shows_the_building_block_until_it_ends() {
+        use talaria_core::ultracode::authoring::AuthoringStage;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        // Nothing shows until the turn starts.
+        assert_eq!(stage(&state), None);
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(stage(&state), Some(AuthoringStage::Planning));
+        state.now_ms = 66_000;
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "write_file",
+            json!({"path": DRAFT, "content": "export const meta = {name:'fix-parser'};"}),
+        );
+        let block = state
+            .view()
+            .authoring
+            .expect("the block shows while writing");
+        assert_eq!(block.progress.stage, AuthoringStage::Writing);
+        assert_eq!(
+            block.progress.script.as_deref(),
+            Some("fix-parser.workflow")
+        );
+        assert_eq!(block.elapsed_ms, 65_000);
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Here is the proposed workflow. Start it?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Ultracode wrote the workflow script fix-parser.workflow in 1m 05s. No workflow started yet."
+            ]
+        );
+        assert_eq!(stage(&state), None, "the block leaves with the turn");
+        // The line is committed once.
+        let effects = update(&mut state, AppMessage::Tick { now_ms: 90_000 });
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn an_interrupted_build_says_it_stopped() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        state.now_ms = 13_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "", "status": "interrupted"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Ultracode stopped: interrupted while planning the workflow after 12s. No workflow started."
+            ]
+        );
+        assert_eq!(stage(&state), None);
+    }
+
+    #[test]
+    fn a_tracked_run_takes_the_slot_and_the_last_line_counts_its_agents() {
+        use talaria_core::ultracode::authoring::AuthoringStage;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.wall_s = 2_000.0;
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "terminal",
+            json!({"command": format!("talaria workflow run --profile fixture --json {DRAFT}"), "background": true}),
+        );
+        assert_eq!(stage(&state), Some(AuthoringStage::Running));
+        let mut run = summary(talaria_workflow::runner::RunStatus::Running, 0);
+        run.started_at_ms = 2_000_500;
+        let _ = update(&mut state, AppMessage::UltracodeRuns { rows: vec![run] });
+        assert_eq!(stage(&state), None, "the run dock takes over");
+        assert!(state.view().workflow_run.is_some());
+        state.now_ms = 201_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Started.", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Ultracode built the workflow in 3m 20s: review-branch is running with 10 agents."
+            ]
+        );
+    }
+
+    #[test]
+    fn a_plain_turn_shows_no_building_block() {
+        let mut state = opened("session");
+        let _ = enter(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(stage(&state), None);
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Done.", "status": "complete"}),
+        );
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
     #[test]
     fn workflow_prompts_show_what_was_typed_and_load_the_skill_once() {
         let reminder = talaria_core::ultracode::follow_up_text;
@@ -18914,7 +19076,7 @@ mod ultracode_visibility_tests {
         // The first prompt goes to Hermes for the whole skill.
         let effects = enter(&mut state, "fix the parser");
         assert!(loads_skill(&effects), "{effects:?}");
-        assert_eq!(lines(&effects), [format!("\u{b7} {}", notice::ROUTED)]);
+        assert!(lines(&effects).is_empty(), "{effects:?}");
         assert!(state.draft.is_empty());
         screen.extend(lines(&effects));
         let effects = dispatched(&mut state, "fix the parser");
@@ -18928,7 +19090,7 @@ mod ultracode_visibility_tests {
             let effects = enter(&mut state, typed);
             assert!(!loads_skill(&effects), "{effects:?}");
             assert_eq!(sent(&effects), [reminder(typed)]);
-            assert_eq!(lines(&effects), [format!("\u{b7} {}", notice::ROUTED)]);
+            assert!(lines(&effects).is_empty(), "{effects:?}");
             assert!(state.draft.is_empty(), "the composer clears");
             assert_eq!(user_cells(&state).last().map(String::as_str), Some(typed));
             screen.extend(lines(&effects));

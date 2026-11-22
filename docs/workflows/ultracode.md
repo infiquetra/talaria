@@ -105,8 +105,32 @@ space is tight. Start interactive sessions on with `talaria --ultracode`. The fl
 the session it opens even when that session was saved as off; other sessions keep their
 saved setting. Print mode does not use this flag.
 
-Each routed prompt prints one line, `Ultracode: handling this prompt as a workflow.`, before it
-is sent. The agent then proposes a workflow and asks before it starts one. While Ultracode
+While a routed prompt's turn runs, a block above the composer, in the place the workflow dock
+uses, shows that the agent is building a workflow, how long the turn has run, and the step it
+is on:
+
+```text
+⚙ Ultracode · building a workflow · 1m 05s
+  Step 2 of 5: writing the workflow script · fix-parser.workflow
+```
+
+The steps are planning the workflow, writing the workflow script, checking the script,
+waiting for your approval (or waiting for your answer, when the agent asks before any script
+is written), and running the workflow. Talaria reads them from the turn's tool calls: a write
+to a `.workflow` file or a script in the drafts folder names the script, reading it back or a
+command that names it is checking, an open question is waiting, and `talaria workflow run` is
+running. Once Talaria finds the run the turn started, the workflow dock takes the block's
+place. On a screen shorter than 16 rows the block is one row
+(`⚙ Ultracode · writing the workflow script · 1m 05s`). It does not move; only its seconds
+change, and the screen wakes once a second only while the block is on screen.
+
+When the turn ends, the block leaves one line in the transcript that says how it ended, for
+example `Ultracode built the workflow in 3m 20s: fix-parser is running with 7 agents.`,
+`Ultracode wrote the workflow script fix-parser.workflow in 1m 30s. No workflow started yet.`,
+or, for an interrupted turn,
+`Ultracode stopped: interrupted while writing the workflow script (fix-parser.workflow) after
+1m 05s. No workflow started.` The agent proposes a workflow and asks before it starts one.
+While Ultracode
 is on, a slash command that carries a prompt (`/goal`, `/bg`, `/queue`, `/steer`, `/btw` and
 `/plan`, with their aliases) still goes to Hermes as typed, after a one-line notice that names
 the command and says to send the prompt without it to have the task handled as a workflow.

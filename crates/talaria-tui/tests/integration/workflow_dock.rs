@@ -1,8 +1,10 @@
-//! The one-line workflow dock above the composer names the run and the key that opens it.
+//! The one-line workflow dock above the composer names the run and the key that opens it. While
+//! Ultracode builds a workflow, the building block in the same place says which step it is on.
 
 use ratatui::{Terminal, backend::TestBackend, style::Style};
+use talaria_core::ultracode::authoring::{AuthoringProgress, AuthoringStage};
 use talaria_tui::live::LiveSection;
-use talaria_tui::workflow_view::{WorkflowDock, WorkflowTheme, WorkflowView};
+use talaria_tui::workflow_view::{AuthoringDock, WorkflowDock, WorkflowTheme, WorkflowView};
 
 fn text(dock: &WorkflowDock<'_>, width: u16) -> Vec<String> {
     dock.lines(width)
@@ -60,6 +62,96 @@ fn dock_hidden_without_room() {
     );
     assert!(text(&dock, 0).is_empty());
     assert_eq!(dock.height(0), 0);
+}
+
+fn authoring(
+    stage: AuthoringStage,
+    script: Option<&str>,
+    elapsed_ms: u64,
+) -> talaria_core::ultracode::authoring::AuthoringView {
+    talaria_core::ultracode::authoring::AuthoringView {
+        progress: AuthoringProgress {
+            stage,
+            script: script.map(str::to_owned),
+        },
+        elapsed_ms,
+    }
+}
+
+/// What the section draws into `width` columns, row by row, with no colour at all.
+fn drawn(section: &dyn LiveSection, width: u16) -> Vec<String> {
+    let height = section.height(width);
+    let area = ratatui::layout::Rect::new(0, 0, width, height);
+    let mut buffer = ratatui::buffer::Buffer::empty(area);
+    section.render(area, &mut buffer);
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn building_block_names_the_step_script_and_time_in_plain_words() {
+    let view = authoring(AuthoringStage::Writing, Some("fix-parser.workflow"), 65_000);
+    let block = AuthoringDock::new(&view, 2, Style::new(), Style::new());
+    assert_eq!(
+        drawn(&block, 80),
+        [
+            "⚙ Ultracode · building a workflow · 1m 05s",
+            "  Step 2 of 5: writing the workflow script · fix-parser.workflow",
+        ]
+    );
+    let planning = authoring(AuthoringStage::Planning, None, 4_000);
+    let block = AuthoringDock::new(&planning, 2, Style::new(), Style::new());
+    assert_eq!(
+        drawn(&block, 80),
+        [
+            "⚙ Ultracode · building a workflow · 4s",
+            "  Step 1 of 5: planning the workflow",
+        ]
+    );
+}
+
+#[test]
+fn building_block_fits_sixty_columns_and_narrower() {
+    let view = authoring(
+        AuthoringStage::Waiting,
+        Some("a-rather-long-workflow-name.workflow"),
+        65_000,
+    );
+    let block = AuthoringDock::new(&view, 2, Style::new(), Style::new());
+    let rows = drawn(&block, 60);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows[0], "⚙ Ultracode · building a workflow · 1m 05s");
+    assert!(
+        rows[1].starts_with("  Step 4 of 5: waiting for your approval · a-rather"),
+        "{rows:?}"
+    );
+    assert!(rows[1].ends_with('…'), "the script name is cut: {rows:?}");
+    for width in [60, 30, 12, 1] {
+        for row in drawn(&block, width) {
+            assert!(
+                unicode_width::UnicodeWidthStr::width(row.as_str()) <= usize::from(width),
+                "{row:?} is wider than {width}"
+            );
+        }
+    }
+    assert!(drawn(&block, 0).is_empty());
+}
+
+#[test]
+fn building_block_is_one_row_on_a_short_screen() {
+    let view = authoring(AuthoringStage::Checking, Some("fix-parser.workflow"), 9_000);
+    let block = AuthoringDock::new(&view, 1, Style::new(), Style::new());
+    assert_eq!(
+        drawn(&block, 60),
+        ["⚙ Ultracode · checking the script · 9s"]
+    );
 }
 
 #[test]

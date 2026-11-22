@@ -3,10 +3,12 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use talaria_core::{
     commands::{CommandCatalog, CommandOutcome, ErrorView, SlashLine, describe_error},
-    session::SessionId,
+    session::{Cell, SessionId, TurnOutcome, TurnState},
     ultracode::{
         SKILL_COMMAND, SavedChanges, SavedModes, SkillAvailability, SkillEpoch, SubmitRoute,
-        UltracodeCommand, UltracodeState, follow_up_text, notice, route_submit, skill_availability,
+        UltracodeCommand, UltracodeState,
+        authoring::{AuthoringEnd, AuthoringView, RunFacts, progress},
+        follow_up_text, notice, route_submit, skill_availability,
     },
 };
 use talaria_workflow::runner::{RunStatus, RunSummary};
@@ -113,6 +115,32 @@ fn is_active(status: RunStatus) -> bool {
     matches!(status, RunStatus::Running | RunStatus::Parked)
 }
 
+/// A routed prompt's turn while the agent builds a workflow.
+#[derive(Debug, Clone)]
+struct Authoring {
+    /// What the person typed: the text of the prompt's cell.
+    typed: String,
+    /// How many cells the session held when the prompt was sent; its cell comes after them.
+    from: usize,
+    /// Wall-clock milliseconds when the prompt was sent: a run started since is this turn's.
+    since_wall_ms: i64,
+    /// When the turn started, in the application's clock.
+    started_ms: Option<u64>,
+}
+
+impl Authoring {
+    /// Where the prompt's cell is, once it is drawn.
+    fn cell(&self, cells: &[Cell]) -> Option<usize> {
+        cells
+            .iter()
+            .enumerate()
+            .skip(self.from)
+            .rev()
+            .find(|(_, cell)| matches!(cell, Cell::User(user) if user.text == self.typed))
+            .map(|(at, _)| at)
+    }
+}
+
 pub struct UltracodeService {
     state: UltracodeState,
     profiles: HashMap<SessionId, String>,
@@ -135,6 +163,8 @@ pub struct UltracodeService {
     remote: bool,
     watches: HashMap<SessionId, RunWatch>,
     tracked: HashMap<SessionId, RunSummary>,
+    /// The routed turn each session is building a workflow in.
+    authoring: HashMap<SessionId, Authoring>,
     next_scan_ms: Option<u64>,
     scanning: bool,
 }
@@ -160,6 +190,7 @@ impl UltracodeService {
             remote: false,
             watches: HashMap::new(),
             tracked: HashMap::new(),
+            authoring: HashMap::new(),
             next_scan_ms: None,
             scanning: false,
         }
@@ -307,6 +338,88 @@ impl UltracodeService {
     pub fn note_routed(&mut self, session: &SessionId) {
         self.routed.insert(session.clone());
     }
+    /// A routed prompt was sent while the session held `cells` cells, at wall-clock `wall_ms`:
+    /// its turn shows the building block.
+    pub fn begin_authoring(
+        &mut self,
+        session: &SessionId,
+        typed: &str,
+        cells: usize,
+        wall_ms: i64,
+    ) {
+        self.authoring.insert(
+            session.clone(),
+            Authoring {
+                typed: typed.to_owned(),
+                from: cells,
+                since_wall_ms: wall_ms,
+                started_ms: None,
+            },
+        );
+    }
+    /// The run the routed turn started, once the runs watch found it.
+    fn authoring_run(&self, session: &SessionId, authoring: &Authoring) -> Option<&RunSummary> {
+        self.tracked(session)
+            .filter(|run| run.started_at_ms >= authoring.since_wall_ms)
+    }
+    /// Follow the routed turn: note when it starts, and when it ends give the one line it
+    /// leaves in the transcript.
+    pub fn observe_authoring(
+        &mut self,
+        session: &SessionId,
+        cells: &[Cell],
+        turn: &TurnState,
+        now_ms: u64,
+    ) -> Option<String> {
+        let authoring = self.authoring.get_mut(session)?;
+        let running = *turn == TurnState::Running;
+        let Some(started_ms) = authoring.started_ms else {
+            if running && authoring.cell(cells).is_some() {
+                authoring.started_ms = Some(now_ms);
+            }
+            return None;
+        };
+        if running {
+            return None;
+        }
+        let authoring = self.authoring.remove(session)?;
+        let at = authoring.cell(cells)?;
+        let end = match turn {
+            TurnState::Finished(TurnOutcome::Completed) => AuthoringEnd::Completed,
+            TurnState::Finished(TurnOutcome::Interrupted) => AuthoringEnd::Interrupted,
+            _ => AuthoringEnd::Failed,
+        };
+        let run = self.authoring_run(session, &authoring).map(|run| RunFacts {
+            name: &run.name,
+            status: run.status.as_str(),
+            agents: run.agents_total_known,
+        });
+        Some(notice::authoring_ended(
+            &progress(&cells[at + 1..]),
+            end,
+            now_ms.saturating_sub(started_ms),
+            run,
+        ))
+    }
+    /// The building block, while the routed turn runs and no run it started is tracked: from
+    /// then on the run dock shows in its place.
+    pub fn authoring_view(
+        &self,
+        session: &SessionId,
+        cells: &[Cell],
+        now_ms: u64,
+    ) -> Option<AuthoringView> {
+        let authoring = self.authoring.get(session)?;
+        let started_ms = authoring.started_ms?;
+        if self.authoring_run(session, authoring).is_some() {
+            return None;
+        }
+        let at = authoring.cell(cells)?;
+        Some(AuthoringView {
+            progress: progress(&cells[at + 1..]),
+            elapsed_ms: now_ms.saturating_sub(started_ms),
+        })
+    }
     pub fn after_interrupt(&self, session: &SessionId) -> Option<Action> {
         (self.routed.contains(session) && self.state.is_on(session))
             .then(|| Action::Notice(notice::STILL_ON.into()))
@@ -392,14 +505,8 @@ impl UltracodeService {
                 command_line,
                 one_shot,
             } => {
+                // The building block shows once the turn starts; no line is printed here.
                 let mut actions = vec![];
-                if one_shot {
-                    actions.push(Action::Notice(notice::ONE_SHOT.into()));
-                } else if self.remote {
-                    actions.push(Action::Notice(notice::ROUTED_REMOTE.into()));
-                } else {
-                    actions.push(Action::Notice(notice::ROUTED.into()));
-                }
                 // The conversation holds the skill already: the prompt goes with a reminder.
                 if !one_shot && self.state.skill_loaded(session) {
                     actions.push(Action::SubmitCommand {

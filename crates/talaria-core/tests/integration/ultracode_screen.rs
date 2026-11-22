@@ -342,9 +342,7 @@ fn no_routing_notice_names_the_skill_command_or_wrapper() {
     let mut texts = vec![
         notice::ON.to_owned(),
         notice::ON_REMOTE.to_owned(),
-        notice::ROUTED.to_owned(),
-        notice::ROUTED_REMOTE.to_owned(),
-        notice::ONE_SHOT.to_owned(),
+        notice::AUTHORING_TITLE.to_owned(),
         notice::SKILL_ROLE.to_owned(),
         notice::bypassed("goal"),
         notice::collision("fixture"),
@@ -354,9 +352,4 @@ fn no_routing_notice_names_the_skill_command_or_wrapper() {
     ];
     texts.retain(|text| !text.is_empty());
     assert_hidden(&texts);
-    for routed in [notice::ROUTED, notice::ROUTED_REMOTE, notice::ONE_SHOT] {
-        assert_eq!(routed.lines().count(), 1, "{routed}");
-        assert!(routed.len() <= 80, "one short line: {routed}");
-        assert!(!routed.contains("skill"), "{routed}");
-    }
 }

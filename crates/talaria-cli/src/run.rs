@@ -376,6 +376,8 @@ pub struct TuiScreen {
     clock: ToolClock,
     /// When the foreground turn started and whether its working row is on screen.
     activity: ActivityClock,
+    /// When the building block's seconds next change, while the block is on screen.
+    authoring_wake: Option<Instant>,
     tool_theme: ToolTheme,
     /// The settings and start-up decisions the theme is resolved from.
     look: Look,
@@ -3675,9 +3677,13 @@ impl StatusHost for TuiScreen {
             (Some(status), Some(tick)) => Some(status.min(tick)),
             (status, tick) => status.or(tick),
         };
-        match (tick, self.activity.next_wake(self.theme.motion, now)) {
+        let tick = match (tick, self.activity.next_wake(self.theme.motion, now)) {
             (Some(tick), Some(frame)) => Some(tick.min(frame)),
             (tick, frame) => tick.or(frame),
+        };
+        match (tick, self.authoring_wake) {
+            (Some(tick), Some(second)) => Some(tick.min(second)),
+            (tick, second) => tick.or(second),
         }
     }
 
@@ -4141,6 +4147,7 @@ impl Screen for TuiScreen {
     fn draw(&mut self, view: &View<'_>) {
         // Overlays return early, so the working row counts as hidden until it is pushed below.
         self.activity.begin_frame();
+        self.authoring_wake = None;
         let turn_running = view
             .state
             .is_some_and(|state| matches!(state.turn(), SessionTurn::Running));
@@ -4668,6 +4675,19 @@ impl Screen for TuiScreen {
             ))
         });
         let workflow_hint = self.keymap.label(Action::WorkflowView);
+        // While a routed turn builds a workflow, the building block takes the dock's place.
+        let authoring = view.authoring.as_ref().map(|block| {
+            talaria_tui::workflow_view::AuthoringDock::new(
+                block,
+                if self.rows < SHORT_TERMINAL_ROWS {
+                    1
+                } else {
+                    2
+                },
+                subagent_style.header,
+                subagent_style.hint,
+            )
+        });
         let workflow = view.workflow_run.map(|run| {
             talaria_tui::workflow_view::WorkflowDock::new(
                 &run.name,
@@ -4784,6 +4804,9 @@ impl Screen for TuiScreen {
             {
                 sections.push(subagents);
             }
+            if let Some(authoring) = &authoring {
+                sections.push(authoring);
+            }
             if let Some(workflow) = &workflow {
                 sections.push(workflow);
             }
@@ -4829,6 +4852,25 @@ impl Screen for TuiScreen {
                 })
         {
             self.activity.shown(Instant::now());
+        }
+        // The block counts its seconds, so the screen wakes on the next whole second while the
+        // block is on screen, and never otherwise.
+        if let (Some(section), Some(block)) = (&authoring, &view.authoring)
+            && self.transcript.is_none()
+            && !self.terminal.is_released()
+            && sections
+                .iter()
+                .position(|shown| std::ptr::addr_eq(*shown, section))
+                .is_some_and(|index| {
+                    LiveView {
+                        sections: sections.clone(),
+                    }
+                    .rows_of(index, width, max_live_height(self.rows))
+                        > 0
+                })
+        {
+            let wait = 1_000 - block.elapsed_ms % 1_000;
+            self.authoring_wake = Some(Instant::now() + Duration::from_millis(wait));
         }
         if workspace_enabled {
             let empty_agents = talaria_core::subagents::SubagentTree::new();
@@ -5707,6 +5749,7 @@ fn session(
         cells: tool_cells(&theme, &keymap),
         clock: ToolClock::new(),
         activity: ActivityClock::default(),
+        authoring_wake: None,
         tool_theme: theme.tool.clone(),
         look,
         startup_theme_files: theme_files,

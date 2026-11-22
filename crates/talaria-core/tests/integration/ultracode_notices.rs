@@ -35,13 +35,6 @@ fn every_routing_notice_says_the_agent_asks_first() {
         );
         never_says_a_prompt_runs_by_itself(text);
     }
-    for text in [notice::ROUTED, notice::ROUTED_REMOTE, notice::ONE_SHOT] {
-        assert!(
-            text.contains("handling this prompt as a workflow"),
-            "{text}"
-        );
-        never_says_a_prompt_runs_by_itself(text);
-    }
     never_says_a_prompt_runs_by_itself(&notice::bypassed("goal"));
 }
 
@@ -132,22 +125,6 @@ fn remote_on_notice_says_runs_start_on_the_gateway_machine() {
     }
     assert!(!notice::ON_REMOTE.contains("above the composer"));
     assert!(!notice::ON_REMOTE.contains("/workflows lists"));
-}
-
-#[test]
-fn routed_notice_is_one_short_line() {
-    assert_eq!(
-        notice::ROUTED,
-        "Ultracode: handling this prompt as a workflow."
-    );
-    assert_eq!(
-        notice::ROUTED_REMOTE,
-        "Ultracode: handling this prompt as a workflow on the gateway's machine."
-    );
-    assert_eq!(
-        notice::ONE_SHOT,
-        "Ultracode (keyword ultracode): handling this prompt as a workflow."
-    );
 }
 
 #[test]

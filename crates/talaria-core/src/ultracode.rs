@@ -5,6 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+pub mod authoring;
 pub const SKILL_COMMAND: &str = "/talaria-workflows";
 /// The model-facing line in front of a routed prompt once the skill is in the conversation.
 /// It never shows on screen, live or replayed.
@@ -429,14 +430,75 @@ pub fn skill_availability(catalog: &CommandCatalog) -> SkillAvailability {
 }
 pub mod notice {
     use super::SkillAvailability;
+    use super::authoring::{
+        AuthoringEnd, AuthoringProgress, AuthoringStage, RunFacts, STEPS, elapsed_text,
+    };
     /// What Ultracode does with a prompt, in the words every notice shares.
     pub const SKILL_ROLE: &str = "With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
     pub const ON: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /ultracode off to stop.";
     pub const ON_REMOTE: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Ultracode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /ultracode off to stop.";
-    /// The one line a routed prompt prints.
-    pub const ROUTED: &str = "Ultracode: handling this prompt as a workflow.";
-    pub const ROUTED_REMOTE: &str =
-        "Ultracode: handling this prompt as a workflow on the gateway's machine.";
+    /// The building block's first row while a routed turn builds a workflow.
+    pub const AUTHORING_TITLE: &str = "Ultracode · building a workflow";
+    /// The block's second row: the step in plain words, then the script once written.
+    pub fn authoring_step(progress: &AuthoringProgress) -> String {
+        let mut text = format!("Step {} of {STEPS}: {}", progress.step(), progress.label());
+        if let Some(script) = &progress.script {
+            text.push_str(&format!(" · {script}"));
+        }
+        text
+    }
+    /// The block as one row, on a short screen.
+    pub fn authoring_short(progress: &AuthoringProgress, elapsed_ms: u64) -> String {
+        format!(
+            "Ultracode · {} · {}",
+            progress.label(),
+            elapsed_text(elapsed_ms)
+        )
+    }
+    /// The one line a routed turn leaves in the transcript when it ends.
+    pub fn authoring_ended(
+        progress: &AuthoringProgress,
+        end: AuthoringEnd,
+        elapsed_ms: u64,
+        run: Option<RunFacts<'_>>,
+    ) -> String {
+        let elapsed = elapsed_text(elapsed_ms);
+        let stopped = |why: &str| {
+            let script = progress
+                .script
+                .as_ref()
+                .map_or_else(String::new, |script| format!(" ({script})"));
+            format!(
+                "Ultracode stopped: {why} while {}{script} after {elapsed}. No workflow started.",
+                progress.label()
+            )
+        };
+        match (end, run, &progress.script) {
+            (AuthoringEnd::Interrupted, None, _) => stopped("interrupted"),
+            (AuthoringEnd::Failed, None, _) => stopped("the turn failed"),
+            (_, Some(run), _) => {
+                let state = match run.status {
+                    "running" => "is running".to_owned(),
+                    "parked" => "is waiting for an answer".to_owned(),
+                    other => other.to_owned(),
+                };
+                format!(
+                    "Ultracode built the workflow in {elapsed}: {} {state} with {} agents.",
+                    run.name, run.agents
+                )
+            }
+            (_, None, script) if progress.stage == AuthoringStage::Running => format!(
+                "Ultracode built the workflow in {elapsed} and started {}.",
+                script.as_deref().unwrap_or("the run")
+            ),
+            (_, None, Some(script)) => format!(
+                "Ultracode wrote the workflow script {script} in {elapsed}. No workflow started yet."
+            ),
+            (_, None, None) => {
+                format!("Ultracode finished in {elapsed} without writing a workflow script.")
+            }
+        }
+    }
     pub const BRANCH_CARRIED: &str = "Ultracode stays on in this branch.";
     /// Printed when a session opens with Ultracode on.
     pub const OPENED_ON: &str = "Ultracode is on in this session: a plain prompt is handled as a workflow. /ultracode off to stop.";
@@ -446,7 +508,6 @@ pub mod notice {
     /// Why the staffing tiers are missing when no table names one.
     pub const NO_TIERS: &str = "no tiers are configured";
     pub const OFF: &str = "Ultracode off for this session.";
-    pub const ONE_SHOT: &str = "Ultracode (keyword ultracode): handling this prompt as a workflow.";
     /// Names the routed request in an error Talaria words for a slash command.
     pub const REQUEST: &str = "the workflow request";
     pub const NO_SESSION: &str = "No session to set ultracode on.";

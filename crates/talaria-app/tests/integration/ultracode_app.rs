@@ -252,7 +252,7 @@ fn slash_shell_and_keyword_paths() {
     assert!(
         actions
             .iter()
-            .any(|a| matches!(a,Action::Notice(v) if v==notice::ONE_SHOT))
+            .any(|a| matches!(a, Action::RunCommand { .. }))
     );
     assert!(!off.status_input(Some(&id)));
 }
@@ -521,20 +521,28 @@ fn background_reply_asks_when_shown() {
 }
 
 #[test]
-fn routed_prompt_announces_routing() {
+fn routed_prompt_prints_no_interim_line() {
+    // The building block above the composer says the prompt is handled as a workflow.
     let id = session();
     let service = on();
     let actions = service.intercept_submit(&id, "fix the parser").unwrap();
-    assert_eq!(actions[0], Action::Notice(notice::ROUTED.into()));
-    assert!(matches!(&actions[1], Action::RunCommand { .. }));
+    assert!(
+        matches!(&actions[..], [Action::RunCommand { .. }]),
+        "{actions:?}"
+    );
     let off = UltracodeService::new(false);
     let keyword = off.intercept_submit(&id, "please ultracode this").unwrap();
-    assert_eq!(keyword[0], Action::Notice(notice::ONE_SHOT.into()));
-    assert!(!keyword.contains(&Action::Notice(notice::ROUTED.into())));
+    assert!(
+        matches!(&keyword[..], [Action::RunCommand { .. }]),
+        "{keyword:?}"
+    );
     let mut remote = on();
     remote.set_remote(true);
     let actions = remote.intercept_submit(&id, "fix the parser").unwrap();
-    assert_eq!(actions[0], Action::Notice(notice::ROUTED_REMOTE.into()));
+    assert!(
+        matches!(&actions[..], [Action::RunCommand { .. }]),
+        "{actions:?}"
+    );
 }
 
 fn skill_reply(instruction: &str) -> Value {
@@ -589,7 +597,12 @@ fn later_routed_prompts_send_a_reminder_with_the_typed_text() {
     for typed in ["go ahead", "now add a test for the lexer", "keep going"] {
         service.note_epoch(&id, &epoch("stored", 0));
         let actions = service.intercept_submit(&id, typed).unwrap();
-        assert_eq!(actions[0], Action::Notice(notice::ROUTED.into()));
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::Notice(_))),
+            "{actions:?}"
+        );
         assert!(
             !actions
                 .iter()
