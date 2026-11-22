@@ -237,6 +237,9 @@ pub struct UiConfig {
     pub work_panel: bool,
     /// Start with the one-row menu. Runtime toggles do not save this setting.
     pub menu_bar: bool,
+    /// How the main screen draws reasoning. The default is one line per block; `/thinking`
+    /// changes the current view without saving this setting.
+    pub reasoning: talaria_core::layout::ReasoningDisplay,
     /// Reduced motion. The default is false.
     pub reduced_motion: bool,
 }
@@ -310,6 +313,7 @@ impl Default for Config {
             ui: UiConfig {
                 work_panel: false,
                 menu_bar: false,
+                reasoning: talaria_core::layout::ReasoningDisplay::Collapsed,
                 reduced_motion: false,
             },
             composer: ComposerConfig::default(),
@@ -716,6 +720,15 @@ fn read_ui(section: &Table, notices: &mut Vec<String>) -> UiConfig {
             "menu_bar" => match value.as_bool() {
                 Some(enabled) => ui.menu_bar = enabled,
                 None => notices.push("[ui] menu_bar must be true or false; using false.".into()),
+            },
+            "reasoning" => match value.as_str() {
+                Some("collapsed") => {
+                    ui.reasoning = talaria_core::layout::ReasoningDisplay::Collapsed;
+                }
+                Some("full") => ui.reasoning = talaria_core::layout::ReasoningDisplay::Full,
+                _ => notices.push(
+                    "[ui] reasoning must be \"collapsed\" or \"full\"; using \"collapsed\".".into(),
+                ),
             },
             "reduced_motion" => match value.as_bool() {
                 Some(reduced) => ui.reduced_motion = reduced,

@@ -46,6 +46,7 @@ use talaria_core::directory::state::{PickerAction, PickerInput, PickerMode, Pick
 use talaria_core::fleet::ProfileStatus;
 use talaria_core::fleet_attention::FleetAttentionConfig;
 use talaria_core::fleet_view::{FleetAction, FleetViewInput, FleetViewState, Focus as FleetFocus};
+use talaria_core::layout::ReasoningDisplay;
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
 use talaria_core::permissions::{ApprovalSegmentText, ApprovalTone};
@@ -114,7 +115,9 @@ use talaria_tui::terminal::{
     InlineTerminal, InputThread, TerminalError, TerminalGuard, probe_startup, spawn_input,
     terminal_size,
 };
-use talaria_tui::theme::cells::{ThemedCells, themed_cell_id};
+use talaria_tui::theme::cells::{
+    ReasoningClock, ThemedCells, reasoning_collapses, reasoning_summary_lines, themed_cell_id,
+};
 use talaria_tui::theme::detect::{self, EnvView};
 use talaria_tui::theme::{
     ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors, Theme,
@@ -254,6 +257,8 @@ impl InForce {
             captured,
             tools: &self.cells,
             transcript_key,
+            reasoning: ReasoningDisplay::Full,
+            reasoning_clock: None,
         }
     }
 }
@@ -374,6 +379,10 @@ pub struct TuiScreen {
     cells: ToolCellLines,
     /// When each running tool cell was first seen, for its seconds counter.
     clock: ToolClock,
+    /// How long each reasoning block streamed, for its collapsed line.
+    reasoning_clock: ReasoningClock,
+    /// How the current view draws reasoning, copied from the view at each draw.
+    reasoning: ReasoningDisplay,
     /// When the foreground turn started and whether its working row is on screen.
     activity: ActivityClock,
     tool_theme: ToolTheme,
@@ -1048,6 +1057,24 @@ struct CapturedCells<'a> {
     tools: &'a ToolCellLines,
     /// The label of the key that opens the transcript view, when one is bound.
     transcript_key: Option<&'a str>,
+    /// How reasoning is drawn: one line per block, or in full.
+    reasoning: ReasoningDisplay,
+    /// How long each reasoning block streamed, as of the instant given.
+    reasoning_clock: Option<(&'a ReasoningClock, Instant)>,
+}
+
+impl<'a> CapturedCells<'a> {
+    /// Draw reasoning in `display`'s form, timed by `clock` as of `now`.
+    fn reasoning(
+        mut self,
+        display: ReasoningDisplay,
+        clock: &'a ReasoningClock,
+        now: Instant,
+    ) -> Self {
+        self.reasoning = display;
+        self.reasoning_clock = Some((clock, now));
+        self
+    }
 }
 
 impl CellLines for CapturedCells<'_> {
@@ -1069,6 +1096,14 @@ impl CellLines for CapturedCells<'_> {
         let theme = themed_cell_id(cell)
             .and_then(|id| self.captured.get(&id))
             .map_or(self.current, |theme| theme.as_ref());
+        if let Cell::Reasoning(reasoning) = cell
+            && reasoning_collapses(reasoning, self.reasoning)
+        {
+            let took = self
+                .reasoning_clock
+                .and_then(|(clock, now)| clock.took(reasoning.id, now));
+            return reasoning_summary_lines(reasoning, theme, took, self.transcript_key, width);
+        }
         ThemedCells {
             theme,
             transcript_key: self.transcript_key,
@@ -3701,6 +3736,9 @@ impl Screen for TuiScreen {
     fn menu_bar(&self) -> bool {
         self.config.ui.menu_bar
     }
+    fn reasoning_display(&self) -> ReasoningDisplay {
+        self.config.ui.reasoning
+    }
 
     fn sync_workspace_transcript(&mut self, source_epoch: u64, committed_cells: usize) {
         if self.workspace_source_epoch != source_epoch {
@@ -3715,6 +3753,8 @@ impl Screen for TuiScreen {
                 captured: &self.captured,
                 tools: &self.cells,
                 transcript_key: transcript_key.as_deref(),
+                reasoning: self.reasoning,
+                reasoning_clock: Some((&self.reasoning_clock, Instant::now())),
             };
             let lines = self
                 .replies
@@ -4434,6 +4474,11 @@ impl Screen for TuiScreen {
         );
         self.cells.set_clock(&self.clock, now);
         self.in_force.cells.set_clock(&self.clock, now);
+        self.reasoning_clock.observe(
+            view.state.map(|state| state.cells()).unwrap_or_default(),
+            now,
+        );
+        self.reasoning = view.layout.reasoning;
         self.sync_confirmation_focus(now);
         if let Some(rewind) = &view.rewind {
             self.transcript_overlay_open = false;
@@ -4497,6 +4542,7 @@ impl Screen for TuiScreen {
                 let tools = &self.cells;
                 let replies = &self.replies;
                 let cards = &self.prompts;
+                let (reasoning, reasoning_clock) = (self.reasoning, &self.reasoning_clock);
                 let transcript_key = self.keymap.label(Action::TranscriptOpen);
                 // A long open reply drawn from its last lines only: the cut marker's count is
                 // then a floor.
@@ -4529,6 +4575,18 @@ impl Screen for TuiScreen {
                             ),
                             None => Arc::clone(current),
                         };
+                        // A collapsed block is one line that updates in place as it streams.
+                        if let Cell::Reasoning(block) = cell
+                            && reasoning_collapses(block, reasoning)
+                        {
+                            return reasoning_summary_lines(
+                                block,
+                                &theme,
+                                reasoning_clock.took(block.id, now),
+                                transcript_key.as_deref(),
+                                width,
+                            );
+                        }
                         let cells = ThemedCells {
                             theme: &theme,
                             transcript_key: transcript_key.as_deref(),
@@ -4732,6 +4790,9 @@ impl Screen for TuiScreen {
                     captured: &no_captures,
                     tools: &self.cells,
                     transcript_key: None,
+                    // The sample shows the reasoning colour, which one quiet line would not.
+                    reasoning: ReasoningDisplay::Full,
+                    reasoning_clock: None,
                 };
                 (
                     choice,
@@ -5061,7 +5122,8 @@ impl Screen for TuiScreen {
         let transcript_key = self.keymap.label(Action::TranscriptOpen);
         let render = self
             .in_force
-            .cells(&self.captured, transcript_key.as_deref());
+            .cells(&self.captured, transcript_key.as_deref())
+            .reasoning(self.reasoning, &self.reasoning_clock, Instant::now());
         let lines = self
             .replies
             .final_lines(cells, &render, self.terminal.viewport().width);
@@ -5245,7 +5307,8 @@ impl TuiScreen {
         let transcript_key = self.keymap.label(Action::TranscriptOpen);
         let render = self
             .in_force
-            .cells(&self.captured, transcript_key.as_deref());
+            .cells(&self.captured, transcript_key.as_deref())
+            .reasoning(self.reasoning, &self.reasoning_clock, Instant::now());
         let lines = self.replies.before_frame(
             state.cells(),
             state.final_prefix_len(),
@@ -5686,6 +5749,8 @@ fn session(
     );
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     composer.set_style(theme.composer);
+    // A resume can commit history before the first draw copies the view's choice.
+    let reasoning = config.ui.reasoning;
     let mut screen = TuiScreen {
         workspace_history: Vec::new(),
         menu: talaria_tui::workspace::menu::MenuState::hidden(),
@@ -5735,6 +5800,8 @@ fn session(
         palette: theme.status,
         cells: tool_cells(&theme, &keymap),
         clock: ToolClock::new(),
+        reasoning_clock: ReasoningClock::new(),
+        reasoning,
         activity: ActivityClock::default(),
         tool_theme: theme.tool.clone(),
         look,

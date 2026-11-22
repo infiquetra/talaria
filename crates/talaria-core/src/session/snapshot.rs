@@ -84,6 +84,7 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
                         text,
                         sealed: true,
                         latest_step: false,
+                        no_reply: false,
                     }));
                 }
                 if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
@@ -125,6 +126,13 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
             _ => {}
         }
     }
+    // A turn still running has not ended in its reasoning yet.
+    let finished = if snapshot.running {
+        state.cells.iter().rposition(Cell::starts_turn).unwrap_or(0)
+    } else {
+        state.cells.len()
+    };
+    super::cell::mark_unanswered_reasoning(&mut state.cells[..finished]);
     state.turn_start = state.cells.len();
     for prompt in snapshot.prompts {
         let cell = PromptCell {

@@ -490,6 +490,7 @@ fn session(
                         text: text.to_owned(),
                         sealed: false,
                         latest_step: false,
+                        no_reply: false,
                     }));
                 }
             }
@@ -721,12 +722,17 @@ fn complete(state: &mut SessionState, payload: &Value) {
             text,
             sealed: true,
             latest_step: !state.tools.is_empty() || resumed_turn_ran_tools(state),
+            no_reply: false,
         });
         state.insert_cell_at(at, cell);
         state.had_reasoning = true;
     }
     match outcome {
-        TurnOutcome::Completed => complete_text(state, payload),
+        TurnOutcome::Completed => {
+            complete_text(state, payload);
+            let start = state.turn_start.min(state.cells.len());
+            super::cell::mark_unanswered_reasoning(&mut state.cells[start..]);
+        }
         TurnOutcome::Interrupted => interrupted_notice(state),
         TurnOutcome::Failed => {
             let text = if unknown {

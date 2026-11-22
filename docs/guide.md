@@ -5,6 +5,9 @@ to toggle it, and `/layout menu` to focus it temporarily. Use arrows, Tab and En
 navigate, and Esc to return to the composer. Disabled items explain their refusal. Narrow
 screens collapse the headings, and short screens use a temporary menu.
 
+The model's thinking shows as one line per block. Ctrl+O opens the transcript view, where it
+shows in full, and `/thinking full` shows it in full on the main screen for this view.
+
 ## What Talaria is
 
 Talaria is a terminal client for the Hermes agent gateway. It presents sessions and terminal input. Hermes owns the agent logic and session authority.

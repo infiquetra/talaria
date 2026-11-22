@@ -379,6 +379,7 @@ colors = "auto"
 reduced_motion = false
 work_panel = false
 menu_bar = false
+reasoning = "collapsed"
 [fleet]
 enabled = true
 hot_poll_ms = 2000
@@ -930,6 +931,7 @@ answer the probe gets no in-band record.
 | `reduced_motion` | boolean | false | true or false | false |
 | `work_panel` | boolean | false | true or false | false |
 | `menu_bar` | boolean | false | true or false | false |
+| `reasoning` | string | collapsed | collapsed, full | full |
 
 `work_panel` enables the optional full-screen workspace at startup. Alt+D
 (`layout_panel`) and `/layout panel` change the current view without saving this
@@ -939,6 +941,16 @@ setting controls the startup menu. Alt+I and `/layout bar` toggle it for this vi
 for the docking thresholds and scrollback tradeoff. Set `layout_panel = []` under
 `[keys]` to unbind the shortcut, or replace its chord. Conflicts with another
 effective binding produce a notice; `/layout panel` remains available.
+
+`reasoning` sets how the main screen draws the model's thinking. `collapsed` draws each
+reasoning block as one dim line that names its length and the key that opens the transcript
+view, such as `∴ thinking (+34 lines, Ctrl+O to view)`, or
+`∴ thought for 12s (+34 lines, Ctrl+O to view)` when Talaria saw the block stream. `full` draws
+every line, as earlier versions did. A turn whose only output is its reasoning is drawn in full
+either way. `/thinking`, `/thinking collapsed` and `/thinking full` change the current view
+without saving this file; scrollback already written keeps its form. Talaria never asks Hermes
+to stop sending reasoning, so the transcript view (Ctrl+O) always holds the full text. An
+invalid value produces one notice and uses `collapsed`.
 
 ### `fleet`
 
