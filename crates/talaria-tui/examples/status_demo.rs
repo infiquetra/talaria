@@ -43,7 +43,7 @@ fn full() -> StatusInputs {
     StatusInputs {
         notice: None,
         warning_count: 0,
-        ultracode: false,
+        hivecode: false,
         profile: None,
         workflow_run: None,
         connection: Connection::Connected,

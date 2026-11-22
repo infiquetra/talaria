@@ -22,7 +22,7 @@ const REVIEW_SPEC = {base: 'ref', focus: 'focus', head: 'ref', lenses: 'lenses',
 function checkArgs(spec, value, path = 'args') {
   if (value === undefined) value = {};
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail("'" + path + "' must be an object, got " + shown(value));
-  if (path === 'review' && ('base' in value || 'head' in value)) fail('review.base and review.head are set by ultracode');
+  if (path === 'review' && ('base' in value || 'head' in value)) fail('review.base and review.head are set by hivecode');
   const prefix = path === 'args' ? '' : path + '.';
   const keys = Object.keys(spec).sort();
   for (const k of Object.keys(value)) if (!keys.includes(k)) fail("unknown argument '" + prefix + k + "'; allowed: " + keys.join(', '));

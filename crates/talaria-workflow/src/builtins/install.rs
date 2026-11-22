@@ -171,7 +171,7 @@ pub fn resolve_script_arg(arg: &str, workflows_dir: &Path) -> Result<ScriptArg, 
         });
     }
     Err(format!(
-        "no workflow named '{arg}' in {}; built-ins: fix-failing-tests, research, review-branch, ultracode",
+        "no workflow named '{arg}' in {}; built-ins: fix-failing-tests, research, review-branch, hivecode",
         workflows_dir.display()
     ))
 }

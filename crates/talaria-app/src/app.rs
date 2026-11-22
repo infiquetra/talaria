@@ -492,11 +492,11 @@ pub struct View<'a> {
     pub pr_labels: BTreeMap<RowKey, talaria_core::review::PrLabel>,
     /// The background counters the status line shows.
     pub fleet_counts: StatusCounts,
-    pub ultracode: bool,
+    pub hivecode: bool,
     /// The foreground session's active workflow run, for the dock line and the status bar.
     pub workflow_run: Option<&'a talaria_workflow::runner::RunSummary>,
     /// The building block, while a routed turn builds a workflow and no run it started shows.
-    pub authoring: Option<talaria_core::ultracode::authoring::AuthoringView>,
+    pub authoring: Option<talaria_core::hivecode::authoring::AuthoringView>,
 }
 
 impl View<'_> {
@@ -830,12 +830,12 @@ pub struct AppState {
     voice_submissions: BTreeMap<String, String>,
     remembered_notes: BTreeMap<String, String>,
     pub workflow_views: crate::workflow_progress::ProgressViews,
-    pub ultracode: crate::ultracode::UltracodeService,
-    ultracode_requests: std::collections::HashMap<SessionId, u64>,
+    pub hivecode: crate::hivecode::HivecodeService,
+    hivecode_requests: std::collections::HashMap<SessionId, u64>,
     /// Where the per-session switch is saved; none in tests.
-    ultracode_file: Option<crate::ultracode_files::ModeFile>,
+    hivecode_file: Option<crate::hivecode_files::ModeFile>,
     /// The number of the last save of the switch file.
-    ultracode_saves: u64,
+    hivecode_saves: u64,
     configure: Option<talaria_core::configure::ConfigureState>,
     configure_service: Option<Arc<crate::configure::Service>>,
     configure_generation: u64,
@@ -1273,10 +1273,10 @@ impl AppState {
             palette: PaletteState::closed(),
             choice: None,
             skin_preview: None,
-            ultracode: crate::ultracode::UltracodeService::default(),
-            ultracode_requests: std::collections::HashMap::new(),
-            ultracode_file: None,
-            ultracode_saves: 0,
+            hivecode: crate::hivecode::HivecodeService::default(),
+            hivecode_requests: std::collections::HashMap::new(),
+            hivecode_file: None,
+            hivecode_saves: 0,
             commands: CommandsState::default(),
             local: LocalCommandTable::builtin(),
             picker: None,
@@ -1536,18 +1536,18 @@ impl AppState {
                     .collect()
             }),
             fleet_counts: self.status_counts,
-            ultracode: self.ultracode.status_input(
+            hivecode: self.hivecode.status_input(
                 self.opened
                     .as_ref()
                     .map(|s| SessionId::new(s.session_id.clone()))
                     .as_ref(),
             ),
             workflow_run: self.opened.as_ref().and_then(|opened| {
-                self.ultracode
+                self.hivecode
                     .active_run(&SessionId::new(opened.session_id.clone()))
             }),
             authoring: self.opened.as_ref().and_then(|opened| {
-                self.ultracode.authoring_view(
+                self.hivecode.authoring_view(
                     &SessionId::new(opened.session_id.clone()),
                     opened.state.cells(),
                     self.now_ms,
@@ -1846,29 +1846,29 @@ pub enum AppMessage {
         run: PathBuf,
         input: talaria_workflow::progress::live::ProgressInput,
     },
-    UltracodeCatalog {
+    HivecodeCatalog {
         request_id: u64,
         session: SessionId,
         profile: String,
-        command: talaria_core::ultracode::UltracodeCommand,
+        command: talaria_core::hivecode::HivecodeCommand,
         result: Result<talaria_core::commands::CommandCatalog, String>,
     },
-    UltracodeDone {
+    HivecodeDone {
         session: SessionId,
         original_text: String,
         outcome: Result<Value, talaria_core::commands::ErrorView>,
     },
-    UltracodeNotice {
+    HivecodeNotice {
         text: String,
     },
     /// What a read of the local workflow setup found for a session.
-    UltracodeSetup {
+    HivecodeSetup {
         session: SessionId,
         profile: String,
-        facts: crate::ultracode::SetupFacts,
+        facts: crate::hivecode::SetupFacts,
     },
     /// One read of the runs folder for the sessions that wait for a workflow run.
-    UltracodeRuns {
+    HivecodeRuns {
         rows: Vec<talaria_workflow::runner::RunSummary>,
     },
     Configure {
@@ -2427,18 +2427,18 @@ pub enum AppEffect {
     Describe(u64),
     Quit,
     /// Read the workflow catalogue or run its skill command off the loop.
-    Ultracode {
-        action: crate::ultracode::Action,
+    Hivecode {
+        action: crate::hivecode::Action,
         request_id: u64,
     },
     /// Read the local runs folder for runs that started at or after `since_ms`.
-    UltracodeScan {
+    HivecodeScan {
         since_ms: i64,
     },
     /// Merge changes into the per-session switch file; save number `generation`.
-    UltracodeSave {
+    HivecodeSave {
         generation: u64,
-        changes: talaria_core::ultracode::SavedChanges,
+        changes: talaria_core::hivecode::SavedChanges,
     },
     /// Run a Hermes slash command (`slash.exec`) in the background.
     RunCommand {
@@ -3062,7 +3062,7 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
             )),
             RewindEffect::ReturnPrompt { text, attachments } => {
                 // A routed prompt comes back as typed; sending it routes it again.
-                let text = talaria_core::ultracode::shown_text(&text).to_owned();
+                let text = talaria_core::hivecode::shown_text(&text).to_owned();
                 effects.extend(return_prompt(state, text, attachments));
             }
             RewindEffect::Submit(text) => {
@@ -3075,7 +3075,7 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
                 effects.extend(reduce(
                     state,
                     Event::Submit {
-                        display: talaria_core::ultracode::shown_text(&text).to_owned(),
+                        display: talaria_core::hivecode::shown_text(&text).to_owned(),
                         text,
                         submission_id,
                         attachments: Vec::new(),
@@ -3426,7 +3426,7 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::Connectors { .. }
         | AppMessage::Tick { .. }
-        | AppMessage::UltracodeRuns { .. }
+        | AppMessage::HivecodeRuns { .. }
         | AppMessage::BackgroundDone { .. }
         | AppMessage::DoctorFacts(_)
         | AppMessage::DoctorRestart(_)
@@ -4299,55 +4299,55 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             let (effects, _) = palette(state, input);
             effects
         }
-        AppMessage::UltracodeCatalog {
+        AppMessage::HivecodeCatalog {
             request_id,
             session,
             profile,
             command,
             result,
         } => {
-            if state.ultracode_requests.get(&session).copied() != Some(request_id) {
+            if state.hivecode_requests.get(&session).copied() != Some(request_id) {
                 return Vec::new();
             }
             let actions = state
-                .ultracode
+                .hivecode
                 .on_catalog_reply(&session, &profile, command, result);
             if is_foreground(state, session.as_str()) {
-                if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&profile))) {
-                    state.ultracode.record_shown(&session);
+                if actions.iter().any(|action| matches!(action, crate::hivecode::Action::Notice(text) if *text == talaria_core::hivecode::notice::offer(&profile))) {
+                    state.hivecode.record_shown(&session);
                 }
-                let turned_on = command != talaria_core::ultracode::UltracodeCommand::Status
-                    && state.ultracode.status_input(Some(&session));
-                let mut effects = ultracode_actions(state, actions);
-                if turned_on && let Some(check) = state.ultracode.setup_check(&session) {
-                    effects.extend(apply_ultracode(state, vec![check], false));
+                let turned_on = command != talaria_core::hivecode::HivecodeCommand::Status
+                    && state.hivecode.status_input(Some(&session));
+                let mut effects = hivecode_actions(state, actions);
+                if turned_on && let Some(check) = state.hivecode.setup_check(&session) {
+                    effects.extend(apply_hivecode(state, vec![check], false));
                 }
                 effects
             } else {
                 Vec::new()
             }
         }
-        AppMessage::UltracodeDone {
+        AppMessage::HivecodeDone {
             session,
             original_text,
             outcome,
         } => {
             if is_foreground(state, session.as_str()) {
                 let actions = state
-                    .ultracode
+                    .hivecode
                     .on_command_outcome(&session, &original_text, outcome);
-                if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&state.profile))) {
-                    state.ultracode.record_shown(&session);
+                if actions.iter().any(|action| matches!(action, crate::hivecode::Action::Notice(text) if *text == talaria_core::hivecode::notice::offer(&state.profile))) {
+                    state.hivecode.record_shown(&session);
                 }
-                ultracode_actions(state, actions)
+                hivecode_actions(state, actions)
             } else {
                 vec![notice_lines(
                     "The workflow reply belongs to another session; nothing was sent.",
                 )]
             }
         }
-        AppMessage::UltracodeNotice { text } => vec![notice_lines(&text)],
-        AppMessage::UltracodeSetup {
+        AppMessage::HivecodeNotice { text } => vec![notice_lines(&text)],
+        AppMessage::HivecodeSetup {
             session,
             profile,
             facts,
@@ -4356,10 +4356,10 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             if !is_foreground(state, session.as_str()) {
                 return Vec::new();
             }
-            let actions = state.ultracode.on_setup(&session, &profile, facts);
-            apply_ultracode(state, actions, false)
+            let actions = state.hivecode.on_setup(&session, &profile, facts);
+            apply_hivecode(state, actions, false)
         }
-        AppMessage::UltracodeRuns { rows } => ultracode_runs(state, &rows),
+        AppMessage::HivecodeRuns { rows } => hivecode_runs(state, &rows),
         AppMessage::CommandDone { typed, outcome } => command_done(state, &typed, outcome),
         AppMessage::ContextDone { block } => context_done(state, block),
         AppMessage::CompactDone {
@@ -4389,7 +4389,7 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects.extend(review_tick(state));
             effects.extend(workflow_tick(state));
-            effects.extend(ultracode_scan(state));
+            effects.extend(hivecode_scan(state));
             effects.extend(kanban_input(
                 state,
                 talaria_core::kanban::KanbanInput::Tick {
@@ -4752,7 +4752,7 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         && opened.state.queue.take_skill_dropped()
     {
         let session = SessionId::new(opened.session_id.clone());
-        state.ultracode.rearm(&session);
+        state.hivecode.rearm(&session);
     }
     effects.extend(connectors_effects);
     effects.extend(commit_ready(state));
@@ -4895,7 +4895,7 @@ fn authoring_effects(state: &mut AppState) -> Vec<AppEffect> {
     };
     let session = SessionId::new(opened.session_id.clone());
     state
-        .ultracode
+        .hivecode
         .observe_authoring(
             &session,
             opened.state.cells(),
@@ -6286,24 +6286,22 @@ fn local_effect(
     if action == LocalAction::Workflows {
         return workflow_command(state, &argument);
     }
-    if action == LocalAction::Ultracode {
+    if action == LocalAction::Hivecode {
         let session = state
             .opened
             .as_ref()
             .map(|s| SessionId::new(s.session_id.clone()));
         if let Some(session) = &session {
-            let request = state.ultracode_requests.entry(session.clone()).or_default();
+            let request = state.hivecode_requests.entry(session.clone()).or_default();
             *request = request.wrapping_add(1);
         }
         let profile = state.profile.clone();
-        let foreground = session
-            .as_ref()
-            .map(|session| crate::ultracode::Foreground {
-                session,
-                profile: &profile,
-            });
-        let actions = state.ultracode.handle_local_command(&argument, foreground);
-        return ultracode_actions(state, actions);
+        let foreground = session.as_ref().map(|session| crate::hivecode::Foreground {
+            session,
+            profile: &profile,
+        });
+        let actions = state.hivecode.handle_local_command(&argument, foreground);
+        return hivecode_actions(state, actions);
     }
 
     if action == LocalAction::Configure {
@@ -6989,7 +6987,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::WorkflowView => {
             let run = state.opened.as_ref().and_then(|opened| {
                 state
-                    .ultracode
+                    .hivecode
                     .tracked(&SessionId::new(opened.session_id.clone()))
                     .map(|run| run.run_dir.clone())
             });
@@ -7637,27 +7635,24 @@ fn commands_follow(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect>
 }
 
 /// The conversation the open session holds: its stored id and how often Hermes compacted it.
-fn skill_epoch(opened: &OpenedSession) -> talaria_core::ultracode::SkillEpoch {
-    talaria_core::ultracode::SkillEpoch {
+fn skill_epoch(opened: &OpenedSession) -> talaria_core::hivecode::SkillEpoch {
+    talaria_core::hivecode::SkillEpoch {
         stored: opened.stored_session_id.clone(),
         compressions: opened.state.usage().compressions.unwrap_or(0),
     }
 }
 
 /// Apply workflow routing through the existing session events and effects.
-fn ultracode_actions(
-    state: &mut AppState,
-    actions: Vec<crate::ultracode::Action>,
-) -> Vec<AppEffect> {
-    apply_ultracode(state, actions, true)
+fn hivecode_actions(state: &mut AppState, actions: Vec<crate::hivecode::Action>) -> Vec<AppEffect> {
+    apply_hivecode(state, actions, true)
 }
 
-fn apply_ultracode(
+fn apply_hivecode(
     state: &mut AppState,
-    actions: Vec<crate::ultracode::Action>,
+    actions: Vec<crate::hivecode::Action>,
     clear_composer: bool,
 ) -> Vec<AppEffect> {
-    use crate::ultracode::Action;
+    use crate::hivecode::Action;
     let mut effects = vec![];
     for action in actions {
         match action {
@@ -7671,14 +7666,14 @@ fn apply_ultracode(
                     let since_ms = (state.wall_s * 1000.0) as i64;
                     let profile = state.profile.clone();
                     state
-                        .ultracode
+                        .hivecode
                         .arm(&session, &profile, since_ms, state.now_ms);
-                    if talaria_core::ultracode::loads_skill(&text) {
-                        state.ultracode.skill_sent(&session, epoch);
+                    if talaria_core::hivecode::loads_skill(&text) {
+                        state.hivecode.skill_sent(&session, epoch);
                     }
-                    state.ultracode.note_routed(&session);
+                    state.hivecode.note_routed(&session);
                     let cells = opened.state.cells().len();
-                    state.ultracode.begin_authoring(
+                    state.hivecode.begin_authoring(
                         &session,
                         &submission_id,
                         &display,
@@ -7702,9 +7697,9 @@ fn apply_ultracode(
                     clear_submitted_draft(state);
                 }
                 if let Action::RunCommand { session, .. } = &action {
-                    state.ultracode.note_routed(session);
+                    state.hivecode.note_routed(session);
                 }
-                effects.push(AppEffect::Ultracode {
+                effects.push(AppEffect::Hivecode {
                     action,
                     request_id: 0,
                 });
@@ -7712,13 +7707,13 @@ fn apply_ultracode(
             action @ Action::FetchCatalog { .. } => {
                 let request_id = match &action {
                     Action::FetchCatalog { session, .. } => state
-                        .ultracode_requests
+                        .hivecode_requests
                         .get(session)
                         .copied()
                         .unwrap_or_default(),
                     _ => 0,
                 };
-                effects.push(AppEffect::Ultracode { action, request_id });
+                effects.push(AppEffect::Hivecode { action, request_id });
             }
             action @ (Action::InstallSkill { .. }
             | Action::ReinstallSkill { .. }
@@ -7726,25 +7721,25 @@ fn apply_ultracode(
                 // The conversation holds the old instructions; the next routed prompt sends
                 // the reinstalled skill whole.
                 if let Action::ReinstallSkill { session, .. } = &action {
-                    state.ultracode.rearm(session);
+                    state.hivecode.rearm(session);
                 }
-                effects.push(AppEffect::Ultracode {
+                effects.push(AppEffect::Hivecode {
                     action,
                     request_id: 0,
                 });
             }
         }
     }
-    effects.extend(ultracode_save(state));
+    effects.extend(hivecode_save(state));
     effects
 }
 
 /// Save the per-session switch when a setting changed or a session that has one was opened.
-fn ultracode_save(state: &mut AppState) -> Option<AppEffect> {
-    let changes = state.ultracode.take_saved((state.wall_s * 1000.0) as i64)?;
-    state.ultracode_saves += 1;
-    Some(AppEffect::UltracodeSave {
-        generation: state.ultracode_saves,
+fn hivecode_save(state: &mut AppState) -> Option<AppEffect> {
+    let changes = state.hivecode.take_saved((state.wall_s * 1000.0) as i64)?;
+    state.hivecode_saves += 1;
+    Some(AppEffect::HivecodeSave {
+        generation: state.hivecode_saves,
         changes,
     })
 }
@@ -8548,19 +8543,17 @@ fn branched(
             match install {
                 Some(install) => {
                     let child = SessionId::new(install.opened.session_id.clone());
-                    // Ultracode follows the branch, so a held prompt in the child is routed too.
+                    // Hivecode follows the branch, so a held prompt in the child is routed too.
                     let carried = parent
                         .as_ref()
-                        .is_some_and(|parent| state.ultracode.carry(parent, &child));
+                        .is_some_and(|parent| state.hivecode.carry(parent, &child));
                     if carried {
                         // The branch notice below says it; the open does not repeat it.
-                        state.ultracode.mark_announced(&child);
+                        state.hivecode.mark_announced(&child);
                     }
                     effects.extend(install_session(state, install, Some(notice)));
                     if carried {
-                        effects.push(notice_lines(
-                            talaria_core::ultracode::notice::BRANCH_CARRIED,
-                        ));
+                        effects.push(notice_lines(talaria_core::hivecode::notice::BRANCH_CARRIED));
                     }
                 }
                 None => effects.push(notice_lines(&notice)),
@@ -9185,9 +9178,9 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
         .filter(|_| !state.session_gone)
         .and_then(|opened| {
             let on = state
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new(opened.session_id.clone())));
-            talaria_core::ultracode::bypass(&text, on)
+            talaria_core::hivecode::bypass(&text, on)
         });
     let mut effects = submit_line(state, text);
     // Only a command that went somewhere gets the notice; a refused one is back in the composer.
@@ -9201,13 +9194,13 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     {
         effects.insert(
             0,
-            notice_lines(&talaria_core::ultracode::notice::bypassed(&command)),
+            notice_lines(&talaria_core::hivecode::notice::bypassed(&command)),
         );
     }
     effects
 }
 
-/// The model and provider the open session runs on, for an Ultracode-routed prompt; the model
+/// The model and provider the open session runs on, for a Hivecode-routed prompt; the model
 /// the user switched to wins over the one the session started with.
 fn session_model(state: &AppState) -> Option<(String, String)> {
     state
@@ -9224,9 +9217,9 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
             .as_ref()
             .filter(|_| !state.session_gone)
             .map(|opened| SessionId::new(opened.session_id.clone()))
-            && let Some(actions) = state.ultracode.answer_install(&session, &text)
+            && let Some(actions) = state.hivecode.answer_install(&session, &text)
         {
-            return ultracode_actions(state, actions);
+            return hivecode_actions(state, actions);
         }
         return Vec::new();
     }
@@ -9321,15 +9314,15 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
         .filter(|_| !state.session_gone)
         .map(|s| SessionId::new(s.session_id.clone()))
     {
-        state.ultracode.bind(&session, &state.profile);
-        if let Some(actions) = state.ultracode.answer_install(&session, &text) {
-            return ultracode_actions(state, actions);
+        state.hivecode.bind(&session, &state.profile);
+        if let Some(actions) = state.hivecode.answer_install(&session, &text) {
+            return hivecode_actions(state, actions);
         }
         if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
-            state.ultracode.note_epoch(&session, &epoch);
+            state.hivecode.note_epoch(&session, &epoch);
         }
         let session_model = session_model(state);
-        if let Some(actions) = state.ultracode.intercept_submit_with_model(
+        if let Some(actions) = state.hivecode.intercept_submit_with_model(
             &session,
             &text,
             session_model
@@ -9339,7 +9332,7 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
             // A prompt sent with the reminder goes straight to Hermes, like a plain one.
             if actions
                 .iter()
-                .any(|action| matches!(action, crate::ultracode::Action::SubmitCommand { .. }))
+                .any(|action| matches!(action, crate::hivecode::Action::SubmitCommand { .. }))
             {
                 if state.link_failed {
                     return vec![
@@ -9349,12 +9342,12 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
                 }
                 clear_submitted_draft(state);
             }
-            let mut effects = ultracode_actions(state, actions);
+            let mut effects = hivecode_actions(state, actions);
             // A routed prompt checks the local setup on the side; the prompt does not wait.
-            if state.ultracode.status_input(Some(&session))
-                && let Some(check) = state.ultracode.setup_check(&session)
+            if state.hivecode.status_input(Some(&session))
+                && let Some(check) = state.hivecode.setup_check(&session)
             {
-                effects.extend(apply_ultracode(state, vec![check], false));
+                effects.extend(apply_hivecode(state, vec![check], false));
             }
             return effects;
         }
@@ -9994,9 +9987,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
                     if let Some(stored) = rotated {
                         state
-                            .ultracode
+                            .hivecode
                             .rotate(&SessionId::new(session_id.clone()), &stored);
-                        hub_effects.extend(ultracode_save(state));
+                        hub_effects.extend(hivecode_save(state));
                     }
                     let background = produced
                         .into_iter()
@@ -10100,9 +10093,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         .filter(|stored| !stored.is_empty())
                 {
                     state
-                        .ultracode
+                        .hivecode
                         .rotate(&SessionId::new(session_id.clone()), stored);
-                    effects.extend(ultracode_save(state));
+                    effects.extend(hivecode_save(state));
                 }
                 if let Some(input) = rewound {
                     effects.extend(rewind_input(state, input));
@@ -10360,15 +10353,15 @@ fn opened_session(
     }) {
         let old = SessionId::new(old.session_id.clone());
         state
-            .ultracode
+            .hivecode
             .carry(&old, &SessionId::new(opened.session_id.clone()));
     }
     // The switch belongs to the stored session, so a return from another session, a restart or
     // a compaction finds it again.
-    let ultracode_session = SessionId::new(opened.session_id.clone());
-    let announce_ultracode = state
-        .ultracode
-        .adopt(&ultracode_session, &opened.stored_session_id)
+    let hivecode_session = SessionId::new(opened.session_id.clone());
+    let announce_hivecode = state
+        .hivecode
+        .adopt(&hivecode_session, &opened.stored_session_id)
         && !same_session;
     if !same_session && let Some(old_id) = state.opened.as_ref().map(|old| old.session_id.clone()) {
         background.extend(background_event(
@@ -10572,14 +10565,14 @@ fn opened_session(
     if let Some(notice) = notice.filter(|notice| !notice.is_empty()) {
         effects.push(notice_lines(&notice));
     }
-    if announce_ultracode {
-        state.ultracode.bind(&ultracode_session, &state.profile);
-        effects.push(notice_lines(talaria_core::ultracode::notice::OPENED_ON));
-        if let Some(check) = state.ultracode.setup_check(&ultracode_session) {
-            effects.extend(apply_ultracode(state, vec![check], false));
+    if announce_hivecode {
+        state.hivecode.bind(&hivecode_session, &state.profile);
+        effects.push(notice_lines(talaria_core::hivecode::notice::OPENED_ON));
+        if let Some(check) = state.hivecode.setup_check(&hivecode_session) {
+            effects.extend(apply_hivecode(state, vec![check], false));
         }
     }
-    effects.extend(ultracode_save(state));
+    effects.extend(hivecode_save(state));
     // The snapshot's `yolo` is never read: it is false after a gateway restart until the next
     // turn (#237). `install` made the state when the connection opened; a session that opens
     // without it makes it here.
@@ -10595,7 +10588,7 @@ fn opened_session(
         .opened
         .as_ref()
         .map(|opened| SessionId::new(opened.session_id.clone()))
-        && let Some(text) = state.ultracode.show_kept(&session)
+        && let Some(text) = state.hivecode.show_kept(&session)
     {
         effects.push(notice_lines(&text));
     }
@@ -10605,16 +10598,16 @@ fn opened_session(
             .as_ref()
             .map(|opened| SessionId::new(opened.session_id.clone()))
         {
-            state.ultracode.bind(&session, &state.profile);
-            if let Some(actions) = state.ultracode.answer_install(&session, &text) {
-                effects.extend(apply_ultracode(state, actions, false));
+            state.hivecode.bind(&session, &state.profile);
+            if let Some(actions) = state.hivecode.answer_install(&session, &text) {
+                effects.extend(apply_hivecode(state, actions, false));
                 continue;
             }
             if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
-                state.ultracode.note_epoch(&session, &epoch);
+                state.hivecode.note_epoch(&session, &epoch);
             }
             let session_model = session_model(state);
-            if let Some(actions) = state.ultracode.intercept_submit_with_model(
+            if let Some(actions) = state.hivecode.intercept_submit_with_model(
                 &session,
                 &text,
                 session_model
@@ -10628,7 +10621,7 @@ fn opened_session(
                 {
                     state.held_attachments.pop_front();
                 }
-                effects.extend(apply_ultracode(state, actions, false));
+                effects.extend(apply_hivecode(state, actions, false));
                 continue;
             }
         }
@@ -10798,10 +10791,10 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
             .ledger
             .get(&SubmissionId(id.clone()))
             .filter(|entry| entry.retried)
-            .map(|entry| talaria_core::ultracode::shown_text(&entry.text).to_owned())
+            .map(|entry| talaria_core::hivecode::shown_text(&entry.text).to_owned())
     });
     // A routed prompt that was not sent builds no workflow.
-    state.ultracode.submission_failed(&id);
+    state.hivecode.submission_failed(&id);
     let mut effects = reduce(
         state,
         Event::SubmitFailed {
@@ -10859,9 +10852,9 @@ fn interrupt_done(
                 .opened
                 .as_ref()
                 .map(|opened| SessionId::new(opened.session_id.clone()))
-                && let Some(action) = state.ultracode.after_interrupt(&session)
+                && let Some(action) = state.hivecode.after_interrupt(&session)
             {
-                effects.extend(apply_ultracode(state, vec![action], false));
+                effects.extend(apply_hivecode(state, vec![action], false));
             }
             return effects;
         }
@@ -11425,7 +11418,7 @@ mod attachment_tests {
     #[test]
     fn cold_start_routes_held_workflows_without_clearing_the_next_draft() {
         let mut state = AppState::new("cold-start");
-        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
         let initial = submit(&mut state, "review the parser".into());
         assert!(
             !initial
@@ -11437,7 +11430,7 @@ mod attachment_tests {
         state.caret = state.draft.len();
         let session = opened().opened.take().unwrap();
         let effects = opened_session(&mut state, session, None);
-        assert!(effects.iter().any(|effect|matches!(effect,AppEffect::Ultracode{action:crate::ultracode::Action::RunCommand{command_line,..},..} if command_line=="/talaria-workflows review the parser")));
+        assert!(effects.iter().any(|effect|matches!(effect,AppEffect::Hivecode{action:crate::hivecode::Action::RunCommand{command_line,..},..} if command_line=="/talaria-workflows review the parser")));
         assert!(
             !effects
                 .iter()
@@ -11452,7 +11445,7 @@ mod attachment_tests {
     #[test]
     fn held_workflow_prompt_names_the_model_the_opened_session_runs_on() {
         let mut state = AppState::new("cold-start");
-        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
         let _ = submit(&mut state, "review the parser".into());
         assert_eq!(state.held.len(), 1);
         let mut session = opened().opened.take().unwrap();
@@ -11462,8 +11455,8 @@ mod attachment_tests {
         let lines: Vec<_> = effects
             .iter()
             .filter_map(|effect| match effect {
-                AppEffect::Ultracode {
-                    action: crate::ultracode::Action::RunCommand { command_line, .. },
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::RunCommand { command_line, .. },
                     ..
                 } => Some(command_line.as_str()),
                 _ => None,
@@ -11478,11 +11471,11 @@ mod attachment_tests {
     #[test]
     fn routed_workflow_prompt_names_the_model_the_session_runs_on() {
         let mut state = opened();
-        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
         let line = |effects: &[AppEffect]| {
             effects.iter().find_map(|effect| match effect {
-                AppEffect::Ultracode {
-                    action: crate::ultracode::Action::RunCommand { command_line, .. },
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::RunCommand { command_line, .. },
                     ..
                 } => Some(command_line.clone()),
                 _ => None,
@@ -12455,7 +12448,7 @@ fn workflow_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     }
     [
         state.workflow_views.next_tick_ms(),
-        state.ultracode.next_scan_ms(),
+        state.hivecode.next_scan_ms(),
     ]
     .into_iter()
     .flatten()
@@ -13625,7 +13618,7 @@ fn apply<S: Screen>(
                     service.execute(&board, effect, executor.sender.clone());
                 }
             }
-            AppEffect::UltracodeScan { since_ms } => {
+            AppEffect::HivecodeScan { since_ms } => {
                 let sender = executor.sender.clone();
                 tokio::spawn(async move {
                     let rows = tokio::task::spawn_blocking(move || {
@@ -13636,7 +13629,7 @@ fn apply<S: Screen>(
                     })
                     .await
                     .unwrap_or_default();
-                    let _ = sender.send(AppMessage::UltracodeRuns { rows });
+                    let _ = sender.send(AppMessage::HivecodeRuns { rows });
                 });
             }
             AppEffect::WorkflowDiscover => {
@@ -14325,8 +14318,8 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::Quit => state.quitting = true,
-            AppEffect::Ultracode { action, request_id } => match action {
-                crate::ultracode::Action::FetchCatalog {
+            AppEffect::Hivecode { action, request_id } => match action {
+                crate::hivecode::Action::FetchCatalog {
                     session,
                     profile,
                     command,
@@ -14340,7 +14333,7 @@ fn apply<S: Screen>(
                             }
                             None => Err("not connected".into()),
                         };
-                        AppMessage::UltracodeCatalog {
+                        AppMessage::HivecodeCatalog {
                             request_id,
                             session,
                             profile,
@@ -14349,7 +14342,7 @@ fn apply<S: Screen>(
                         }
                     });
                 }
-                crate::ultracode::Action::RunCommand {
+                crate::hivecode::Action::RunCommand {
                     session,
                     original_text,
                     command_line,
@@ -14362,14 +14355,14 @@ fn apply<S: Screen>(
                             }
                             None => Err(talaria_core::commands::ErrorView::NotConnected),
                         };
-                        AppMessage::UltracodeDone {
+                        AppMessage::HivecodeDone {
                             session,
                             original_text,
                             outcome,
                         }
                     });
                 }
-                crate::ultracode::Action::CheckSetup { session, profile } => {
+                crate::hivecode::Action::CheckSetup { session, profile } => {
                     let Some(talaria_home) = talaria_workflow::staffing::talaria_home() else {
                         continue;
                     };
@@ -14377,31 +14370,31 @@ fn apply<S: Screen>(
                     executor.send_later(async move {
                         let read_profile = profile.clone();
                         let facts = tokio::task::spawn_blocking(move || {
-                            crate::ultracode_files::read_setup(
+                            crate::hivecode_files::read_setup(
                                 &read_profile,
                                 &hermes_home,
                                 &talaria_home,
                             )
                         })
                         .await
-                        .unwrap_or(crate::ultracode::SetupFacts {
-                            skill: crate::ultracode::SkillCheck::Unknown,
-                            tiers: crate::ultracode::TierCheck::Present,
+                        .unwrap_or(crate::hivecode::SetupFacts {
+                            skill: crate::hivecode::SkillCheck::Unknown,
+                            tiers: crate::hivecode::TierCheck::Present,
                             missing_builtins: Vec::new(),
                         });
-                        AppMessage::UltracodeSetup {
+                        AppMessage::HivecodeSetup {
                             session,
                             profile,
                             facts,
                         }
                     });
                 }
-                action @ (crate::ultracode::Action::InstallSkill { .. }
-                | crate::ultracode::Action::ReinstallSkill { .. }) => {
+                action @ (crate::hivecode::Action::InstallSkill { .. }
+                | crate::hivecode::Action::ReinstallSkill { .. }) => {
                     // A reinstall replaces a changed copy after backing it up.
                     let (profile, force) = match action {
-                        crate::ultracode::Action::ReinstallSkill { profile, .. } => (profile, true),
-                        crate::ultracode::Action::InstallSkill { profile, .. } => (profile, false),
+                        crate::hivecode::Action::ReinstallSkill { profile, .. } => (profile, true),
+                        crate::hivecode::Action::InstallSkill { profile, .. } => (profile, false),
                         _ => continue,
                     };
                     executor.send_later(async move {
@@ -14438,18 +14431,18 @@ fn apply<S: Screen>(
                             )
                         }
                         .await;
-                        AppMessage::UltracodeNotice {
+                        AppMessage::HivecodeNotice {
                             text: result.unwrap_or_else(|error| error.to_string()),
                         }
                     });
                 }
                 _ => {}
             },
-            AppEffect::UltracodeSave {
+            AppEffect::HivecodeSave {
                 generation,
                 changes,
             } => {
-                if let Some(file) = state.ultracode_file.clone() {
+                if let Some(file) = state.hivecode_file.clone() {
                     executor.spawn(async move {
                         let _ =
                             tokio::task::spawn_blocking(move || file.write(generation, &changes))
@@ -16341,7 +16334,7 @@ pub async fn run<S: Screen>(
     Box::pin(run_inner(launch, setup, screen, inputs, false, None)).await
 }
 
-pub async fn run_with_ultracode<S: Screen>(
+pub async fn run_with_hivecode<S: Screen>(
     launch: Launch,
     setup: RunSetup,
     screen: &mut S,
@@ -16376,7 +16369,7 @@ async fn run_inner<S: Screen>(
     mut setup: RunSetup,
     screen: &mut S,
     mut inputs: mpsc::UnboundedReceiver<S::Input>,
-    default_ultracode: bool,
+    default_hivecode: bool,
     remote_audio: Option<hermes_client::audio_api::AudioRelay>,
 ) -> Outcome {
     let mut state = AppState::new_boxed(setup.launch_id.clone());
@@ -16390,22 +16383,22 @@ async fn run_inner<S: Screen>(
         .map(str::trim)
         .filter(|host| !host.is_empty())
         .map(str::to_owned);
-    state.ultracode = crate::ultracode::UltracodeService::new(default_ultracode);
+    state.hivecode = crate::hivecode::HivecodeService::new(default_hivecode);
     if setup.remote_gateway {
-        state.ultracode.set_remote(true);
+        state.hivecode.set_remote(true);
     }
     // The per-session switch saved by earlier runs; an unreadable file starts empty and is
     // replaced by the next change.
     if let Some(home) = talaria_workflow::staffing::talaria_home() {
-        let path = home.join(crate::ultracode_files::MODE_FILE);
-        if let Ok(mut saved) = crate::ultracode_files::ModeFile::read(&path) {
+        let path = home.join(crate::hivecode_files::MODE_FILE);
+        if let Ok(mut saved) = crate::hivecode_files::ModeFile::read(&path) {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |elapsed| elapsed.as_millis() as i64);
             saved.prune(now_ms);
-            state.ultracode.restore(saved);
+            state.hivecode.restore(saved);
         }
-        state.ultracode_file = Some(crate::ultracode_files::ModeFile::new(path));
+        state.hivecode_file = Some(crate::hivecode_files::ModeFile::new(path));
     }
     let voice_config = screen.voice_config();
     state.configure_voice(voice_config);
@@ -18707,30 +18700,30 @@ fn workflow_polled(
     }
 }
 /// Read the runs folder when a session waits for a workflow run and a read is due.
-fn ultracode_scan(state: &mut AppState) -> Vec<AppEffect> {
+fn hivecode_scan(state: &mut AppState) -> Vec<AppEffect> {
     state
-        .ultracode
+        .hivecode
         .scan_due(state.now_ms)
-        .map(|since_ms| AppEffect::UltracodeScan { since_ms })
+        .map(|since_ms| AppEffect::HivecodeScan { since_ms })
         .into_iter()
         .collect()
 }
 /// Announce the foreground session's run starting and ending; other sessions only update.
-fn ultracode_runs(
+fn hivecode_runs(
     state: &mut AppState,
     rows: &[talaria_workflow::runner::RunSummary],
 ) -> Vec<AppEffect> {
     let key = state.workflow_key_label.clone();
-    let actions = state.ultracode.on_runs(rows, state.now_ms, key.as_deref());
+    let actions = state.hivecode.on_runs(rows, state.now_ms, key.as_deref());
     let actions = actions
         .into_iter()
         .filter(|(session, action)| {
-            matches!(action, crate::ultracode::Action::Changed)
+            matches!(action, crate::hivecode::Action::Changed)
                 || is_foreground(state, session.as_str())
         })
         .map(|(_, action)| action)
         .collect();
-    apply_ultracode(state, actions, false)
+    apply_hivecode(state, actions, false)
 }
 fn workflow_tick(state: &mut AppState) -> Vec<AppEffect> {
     state.workflow_views.last_tick_ms = state.now_ms;
@@ -19145,9 +19138,9 @@ mod workflow_wake_tests {
 }
 
 #[cfg(test)]
-mod ultracode_visibility_tests {
+mod hivecode_visibility_tests {
     use super::*;
-    use talaria_core::ultracode::{UltracodeCommand, notice};
+    use talaria_core::hivecode::{HivecodeCommand, notice};
 
     fn session(runtime: &str, stored: &str) -> OpenedSession {
         OpenedSession {
@@ -19180,7 +19173,7 @@ mod ultracode_visibility_tests {
         state
     }
 
-    /// Turn Ultracode on the way `/ultracode on` does once the catalogue lists the skill.
+    /// Turn Hivecode on the way `/hivecode on` does once the catalogue lists the skill.
     fn turn_on(state: &mut AppState, runtime: &str) {
         let result: talaria_core::commands::CatalogResult = serde_json::from_value(json!({
             "skills": {"/talaria-workflows": {"usage": 0, "origin": "local"}},
@@ -19188,13 +19181,13 @@ mod ultracode_visibility_tests {
         }))
         .unwrap();
         let catalog = talaria_core::commands::CommandCatalog::from_result(&result);
-        let _ = state.ultracode.on_catalog_reply(
+        let _ = state.hivecode.on_catalog_reply(
             &SessionId::new(runtime),
             "fixture",
-            UltracodeCommand::On,
+            HivecodeCommand::On,
             Ok(catalog),
         );
-        assert!(state.ultracode.status_input(Some(&SessionId::new(runtime))));
+        assert!(state.hivecode.status_input(Some(&SessionId::new(runtime))));
     }
 
     fn lines(effects: &[AppEffect]) -> Vec<String> {
@@ -19229,7 +19222,7 @@ mod ultracode_visibility_tests {
     }
 
     #[test]
-    fn goal_with_ultracode_on_runs_command_with_notice() {
+    fn goal_with_hivecode_on_runs_command_with_notice() {
         let mut state = opened("session");
         turn_on(&mut state, "session");
         let effects = submit(&mut state, "/goal build a fixture tool".into());
@@ -19288,8 +19281,8 @@ mod ultracode_visibility_tests {
         effects.iter().any(|effect| {
             matches!(
                 effect,
-                AppEffect::Ultracode {
-                    action: crate::ultracode::Action::RunCommand { .. },
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::RunCommand { .. },
                     ..
                 }
             )
@@ -19334,7 +19327,7 @@ mod ultracode_visibility_tests {
             "message": expanded(typed), "display": format!("/talaria-workflows {typed}")});
         update(
             state,
-            AppMessage::UltracodeDone {
+            AppMessage::HivecodeDone {
                 session: SessionId::new("session"),
                 original_text: typed.into(),
                 outcome: Ok(reply),
@@ -19362,13 +19355,13 @@ mod ultracode_visibility_tests {
         )
     }
 
-    fn stage(state: &AppState) -> Option<talaria_core::ultracode::authoring::AuthoringStage> {
+    fn stage(state: &AppState) -> Option<talaria_core::hivecode::authoring::AuthoringStage> {
         state.view().authoring.map(|block| block.progress.stage)
     }
 
     #[test]
     fn a_routed_turn_shows_the_building_block_until_it_ends() {
-        use talaria_core::ultracode::authoring::AuthoringStage;
+        use talaria_core::hivecode::authoring::AuthoringStage;
         let mut state = opened("session");
         turn_on(&mut state, "session");
         state.now_ms = 1_000;
@@ -19403,7 +19396,7 @@ mod ultracode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Ultracode wrote the workflow script fix-parser.workflow in 1m 05s and is waiting for your approval to start it."
+                "\u{b7} Hivecode wrote the workflow script fix-parser.workflow in 1m 05s and is waiting for your approval to start it."
             ]
         );
         assert_eq!(stage(&state), None, "the block leaves with the turn");
@@ -19429,7 +19422,7 @@ mod ultracode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Ultracode stopped: interrupted while planning the workflow after 12s. No workflow started."
+                "\u{b7} Hivecode stopped: interrupted while planning the workflow after 12s. No workflow started."
             ]
         );
         assert_eq!(stage(&state), None);
@@ -19437,7 +19430,7 @@ mod ultracode_visibility_tests {
 
     #[test]
     fn a_tracked_run_takes_the_slot_and_the_last_line_counts_its_agents() {
-        use talaria_core::ultracode::authoring::AuthoringStage;
+        use talaria_core::hivecode::authoring::AuthoringStage;
         let mut state = opened("session");
         turn_on(&mut state, "session");
         state.wall_s = 2_000.0;
@@ -19454,7 +19447,7 @@ mod ultracode_visibility_tests {
         assert_eq!(stage(&state), Some(AuthoringStage::Running));
         let mut run = summary(talaria_workflow::runner::RunStatus::Running, 0);
         run.started_at_ms = 2_000_500;
-        let _ = update(&mut state, AppMessage::UltracodeRuns { rows: vec![run] });
+        let _ = update(&mut state, AppMessage::HivecodeRuns { rows: vec![run] });
         assert_eq!(stage(&state), None, "the run dock takes over");
         assert!(state.view().workflow_run.is_some());
         state.now_ms = 201_000;
@@ -19466,7 +19459,7 @@ mod ultracode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Ultracode built the workflow in 3m 20s: review-branch is running (10 agents so far)."
+                "\u{b7} Hivecode built the workflow in 3m 20s: review-branch is running (10 agents so far)."
             ]
         );
     }
@@ -19502,14 +19495,14 @@ mod ultracode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Ultracode stopped: interrupted after starting fix-parser.workflow, 2m 10s in. The workflow may still be running."
+                "\u{b7} Hivecode stopped: interrupted after starting fix-parser.workflow, 2m 10s in. The workflow may still be running."
             ]
         );
     }
 
     #[test]
     fn a_routed_prompt_queued_behind_a_building_turn_waits_for_its_own_turn() {
-        use talaria_core::ultracode::authoring::AuthoringStage;
+        use talaria_core::hivecode::authoring::AuthoringStage;
         let mut state = opened("session");
         turn_on(&mut state, "session");
         state.now_ms = 1_000;
@@ -19541,7 +19534,7 @@ mod ultracode_visibility_tests {
         );
         assert_eq!(
             lines(&effects),
-            ["\u{b7} Ultracode finished in 10s without writing a workflow script."]
+            ["\u{b7} Hivecode finished in 10s without writing a workflow script."]
         );
         // The queued prompt's turn starts and gets its own block and its own line.
         let _ = frame(&mut state, "message.start", json!({}));
@@ -19559,7 +19552,7 @@ mod ultracode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Ultracode stopped: interrupted while planning the workflow after 3s. No workflow started."
+                "\u{b7} Hivecode stopped: interrupted while planning the workflow after 3s. No workflow started."
             ]
         );
         assert_eq!(stage(&state), None);
@@ -19606,7 +19599,7 @@ mod ultracode_visibility_tests {
     }
 
     #[test]
-    fn a_refused_routed_prompt_does_not_take_a_plain_turn_after_ultracode_is_off() {
+    fn a_refused_routed_prompt_does_not_take_a_plain_turn_after_hivecode_is_off() {
         let mut state = opened("session");
         turn_on(&mut state, "session");
         let _ = enter(&mut state, "fix the parser");
@@ -19620,12 +19613,12 @@ mod ultracode_visibility_tests {
                 },
             },
         );
-        // The refused prompt's cell stays; Ultracode is turned off and a plain prompt sent.
+        // The refused prompt's cell stays; Hivecode is turned off and a plain prompt sent.
         assert_eq!(
             user_cells(&state).last().map(String::as_str),
             Some("fix the parser")
         );
-        let _ = submit(&mut state, "/ultracode off".into());
+        let _ = submit(&mut state, "/hivecode off".into());
         let _ = enter(&mut state, "hello");
         let _ = frame(&mut state, "message.start", json!({}));
         assert_eq!(user_cells(&state).last().map(String::as_str), Some("hello"));
@@ -19640,7 +19633,7 @@ mod ultracode_visibility_tests {
 
     #[test]
     fn the_answer_to_an_approval_question_goes_on_from_the_written_script() {
-        use talaria_core::ultracode::authoring::AuthoringStage;
+        use talaria_core::hivecode::authoring::AuthoringStage;
         let mut state = opened("session");
         turn_on(&mut state, "session");
         state.now_ms = 1_000;
@@ -19663,7 +19656,7 @@ mod ultracode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Ultracode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your approval to start it."
+                "\u{b7} Hivecode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your approval to start it."
             ]
         );
         // The answer's turn starts at the answer, with the script named and the time going on.
@@ -19696,7 +19689,7 @@ mod ultracode_visibility_tests {
         );
         assert_eq!(
             lines(&effects),
-            ["\u{b7} Ultracode built the workflow in 1m 38s and started fix-parser.workflow."]
+            ["\u{b7} Hivecode built the workflow in 1m 38s and started fix-parser.workflow."]
         );
         // Nothing is carried past a turn that started the run.
         let _ = enter(&mut state, "and the lexer");
@@ -19720,7 +19713,7 @@ mod ultracode_visibility_tests {
 
     #[test]
     fn workflow_prompts_show_what_was_typed_and_load_the_skill_once() {
-        let reminder = talaria_core::ultracode::follow_up_text;
+        let reminder = talaria_core::hivecode::follow_up_text;
         let mut state = opened("session");
         turn_on(&mut state, "session");
         let mut screen = vec![];
@@ -19812,7 +19805,7 @@ mod ultracode_visibility_tests {
         effects
             .iter()
             .filter_map(|effect| match effect {
-                AppEffect::UltracodeScan { since_ms } => Some(*since_ms),
+                AppEffect::HivecodeScan { since_ms } => Some(*since_ms),
                 _ => None,
             })
             .collect()
@@ -19830,7 +19823,7 @@ mod ultracode_visibility_tests {
         let late = 61 * 60 * 1_000;
         let effects = update(&mut state, AppMessage::Tick { now_ms: late });
         assert_eq!(scans(&effects), [1_000_000]);
-        let _ = update(&mut state, AppMessage::UltracodeRuns { rows: vec![] });
+        let _ = update(&mut state, AppMessage::HivecodeRuns { rows: vec![] });
         let effects = update(
             &mut state,
             AppMessage::Tick {
@@ -19843,7 +19836,7 @@ mod ultracode_visibility_tests {
         let effects = enter(&mut state, "go ahead");
         assert_eq!(
             sent(&effects),
-            [talaria_core::ultracode::follow_up_text("go ahead")]
+            [talaria_core::hivecode::follow_up_text("go ahead")]
         );
         let effects = update(
             &mut state,
@@ -19854,7 +19847,7 @@ mod ultracode_visibility_tests {
         assert_eq!(scans(&effects), [5_000_000]);
         let mut run = summary(talaria_workflow::runner::RunStatus::Running, 0);
         run.started_at_ms = 5_100_000;
-        let effects = update(&mut state, AppMessage::UltracodeRuns { rows: vec![run] });
+        let effects = update(&mut state, AppMessage::HivecodeRuns { rows: vec![run] });
         assert_eq!(
             lines(&effects),
             [format!(
@@ -19944,7 +19937,7 @@ mod ultracode_visibility_tests {
     }
 
     #[test]
-    fn branch_child_inherits_ultracode() {
+    fn branch_child_inherits_hivecode() {
         let mut state = opened("parent");
         turn_on(&mut state, "parent");
         let install = SwitchInstall {
@@ -19959,7 +19952,7 @@ mod ultracode_visibility_tests {
             },
             Some(install),
         );
-        assert!(state.ultracode.status_input(Some(&SessionId::new("child"))));
+        assert!(state.hivecode.status_input(Some(&SessionId::new("child"))));
         let shown = lines(&effects);
         let branch = shown
             .iter()
@@ -19984,16 +19977,12 @@ mod ultracode_visibility_tests {
             },
             Some(install),
         );
-        assert!(!off.ultracode.status_input(Some(&SessionId::new("child"))));
-        assert!(
-            !lines(&effects)
-                .iter()
-                .any(|line| line.contains("Ultracode"))
-        );
+        assert!(!off.hivecode.status_input(Some(&SessionId::new("child"))));
+        assert!(!lines(&effects).iter().any(|line| line.contains("Hivecode")));
     }
 
     #[test]
-    fn reopen_with_same_stored_id_keeps_ultracode() {
+    fn reopen_with_same_stored_id_keeps_hivecode() {
         let mut state = AppState::new("launch");
         state.profile = "fixture".into();
         state.opened = Some(session("runtime-1", "stored-1"));
@@ -20001,26 +19990,26 @@ mod ultracode_visibility_tests {
         let _ = opened_session(&mut state, session("runtime-2", "stored-1"), None);
         assert!(
             state
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-2")))
         );
         let _ = opened_session(&mut state, session("runtime-3", "stored-other"), None);
         assert!(
             !state
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-3"))),
             "another stored session keeps its own setting"
         );
     }
 
-    /// `/ultracode on` typed in the composer, answered by a catalogue that lists the skill.
-    fn type_ultracode_on(state: &mut AppState) -> Vec<AppEffect> {
-        let mut effects = submit(state, "/ultracode on".into());
+    /// `/hivecode on` typed in the composer, answered by a catalogue that lists the skill.
+    fn type_hivecode_on(state: &mut AppState) -> Vec<AppEffect> {
+        let mut effects = submit(state, "/hivecode on".into());
         let (request_id, session) = effects
             .iter()
             .find_map(|effect| match effect {
-                AppEffect::Ultracode {
-                    action: crate::ultracode::Action::FetchCatalog { session, .. },
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::FetchCatalog { session, .. },
                     request_id,
                 } => Some((*request_id, session.clone())),
                 _ => None,
@@ -20033,11 +20022,11 @@ mod ultracode_visibility_tests {
         .unwrap();
         effects.extend(update(
             state,
-            AppMessage::UltracodeCatalog {
+            AppMessage::HivecodeCatalog {
                 request_id,
                 session,
                 profile: "fixture".into(),
-                command: UltracodeCommand::On,
+                command: HivecodeCommand::On,
                 result: Ok(talaria_core::commands::CommandCatalog::from_result(&result)),
             },
         ));
@@ -20045,11 +20034,11 @@ mod ultracode_visibility_tests {
     }
 
     /// The saved switch file after the saves `effects` asked for, starting from an empty file.
-    fn saved(effects: &[AppEffect]) -> Option<talaria_core::ultracode::SavedModes> {
+    fn saved(effects: &[AppEffect]) -> Option<talaria_core::hivecode::SavedModes> {
         let mut file = None;
         for effect in effects {
-            if let AppEffect::UltracodeSave { changes, .. } = effect {
-                file.get_or_insert_with(talaria_core::ultracode::SavedModes::default)
+            if let AppEffect::HivecodeSave { changes, .. } = effect {
+                file.get_or_insert_with(talaria_core::hivecode::SavedModes::default)
                     .merge(changes);
             }
         }
@@ -20060,8 +20049,8 @@ mod ultracode_visibility_tests {
         effects.iter().any(|effect| {
             matches!(
                 effect,
-                AppEffect::Ultracode {
-                    action: crate::ultracode::Action::CheckSetup { .. },
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::CheckSetup { .. },
                     ..
                 }
             )
@@ -20073,16 +20062,16 @@ mod ultracode_visibility_tests {
     }
 
     #[test]
-    fn ultracode_survives_return_from_another_session() {
+    fn hivecode_survives_return_from_another_session() {
         let mut state = AppState::new("launch");
         state.profile = "fixture".into();
         let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
-        let _ = type_ultracode_on(&mut state);
+        let _ = type_hivecode_on(&mut state);
         // A workflow agent's session opened from the workflow view.
         let effects = opened_session(&mut state, session("runtime-w1", "stored-w"), None);
         assert!(
             !state
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-w1")))
         );
         assert!(!lines(&effects).contains(&opened_line()), "{effects:?}");
@@ -20090,7 +20079,7 @@ mod ultracode_visibility_tests {
         let effects = opened_session(&mut state, session("runtime-b2", "stored-s"), None);
         assert!(
             state
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-b2")))
         );
         assert_eq!(
@@ -20105,7 +20094,7 @@ mod ultracode_visibility_tests {
         let effects = enter(&mut state, "fix the parser");
         assert!(
             effects.iter().any(|effect| matches!(effect,
-                AppEffect::Ultracode { action: crate::ultracode::Action::RunCommand { session, .. }, .. }
+                AppEffect::Hivecode { action: crate::hivecode::Action::RunCommand { session, .. }, .. }
                     if session.as_str() == "runtime-b2")),
             "{effects:?}"
         );
@@ -20116,33 +20105,33 @@ mod ultracode_visibility_tests {
     }
 
     #[test]
-    fn ultracode_is_restored_after_a_restart() {
+    fn hivecode_is_restored_after_a_restart() {
         let mut first = AppState::new("launch");
         first.profile = "fixture".into();
         let _ = opened_session(&mut first, session("runtime-a1", "stored-s"), None);
-        let effects = type_ultracode_on(&mut first);
+        let effects = type_hivecode_on(&mut first);
         assert!(checks_setup(&effects), "turning on checks the setup");
         let text = saved(&effects).expect("turning on saves the switch");
 
         // `talaria --resume` in a new process opens the stored session under a new runtime id.
         let mut second = AppState::new("launch");
         second.profile = "fixture".into();
-        second.ultracode.restore(text);
+        second.hivecode.restore(text);
         let effects = opened_session(&mut second, session("runtime-r2", "stored-s"), None);
         assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
         let effects = enter(&mut second, "lets continue the workflow");
         assert!(loads_skill(&effects), "{effects:?}");
 
         // Off is remembered the same way.
-        let effects = submit(&mut second, "/ultracode off".into());
+        let effects = submit(&mut second, "/hivecode off".into());
         let text = saved(&effects).expect("turning off saves the switch");
         let mut third = AppState::new("launch");
         third.profile = "fixture".into();
-        third.ultracode.restore(text);
+        third.hivecode.restore(text);
         let effects = opened_session(&mut third, session("runtime-r3", "stored-s"), None);
         assert!(
             !third
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-r3")))
         );
         assert!(!lines(&effects).contains(&opened_line()), "{effects:?}");
@@ -20150,19 +20139,19 @@ mod ultracode_visibility_tests {
 
     #[test]
     fn the_launch_flag_turns_on_the_session_it_opens_even_when_saved_off() {
-        let text = talaria_core::ultracode::SavedModes::from_json(
+        let text = talaria_core::hivecode::SavedModes::from_json(
             r#"{"version":1,"sessions":{"stored-s":{"on":false,"seen_ms":0},"stored-t":{"on":false,"seen_ms":0}}}"#,
         )
         .unwrap();
-        // `talaria --ultracode --resume stored-s`.
+        // `talaria --hivecode --resume stored-s`.
         let mut state = AppState::new("launch");
         state.profile = "fixture".into();
-        state.ultracode = crate::ultracode::UltracodeService::new(true);
-        state.ultracode.restore(text);
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
+        state.hivecode.restore(text);
         let effects = opened_session(&mut state, session("runtime-1", "stored-s"), None);
         assert!(
             state
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-1")))
         );
         assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
@@ -20176,23 +20165,23 @@ mod ultracode_visibility_tests {
         let _ = opened_session(&mut state, session("runtime-2", "stored-t"), None);
         assert!(
             !state
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-2")))
         );
     }
 
     #[test]
-    fn a_session_compacted_while_away_keeps_ultracode() {
+    fn a_session_compacted_while_away_keeps_hivecode() {
         // Back under the same runtime id, after Hermes compacted it with no frame seen.
         let mut state = AppState::new("launch");
         state.profile = "fixture".into();
         let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
-        let _ = type_ultracode_on(&mut state);
+        let _ = type_hivecode_on(&mut state);
         let _ = opened_session(&mut state, session("runtime-w1", "stored-w"), None);
         let effects = opened_session(&mut state, session("runtime-a1", "stored-tip"), None);
         assert!(
             state
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-a1")))
         );
         assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
@@ -20202,8 +20191,8 @@ mod ultracode_visibility_tests {
         // here the stored id saved before the restart, and names the compaction's tip.
         let mut restarted = AppState::new("launch");
         restarted.profile = "fixture".into();
-        restarted.ultracode.restore(
-            talaria_core::ultracode::SavedModes::from_json(
+        restarted.hivecode.restore(
+            talaria_core::hivecode::SavedModes::from_json(
                 r#"{"version":1,"sessions":{"stored-s":{"on":true,"seen_ms":0}}}"#,
             )
             .unwrap(),
@@ -20211,18 +20200,18 @@ mod ultracode_visibility_tests {
         let effects = opened_session(&mut restarted, session("stored-s", "stored-tip"), None);
         assert!(
             restarted
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("stored-s")))
         );
         assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
     }
 
     #[test]
-    fn a_compaction_in_the_background_moves_ultracode() {
+    fn a_compaction_in_the_background_moves_hivecode() {
         let mut state = AppState::new("launch");
         state.profile = "fixture".into();
         let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
-        let _ = type_ultracode_on(&mut state);
+        let _ = type_hivecode_on(&mut state);
         let _ = opened_session(&mut state, session("runtime-w1", "stored-w"), None);
         // A frame for the retained first session, while the agent's session is in front.
         let raw = json!({"session_id": "runtime-a1", "replay_epoch": "epoch", "seq": 1,
@@ -20241,21 +20230,21 @@ mod ultracode_visibility_tests {
         let file = saved(&effects).expect("the move is saved");
         let mut restarted = AppState::new("launch");
         restarted.profile = "fixture".into();
-        restarted.ultracode.restore(file);
+        restarted.hivecode.restore(file);
         let _ = opened_session(&mut restarted, session("runtime-2", "stored-tip"), None);
         assert!(
             restarted
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-2")))
         );
     }
 
     #[test]
-    fn compaction_moves_ultracode_to_the_new_stored_id() {
+    fn compaction_moves_hivecode_to_the_new_stored_id() {
         let mut state = AppState::new("launch");
         state.profile = "fixture".into();
         let _ = opened_session(&mut state, session("session", "stored-before"), None);
-        let _ = type_ultracode_on(&mut state);
+        let _ = type_hivecode_on(&mut state);
         let effects = frame(
             &mut state,
             "session.info",
@@ -20264,17 +20253,17 @@ mod ultracode_visibility_tests {
         let text = saved(&effects).expect("the new stored id is saved");
         let mut restarted = AppState::new("launch");
         restarted.profile = "fixture".into();
-        restarted.ultracode.restore(text);
+        restarted.hivecode.restore(text);
         let _ = opened_session(&mut restarted, session("runtime-2", "stored-after"), None);
         assert!(
             restarted
-                .ultracode
+                .hivecode
                 .status_input(Some(&SessionId::new("runtime-2")))
         );
     }
 
     #[test]
-    fn a_branch_says_ultracode_once() {
+    fn a_branch_says_hivecode_once() {
         let mut state = opened("parent");
         turn_on(&mut state, "parent");
         let install = SwitchInstall {
@@ -20293,7 +20282,7 @@ mod ultracode_visibility_tests {
         assert_eq!(
             shown
                 .iter()
-                .filter(|line| line.contains("Ultracode"))
+                .filter(|line| line.contains("Hivecode"))
                 .count(),
             1,
             "{shown:?}"
@@ -20302,7 +20291,7 @@ mod ultracode_visibility_tests {
     }
 
     #[test]
-    fn interrupting_a_routed_turn_says_ultracode_is_still_on() {
+    fn interrupting_a_routed_turn_says_hivecode_is_still_on() {
         let mut state = opened("session");
         turn_on(&mut state, "session");
         let _ = enter(&mut state, "fix the parser");
@@ -20322,16 +20311,16 @@ mod ultracode_visibility_tests {
     fn a_remote_gateway_skips_the_setup_check() {
         let mut state = AppState::new("launch");
         state.profile = "fixture".into();
-        state.ultracode.set_remote(true);
+        state.hivecode.set_remote(true);
         let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
-        let effects = type_ultracode_on(&mut state);
+        let effects = type_hivecode_on(&mut state);
         assert!(!checks_setup(&effects), "{effects:?}");
         let effects = enter(&mut state, "fix the parser");
         assert!(!checks_setup(&effects), "{effects:?}");
     }
 
     #[tokio::test]
-    async fn workflow_tick_schedules_ultracode_scan_only_when_armed() {
+    async fn workflow_tick_schedules_hivecode_scan_only_when_armed() {
         let mut state = opened("session");
         turn_on(&mut state, "session");
         state.wall_s = 2_000.0;
@@ -20339,13 +20328,13 @@ mod ultracode_visibility_tests {
         assert!(
             !idle
                 .iter()
-                .any(|effect| matches!(effect, AppEffect::UltracodeScan { .. }))
+                .any(|effect| matches!(effect, AppEffect::HivecodeScan { .. }))
         );
         let reply = json!({"type": "skill", "name": "talaria-workflows",
             "message": "fixture skill body", "display": "/talaria-workflows fix it"});
         let _ = update(
             &mut state,
-            AppMessage::UltracodeDone {
+            AppMessage::HivecodeDone {
                 session: SessionId::new("session"),
                 original_text: "fix it".into(),
                 outcome: Ok(reply),
@@ -20355,7 +20344,7 @@ mod ultracode_visibility_tests {
         assert!(
             armed
                 .iter()
-                .any(|effect| matches!(effect, AppEffect::UltracodeScan { .. })),
+                .any(|effect| matches!(effect, AppEffect::HivecodeScan { .. })),
             "{armed:?}"
         );
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -20367,7 +20356,7 @@ mod ultracode_visibility_tests {
         state.workflow_key_label = Some("Alt+W".into());
         let effects = update(
             &mut state,
-            AppMessage::UltracodeRuns {
+            AppMessage::HivecodeRuns {
                 rows: vec![summary(talaria_workflow::runner::RunStatus::Running, 3)],
             },
         );
@@ -20398,10 +20387,10 @@ mod ultracode_visibility_tests {
         turn_on(&mut state, "session");
         state.wall_s = 1_000.0;
         state
-            .ultracode
+            .hivecode
             .arm(&SessionId::new("session"), "fixture", 1_000_000, 0);
-        let _ = state.ultracode.scan_due(0);
-        let _ = state.ultracode.on_runs(
+        let _ = state.hivecode.scan_due(0);
+        let _ = state.hivecode.on_runs(
             &[summary(talaria_workflow::runner::RunStatus::Running, 1)],
             0,
             None,

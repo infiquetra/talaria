@@ -22,7 +22,7 @@ fn every_builtin_parses_with_matching_meta() {
             "review-branch" => vec!["Collect", "Review", "Verify", "Synthesize"],
             "research" => vec!["Plan", "Sweep", "Read", "Synthesize"],
             "fix-failing-tests" => vec!["Find", "Fix", "Verify"],
-            "ultracode" => vec!["Understand", "Design", "Choose", "Implement", "Review"],
+            "hivecode" => vec!["Understand", "Design", "Choose", "Implement", "Review"],
             _ => panic!("unknown workflow"),
         };
         assert_eq!(
@@ -77,22 +77,17 @@ fn registry_matches_workflow_files() {
     let names = BUILTINS.iter().map(|b| b.name).collect::<Vec<_>>();
     assert_eq!(
         names,
-        [
-            "fix-failing-tests",
-            "research",
-            "review-branch",
-            "ultracode"
-        ]
+        ["fix-failing-tests", "research", "review-branch", "hivecode"]
     );
     let mut files = std::fs::read_dir("workflows")
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
         .collect::<Vec<_>>();
     files.sort();
-    assert_eq!(
-        files,
-        names.iter().map(|n| format!("{n}.js")).collect::<Vec<_>>()
-    );
+    // The registry keeps its listing order; the folder is compared by name.
+    let mut expected = names.iter().map(|n| format!("{n}.js")).collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(files, expected);
     for b in BUILTINS {
         assert_eq!(
             b.source,
@@ -102,7 +97,7 @@ fn registry_matches_workflow_files() {
             "review-branch" => 17,
             "research" => 13,
             "fix-failing-tests" => 11,
-            "ultracode" => 23,
+            "hivecode" => 23,
             _ => unreachable!(),
         };
         assert_eq!(b.max_agents_default, expected);
@@ -156,7 +151,7 @@ fn tiers_for_lists_each_agent_slot() {
             if i % 2 == 0 { "a" } else { "b" }.into()
         )));
     }
-    let ultra = BUILTINS.iter().find(|b| b.name == "ultracode").unwrap();
+    let ultra = BUILTINS.iter().find(|b| b.name == "hivecode").unwrap();
     assert!(
         tiers_for(ultra, None)
             .unwrap()
@@ -212,14 +207,14 @@ async fn argument_errors_start_no_agent() {
             "review-branch: unknown argument 'tiers.bogus'; allowed: collector, reviewers, synthesizer, verifier",
         ),
         (
-            "ultracode",
+            "hivecode",
             json!({"task":"x","review":3}),
-            "ultracode: 'review' must be an object, got 3",
+            "hivecode: 'review' must be an object, got 3",
         ),
         (
-            "ultracode",
+            "hivecode",
             json!({"task":"x","review":{"base":"main"}}),
-            "ultracode: review.base and review.head are set by ultracode",
+            "hivecode: review.base and review.head are set by hivecode",
         ),
         (
             "review-branch",
@@ -242,9 +237,9 @@ async fn argument_errors_start_no_agent() {
             "fix-failing-tests: 'testCommand' must be one line of at most 500 characters",
         ),
         (
-            "ultracode",
+            "hivecode",
             json!({"task":"x","review":{"maxFindings":0}}),
-            "ultracode: 'review.maxFindings' must be an integer from 1 to 20, got 0",
+            "hivecode: 'review.maxFindings' must be an integer from 1 to 20, got 0",
         ),
     ];
     for (name, args, expected) in cases {

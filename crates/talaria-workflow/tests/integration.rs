@@ -30,6 +30,8 @@ mod agent_call;
 mod budget;
 #[path = "integration/builtins_fix_failing_tests.rs"]
 mod builtins_fix_failing_tests;
+#[path = "integration/builtins_hivecode.rs"]
+mod builtins_hivecode;
 #[path = "integration/builtins_install.rs"]
 mod builtins_install;
 #[path = "integration/builtins_invariants.rs"]
@@ -42,8 +44,6 @@ mod builtins_resume;
 mod builtins_review_branch;
 #[path = "integration/builtins_scripts.rs"]
 mod builtins_scripts;
-#[path = "integration/builtins_ultracode.rs"]
-mod builtins_ultracode;
 #[path = "integration/call_id.rs"]
 mod call_id;
 #[path = "integration/check.rs"]
@@ -112,8 +112,8 @@ mod journal_wire;
 mod kanban_compile;
 #[path = "integration/launch.rs"]
 mod launch;
-#[path = "integration/live_ultracode.rs"]
-mod live_ultracode;
+#[path = "integration/live_hivecode.rs"]
+mod live_hivecode;
 #[path = "integration/meta_parse.rs"]
 mod meta_parse;
 #[path = "integration/mock.rs"]

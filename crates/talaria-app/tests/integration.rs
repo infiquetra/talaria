@@ -431,8 +431,8 @@ mod theme_file_parse;
 #[path = "integration/tool_replay.rs"]
 mod tool_replay;
 
-#[path = "integration/ultracode_app.rs"]
-mod ultracode_app;
+#[path = "integration/hivecode_app.rs"]
+mod hivecode_app;
 
 #[path = "integration/vim_routing.rs"]
 mod vim_routing;

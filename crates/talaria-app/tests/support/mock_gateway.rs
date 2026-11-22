@@ -3467,7 +3467,7 @@ fn slash_result(method: &str, params: &Value, turn_running: bool) -> Value {
                     "notice": "Planning: write a haiku about rain"
                 })
             } else if name == "talaria-workflows" {
-                let rows = include_str!("../../../../fixtures/frames/p5-09-ultracode-skill.jsonl");
+                let rows = include_str!("../../../../fixtures/frames/p5-09-hivecode-skill.jsonl");
                 rows.lines()
                     .filter_map(|line| serde_json::from_str::<Value>(line).ok())
                     .find_map(|row| {

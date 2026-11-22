@@ -19,7 +19,7 @@ pub enum LocalAction {
     /// View a journaled workflow run.
     Workflows,
     /// Send plain prompts to the talaria-workflows skill.
-    Ultracode,
+    Hivecode,
     /// Open the gateway health check.
     Doctor,
     Providers(crate::providers::OpenTarget),
@@ -436,12 +436,12 @@ const BUILTIN: &[LocalCommand] = &[
         tag: "talaria",
     },
     LocalCommand {
-        name: "ultracode",
+        name: "hivecode",
         aliases: &[],
-        summary: "Send plain prompts to the talaria-workflows skill",
+        summary: "Handle plain prompts as multi-agent workflows",
         args_hint: "[on|off|status]",
         takes_argument: true,
-        action: LocalAction::Ultracode,
+        action: LocalAction::Hivecode,
         tag: "talaria",
     },
     LocalCommand {

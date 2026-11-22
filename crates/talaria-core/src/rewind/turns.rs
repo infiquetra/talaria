@@ -174,7 +174,7 @@ fn turn_from_row(
         return None;
     }
     // A routed prompt previews what the person typed, never the workflow skill.
-    let preview = crate::ultracode::shown_text(&text_parts)
+    let preview = crate::hivecode::shown_text(&text_parts)
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())

@@ -205,7 +205,7 @@ fn draw_started_row(state: &mut SessionState, row: &QueuedRow) {
                 .iter()
                 .find(|entry| entry.id == row.input_id.0)
                 .map_or_else(
-                    || crate::ultracode::shown_text(&row.text).to_owned(),
+                    || crate::hivecode::shown_text(&row.text).to_owned(),
                     |entry| entry.text.clone(),
                 );
             state.user(display);
@@ -264,7 +264,7 @@ pub(crate) fn start_cell(state: &mut SessionState, admission: Option<&str>, inje
                         .queue
                         .row(&id)
                         .map_or(entry.text, |row| row.text.clone());
-                    crate::ultracode::shown_text(&sent).to_owned()
+                    crate::hivecode::shown_text(&sent).to_owned()
                 });
             state.user(text);
         }
@@ -681,7 +681,7 @@ fn take_row(state: &mut SessionState, id: &AdmissionId) -> Option<String> {
 /// A prompt left the queue without being seen to start. When it carried the whole workflow
 /// skill, the conversation may not hold the skill, so the next routed prompt sends it again.
 fn note_dropped(state: &mut SessionState, sent: &str) {
-    if crate::ultracode::loads_skill(sent) {
+    if crate::hivecode::loads_skill(sent) {
         state.queue.skill_dropped = true;
     }
 }
@@ -716,7 +716,7 @@ fn on_cancel_receipt(
 /// shown in the transcript: nothing is lost and no draft is touched.
 pub(super) fn take_back(state: &mut SessionState, text: String) {
     note_dropped(state, &text);
-    let text = crate::ultracode::shown_text(&text).to_owned();
+    let text = crate::hivecode::shown_text(&text).to_owned();
     state.queue.returned.push(text.clone());
     note(
         state,
@@ -1062,7 +1062,7 @@ fn settle_submit(state: &mut SessionState, key: &SubmissionId) -> Vec<Effect> {
         state
             .queue
             .returned
-            .push(crate::ultracode::shown_text(&text).to_owned());
+            .push(crate::hivecode::shown_text(&text).to_owned());
     }
     Vec::new()
 }

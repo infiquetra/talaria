@@ -46,7 +46,7 @@ pub struct StatusInputs {
     /// The number of current warnings and errors.
     pub warning_count: u32,
     /// Workflow routing is enabled for the foreground session.
-    pub ultracode: bool,
+    pub hivecode: bool,
     /// The connected Hermes profile, when it is not the default one.
     pub profile: Option<String>,
     /// The foreground session's active workflow run, as its agent count.
@@ -156,7 +156,7 @@ pub struct ExternalSegment {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Segment {
     /// Workflow routing for this session.
-    Ultracode,
+    Hivecode,
     /// The connected Hermes profile, when it is not the default one.
     Profile,
     /// The attach state.
@@ -204,7 +204,7 @@ impl Segment {
         Segment::Cost,
         Segment::PullRequest,
         Segment::External,
-        Segment::Ultracode,
+        Segment::Hivecode,
     ];
 
     /// Smaller priorities are retained longer.
@@ -224,7 +224,7 @@ impl Segment {
             Segment::Cost => 12,
             Segment::PullRequest => 13,
             Segment::External => 14,
-            Segment::Ultracode => 15,
+            Segment::Hivecode => 15,
         }
     }
 
@@ -234,7 +234,7 @@ impl Segment {
             Segment::Connection => 0,
             Segment::Profile => 1,
             Segment::Model => 2,
-            Segment::Ultracode => 3,
+            Segment::Hivecode => 3,
             Segment::Approvals => 4,
             Segment::Folder => 5,
             Segment::Context => 6,
@@ -328,7 +328,7 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     add(&mut pieces, Segment::Connection, connection_segment(inputs));
     add(&mut pieces, Segment::Profile, profile_segment(inputs));
     add(&mut pieces, Segment::Model, model_segment(inputs));
-    add(&mut pieces, Segment::Ultracode, ultracode_segment(inputs));
+    add(&mut pieces, Segment::Hivecode, hivecode_segment(inputs));
     add(&mut pieces, Segment::Approvals, approvals_segment(inputs));
     add(&mut pieces, Segment::Folder, folder_segment(inputs));
     add(&mut pieces, Segment::Context, context_segment(inputs));
@@ -422,7 +422,7 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
 
 /// A running workflow keeps its segment about as long as the failed count.
 fn keep_priority(segment: Segment, inputs: &StatusInputs) -> u8 {
-    if segment == Segment::Ultracode && inputs.workflow_run.is_some() {
+    if segment == Segment::Hivecode && inputs.workflow_run.is_some() {
         Segment::Failed.priority()
     } else {
         segment.priority()
@@ -435,11 +435,11 @@ fn profile_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
     (!name.is_empty()).then(|| (format!("profile {name}"), Tone::Accent))
 }
 
-fn ultracode_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
+fn hivecode_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
     let run = inputs.workflow_run.as_deref().map(sanitize);
-    match (inputs.ultracode, run) {
-        (true, None) => Some(("ultracode".into(), Tone::Accent)),
-        (true, Some(run)) => Some((format!("ultracode · {run}"), Tone::Accent)),
+    match (inputs.hivecode, run) {
+        (true, None) => Some(("hivecode".into(), Tone::Accent)),
+        (true, Some(run)) => Some((format!("hivecode · {run}"), Tone::Accent)),
         (false, Some(run)) => Some((format!("workflow · {run}"), Tone::Accent)),
         (false, None) => None,
     }

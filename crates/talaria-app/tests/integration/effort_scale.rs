@@ -1,15 +1,15 @@
 //! Bare `/effort` opens a scale under the composer. Left and Right move it, Tab stages
-//! Ultracode, the `/model` picker's scope key stages saving for new sessions, and Enter sends
-//! exactly what the typed `/effort` and `/ultracode` commands send. Esc sends nothing.
+//! Hivecode, the `/model` picker's scope key stages saving for new sessions, and Enter sends
+//! exactly what the typed `/effort` and `/hivecode` commands send. Esc sends nothing.
 
 use hermes_client::replay::Cursor;
 use serde_json::json;
 use talaria_app::app::{AppEffect, AppMessage, AppState, UserAction, update};
 use talaria_app::sessions::{OpenedSession, SessionInfoSummary};
+use talaria_core::hivecode::notice;
 use talaria_core::models::{Effort, ModelsEffect, ModelsInput, ScaleKey};
 use talaria_core::mutation::{MutationOutcome, MutationRequest};
 use talaria_core::session::{SessionId, SessionState};
-use talaria_core::ultracode::notice;
 
 /// A session `s` on `model-a` at effort high.
 fn opened() -> AppState {
@@ -97,10 +97,10 @@ fn lines(effects: &[AppEffect]) -> Vec<String> {
         .collect()
 }
 
-fn ultracode_work(effects: &[AppEffect]) -> usize {
+fn hivecode_work(effects: &[AppEffect]) -> usize {
     effects
         .iter()
-        .filter(|effect| matches!(effect, AppEffect::Ultracode { .. }))
+        .filter(|effect| matches!(effect, AppEffect::Hivecode { .. }))
         .count()
 }
 
@@ -245,36 +245,36 @@ fn the_save_switch_sends_what_typed_effort_default_sends() {
 }
 
 #[test]
-fn tab_then_enter_turns_ultracode_off_as_the_typed_command_does() {
+fn tab_then_enter_turns_hivecode_off_as_the_typed_command_does() {
     let mut state = opened();
-    state.ultracode = talaria_app::ultracode::UltracodeService::new(true);
-    assert!(state.view().ultracode);
+    state.hivecode = talaria_app::hivecode::HivecodeService::new(true);
+    assert!(state.view().hivecode);
     submit(&mut state, "/effort");
-    let staged = keys(&mut state, &[ScaleKey::ToggleUltracode]);
+    let staged = keys(&mut state, &[ScaleKey::ToggleHivecode]);
     assert!(only_redraws(&staged), "Tab only stages the switch");
-    assert!(state.view().ultracode, "nothing changes before Enter");
+    assert!(state.view().hivecode, "nothing changes before Enter");
     let effects = keys(&mut state, &[ScaleKey::Apply]);
-    assert!(!state.view().ultracode);
+    assert!(!state.view().hivecode);
     assert_eq!(lines(&effects), [format!("\u{b7} {}", notice::OFF)]);
     assert!(mutations(&effects).is_empty(), "the level was not changed");
 }
 
 #[test]
-fn tab_then_enter_asks_for_ultracode_on_as_the_typed_command_does() {
+fn tab_then_enter_asks_for_hivecode_on_as_the_typed_command_does() {
     let mut scale = opened();
     submit(&mut scale, "/effort");
     let effects = keys(
         &mut scale,
-        &[ScaleKey::Lower, ScaleKey::ToggleUltracode, ScaleKey::Apply],
+        &[ScaleKey::Lower, ScaleKey::ToggleHivecode, ScaleKey::Apply],
     );
     let mut typed = opened();
-    let expected = submit(&mut typed, "/ultracode on");
-    assert_eq!(ultracode_work(&expected), 1);
-    assert_eq!(ultracode_work(&effects), 1, "the skill check runs");
+    let expected = submit(&mut typed, "/hivecode on");
+    assert_eq!(hivecode_work(&expected), 1);
+    assert_eq!(hivecode_work(&effects), 1, "the skill check runs");
     assert_eq!(
         mutations(&effects)[0].payload.get("effort"),
         Some(&json!("medium")),
-        "effort and Ultracode apply together"
+        "effort and Hivecode apply together"
     );
 }
 
@@ -286,14 +286,14 @@ fn escape_drops_everything_staged() {
         &mut state,
         &[
             ScaleKey::Higher,
-            ScaleKey::ToggleUltracode,
+            ScaleKey::ToggleHivecode,
             ScaleKey::ToggleSave,
             ScaleKey::Cancel,
         ],
     );
     assert!(only_redraws(&effects), "Esc sends nothing");
     assert!(state.view().effort_scale.is_none());
-    assert!(!state.view().ultracode);
+    assert!(!state.view().hivecode);
     assert_eq!(state.view().effort, Some("high"));
 }
 

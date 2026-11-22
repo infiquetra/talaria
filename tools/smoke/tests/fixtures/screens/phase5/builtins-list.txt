@@ -27,7 +27,7 @@ review-branch: Review a branch with one reviewer per lens, try to refute each fi
   agents with default arguments: at most 17
   installed: installed
 
-ultracode: Understand the code, compare independent designs, implement the chosen one test-first in a worktree, then review it with review-branch.
+hivecode: Understand the code, compare independent designs, implement the chosen one test-first in a worktree, then review it with review-branch.
   phases: Understand, Design, Choose, Implement, Review
   scout: survey via file (worktree)
   designers: judge via file (worktree)

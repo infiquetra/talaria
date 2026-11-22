@@ -1,4 +1,4 @@
-//! While Ultracode builds a workflow, the turn's tool calls say which step it is on: planning,
+//! While Hivecode builds a workflow, the turn's tool calls say which step it is on: planning,
 //! writing the script, checking it, waiting for the person, and starting the run. The words are
 //! plain, the script is named once written, and the line committed at the end says how it ended.
 
@@ -6,12 +6,12 @@ use crate::events;
 
 use events::{SESSION, ev};
 use serde_json::{Value, json};
-use talaria_core::session::{SessionId, SessionState, update};
-use talaria_core::ultracode::authoring::{
+use talaria_core::hivecode::authoring::{
     AuthoringEnd, AuthoringProgress, AuthoringStage, RunFacts, STEPS, elapsed_text, progress,
     resume,
 };
-use talaria_core::ultracode::notice;
+use talaria_core::hivecode::notice;
+use talaria_core::session::{SessionId, SessionState, update};
 
 const DRAFT: &str = "/home/fixture/.talaria/drafts/fix-parser.workflow";
 
@@ -226,14 +226,14 @@ fn the_block_names_the_step_and_the_script_in_plain_words() {
         stage: AuthoringStage::Writing,
         script: Some("fix-parser.workflow".into()),
     };
-    assert_eq!(notice::AUTHORING_TITLE, "Ultracode · building a workflow");
+    assert_eq!(notice::AUTHORING_TITLE, "Hivecode · building a workflow");
     assert_eq!(
         notice::authoring_step(&writing),
         "Step 2 of 5: writing the workflow script · fix-parser.workflow"
     );
     assert_eq!(
         notice::authoring_short(&writing, 65_000),
-        "Ultracode · writing the workflow script · 1m 05s"
+        "Hivecode · writing the workflow script · 1m 05s"
     );
     let planning = AuthoringProgress {
         stage: AuthoringStage::Planning,
@@ -267,15 +267,15 @@ fn the_line_left_behind_says_how_the_build_ended() {
     let lines = [
         (
             notice::authoring_ended(&checking, AuthoringEnd::Interrupted, 65_000, None),
-            "Ultracode stopped: interrupted while checking the script (fix-parser.workflow) after 1m 05s. No workflow started.",
+            "Hivecode stopped: interrupted while checking the script (fix-parser.workflow) after 1m 05s. No workflow started.",
         ),
         (
             notice::authoring_ended(&planning, AuthoringEnd::Failed, 4_000, None),
-            "Ultracode stopped: the turn failed while planning the workflow after 4s. No workflow started.",
+            "Hivecode stopped: the turn failed while planning the workflow after 4s. No workflow started.",
         ),
         (
             notice::authoring_ended(&running, AuthoringEnd::Completed, 200_000, Some(run)),
-            "Ultracode built the workflow in 3m 20s: fix-parser is running (7 agents so far).",
+            "Hivecode built the workflow in 3m 20s: fix-parser is running (7 agents so far).",
         ),
         (
             notice::authoring_ended(
@@ -287,7 +287,7 @@ fn the_line_left_behind_says_how_the_build_ended() {
                     ..run
                 }),
             ),
-            "Ultracode built the workflow in 3m 20s: fix-parser completed (7 agents).",
+            "Hivecode built the workflow in 3m 20s: fix-parser completed (7 agents).",
         ),
         // The count is the agents seen so far: none yet says nothing, and one is singular.
         (
@@ -297,7 +297,7 @@ fn the_line_left_behind_says_how_the_build_ended() {
                 200_000,
                 Some(RunFacts { agents: 0, ..run }),
             ),
-            "Ultracode built the workflow in 3m 20s: fix-parser is running.",
+            "Hivecode built the workflow in 3m 20s: fix-parser is running.",
         ),
         (
             notice::authoring_ended(
@@ -310,7 +310,7 @@ fn the_line_left_behind_says_how_the_build_ended() {
                     ..run
                 }),
             ),
-            "Ultracode built the workflow in 3m 20s: fix-parser is waiting for an answer (1 agent so far).",
+            "Hivecode built the workflow in 3m 20s: fix-parser is waiting for an answer (1 agent so far).",
         ),
         (
             notice::authoring_ended(
@@ -323,17 +323,17 @@ fn the_line_left_behind_says_how_the_build_ended() {
                     ..run
                 }),
             ),
-            "Ultracode built the workflow in 3m 20s: fix-parser failed (1 agent).",
+            "Hivecode built the workflow in 3m 20s: fix-parser failed (1 agent).",
         ),
         // A turn stopped after it sent the run command, before Talaria found the run (always
         // so on a remote gateway), does not say that no workflow started.
         (
             notice::authoring_ended(&running, AuthoringEnd::Interrupted, 130_000, None),
-            "Ultracode stopped: interrupted after starting fix-parser.workflow, 2m 10s in. The workflow may still be running.",
+            "Hivecode stopped: interrupted after starting fix-parser.workflow, 2m 10s in. The workflow may still be running.",
         ),
         (
             notice::authoring_ended(&running, AuthoringEnd::Failed, 130_000, None),
-            "Ultracode stopped: the turn failed after starting fix-parser.workflow, 2m 10s in. The workflow may still be running.",
+            "Hivecode stopped: the turn failed after starting fix-parser.workflow, 2m 10s in. The workflow may still be running.",
         ),
         (
             notice::authoring_ended(
@@ -345,19 +345,19 @@ fn the_line_left_behind_says_how_the_build_ended() {
                 5_000,
                 None,
             ),
-            "Ultracode stopped: interrupted after starting the workflow, 5s in. The workflow may still be running.",
+            "Hivecode stopped: interrupted after starting the workflow, 5s in. The workflow may still be running.",
         ),
         (
             notice::authoring_ended(&running, AuthoringEnd::Completed, 200_000, None),
-            "Ultracode built the workflow in 3m 20s and started fix-parser.workflow.",
+            "Hivecode built the workflow in 3m 20s and started fix-parser.workflow.",
         ),
         (
             notice::authoring_ended(&checking, AuthoringEnd::Completed, 90_000, None),
-            "Ultracode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your approval to start it.",
+            "Hivecode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your approval to start it.",
         ),
         (
             notice::authoring_ended(&planning, AuthoringEnd::Completed, 12_000, None),
-            "Ultracode finished in 12s without writing a workflow script.",
+            "Hivecode finished in 12s without writing a workflow script.",
         ),
     ];
     for (line, expected) in lines {

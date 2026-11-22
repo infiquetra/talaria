@@ -3,13 +3,13 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use talaria_core::{
     commands::{CommandCatalog, CommandOutcome, ErrorView, SlashLine, describe_error},
-    session::{Cell, SessionId, TurnOutcome, TurnState},
-    ultracode::{
-        SKILL_COMMAND, SavedChanges, SavedModes, SkillAvailability, SkillEpoch, SubmitRoute,
-        UltracodeCommand, UltracodeState,
+    hivecode::{
+        HivecodeCommand, HivecodeState, SKILL_COMMAND, SavedChanges, SavedModes, SkillAvailability,
+        SkillEpoch, SubmitRoute,
         authoring::{AuthoringEnd, AuthoringStage, AuthoringView, RunFacts, resume},
         follow_up_text, notice, route_submit_with_model, skill_availability,
     },
+    session::{Cell, SessionId, TurnOutcome, TurnState},
 };
 use talaria_workflow::runner::{RunStatus, RunSummary};
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +17,7 @@ pub enum Action {
     FetchCatalog {
         session: SessionId,
         profile: String,
-        command: UltracodeCommand,
+        command: HivecodeCommand,
     },
     /// Read the local workflow setup: the installed skill, staffing tiers and built-ins.
     CheckSetup {
@@ -155,7 +155,7 @@ impl Authoring {
         &self,
         cells: &[Cell],
         at: usize,
-    ) -> talaria_core::ultracode::authoring::AuthoringProgress {
+    ) -> talaria_core::hivecode::authoring::AuthoringProgress {
         let script = self.carried.as_ref().map(|carried| carried.script.as_str());
         resume(script, &cells[at + 1..])
     }
@@ -169,8 +169,8 @@ impl Authoring {
     }
 }
 
-pub struct UltracodeService {
-    state: UltracodeState,
+pub struct HivecodeService {
+    state: HivecodeState,
     profiles: HashMap<SessionId, String>,
     asked: HashSet<SessionId>,
     kept: HashSet<SessionId>,
@@ -185,7 +185,7 @@ pub struct UltracodeService {
     routed: HashSet<SessionId>,
     /// Sessions whose next open says nothing, because a notice about the switch is already shown.
     announced: HashSet<SessionId>,
-    /// True until the first session opens when Talaria was started with Ultracode on: that
+    /// True until the first session opens when Talaria was started with Hivecode on: that
     /// session is turned on even if it was saved as off.
     launch_on: bool,
     remote: bool,
@@ -198,15 +198,15 @@ pub struct UltracodeService {
     next_scan_ms: Option<u64>,
     scanning: bool,
 }
-impl Default for UltracodeService {
+impl Default for HivecodeService {
     fn default() -> Self {
         Self::new(false)
     }
 }
-impl UltracodeService {
+impl HivecodeService {
     pub fn new(default_on: bool) -> Self {
         Self {
-            state: UltracodeState::new(default_on),
+            state: HivecodeState::new(default_on),
             profiles: HashMap::new(),
             asked: HashSet::new(),
             kept: HashSet::new(),
@@ -226,7 +226,7 @@ impl UltracodeService {
             scanning: false,
         }
     }
-    pub fn state(&self) -> &UltracodeState {
+    pub fn state(&self) -> &HivecodeState {
         &self.state
     }
     pub fn set_remote(&mut self, remote: bool) {
@@ -278,7 +278,7 @@ impl UltracodeService {
         self.state.restore(saved);
     }
     /// The runtime session belongs to stored session `stored`. True when it opens with
-    /// Ultracode on and nothing has said so yet.
+    /// Hivecode on and nothing has said so yet.
     pub fn adopt(&mut self, session: &SessionId, stored: &str) -> bool {
         let mut on = self.state.adopt(session, stored);
         if std::mem::take(&mut self.launch_on) && !on {
@@ -365,7 +365,7 @@ impl UltracodeService {
         self.reinstall.insert(session.clone());
         actions
     }
-    /// The session routed a prompt, so an interrupt there says Ultracode is still on.
+    /// The session routed a prompt, so an interrupt there says Hivecode is still on.
     pub fn note_routed(&mut self, session: &SessionId) {
         self.routed.insert(session.clone());
     }
@@ -497,7 +497,7 @@ impl UltracodeService {
         arg: &str,
         foreground: Option<Foreground<'_>>,
     ) -> Vec<Action> {
-        let command = match UltracodeCommand::parse(arg) {
+        let command = match HivecodeCommand::parse(arg) {
             Ok(c) => c,
             Err(_) => return vec![Action::Notice(notice::USAGE.into())],
         };
@@ -505,11 +505,11 @@ impl UltracodeService {
             return vec![Action::Notice(notice::NO_SESSION.into())];
         };
         self.bind(session, profile);
-        if command == UltracodeCommand::Off
-            || (command == UltracodeCommand::Toggle && self.state.is_on(session))
+        if command == HivecodeCommand::Off
+            || (command == HivecodeCommand::Toggle && self.state.is_on(session))
         {
             self.state.set(session, false);
-            // A script left waiting is not carried into a routed turn after Ultracode is on
+            // A script left waiting is not carried into a routed turn after Hivecode is on
             // again. Prompts already sent as workflows keep their blocks.
             self.carried.remove(session);
             vec![Action::Notice(notice::OFF.into()), Action::Changed]
@@ -525,7 +525,7 @@ impl UltracodeService {
         &mut self,
         session: &SessionId,
         profile: &str,
-        command: UltracodeCommand,
+        command: HivecodeCommand,
         result: Result<CommandCatalog, String>,
     ) -> Vec<Action> {
         self.bind(session, profile);
@@ -536,7 +536,7 @@ impl UltracodeService {
         if !matches!(availability, SkillAvailability::Missing) {
             self.kept.remove(session);
         }
-        if command == UltracodeCommand::Status {
+        if command == HivecodeCommand::Status {
             return vec![Action::Notice(notice::status(
                 self.state.is_on(session),
                 profile,

@@ -58,9 +58,10 @@ pub struct Cli {
     pub no_ensure: bool,
     #[arg(long)]
     pub remote: Option<String>,
-    /// Start interactive sessions with Ultracode on: plain prompts go to the talaria-workflows skill.
-    #[arg(long, global = true)]
-    pub ultracode: bool,
+    /// Start interactive sessions with Hivecode on: plain prompts are handled as workflows.
+    // The flag's earlier name still works, unlisted, so an existing launcher keeps starting.
+    #[arg(long, global = true, alias = "ultracode")]
+    pub hivecode: bool,
     /// Start a session in the background and return.
     #[arg(long)]
     pub bg: bool,

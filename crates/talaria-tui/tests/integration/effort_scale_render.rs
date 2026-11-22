@@ -1,5 +1,5 @@
 //! The `/effort` selector in the live region: the scale with its marker, the selected level's
-//! description, the staged Ultracode and save switches, and the key hints.
+//! description, the staged Hivecode and save switches, and the key hints.
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -17,7 +17,7 @@ fn scale() -> EffortScale {
         wire: None,
         offered: Some(true),
         can_disable: None,
-        ultracode: false,
+        hivecode: false,
         profile: "work".into(),
     })
 }
@@ -61,14 +61,14 @@ fn column(row: &str, word: &str) -> usize {
 const LABELS_GAP_2: &str = "  none  minimal  low  medium  high  xhigh  max  ultra";
 const LABELS_GAP_5: &str =
     "  none     minimal     low     medium     high     xhigh     max     ultra";
-const HINT: &str = " \u{2190}/\u{2192} adjust \u{b7} Tab Ultracode \u{b7} Ctrl+G new sessions \u{b7} Enter apply \u{b7} Esc cancel";
+const HINT: &str = " \u{2190}/\u{2192} adjust \u{b7} Tab Hivecode \u{b7} Ctrl+G new sessions \u{b7} Enter apply \u{b7} Esc cancel";
 
 #[test]
 fn the_scale_at_80_columns() {
     let (rows, _) = draw(&section(&moved()), 80);
     // The scale runs from column 2 to 52; xhigh's centre is column 38.
     let rule = format!(
-        "  {}\u{25b2}{}    Ultracode off",
+        "  {}\u{25b2}{}    Hivecode off",
         "\u{2500}".repeat(36),
         "\u{2500}".repeat(14)
     );
@@ -92,7 +92,7 @@ fn the_scale_at_120_columns() {
     let (rows, _) = draw(&section(&moved()), 120);
     assert_eq!(rows[3], format!("{LABELS_GAP_5}    Tab to toggle"));
     assert_eq!(column(&rows[2], "\u{25b2}"), column(&rows[3], "xhigh") + 2);
-    assert_eq!(column(&rows[2], "Ultracode off"), column(&rows[3], "Tab"));
+    assert_eq!(column(&rows[2], "Hivecode off"), column(&rows[3], "Tab"));
     assert_eq!(
         rows[1].chars().count(),
         LABELS_GAP_5.chars().count(),
@@ -122,11 +122,11 @@ fn the_marker_sits_over_every_level() {
 #[test]
 fn staged_switches_show_in_the_panel() {
     let mut scale = moved();
-    scale.update(ScaleKey::ToggleUltracode);
+    scale.update(ScaleKey::ToggleHivecode);
     scale.update(ScaleKey::ToggleSave);
     let (rows, _) = draw(&section(&scale), 80);
     assert!(
-        rows[2].ends_with("    Ultracode on (now off)"),
+        rows[2].ends_with("    Hivecode on (now off)"),
         "{:?}",
         rows[2]
     );
@@ -134,21 +134,21 @@ fn staged_switches_show_in_the_panel() {
 }
 
 #[test]
-fn narrow_widths_move_ultracode_to_its_own_row_and_then_compact_the_scale() {
+fn narrow_widths_move_hivecode_to_its_own_row_and_then_compact_the_scale() {
     let (rows, _) = draw(&section(&moved()), 70);
     assert_eq!(
         rows[3],
         "  none    minimal    low    medium    high    xhigh    max    ultra"
     );
     assert!(
-        rows.contains(&"  Ultracode off \u{b7} Tab to toggle".to_owned()),
+        rows.contains(&"  Hivecode off \u{b7} Tab to toggle".to_owned()),
         "{rows:#?}"
     );
     let (rows, _) = draw(&section(&moved()), 40);
     assert_eq!(rows[1], "  \u{25c0} xhigh \u{25b6}   6 of 8");
     assert!(rows.iter().all(|row| !row.contains('\u{2500}')));
     assert!(
-        rows.contains(&"  Ultracode off \u{b7} Tab to toggle".to_owned()),
+        rows.contains(&"  Hivecode off \u{b7} Tab to toggle".to_owned()),
         "{rows:#?}"
     );
     for width in [40u16, 53, 54, 70, 78, 79, 80, 120] {
@@ -188,7 +188,7 @@ fn a_note_takes_its_own_row() {
         wire: Some("medium".into()),
         offered: Some(true),
         can_disable: None,
-        ultracode: false,
+        hivecode: false,
         profile: "work".into(),
     });
     scale.update(ScaleKey::Lower);
@@ -231,7 +231,7 @@ fn names_hermes_reported_cannot_carry_control_characters_into_the_panel() {
         wire: Some("medium\u{1b}[2J".into()),
         offered: Some(true),
         can_disable: None,
-        ultracode: false,
+        hivecode: false,
         profile: "work\u{1b}]0;title\u{7}".into(),
     });
     let (rows, _) = draw(&section(&scale), 100);

@@ -7,11 +7,11 @@ use tokio_util::sync::CancellationToken;
 async fn main() -> Result<ExitCode, serde_json::Error> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let args = serde_json::from_str(include_str!(
-        "../tests/data/builtins/ultracode/happy.args.json"
+        "../tests/data/builtins/hivecode/happy.args.json"
     ))?;
     let options = DryRunOptions {
-        script: root.join("workflows/ultracode.js"),
-        mock: root.join("tests/data/builtins/ultracode/happy.mock.json"),
+        script: root.join("workflows/hivecode.js"),
+        mock: root.join("tests/data/builtins/hivecode/happy.mock.json"),
         args: Some(args),
         max_sync_ms: None,
         seed: 0,

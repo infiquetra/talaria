@@ -1,4 +1,4 @@
-//! Through the binary: while Ultracode builds a workflow, a block above the composer says which
+//! Through the binary: while Hivecode builds a workflow, a block above the composer says which
 //! step the agent is on. An interrupted build leaves one line that says it stopped, and the idle
 //! screen afterwards draws nothing.
 
@@ -66,7 +66,7 @@ fn building_block_shows_each_step_and_leaves_one_line_when_stopped() {
     );
 
     let mut terminal = Launch::new(home.path())
-        .args(&["--ultracode", "--resume", &id, "--profile", "fixture"])
+        .args(&["--hivecode", "--resume", &id, "--profile", "fixture"])
         .answer_queries()
         .spawn();
     assert!(
@@ -80,7 +80,7 @@ fn building_block_shows_each_step_and_leaves_one_line_when_stopped() {
     terminal.type_keys("\r");
     assert!(
         wait_for(&terminal, Duration::from_secs(10), |screen| {
-            screen.contains("⚙ Ultracode · building a workflow · ")
+            screen.contains("⚙ Hivecode · building a workflow · ")
                 && screen.contains("Step 2 of 5: writing the workflow script · fixture.workflow")
         }),
         "no building block while the workflow script is written:\n{}",
@@ -102,7 +102,7 @@ fn building_block_shows_each_step_and_leaves_one_line_when_stopped() {
     assert!(
         wait_for(&terminal, Duration::from_secs(10), |screen| {
             screen.contains(
-                "Ultracode stopped: interrupted while writing the workflow script (fixture.workflow) after",
+                "Hivecode stopped: interrupted while writing the workflow script (fixture.workflow) after",
             ) && !screen.contains("building a workflow")
         }),
         "the stopped build left no line, or the block stayed:\n{}",

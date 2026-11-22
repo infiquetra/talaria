@@ -150,8 +150,8 @@ const BYPASSING: [&str; 9] = [
 const GOAL_SUBCOMMANDS: [&str; 9] = [
     "show", "draft", "gate", "pause", "resume", "clear", "status", "wait", "unwait",
 ];
-/// The command name, as typed, when Ultracode is on and a slash command sends a prompt that
-/// Ultracode does not route.
+/// The command name, as typed, when Hivecode is on and a slash command sends a prompt that
+/// Hivecode does not route.
 pub fn bypass(text: &str, enabled: bool) -> Option<String> {
     if !enabled {
         return None;
@@ -172,7 +172,7 @@ pub fn bypass(text: &str, enabled: bool) -> Option<String> {
 }
 pub fn contains_keyword(text: &str) -> bool {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-        .any(|word| word.eq_ignore_ascii_case("ultracode"))
+        .any(|word| word.eq_ignore_ascii_case("hivecode"))
 }
 /// How long a saved setting is kept after its session was last opened or changed.
 pub const KEEP_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -265,7 +265,7 @@ impl SavedChanges {
     }
 }
 #[derive(Debug, Clone, Default)]
-pub struct UltracodeState {
+pub struct HivecodeState {
     default_on: bool,
     /// Settings made before the session's stored id was known.
     sessions: HashMap<SessionId, bool>,
@@ -278,7 +278,7 @@ pub struct UltracodeState {
     /// Stored ids opened or changed since the last save; true for a changed setting.
     touched: BTreeMap<String, bool>,
 }
-impl UltracodeState {
+impl HivecodeState {
     pub fn new(default_on: bool) -> Self {
         Self {
             default_on,
@@ -417,7 +417,7 @@ impl UltracodeState {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UltracodeCommand {
+pub enum HivecodeCommand {
     Toggle,
     On,
     Off,
@@ -427,11 +427,11 @@ pub enum UltracodeCommand {
 pub struct UsageError;
 impl std::fmt::Display for UsageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Usage: /ultracode [on|off|status]")
+        f.write_str("Usage: /hivecode [on|off|status]")
     }
 }
 impl std::error::Error for UsageError {}
-impl UltracodeCommand {
+impl HivecodeCommand {
     pub fn parse(arg: &str) -> Result<Self, UsageError> {
         match arg.trim().to_ascii_lowercase().as_str() {
             "" => Ok(Self::Toggle),
@@ -474,13 +474,13 @@ pub mod notice {
         AuthoringEnd, AuthoringProgress, AuthoringStage, RunFacts, STEPS, elapsed_text,
     };
     /// The mode's name where a screen shows it on its own, such as the `/effort` selector.
-    pub const NAME: &str = "Ultracode";
-    /// What Ultracode does with a prompt, in the words every notice shares.
-    pub const SKILL_ROLE: &str = "With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
-    pub const ON: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /ultracode off to stop.";
-    pub const ON_REMOTE: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Ultracode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /ultracode off to stop.";
+    pub const NAME: &str = "Hivecode";
+    /// What Hivecode does with a prompt, in the words every notice shares.
+    pub const SKILL_ROLE: &str = "With Hivecode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
+    pub const ON: &str = "Hivecode on for this session. With Hivecode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Hivecode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /hivecode off to stop.";
+    pub const ON_REMOTE: &str = "Hivecode on for this session. With Hivecode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Hivecode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /hivecode off to stop.";
     /// The building block's first row while a routed turn builds a workflow.
-    pub const AUTHORING_TITLE: &str = "Ultracode · building a workflow";
+    pub const AUTHORING_TITLE: &str = "Hivecode · building a workflow";
     /// The block's second row: the step in plain words, then the script once written.
     pub fn authoring_step(progress: &AuthoringProgress) -> String {
         let mut text = format!("Step {} of {STEPS}: {}", progress.step(), progress.label());
@@ -492,7 +492,7 @@ pub mod notice {
     /// The block as one row, on a short screen.
     pub fn authoring_short(progress: &AuthoringProgress, elapsed_ms: u64) -> String {
         format!(
-            "Ultracode · {} · {}",
+            "Hivecode · {} · {}",
             progress.label(),
             elapsed_text(elapsed_ms)
         )
@@ -511,7 +511,7 @@ pub mod notice {
                 .as_ref()
                 .map_or_else(String::new, |script| format!(" ({script})"));
             format!(
-                "Ultracode stopped: {why} while {}{script} after {elapsed}. No workflow started.",
+                "Hivecode stopped: {why} while {}{script} after {elapsed}. No workflow started.",
                 progress.label()
             )
         };
@@ -521,7 +521,7 @@ pub mod notice {
         let started_then_stopped = |why: &str| {
             let target = progress.script.as_deref().unwrap_or("the workflow");
             format!(
-                "Ultracode stopped: {why} after starting {target}, {elapsed} in. The workflow may still be running."
+                "Hivecode stopped: {why} after starting {target}, {elapsed} in. The workflow may still be running."
             )
         };
         match (end, run, &progress.script) {
@@ -541,7 +541,7 @@ pub mod notice {
                     (count, false) => format!(" ({count} agents)"),
                 };
                 format!(
-                    "Ultracode built the workflow in {elapsed}: {} {state}{agents}.",
+                    "Hivecode built the workflow in {elapsed}: {} {state}{agents}.",
                     run.name
                 )
             }
@@ -550,33 +550,33 @@ pub mod notice {
             (AuthoringEnd::Interrupted, None, _) => stopped("interrupted"),
             (AuthoringEnd::Failed, None, _) => stopped("the turn failed"),
             (_, None, script) if started => format!(
-                "Ultracode built the workflow in {elapsed} and started {}.",
+                "Hivecode built the workflow in {elapsed} and started {}.",
                 script.as_deref().unwrap_or("the run")
             ),
             (_, None, Some(script)) => format!(
-                "Ultracode wrote the workflow script {script} in {elapsed} and is waiting for your approval to start it."
+                "Hivecode wrote the workflow script {script} in {elapsed} and is waiting for your approval to start it."
             ),
             (_, None, None) => {
-                format!("Ultracode finished in {elapsed} without writing a workflow script.")
+                format!("Hivecode finished in {elapsed} without writing a workflow script.")
             }
         }
     }
-    pub const BRANCH_CARRIED: &str = "Ultracode stays on in this branch.";
-    /// Printed when a session opens with Ultracode on.
-    pub const OPENED_ON: &str = "Ultracode is on in this session: a plain prompt is handled as a workflow. /ultracode off to stop.";
+    pub const BRANCH_CARRIED: &str = "Hivecode stays on in this branch.";
+    /// Printed when a session opens with Hivecode on.
+    pub const OPENED_ON: &str = "Hivecode is on in this session: a plain prompt is handled as a workflow. /hivecode off to stop.";
     /// Printed after an interrupt in a session that routed a prompt.
     pub const STILL_ON: &str =
-        "Ultracode is still on: your next plain prompt is handled as a workflow too.";
+        "Hivecode is still on: your next plain prompt is handled as a workflow too.";
     /// Why the staffing tiers are missing when no table names one.
     pub const NO_TIERS: &str = "no tiers are configured";
-    pub const OFF: &str = "Ultracode off for this session.";
+    pub const OFF: &str = "Hivecode off for this session.";
     /// Names the routed request in an error Talaria words for a slash command.
     pub const REQUEST: &str = "the workflow request";
-    pub const NO_SESSION: &str = "No session to set ultracode on.";
-    pub const USAGE: &str = "Usage: /ultracode [on|off|status]";
+    pub const NO_SESSION: &str = "No session to set hivecode on.";
+    pub const USAGE: &str = "Usage: /hivecode [on|off|status]";
     pub fn bypassed(command: &str) -> String {
         format!(
-            "Ultracode does not apply to /{command}; it goes to Hermes as typed. To have the task handled as a workflow, send it as a plain prompt without /{command}."
+            "Hivecode does not apply to /{command}; it goes to Hermes as typed. To have the task handled as a workflow, send it as a plain prompt without /{command}."
         )
     }
     fn open_with(key: Option<&str>, what: &str) -> String {
@@ -602,7 +602,7 @@ pub mod notice {
     }
     pub fn missing(profile: &str) -> String {
         format!(
-            "Ultracode needs the talaria-workflows skill in profile {profile}. {SKILL_ROLE} Install it with: talaria workflow skill install --profile {profile}"
+            "Hivecode needs the talaria-workflows skill in profile {profile}. {SKILL_ROLE} Install it with: talaria workflow skill install --profile {profile}"
         )
     }
     pub fn unknown(reason: &str) -> String {
@@ -680,7 +680,7 @@ pub mod notice {
             SkillAvailability::Unknown { reason } => format!("unknown ({reason})"),
         };
         format!(
-            "Ultracode is {} for this session. Skill: {skill}.",
+            "Hivecode is {} for this session. Skill: {skill}.",
             if on { "on" } else { "off" }
         )
     }

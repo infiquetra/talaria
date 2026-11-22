@@ -1,6 +1,6 @@
 //! The `/effort` selector, drawn in the slash palette's place under the composer: Hermes's
 //! levels on one scale with a marker over the selected one, the selected level's description,
-//! the staged Ultracode and save switches, and the key hints.
+//! the staged Hivecode and save switches, and the key hints.
 //!
 //! Nothing here animates, so reduced motion draws the same frame. Without colour the marker
 //! glyph and the bold label still show the selection.
@@ -10,8 +10,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
+use talaria_core::hivecode::notice::NAME as HIVECODE;
 use talaria_core::models::{Effort, EffortScale};
-use talaria_core::ultracode::notice::NAME as ULTRACODE;
 
 use crate::history::word_wrapped;
 use crate::keys::{KeyChord, KeyMap, ModelAction};
@@ -20,7 +20,7 @@ use crate::theme::surfaces::{Token, ViewStyles, tokens as t};
 
 /// Columns before the scale.
 const INDENT: usize = 2;
-/// Columns between the scale and the Ultracode column.
+/// Columns between the scale and the Hivecode column.
 const SIDE_GAP: usize = 4;
 /// The widest and narrowest gaps between two labels.
 const GAPS: std::ops::RangeInclusive<usize> = 2..=5;
@@ -67,7 +67,7 @@ pub struct EffortScaleSection {
     selected: Effort,
     detail: String,
     note: Option<String>,
-    ultracode: String,
+    hivecode: String,
     save: String,
     hints: Vec<String>,
     views: Option<ViewStyles>,
@@ -83,7 +83,7 @@ impl EffortScaleSection {
         };
         let hints = [
             adjust,
-            Some(format!("Tab {ULTRACODE}")),
+            Some(format!("Tab {HIVECODE}")),
             keys.save.map(|save| format!("{save} new sessions")),
             Some("Enter apply".to_owned()),
             Some("Esc cancel".to_owned()),
@@ -99,7 +99,7 @@ impl EffortScaleSection {
             selected: scale.selected(),
             detail: super::render::clean(&scale.detail()),
             note: scale.note().map(|note| super::render::clean(&note)),
-            ultracode: super::render::clean(&scale.ultracode_line()),
+            hivecode: super::render::clean(&scale.hivecode_line()),
             save: super::render::clean(&scale.save_line()),
             hints,
             views: None,
@@ -131,13 +131,13 @@ impl EffortScaleSection {
             .add_modifier(Modifier::BOLD)
     }
 
-    /// The widest the Ultracode column gets, so pressing Tab never moves the scale.
+    /// The widest the Hivecode column gets, so pressing Tab never moves the scale.
     fn side_width() -> usize {
-        let staged = format!("{ULTRACODE} off (now on)");
+        let staged = format!("{HIVECODE} off (now on)");
         staged.chars().count().max(TOGGLE.len())
     }
 
-    /// The gap between labels and whether the Ultracode column fits beside the scale; `None`
+    /// The gap between labels and whether the Hivecode column fits beside the scale; `None`
     /// when the scale itself does not fit.
     fn layout(&self, width: usize) -> Option<(usize, bool)> {
         let labels: usize = self.levels.iter().map(|level| level.as_wire().len()).sum();
@@ -178,7 +178,7 @@ impl EffortScaleSection {
             format!(" {}", self.title),
             self.style(t::LIST_HEADER, Style::new().add_modifier(Modifier::BOLD)),
         )];
-        let switch = format!("{}{SEPARATOR}{TOGGLE}", self.ultracode);
+        let switch = format!("{}{SEPARATOR}{TOGGLE}", self.hivecode);
         match self.layout(columns) {
             Some((gap, side)) => {
                 lines.extend(self.scale_rows(gap, side));
@@ -213,7 +213,7 @@ impl EffortScaleSection {
         lines
     }
 
-    /// The "Faster … Smarter" row, the rule with the marker, and the labels, with the Ultracode
+    /// The "Faster … Smarter" row, the rule with the marker, and the labels, with the Hivecode
     /// column beside the last two when `side`.
     fn scale_rows(&self, gap: usize, side: bool) -> [Line<'static>; 3] {
         let indent = " ".repeat(INDENT);
@@ -257,7 +257,7 @@ impl EffortScaleSection {
         }
         if side {
             let gap = " ".repeat(SIDE_GAP);
-            rule.push(Span::raw(format!("{gap}{}", self.ultracode)));
+            rule.push(Span::raw(format!("{gap}{}", self.hivecode)));
             labels.push(Span::styled(format!("{gap}{TOGGLE}"), self.muted()));
         }
         [ends, Line::from(rule), Line::from(labels)]

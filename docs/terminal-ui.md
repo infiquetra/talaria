@@ -121,12 +121,12 @@ all eight Hermes levels on one scale from `Faster` to `Smarter` (`none` is left 
 catalogue says the model cannot turn reasoning off), a marker over the selected level, one line
 describing it, and where the session's own level is. Left and Right (`effort_down`, `effort_up`)
 move the marker and Home and End jump to the ends; nothing is sent while it moves. Tab stages
-Ultracode on or off, and Ctrl+G (`model_scope`) stages saving the level for new sessions too; the
+Hivecode on or off, and Ctrl+G (`model_scope`) stages saving the level for new sessions too; the
 selector shows both switches as on or off. Enter applies what was staged by running the typed
-commands, `/effort <level>` (with `--default` when saving) and then `/ultracode on` or `off`, so
+commands, `/effort <level>` (with `--default` when saving) and then `/hivecode on` or `off`, so
 their notices and checks are the same. Esc, a paste, a typed `/` or a session switch closes it and
 sends nothing, and Enter with nothing changed closes it quietly. `/effort <level>` typed in full
-still sets the level directly. At 80 columns and wider the Ultracode switch sits beside the scale;
+still sets the level directly. At 80 columns and wider the Hivecode switch sits beside the scale;
 narrower, it gets its own row, and below about 53 columns the scale becomes one `◀ level ▶` row.
 Nothing in it animates, and the marker and the bold label show the selection without colour.
 

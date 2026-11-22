@@ -1,6 +1,6 @@
-# Ultracode workflows
+# Hivecode workflows
 
-With Ultracode on, a plain prompt goes to the `talaria-workflows` Hermes skill, and the agent
+With Hivecode on, a plain prompt goes to the `talaria-workflows` Hermes skill, and the agent
 proposes a workflow and asks before starting it. A prompt never starts a run by itself. The lead
 uses the roster to choose configured tiers or models, proposes a workflow, asks for an explicit
 yes for that run, then runs it with the Talaria workflow runner. Trivial requests can be answered
@@ -47,14 +47,14 @@ profile.
 In an interactive Talaria session:
 
 ```text
-/ultracode on
-/ultracode status
-/ultracode off
+/hivecode on
+/hivecode status
+/hivecode off
 ```
 
-Bare `/ultracode` toggles. Turning on and checking status read a fresh command catalogue.
+Bare `/hivecode` toggles. Turning on and checking status read a fresh command catalogue.
 
-On a local gateway Talaria also checks the workflow setup when Ultracode turns on, when a
+On a local gateway Talaria also checks the workflow setup when Hivecode turns on, when a
 session opens with it on, and before each routed prompt. Each finding is reported once until it
 changes:
 
@@ -95,13 +95,13 @@ with `talaria --resume`. Sessions not opened for 30 days are dropped from the fi
 Talaria windows share the file: each save takes a lock on `workflow-mode.json.lock` beside it
 and merges that window's changes into the file, so a setting saved in one window is kept when
 another window saves. A `/branch`
-copy starts with its parent's setting and says `Ultracode stays on in this branch.` Other
-sessions keep their own setting. A session that opens with Ultracode on prints
-`Ultracode is on in this session: a plain prompt is handled as a workflow. /ultracode off to stop.`
+copy starts with its parent's setting and says `Hivecode stays on in this branch.` Other
+sessions keep their own setting. A session that opens with Hivecode on prints
+`Hivecode is on in this session: a plain prompt is handled as a workflow. /hivecode off to stop.`
 After you interrupt a turn in a session that has routed a prompt, Talaria prints
-`Ultracode is still on: your next plain prompt is handled as a workflow too.` The foreground
-session controls the `ultracode` status segment, shown after the model and dropped first when
-space is tight. Start interactive sessions on with `talaria --ultracode`. The flag turns on
+`Hivecode is still on: your next plain prompt is handled as a workflow too.` The foreground
+session controls the `hivecode` status segment, shown after the model and dropped first when
+space is tight. Start interactive sessions on with `talaria --hivecode`. The flag turns on
 the session it opens even when that session was saved as off; other sessions keep their
 saved setting. Print mode does not use this flag.
 
@@ -110,7 +110,7 @@ uses, shows that the agent is building a workflow, how long the turn has run, an
 is on:
 
 ```text
-⚙ Ultracode · building a workflow · 1m 05s
+⚙ Hivecode · building a workflow · 1m 05s
   Step 2 of 5: writing the workflow script · fix-parser.workflow
 ```
 
@@ -123,18 +123,18 @@ running. When the agent writes a script and ends its turn to ask whether to star
 reply's turn goes on from that script at step 4 (reading your answer), and the time counts
 both turns. Once Talaria finds the run the turn started, the workflow dock takes the block's
 place. On a screen shorter than 16 rows the block is one row
-(`⚙ Ultracode · writing the workflow script · 1m 05s`). It does not move; only its seconds
+(`⚙ Hivecode · writing the workflow script · 1m 05s`). It does not move; only its seconds
 change, and the screen wakes once a second only while the block is on screen.
 
 When the turn ends, the block leaves one line in the transcript that says how it ended, for
-example `Ultracode built the workflow in 3m 20s: fix-parser is running (7 agents so far).`,
-`Ultracode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your
+example `Hivecode built the workflow in 3m 20s: fix-parser is running (7 agents so far).`,
+`Hivecode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your
 approval to start it.`, or, for an interrupted turn,
-`Ultracode stopped: interrupted while writing the workflow script (fix-parser.workflow) after
+`Hivecode stopped: interrupted while writing the workflow script (fix-parser.workflow) after
 1m 05s. No workflow started.` A turn interrupted after it sent `talaria workflow run`, before
 Talaria found the run, says the workflow may still be running. The agent proposes a workflow
 and asks before it starts one.
-While Ultracode
+While Hivecode
 is on, a slash command that carries a prompt (`/goal`, `/bg`, `/queue`, `/steer`, `/btw` and
 `/plan`, with their aliases) still goes to Hermes as typed, after a one-line notice that names
 the command and says to send the prompt without it to have the task handled as a workflow.
@@ -147,11 +147,11 @@ later; a run still going after that hour is followed until it ends. Each routed 
 a fresh hour and forgets runs that already ended. When one starts it prints
 `Workflow run started: <name> (<run id>). Press Alt+W or type /workflows to see its agents.`,
 shows a dock line above the composer (`⚙ Workflow <name> · running · 3/10 agents · Alt+W to
-open`), and adds the agent count to the status segment (`ultracode · 3/10 agents`), which is
+open`), and adds the agent count to the status segment (`hivecode · 3/10 agents`), which is
 then kept on a narrow line. When the run ends it prints `Workflow run <outcome>: …` and the
 dock line goes away; a run whose budget refused or stopped any agent prints
 `Workflow run stopped by its budget: …`. The view never opens by itself. `workflow_view` (Alt+W) opens the latest
-run that this Talaria window saw start after an Ultracode-routed prompt in the foreground
+run that this Talaria window saw start after a Hivecode-routed prompt in the foreground
 session, or the run list when it saw none. Runs are matched by profile and start time, not
 by the prompt that asked for them, so for an hour after a routed prompt a run started by hand
 or in another window on the same profile is also announced here and can become Alt+W's
@@ -159,10 +159,10 @@ target, and two Talaria windows on one profile can both announce the same run. A
 is reached through the run list. A session started with `--remote` runs workflows on the
 gateway's machine, so Talaria does not watch for them and the routing notice says so.
 
-With the toggle off, the whole word `ultracode` anywhere in a plain prompt sends just that
+With the toggle off, the whole word `hivecode` anywhere in a plain prompt sends just that
 prompt to the talaria-workflows skill and shows a one-shot notice. Matching ignores ASCII case. Letters, digits,
-underscore, and hyphen count as word characters: `ULTRACODE:` matches, `ultracoder`,
-`pre-ultracode`, and `ultracode_x` do not. Non-ASCII letters are separators. Empty prompts,
+underscore, and hyphen count as word characters: `HIVECODE:` matches, `hivecoder`,
+`pre-hivecode`, and `hivecode_x` do not. Non-ASCII letters are separators. Empty prompts,
 slash commands, and shell commands keep their existing behavior.
 
 The first routed prompt of a session in this Talaria process becomes
@@ -174,7 +174,7 @@ conversation skip the command service: they send the typed text after one model-
 saying that the workflow mode is on and the skill already loaded in the conversation applies.
 The whole skill goes again with the first routed prompt after Hermes compacts the session,
 after the session is opened under a new stored id, after a rewind or a restore, after
-`/ultracode on` is typed again, and after a prompt that carried it is removed from the queue,
+`/hivecode on` is typed again, and after a prompt that carried it is removed from the queue,
 refused, or never confirmed.
 A prompt containing the keyword with the toggle off always carries the whole skill. Busy
 sessions use the existing prompt queue.
@@ -223,11 +223,11 @@ requires the developer to choose the printed `workflow resolve` command's fail, 
 resolution. The lead never chooses a new paid attempt alone.
 
 Workflow agents cannot answer approval requests. Dangerous-command behavior depends on the
-operator's profile approval settings; enabling ultracode does not change them. Code-reading
+operator's profile approval settings; enabling hivecode does not change them. Code-reading
 agents use worktrees and a no-edit instruction because the file toolset can write. A worktree
 is a separate checkout, not a sandbox. Keep credentials out of script arguments and prompts.
 
 Talaria uses several configured models and providers through staffing tiers. Its toggle is
-`/ultracode` and `--ultracode`, rather than Claude Code's effort setting. A Hermes skill guides
+`/hivecode` and `--hivecode`, rather than Claude Code's effort setting. A Hermes skill guides
 the lead, and the detached runner owns durable execution. Script structure is checked by the
 engine, while planning quality and asking before each run depend on the lead following the skill.

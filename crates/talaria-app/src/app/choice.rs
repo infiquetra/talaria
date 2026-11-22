@@ -8,7 +8,7 @@
 //!
 //! Bare `/effort` opens the same slot with a scale instead of a list
 //! (`talaria_core::models::EffortScale`). It writes nothing while it moves; Enter runs the typed
-//! `/effort` and `/ultracode` commands for what was staged.
+//! `/effort` and `/hivecode` commands for what was staged.
 
 use std::time::Duration;
 
@@ -169,8 +169,8 @@ fn effort_facts(state: &AppState) -> Option<(String, ScaleFacts)> {
                 .models
                 .can_disable_reasoning(&session_id, provider, model)
         }),
-        ultracode: state
-            .ultracode
+        hivecode: state
+            .hivecode
             .status_input(Some(&SessionId::new(session_id.clone()))),
         profile: state.profile.clone(),
         model,
@@ -218,7 +218,7 @@ pub(super) fn refresh_effort(state: &mut AppState) {
 }
 
 /// One key for the open `/effort` scale. Enter runs the typed commands for what was staged:
-/// `/effort <level> [--default]`, then `/ultracode on|off`.
+/// `/effort <level> [--default]`, then `/hivecode on|off`.
 pub(super) fn scale_key(state: &mut AppState, key: ScaleKey) -> Vec<AppEffect> {
     let Some(Selector {
         kind: Kind::Effort {
@@ -230,14 +230,14 @@ pub(super) fn scale_key(state: &mut AppState, key: ScaleKey) -> Vec<AppEffect> {
     else {
         return Vec::new();
     };
-    let (level, save_default, ultracode) = match scale.update(key) {
+    let (level, save_default, hivecode) = match scale.update(key) {
         ScaleEffect::Redraw => return vec![AppEffect::Redraw],
         ScaleEffect::Cancel => return close(state),
         ScaleEffect::Apply {
             level,
             save_default,
-            ultracode,
-        } => (level, save_default, ultracode),
+            hivecode,
+        } => (level, save_default, hivecode),
     };
     let owner = owner.clone();
     state.choice = None;
@@ -258,12 +258,12 @@ pub(super) fn scale_key(state: &mut AppState, key: ScaleKey) -> Vec<AppEffect> {
         };
         typed(state, LocalAction::Effort, "effort", argument);
     }
-    if let Some(on) = ultracode {
+    if let Some(on) = hivecode {
         let argument = if on { "on" } else { "off" };
         typed(
             state,
-            LocalAction::Ultracode,
-            "ultracode",
+            LocalAction::Hivecode,
+            "hivecode",
             argument.to_owned(),
         );
     }

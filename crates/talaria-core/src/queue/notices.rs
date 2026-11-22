@@ -92,7 +92,7 @@ pub fn refusal_notice(action: QueueAction, reason: &str) -> Option<&'static str>
 #[must_use]
 pub fn preview(text: &str) -> String {
     const LIMIT: usize = 60;
-    let line = crate::ultracode::shown_text(text)
+    let line = crate::hivecode::shown_text(text)
         .lines()
         .next()
         .unwrap_or("");

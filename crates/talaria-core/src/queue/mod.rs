@@ -73,7 +73,7 @@ pub struct QueuedRow {
 /// A row as the screen shows it: a routed prompt shows what the person typed.
 fn shown_row(row: &QueuedRow) -> QueuedRow {
     QueuedRow {
-        text: crate::ultracode::shown_text(&row.text).to_owned(),
+        text: crate::hivecode::shown_text(&row.text).to_owned(),
         ..row.clone()
     }
 }

@@ -59,6 +59,6 @@ pub mod settings;
 
 pub mod doctor;
 
-pub mod ultracode;
-pub mod ultracode_files;
+pub mod hivecode;
+pub mod hivecode_files;
 pub mod voice;

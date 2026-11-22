@@ -41,7 +41,7 @@ pub mod subagents;
 pub mod text;
 pub mod workspace;
 
-pub mod ultracode;
+pub mod hivecode;
 pub mod voice;
 
 pub use seat_status::{BlockKind, SeatState};

@@ -566,7 +566,7 @@ async fn rewind_rebuild_marks_cells_without_reprint() {
 
 #[tokio::test]
 async fn rewind_rebuild_sends_the_whole_workflow_skill_again() {
-    use talaria_app::ultracode::Action;
+    use talaria_app::hivecode::Action;
     let snapshot = resume_snapshot();
     let (_mock, mut app) = opened_app(snapshot.clone()).await;
     let session = talaria_core::session::SessionId::new(
@@ -576,10 +576,10 @@ async fn rewind_rebuild_sends_the_whole_workflow_skill_again() {
         json!({"skills": {"/talaria-workflows": {"usage": 0, "origin": "local"}}, "pairs": []}),
     )
     .expect("catalog");
-    let _ = app.ultracode.on_catalog_reply(
+    let _ = app.hivecode.on_catalog_reply(
         &session,
         "fixture",
-        talaria_core::ultracode::UltracodeCommand::On,
+        talaria_core::hivecode::HivecodeCommand::On,
         Ok(talaria_core::commands::CommandCatalog::from_result(
             &catalog,
         )),
@@ -588,7 +588,7 @@ async fn rewind_rebuild_sends_the_whole_workflow_skill_again() {
         effects.iter().any(|effect| {
             matches!(
                 effect,
-                AppEffect::Ultracode {
+                AppEffect::Hivecode {
                     action: Action::RunCommand { .. },
                     ..
                 }
@@ -602,7 +602,7 @@ async fn rewind_rebuild_sends_the_whole_workflow_skill_again() {
     let expanded = "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\n\nThe user has provided the following instruction alongside the skill invocation: fix the parser";
     let _ = update(
         &mut app,
-        AppMessage::UltracodeDone {
+        AppMessage::HivecodeDone {
             session: session.clone(),
             original_text: "fix the parser".into(),
             outcome: Ok(json!({"type": "skill", "name": "talaria-workflows",

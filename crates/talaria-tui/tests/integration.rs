@@ -90,6 +90,8 @@ mod herdr_peek;
 mod history_search;
 #[path = "integration/history_text.rs"]
 mod history_text;
+#[path = "integration/hivecode_status.rs"]
+mod hivecode_status;
 #[path = "integration/injected_notice.rs"]
 mod injected_notice;
 #[path = "integration/inline_setup.rs"]
@@ -262,8 +264,6 @@ mod theme_snapshots;
 mod tmux_scrollback;
 #[path = "integration/tool_cells.rs"]
 mod tool_cells;
-#[path = "integration/ultracode_status.rs"]
-mod ultracode_status;
 #[path = "integration/view_chrome.rs"]
 mod view_chrome;
 #[path = "integration/view_colours_default.rs"]

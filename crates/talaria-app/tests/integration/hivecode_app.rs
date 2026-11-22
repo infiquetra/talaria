@@ -1,10 +1,10 @@
 use crate::mock_gateway;
 use serde_json::{Value, json};
-use talaria_app::ultracode::{Action, Foreground, UltracodeService};
+use talaria_app::hivecode::{Action, Foreground, HivecodeService};
 use talaria_core::session::ids::SessionId;
 use talaria_core::{
     commands::{CatalogResult, CommandCatalog, ErrorView},
-    ultracode::{SkillEpoch, UltracodeCommand, follow_up_text, notice},
+    hivecode::{HivecodeCommand, SkillEpoch, follow_up_text, notice},
 };
 fn session() -> SessionId {
     SessionId::new("fixture-session")
@@ -31,55 +31,55 @@ fn rpc(reason: &str) -> ErrorView {
         detail: None,
     }
 }
-fn on() -> UltracodeService {
-    let mut service = UltracodeService::new(false);
+fn on() -> HivecodeService {
+    let mut service = HivecodeService::new(false);
     let id = session();
     assert_eq!(
         service.handle_local_command("on", foreground(&id)),
         vec![Action::FetchCatalog {
             session: id.clone(),
             profile: "fixture".into(),
-            command: UltracodeCommand::On
+            command: HivecodeCommand::On
         }]
     );
-    let _ = service.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(catalog())));
+    let _ = service.on_catalog_reply(&id, "fixture", HivecodeCommand::On, Ok(parsed(catalog())));
     assert!(service.status_input(Some(&id)));
     service
 }
 #[test]
 fn on_checks_a_fresh_catalogue() {
     let id = session();
-    let mut s = UltracodeService::new(false);
+    let mut s = HivecodeService::new(false);
     assert_eq!(
         s.handle_local_command("on", foreground(&id)),
         vec![Action::FetchCatalog {
             session: id.clone(),
             profile: "fixture".into(),
-            command: UltracodeCommand::On
+            command: HivecodeCommand::On
         }]
     );
-    let actions = s.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(catalog())));
+    let actions = s.on_catalog_reply(&id, "fixture", HivecodeCommand::On, Ok(parsed(catalog())));
     assert!(s.status_input(Some(&id)));
     assert!(
         actions
             .iter()
-            .any(|a| matches!(a,Action::Notice(v) if v.contains("Ultracode on")))
+            .any(|a| matches!(a,Action::Notice(v) if v.contains("Hivecode on")))
     );
     for value in [
         json!({"skills":{}}),
         json!({"skills":{"/talaria-workflows":{"origin":"local"}},"pairs":[["/talaria-workflows","custom"]],"categories":[{"name":"User commands","pairs":[["/talaria-workflows","custom"]]}]}),
     ] {
-        let mut service = UltracodeService::new(false);
+        let mut service = HivecodeService::new(false);
         let _ = service.handle_local_command("on", foreground(&id));
         let replies =
-            service.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(value)));
+            service.on_catalog_reply(&id, "fixture", HivecodeCommand::On, Ok(parsed(value)));
         assert!(!service.status_input(Some(&id)));
         assert!(replies.iter().any(|a| matches!(a, Action::Notice(_))));
     }
-    let mut service = UltracodeService::new(false);
+    let mut service = HivecodeService::new(false);
     let _ = service.handle_local_command("on", foreground(&id));
     let replies =
-        service.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Err("offline".into()));
+        service.on_catalog_reply(&id, "fixture", HivecodeCommand::On, Err("offline".into()));
     assert!(!service.status_input(Some(&id)));
     assert!(
         replies
@@ -89,11 +89,10 @@ fn on_checks_a_fresh_catalogue() {
 }
 #[tokio::test]
 async fn routed_submit_frames() {
-    let frames: Vec<Value> =
-        include_str!("../../../../fixtures/frames/p5-09-ultracode-skill.jsonl")
-            .lines()
-            .map(|s| serde_json::from_str(s).unwrap())
-            .collect();
+    let frames: Vec<Value> = include_str!("../../../../fixtures/frames/p5-09-hivecode-skill.jsonl")
+        .lines()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
     let first = &frames[1]["frame"];
     let reply = &frames[2]["frame"]["result"];
     let submit = &frames[3]["frame"];
@@ -247,8 +246,8 @@ fn slash_shell_and_keyword_paths() {
     let service = on();
     assert!(service.intercept_submit(&id, "/help").is_none());
     assert!(service.intercept_submit(&id, "!ls").is_none());
-    let off = UltracodeService::new(false);
-    let actions = off.intercept_submit(&id, "please ultracode this").unwrap();
+    let off = HivecodeService::new(false);
+    let actions = off.intercept_submit(&id, "please hivecode this").unwrap();
     assert!(
         actions
             .iter()
@@ -262,12 +261,12 @@ fn local_missing_asks_once() {
     let id = session();
     let missing = json!({"skills":{}});
 
-    let mut service = UltracodeService::new(false);
+    let mut service = HivecodeService::new(false);
     let _ = service.handle_local_command("on", foreground(&id));
     let replies = service.on_catalog_reply(
         &id,
         "fixture",
-        UltracodeCommand::On,
+        HivecodeCommand::On,
         Ok(parsed(missing.clone())),
     );
     let offer = notice::offer("fixture");
@@ -287,7 +286,7 @@ fn local_missing_asks_once() {
     let second = service.on_catalog_reply(
         &id,
         "fixture",
-        UltracodeCommand::On,
+        HivecodeCommand::On,
         Ok(parsed(missing.clone())),
     );
     let expected_missing = notice::missing("fixture");
@@ -300,12 +299,12 @@ fn local_missing_asks_once() {
         "pairs": [["/talaria-workflows", "custom"]],
         "categories": [{"name": "User commands", "pairs": [["/talaria-workflows", "custom"]]}]
     });
-    let mut collision_service = UltracodeService::new(false);
+    let mut collision_service = HivecodeService::new(false);
     let _ = collision_service.handle_local_command("on", foreground(&id));
     let collision_replies = collision_service.on_catalog_reply(
         &id,
         "fixture",
-        UltracodeCommand::On,
+        HivecodeCommand::On,
         Ok(parsed(collision)),
     );
     assert!(
@@ -314,24 +313,24 @@ fn local_missing_asks_once() {
             .any(|a| matches!(a, Action::Notice(v) if v.contains("Rename that command") && !v.contains("now? [y/N]")))
     );
 
-    let mut offline_service = UltracodeService::new(false);
+    let mut offline_service = HivecodeService::new(false);
     let _ = offline_service.handle_local_command("on", foreground(&id));
     let offline_replies = offline_service.on_catalog_reply(
         &id,
         "fixture",
-        UltracodeCommand::On,
+        HivecodeCommand::On,
         Err("offline".into()),
     );
     assert!(offline_replies.iter().any(
         |a| matches!(a, Action::Notice(v) if v.contains("offline") && !v.contains("now? [y/N]"))
     ));
 
-    let mut status_service = UltracodeService::new(false);
+    let mut status_service = HivecodeService::new(false);
     let _ = status_service.handle_local_command("status", foreground(&id));
     let status_replies = status_service.on_catalog_reply(
         &id,
         "fixture",
-        UltracodeCommand::Status,
+        HivecodeCommand::Status,
         Ok(parsed(missing.clone())),
     );
     assert!(
@@ -340,7 +339,7 @@ fn local_missing_asks_once() {
             .any(|a| matches!(a, Action::Notice(v) if v.contains("not found in profile fixture") && !v.contains("now? [y/N]")))
     );
 
-    let mut outcome_service = UltracodeService::new(false);
+    let mut outcome_service = HivecodeService::new(false);
     let _ = outcome_service.handle_local_command("on", foreground(&id));
     let first_outcome =
         outcome_service.on_command_outcome(&id, "hello", Err(rpc("unsupported_command")));
@@ -372,13 +371,13 @@ fn local_missing_asks_once() {
 
 #[test]
 fn answer_y_installs_and_other_lines_print_the_command() {
-    fn asked_service(id: &SessionId) -> UltracodeService {
-        let mut service = UltracodeService::new(false);
+    fn asked_service(id: &SessionId) -> HivecodeService {
+        let mut service = HivecodeService::new(false);
         let _ = service.handle_local_command("on", foreground(id));
         let _ = service.on_catalog_reply(
             id,
             "fixture",
-            UltracodeCommand::On,
+            HivecodeCommand::On,
             Ok(parsed(json!({"skills":{}}))),
         );
         assert!(service.answer_install(id, "y").is_none());
@@ -419,7 +418,7 @@ fn answer_y_installs_and_other_lines_print_the_command() {
         assert_eq!(service.answer_install(&id, answer), None);
     }
 
-    let mut unasked = UltracodeService::new(false);
+    let mut unasked = HivecodeService::new(false);
     assert_eq!(unasked.answer_install(&id, "y"), None);
 }
 
@@ -432,13 +431,13 @@ fn remote_missing_does_not_ask() {
         notice::missing("fixture")
     );
 
-    let mut service = UltracodeService::new(false);
+    let mut service = HivecodeService::new(false);
     service.set_remote(true);
     let _ = service.handle_local_command("on", foreground(&id));
     let replies = service.on_catalog_reply(
         &id,
         "fixture",
-        UltracodeCommand::On,
+        HivecodeCommand::On,
         Ok(parsed(missing.clone())),
     );
     assert!(
@@ -453,15 +452,14 @@ fn remote_missing_does_not_ask() {
     );
     assert_eq!(service.answer_install(&id, "y"), None);
 
-    let second =
-        service.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(missing)));
+    let second = service.on_catalog_reply(&id, "fixture", HivecodeCommand::On, Ok(parsed(missing)));
     assert!(
         second
             .iter()
             .any(|a| matches!(a, Action::Notice(v) if v == &expected))
     );
 
-    let mut outcome_service = UltracodeService::new(false);
+    let mut outcome_service = HivecodeService::new(false);
     outcome_service.set_remote(true);
     let _ = outcome_service.handle_local_command("on", foreground(&id));
     let outcome = outcome_service.on_command_outcome(&id, "hello", Err(rpc("unsupported_command")));
@@ -483,12 +481,12 @@ fn background_reply_asks_when_shown() {
     let missing = json!({"skills":{}});
     let offer = notice::offer("fixture");
 
-    let mut service = UltracodeService::new(false);
+    let mut service = HivecodeService::new(false);
     let _ = service.handle_local_command("on", foreground(&id));
     let _ = service.on_catalog_reply(
         &id,
         "fixture",
-        UltracodeCommand::On,
+        HivecodeCommand::On,
         Ok(parsed(missing.clone())),
     );
     assert_eq!(service.answer_install(&id, "y"), None);
@@ -498,7 +496,7 @@ fn background_reply_asks_when_shown() {
     let later = service.on_catalog_reply(
         &id,
         "fixture",
-        UltracodeCommand::On,
+        HivecodeCommand::On,
         Ok(parsed(missing.clone())),
     );
     assert!(
@@ -507,15 +505,15 @@ fn background_reply_asks_when_shown() {
             .any(|a| matches!(a, Action::Notice(v) if v == &offer))
     );
 
-    let mut twice = UltracodeService::new(false);
+    let mut twice = HivecodeService::new(false);
     let _ = twice.handle_local_command("on", foreground(&id));
     let _ = twice.on_catalog_reply(
         &id,
         "fixture",
-        UltracodeCommand::On,
+        HivecodeCommand::On,
         Ok(parsed(missing.clone())),
     );
-    let _ = twice.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(missing)));
+    let _ = twice.on_catalog_reply(&id, "fixture", HivecodeCommand::On, Ok(parsed(missing)));
     assert_eq!(twice.show_kept(&id), Some(offer));
     assert_eq!(twice.show_kept(&id), None);
 }
@@ -530,8 +528,8 @@ fn routed_prompt_prints_no_interim_line() {
         matches!(&actions[..], [Action::RunCommand { .. }]),
         "{actions:?}"
     );
-    let off = UltracodeService::new(false);
-    let keyword = off.intercept_submit(&id, "please ultracode this").unwrap();
+    let off = HivecodeService::new(false);
+    let keyword = off.intercept_submit(&id, "please hivecode this").unwrap();
     assert!(
         matches!(&keyword[..], [Action::RunCommand { .. }]),
         "{keyword:?}"
@@ -624,12 +622,12 @@ fn later_routed_prompts_send_a_reminder_with_the_typed_text() {
 }
 
 #[test]
-fn ultracode_on_again_sends_the_whole_skill_next() {
+fn hivecode_on_again_sends_the_whole_skill_next() {
     let id = session();
     let mut service = on();
     service.skill_sent(&id, epoch("stored", 0));
     let _ = service.handle_local_command("on", foreground(&id));
-    let _ = service.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(catalog())));
+    let _ = service.on_catalog_reply(&id, "fixture", HivecodeCommand::On, Ok(parsed(catalog())));
     let actions = service.intercept_submit(&id, "go ahead").unwrap();
     assert!(
         actions
@@ -642,9 +640,9 @@ fn ultracode_on_again_sends_the_whole_skill_next() {
 #[test]
 fn keyword_prompt_always_loads_the_whole_skill() {
     let id = session();
-    let mut off = UltracodeService::new(false);
+    let mut off = HivecodeService::new(false);
     off.skill_sent(&id, epoch("stored", 0));
-    let actions = off.intercept_submit(&id, "please ultracode this").unwrap();
+    let actions = off.intercept_submit(&id, "please hivecode this").unwrap();
     assert!(
         actions
             .iter()
@@ -674,17 +672,17 @@ fn a_failed_dispatch_never_names_the_skill_command() {
 #[test]
 fn remote_on_notice_says_where_runs_appear() {
     let id = session();
-    let mut local = UltracodeService::new(false);
+    let mut local = HivecodeService::new(false);
     let _ = local.handle_local_command("on", foreground(&id));
     assert_eq!(
-        local.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(catalog()))),
+        local.on_catalog_reply(&id, "fixture", HivecodeCommand::On, Ok(parsed(catalog()))),
         vec![Action::Notice(notice::ON.into()), Action::Changed]
     );
-    let mut remote = UltracodeService::new(false);
+    let mut remote = HivecodeService::new(false);
     remote.set_remote(true);
     let _ = remote.handle_local_command("on", foreground(&id));
     assert_eq!(
-        remote.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(catalog()))),
+        remote.on_catalog_reply(&id, "fixture", HivecodeCommand::On, Ok(parsed(catalog()))),
         vec![Action::Notice(notice::ON_REMOTE.into()), Action::Changed]
     );
     assert!(remote.status_input(Some(&id)));
@@ -893,7 +891,7 @@ fn arming_again_opens_a_fresh_window_and_keeps_active_runs() {
     );
 }
 
-/// docs/workflows/ultracode.md describes this: inside the watch's hour, a run started by hand
+/// docs/workflows/hivecode.md describes this: inside the watch's hour, a run started by hand
 /// or in another window on the same profile is announced here and becomes Alt+W's target.
 #[test]
 fn run_started_by_hand_inside_the_hour_is_announced_and_tracked() {
@@ -943,9 +941,9 @@ fn run_started_by_hand_inside_the_hour_is_announced_and_tracked() {
 }
 
 #[test]
-fn ultracode_guide_says_a_run_started_elsewhere_can_be_announced() {
+fn hivecode_guide_says_a_run_started_elsewhere_can_be_announced() {
     let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/workflows/ultracode.md");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/workflows/hivecode.md");
     let guide = std::fs::read_to_string(path).unwrap();
     let guide = guide.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
@@ -1017,10 +1015,10 @@ fn remote_service_never_arms_watch() {
     assert_eq!(service.scan_due(0), None);
 }
 
-fn setup(skill: talaria_app::ultracode::SkillCheck) -> talaria_app::ultracode::SetupFacts {
-    talaria_app::ultracode::SetupFacts {
+fn setup(skill: talaria_app::hivecode::SkillCheck) -> talaria_app::hivecode::SetupFacts {
+    talaria_app::hivecode::SetupFacts {
         skill,
-        tiers: talaria_app::ultracode::TierCheck::Present,
+        tiers: talaria_app::hivecode::TierCheck::Present,
         missing_builtins: vec![],
     }
 }
@@ -1057,7 +1055,7 @@ fn setup_is_checked_locally_on_turn_on_reopen_and_routed_prompts() {
 
 #[test]
 fn a_changed_skill_warns_once_and_offers_the_reinstall() {
-    use talaria_app::ultracode::SkillCheck;
+    use talaria_app::hivecode::SkillCheck;
     let id = session();
     let mut service = on();
     let changed = SkillCheck::Modified {
@@ -1138,7 +1136,7 @@ fn a_changed_skill_warns_once_and_offers_the_reinstall() {
 
 #[test]
 fn missing_tiers_and_builtins_give_one_notice() {
-    use talaria_app::ultracode::{SetupFacts, SkillCheck, TierCheck};
+    use talaria_app::hivecode::{SetupFacts, SkillCheck, TierCheck};
     let id = session();
     let mut service = on();
     let facts = SetupFacts {
@@ -1208,8 +1206,8 @@ fn installed_skill() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathB
 
 #[test]
 fn setup_read_compares_the_installed_skill_with_its_install_record() {
-    use talaria_app::ultracode::{SkillCheck, TierCheck};
-    use talaria_app::ultracode_files::read_setup;
+    use talaria_app::hivecode::{SkillCheck, TierCheck};
+    use talaria_app::hivecode_files::read_setup;
     let (_temp, hermes, talaria) = installed_skill();
     let facts = read_setup("default", &hermes, &talaria);
     assert_eq!(facts.skill, SkillCheck::Unchanged);
@@ -1218,12 +1216,7 @@ fn setup_read_compares_the_installed_skill_with_its_install_record() {
     missing.sort();
     assert_eq!(
         missing,
-        [
-            "fix-failing-tests",
-            "research",
-            "review-branch",
-            "ultracode"
-        ]
+        ["fix-failing-tests", "hivecode", "research", "review-branch"]
     );
 
     // Another program edits the skill and adds a reference file.
@@ -1280,13 +1273,13 @@ fn setup_read_compares_the_installed_skill_with_its_install_record() {
 
 #[test]
 fn the_mode_file_round_trips_and_ignores_a_stale_write() {
-    use talaria_app::ultracode_files::ModeFile;
-    use talaria_core::ultracode::SavedModes;
+    use talaria_app::hivecode_files::ModeFile;
+    use talaria_core::hivecode::SavedModes;
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("state/workflow-mode.json");
     assert_eq!(ModeFile::read(&path).unwrap(), SavedModes::default());
     let file = ModeFile::new(path.clone());
-    let mut state = talaria_core::ultracode::UltracodeState::new(false);
+    let mut state = talaria_core::hivecode::HivecodeState::new(false);
     let id = SessionId::new("runtime-1");
     state.adopt(&id, "stored-1");
     state.set(&id, true);
@@ -1307,12 +1300,12 @@ fn the_mode_file_round_trips_and_ignores_a_stale_write() {
 
 #[test]
 fn two_windows_saving_to_one_mode_file_keep_each_others_settings() {
-    use talaria_app::ultracode_files::ModeFile;
-    use talaria_core::ultracode::UltracodeState;
+    use talaria_app::hivecode_files::ModeFile;
+    use talaria_core::hivecode::HivecodeState;
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("workflow-mode.json");
     // Two Talaria windows, each with its own state and its own handle on the shared file.
-    let (mut first, mut second) = (UltracodeState::new(false), UltracodeState::new(false));
+    let (mut first, mut second) = (HivecodeState::new(false), HivecodeState::new(false));
     let (first_file, second_file) = (ModeFile::new(path.clone()), ModeFile::new(path.clone()));
     let (s, t) = (SessionId::new("runtime-s"), SessionId::new("runtime-t"));
     second.adopt(&s, "stored-s");
@@ -1325,7 +1318,7 @@ fn two_windows_saving_to_one_mode_file_keep_each_others_settings() {
     first_file
         .write(1, &first.take_saved(2_000).unwrap())
         .unwrap();
-    let mut restarted = UltracodeState::new(false);
+    let mut restarted = HivecodeState::new(false);
     restarted.restore(ModeFile::read(&path).unwrap());
     assert!(restarted.adopt(&SessionId::new("runtime-1"), "stored-s"));
     assert!(restarted.adopt(&SessionId::new("runtime-2"), "stored-t"));

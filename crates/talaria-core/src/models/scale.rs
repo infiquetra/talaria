@@ -1,12 +1,12 @@
 //! The `/effort` selector: Hermes's effort levels on one scale, low to high.
 //!
-//! Left and Right move a marker; nothing is written while it moves. Tab stages the Ultracode
+//! Left and Right move a marker; nothing is written while it moves. Tab stages the Hivecode
 //! switch and the save switch stages "also for new sessions". Enter asks the application for
-//! exactly what the typed commands would do (`/effort <level> [--default]`, `/ultracode on|off`),
+//! exactly what the typed commands would do (`/effort <level> [--default]`, `/hivecode on|off`),
 //! so every existing path, its notices and its refusals apply unchanged. Esc drops it all.
 
 use super::Effort;
-use crate::ultracode::notice::NAME as ULTRACODE;
+use crate::hivecode::notice::NAME as HIVECODE;
 
 /// What the application knows when the selector opens, refreshed as reads answer.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -21,8 +21,8 @@ pub struct ScaleFacts {
     pub offered: Option<bool>,
     /// Whether `none` turns thinking off on this route, when the catalogue says.
     pub can_disable: Option<bool>,
-    /// Whether Ultracode is on for the session now.
-    pub ultracode: bool,
+    /// Whether Hivecode is on for the session now.
+    pub hivecode: bool,
     /// The profile a saved level belongs to.
     pub profile: String,
 }
@@ -36,8 +36,8 @@ pub enum ScaleKey {
     Higher,
     Lowest,
     Highest,
-    /// Stage Ultracode on or off.
-    ToggleUltracode,
+    /// Stage Hivecode on or off.
+    ToggleHivecode,
     /// Stage saving the level for new sessions too.
     ToggleSave,
     /// Enter.
@@ -54,11 +54,11 @@ pub enum ScaleEffect {
     /// Close; nothing changes. Also Enter with nothing staged.
     Cancel,
     /// Close and run, in order, `/effort <level>` (with `--default` when `save_default`) when
-    /// `level` is set, then `/ultracode on|off` when `ultracode` is set.
+    /// `level` is set, then `/hivecode on|off` when `hivecode` is set.
     Apply {
         level: Option<Effort>,
         save_default: bool,
-        ultracode: Option<bool>,
+        hivecode: Option<bool>,
     },
 }
 
@@ -70,8 +70,8 @@ pub struct EffortScale {
     /// The person moved the marker, so a later read no longer moves it.
     touched: bool,
     save_default: bool,
-    /// The staged Ultracode switch.
-    ultracode: bool,
+    /// The staged Hivecode switch.
+    hivecode: bool,
 }
 
 impl EffortScale {
@@ -82,7 +82,7 @@ impl EffortScale {
             selected: facts.current.unwrap_or(Effort::Medium),
             touched: false,
             save_default: false,
-            ultracode: facts.ultracode,
+            hivecode: facts.hivecode,
             facts,
         }
     }
@@ -99,8 +99,8 @@ impl EffortScale {
             ScaleKey::Higher => (at + 1).min(last),
             ScaleKey::Lowest => 0,
             ScaleKey::Highest => last,
-            ScaleKey::ToggleUltracode => {
-                self.ultracode = !self.ultracode;
+            ScaleKey::ToggleHivecode => {
+                self.hivecode = !self.hivecode;
                 return ScaleEffect::Redraw;
             }
             ScaleKey::ToggleSave => {
@@ -120,14 +120,14 @@ impl EffortScale {
     fn apply(&self) -> ScaleEffect {
         let moved = self.touched && Some(self.selected) != self.facts.current;
         let level = (moved || self.save_default).then_some(self.selected);
-        let ultracode = self.ultracode_changed().then_some(self.ultracode);
-        if level.is_none() && ultracode.is_none() {
+        let hivecode = self.hivecode_changed().then_some(self.hivecode);
+        if level.is_none() && hivecode.is_none() {
             return ScaleEffect::Cancel;
         }
         ScaleEffect::Apply {
             level,
             save_default: self.save_default,
-            ultracode,
+            hivecode,
         }
     }
 
@@ -171,16 +171,16 @@ impl EffortScale {
         self.facts.current
     }
 
-    /// The staged Ultracode switch.
+    /// The staged Hivecode switch.
     #[must_use]
-    pub fn ultracode(&self) -> bool {
-        self.ultracode
+    pub fn hivecode(&self) -> bool {
+        self.hivecode
     }
 
-    /// Enter would turn Ultracode on or off.
+    /// Enter would turn Hivecode on or off.
     #[must_use]
-    pub fn ultracode_changed(&self) -> bool {
-        self.ultracode != self.facts.ultracode
+    pub fn hivecode_changed(&self) -> bool {
+        self.hivecode != self.facts.hivecode
     }
 
     #[must_use]
@@ -218,17 +218,17 @@ impl EffortScale {
         )
     }
 
-    /// The Ultracode switch, with what it is now when Enter would change it.
+    /// The Hivecode switch, with what it is now when Enter would change it.
     #[must_use]
-    pub fn ultracode_line(&self) -> String {
-        if self.ultracode_changed() {
+    pub fn hivecode_line(&self) -> String {
+        if self.hivecode_changed() {
             format!(
-                "{ULTRACODE} {} (now {})",
-                on_off(self.ultracode),
-                on_off(self.facts.ultracode)
+                "{HIVECODE} {} (now {})",
+                on_off(self.hivecode),
+                on_off(self.facts.hivecode)
             )
         } else {
-            format!("{ULTRACODE} {}", on_off(self.ultracode))
+            format!("{HIVECODE} {}", on_off(self.hivecode))
         }
     }
 

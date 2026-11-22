@@ -56,4 +56,4 @@ Options: --runs-dir, --timeout. Exit 0 means already finished or confirmed stopp
 @@TALARIA_COMMAND@@ workflow skill status --profile @@TALARIA_PROFILE@@ --json
 ```
 
-Options: --profile, --json. Shows current, outdated, modified, foreign, or missing, versions and differences. Exit 0 inspected, 1 I/O or mismatch, 2 invalid input or missing profile. Installation is an explicit developer action. It never happens merely by enabling ultracode.
+Options: --profile, --json. Shows current, outdated, modified, foreign, or missing, versions and differences. Exit 0 inspected, 1 I/O or mismatch, 2 invalid input or missing profile. Installation is an explicit developer action. It never happens merely by enabling hivecode.

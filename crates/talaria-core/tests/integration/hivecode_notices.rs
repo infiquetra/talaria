@@ -1,9 +1,9 @@
-//! Skill notices explain Ultracode's dependency and preserve recovery instructions.
+//! Skill notices explain Hivecode's dependency and preserve recovery instructions.
 
-use talaria_core::ultracode::notice;
+use talaria_core::hivecode::notice;
 
-/// The one way every notice says what Ultracode does with a prompt.
-const SKILL_ROLE: &str = "With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
+/// The one way every notice says what Hivecode does with a prompt.
+const SKILL_ROLE: &str = "With Hivecode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
 
 fn explains_skill_role(text: &str) {
     assert!(
@@ -101,7 +101,7 @@ fn on_notice_says_slash_commands_are_not_routed_and_where_runs_appear() {
         "/workflows lists every run",
         "stays on in a /branch copy",
         "other sessions keep their own setting",
-        "/ultracode off to stop",
+        "/hivecode off to stop",
     ] {
         assert!(notice::ON.contains(phrase), "{phrase:?}: {}", notice::ON);
     }
@@ -115,7 +115,7 @@ fn remote_on_notice_says_runs_start_on_the_gateway_machine() {
         "Runs start on the gateway's machine, so this window cannot show them",
         "talaria workflow list there lists them",
         "stays on in a /branch copy",
-        "/ultracode off to stop",
+        "/hivecode off to stop",
     ] {
         assert!(
             notice::ON_REMOTE.contains(phrase),
@@ -131,7 +131,7 @@ fn remote_on_notice_says_runs_start_on_the_gateway_machine() {
 fn bypass_notice_names_the_command_and_the_way_to_route() {
     assert_eq!(
         notice::bypassed("goal"),
-        "Ultracode does not apply to /goal; it goes to Hermes as typed. To have the task handled as a workflow, send it as a plain prompt without /goal."
+        "Hivecode does not apply to /goal; it goes to Hermes as typed. To have the task handled as a workflow, send it as a plain prompt without /goal."
     );
     assert!(notice::bypassed("q").contains("/q;"));
 }
@@ -154,18 +154,18 @@ fn run_notices_name_key_and_workflows_command() {
         notice::run_finished("review-branch", "run-0001", "failed", None),
         "Workflow run failed: review-branch (run-0001). Type /workflows to see the result."
     );
-    assert_eq!(notice::BRANCH_CARRIED, "Ultracode stays on in this branch.");
+    assert_eq!(notice::BRANCH_CARRIED, "Hivecode stays on in this branch.");
 }
 
 #[test]
 fn the_switch_is_announced_on_open_and_after_an_interrupt() {
     assert_eq!(
         notice::OPENED_ON,
-        "Ultracode is on in this session: a plain prompt is handled as a workflow. /ultracode off to stop."
+        "Hivecode is on in this session: a plain prompt is handled as a workflow. /hivecode off to stop."
     );
     assert_eq!(
         notice::STILL_ON,
-        "Ultracode is still on: your next plain prompt is handled as a workflow too."
+        "Hivecode is still on: your next plain prompt is handled as a workflow too."
     );
     for text in [notice::ON, notice::ON_REMOTE] {
         assert!(text.contains("resumed after a restart"), "{text}");

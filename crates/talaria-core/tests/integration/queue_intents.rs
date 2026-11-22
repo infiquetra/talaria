@@ -785,7 +785,7 @@ fn take_back_keeps_a_draft() {
 #[test]
 fn a_prompt_carrying_the_workflow_skill_that_never_starts_is_reported_once() {
     let skill = "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\n\nThe user has provided the following instruction alongside the skill invocation: fix the parser";
-    let reminder = talaria_core::ultracode::follow_up_text("fix the lexer");
+    let reminder = talaria_core::hivecode::follow_up_text("fix the lexer");
     let remove = |state: &mut SessionState| {
         let _ = update(
             state,

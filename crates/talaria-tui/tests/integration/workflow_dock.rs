@@ -1,8 +1,8 @@
 //! The one-line workflow dock above the composer names the run and the key that opens it. While
-//! Ultracode builds a workflow, the building block in the same place says which step it is on.
+//! Hivecode builds a workflow, the building block in the same place says which step it is on.
 
 use ratatui::{Terminal, backend::TestBackend, style::Style};
-use talaria_core::ultracode::authoring::{AuthoringProgress, AuthoringStage};
+use talaria_core::hivecode::authoring::{AuthoringProgress, AuthoringStage};
 use talaria_tui::live::LiveSection;
 use talaria_tui::workflow_view::{AuthoringDock, WorkflowDock, WorkflowTheme, WorkflowView};
 
@@ -68,8 +68,8 @@ fn authoring(
     stage: AuthoringStage,
     script: Option<&str>,
     elapsed_ms: u64,
-) -> talaria_core::ultracode::authoring::AuthoringView {
-    talaria_core::ultracode::authoring::AuthoringView {
+) -> talaria_core::hivecode::authoring::AuthoringView {
+    talaria_core::hivecode::authoring::AuthoringView {
         progress: AuthoringProgress {
             stage,
             script: script.map(str::to_owned),
@@ -102,7 +102,7 @@ fn building_block_names_the_step_script_and_time_in_plain_words() {
     assert_eq!(
         drawn(&block, 80),
         [
-            "⚙ Ultracode · building a workflow · 1m 05s",
+            "⚙ Hivecode · building a workflow · 1m 05s",
             "  Step 2 of 5: writing the workflow script · fix-parser.workflow",
         ]
     );
@@ -111,7 +111,7 @@ fn building_block_names_the_step_script_and_time_in_plain_words() {
     assert_eq!(
         drawn(&block, 80),
         [
-            "⚙ Ultracode · building a workflow · 4s",
+            "⚙ Hivecode · building a workflow · 4s",
             "  Step 1 of 5: planning the workflow",
         ]
     );
@@ -127,7 +127,7 @@ fn building_block_fits_sixty_columns_and_narrower() {
     let block = AuthoringDock::new(&view, 2, Style::new(), Style::new());
     let rows = drawn(&block, 60);
     assert_eq!(rows.len(), 2, "{rows:?}");
-    assert_eq!(rows[0], "⚙ Ultracode · building a workflow · 1m 05s");
+    assert_eq!(rows[0], "⚙ Hivecode · building a workflow · 1m 05s");
     assert!(
         rows[1].starts_with("  Step 4 of 5: waiting for your approval · a-rather"),
         "{rows:?}"
@@ -148,10 +148,7 @@ fn building_block_fits_sixty_columns_and_narrower() {
 fn building_block_is_one_row_on_a_short_screen() {
     let view = authoring(AuthoringStage::Checking, Some("fix-parser.workflow"), 9_000);
     let block = AuthoringDock::new(&view, 1, Style::new(), Style::new());
-    assert_eq!(
-        drawn(&block, 60),
-        ["⚙ Ultracode · checking the script · 9s"]
-    );
+    assert_eq!(drawn(&block, 60), ["⚙ Hivecode · checking the script · 9s"]);
 }
 
 #[test]
@@ -180,8 +177,8 @@ fn empty_picker_says_how_runs_start_and_lists_keys() {
     let screen = rows.join("\n");
     for phrase in [
         "no runs yet — talaria workflow run starts one",
-        "Turn Ultracode on with /ultracode on.",
-        "With Ultracode on, a plain prompt goes to the talaria-workflows skill,",
+        "Turn Hivecode on with /hivecode on.",
+        "With Hivecode on, a plain prompt goes to the talaria-workflows skill,",
         "and the agent proposes a workflow and asks before starting it.",
         "esc close",
     ] {

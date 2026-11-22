@@ -52,7 +52,7 @@ enum Action {
     },
 }
 fn get(name: &str) -> Result<&'static Builtin, (String, u8)> {
-    builtins::get(name).ok_or_else(|| (format!("no built-in workflow named '{name}'; built-ins: fix-failing-tests, research, review-branch, ultracode"),2))
+    builtins::get(name).ok_or_else(|| (format!("no built-in workflow named '{name}'; built-ins: fix-failing-tests, research, review-branch, hivecode"),2))
 }
 fn phases(builtin: &Builtin) -> Result<Vec<String>, (String, u8)> {
     parse_script(builtin.source)

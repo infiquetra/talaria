@@ -1,10 +1,10 @@
 use proptest::prelude::*;
 use talaria_core::{
-    session::ids::SessionId,
-    ultracode::{
-        SubmitRoute, UltracodeCommand, UltracodeState, contains_keyword, route_submit,
+    hivecode::{
+        HivecodeCommand, HivecodeState, SubmitRoute, contains_keyword, route_submit,
         route_submit_with_model,
     },
+    session::ids::SessionId,
 };
 
 #[test]
@@ -28,25 +28,25 @@ fn route_table() {
         ),
         ("fix the parser", false, plain.clone()),
         (
-            "ultracode: fix it",
+            "hivecode: fix it",
             false,
-            workflow("ultracode: fix it", true),
+            workflow("hivecode: fix it", true),
         ),
         (
-            "please ULTRACODE.",
+            "please HIVECODE.",
             false,
-            workflow("please ULTRACODE.", true),
+            workflow("please HIVECODE.", true),
         ),
-        ("ultracoder", false, plain.clone()),
-        ("pre-ultracode", false, plain.clone()),
-        ("ultracode_x", false, plain.clone()),
-        ("`ultracode`", false, workflow("`ultracode`", true)),
+        ("hivecoder", false, plain.clone()),
+        ("pre-hivecode", false, plain.clone()),
+        ("hivecode_x", false, plain.clone()),
+        ("`hivecode`", false, workflow("`hivecode`", true)),
         (
-            "line one\nultracode\nline three",
+            "line one\nhivecode\nline three",
             false,
-            workflow("line one\nultracode\nline three", true),
+            workflow("line one\nhivecode\nline three", true),
         ),
-        ("ultracode", true, workflow("ultracode", false)),
+        ("hivecode", true, workflow("hivecode", false)),
     ];
     for (text, enabled, expected) in cases {
         assert_eq!(
@@ -55,7 +55,7 @@ fn route_table() {
             "{text:?}, enabled={enabled}"
         );
     }
-    assert!(contains_keyword("éultracode"));
+    assert!(contains_keyword("éhivecode"));
 }
 #[test]
 fn route_submit_includes_session_model() {
@@ -92,9 +92,9 @@ proptest! {
     #[test]
     fn keyword_property(text in "[A-Za-z0-9_.,: \\n-]{0,120}", position in 0usize..120, uppercase in any::<bool>()) {
         let split = position.min(text.len());
-        let keyword = if uppercase { "ULTRACODE" } else { "ultracode" };
+        let keyword = if uppercase { "HIVECODE" } else { "hivecode" };
         let candidate = format!("{}{}{}", &text[..split], keyword, &text[split..]);
-        let oracle = candidate.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-')).any(|word| word.eq_ignore_ascii_case("ultracode"));
+        let oracle = candidate.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-')).any(|word| word.eq_ignore_ascii_case("hivecode"));
         prop_assert_eq!(contains_keyword(&candidate), oracle);
     }
 }
@@ -102,7 +102,7 @@ proptest! {
 fn state_and_command_parsing() {
     let a = SessionId::new("fixture-a");
     let b = SessionId::new("fixture-b");
-    let mut state = UltracodeState::new(false);
+    let mut state = HivecodeState::new(false);
     assert!(!state.is_on(&a));
     assert!(!state.is_on(&b));
     state.set(&a, true);
@@ -111,23 +111,23 @@ fn state_and_command_parsing() {
     assert!(!state.toggle(&a));
     assert!(state.toggle(&b));
     for (input, expected) in [
-        ("", UltracodeCommand::Toggle),
-        ("on", UltracodeCommand::On),
-        (" On ", UltracodeCommand::On),
-        ("off", UltracodeCommand::Off),
-        ("status", UltracodeCommand::Status),
+        ("", HivecodeCommand::Toggle),
+        ("on", HivecodeCommand::On),
+        (" On ", HivecodeCommand::On),
+        ("off", HivecodeCommand::Off),
+        ("status", HivecodeCommand::Status),
     ] {
-        assert_eq!(UltracodeCommand::parse(input).unwrap(), expected);
+        assert_eq!(HivecodeCommand::parse(input).unwrap(), expected);
     }
-    assert!(UltracodeCommand::parse("maybe").is_err());
-    assert!(UltracodeCommand::parse("on now").is_err());
-    let default_on = UltracodeState::new(true);
+    assert!(HivecodeCommand::parse("maybe").is_err());
+    assert!(HivecodeCommand::parse("on now").is_err());
+    let default_on = HivecodeState::new(true);
     assert!(default_on.is_on(&a));
 }
 
 #[test]
 fn bypass_flags_prompt_commands_only_when_on() {
-    use talaria_core::ultracode::bypass;
+    use talaria_core::hivecode::bypass;
     for (text, expected) in [
         ("/goal build a fixture tool", Some("goal")),
         ("  /goal   build x", Some("goal")),
@@ -147,13 +147,13 @@ fn bypass_flags_prompt_commands_only_when_on() {
         ("/goal show", None),
         ("/queue", None),
         ("/help", None),
-        ("/ultracode on", None),
+        ("/hivecode on", None),
         ("!ls", None),
         ("fix the parser", None),
         ("", None),
     ] {
         assert_eq!(bypass(text, true).as_deref(), expected, "{text:?}");
-        assert_eq!(bypass(text, false), None, "{text:?} with Ultracode off");
+        assert_eq!(bypass(text, false), None, "{text:?} with Hivecode off");
     }
 }
 
@@ -161,14 +161,14 @@ fn bypass_flags_prompt_commands_only_when_on() {
 fn carry_copies_explicit_state_to_child() {
     let parent = SessionId::new("fixture-parent");
     let child = SessionId::new("fixture-child");
-    let mut state = UltracodeState::new(false);
+    let mut state = HivecodeState::new(false);
     assert!(!state.carry(&parent, &child), "nothing to carry");
     assert!(!state.is_on(&child));
     state.set(&parent, true);
     assert!(state.carry(&parent, &child));
     assert!(state.is_on(&child));
     state.set(&parent, false);
-    let mut default_on = UltracodeState::new(true);
+    let mut default_on = HivecodeState::new(true);
     default_on.set(&parent, false);
     assert!(!default_on.carry(&parent, &child));
     assert!(!default_on.is_on(&child), "an explicit off is carried too");
@@ -176,14 +176,14 @@ fn carry_copies_explicit_state_to_child() {
 
 #[test]
 fn the_full_skill_goes_once_per_conversation_until_it_changes() {
-    use talaria_core::ultracode::SkillEpoch;
+    use talaria_core::hivecode::SkillEpoch;
     let a = SessionId::new("fixture-a");
     let reconnected = SessionId::new("fixture-a2");
     let epoch = |stored: &str, compressions| SkillEpoch {
         stored: stored.into(),
         compressions,
     };
-    let mut state = UltracodeState::new(true);
+    let mut state = HivecodeState::new(true);
     assert!(
         !state.skill_loaded(&a),
         "the first routed prompt carries it"
@@ -217,8 +217,8 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// The saved file's text after `changes` are merged into `file`.
 fn merged(
-    mut file: talaria_core::ultracode::SavedModes,
-    changes: &talaria_core::ultracode::SavedChanges,
+    mut file: talaria_core::hivecode::SavedModes,
+    changes: &talaria_core::hivecode::SavedChanges,
 ) -> String {
     file.merge(changes);
     file.to_json()
@@ -226,13 +226,13 @@ fn merged(
 
 #[test]
 fn the_switch_follows_the_stored_session_across_runtime_ids() {
-    use talaria_core::ultracode::SavedModes;
+    use talaria_core::hivecode::SavedModes;
     let (a1, w1, b2) = (
         SessionId::new("runtime-a1"),
         SessionId::new("runtime-w1"),
         SessionId::new("runtime-b2"),
     );
-    let mut state = UltracodeState::new(false);
+    let mut state = HivecodeState::new(false);
     assert!(!state.adopt(&a1, "stored-s"));
     state.set(&a1, true);
     // Another session in between keeps its own setting.
@@ -244,7 +244,7 @@ fn the_switch_follows_the_stored_session_across_runtime_ids() {
     // A restart reads the saved file and restores it under yet another runtime id.
     let saved = state.take_saved(10 * DAY_MS).expect("a change is saved");
     let text = merged(SavedModes::default(), &saved);
-    let mut restarted = UltracodeState::new(false);
+    let mut restarted = HivecodeState::new(false);
     restarted.restore(SavedModes::from_json(&text).expect("the saved file reads back"));
     let c3 = SessionId::new("runtime-c3");
     assert!(restarted.adopt(&c3, "stored-s"));
@@ -259,14 +259,14 @@ fn the_switch_follows_the_stored_session_across_runtime_ids() {
     );
 
     // Off is remembered too, even when the launch default is on.
-    let mut defaulted = UltracodeState::new(true);
+    let mut defaulted = HivecodeState::new(true);
     assert!(defaulted.adopt(&a1, "stored-s"));
     defaulted.set(&a1, false);
     let text = merged(
         SavedModes::default(),
         &defaulted.take_saved(DAY_MS).unwrap(),
     );
-    let mut again = UltracodeState::new(true);
+    let mut again = HivecodeState::new(true);
     again.restore(SavedModes::from_json(&text).unwrap());
     assert!(!again.adopt(&b2, "stored-s"));
 }
@@ -277,7 +277,7 @@ fn a_setting_made_before_the_stored_id_is_known_is_kept() {
         SessionId::new("runtime-a1"),
         SessionId::new("runtime-child"),
     );
-    let mut state = UltracodeState::new(false);
+    let mut state = HivecodeState::new(false);
     state.set(&a1, true);
     // A branch copies the parent's setting before the child is opened.
     assert!(state.carry(&a1, &child));
@@ -288,9 +288,9 @@ fn a_setting_made_before_the_stored_id_is_known_is_kept() {
 
 #[test]
 fn compaction_moves_the_switch_to_the_new_stored_id() {
-    use talaria_core::ultracode::SavedModes;
+    use talaria_core::hivecode::SavedModes;
     let a1 = SessionId::new("runtime-a1");
-    let mut state = UltracodeState::new(false);
+    let mut state = HivecodeState::new(false);
     state.adopt(&a1, "stored-before");
     state.set(&a1, true);
     let _ = state.take_saved(DAY_MS);
@@ -300,7 +300,7 @@ fn compaction_moves_the_switch_to_the_new_stored_id() {
         SavedModes::default(),
         &state.take_saved(DAY_MS).expect("the move is saved"),
     );
-    let mut restarted = UltracodeState::new(false);
+    let mut restarted = HivecodeState::new(false);
     restarted.restore(SavedModes::from_json(&text).unwrap());
     assert!(restarted.adopt(&SessionId::new("runtime-b2"), "stored-after"));
     // Rotating to the id it already has changes nothing.
@@ -310,8 +310,8 @@ fn compaction_moves_the_switch_to_the_new_stored_id() {
 
 #[test]
 fn the_saved_file_drops_sessions_not_seen_for_thirty_days() {
-    use talaria_core::ultracode::SavedModes;
-    let mut state = UltracodeState::new(false);
+    use talaria_core::hivecode::SavedModes;
+    let mut state = HivecodeState::new(false);
     let (old, recent) = (SessionId::new("runtime-old"), SessionId::new("runtime-new"));
     state.adopt(&old, "stored-old");
     state.set(&old, true);
@@ -323,7 +323,7 @@ fn the_saved_file_drops_sessions_not_seen_for_thirty_days() {
     assert!(text.contains("stored-new"), "{text}");
     assert!(!text.contains("stored-old"), "{text}");
     // A file read at start-up is pruned the same way, against the time it is read.
-    let mut restarted = UltracodeState::new(false);
+    let mut restarted = HivecodeState::new(false);
     let mut saved = SavedModes::from_json(&text).unwrap();
     saved.prune(80 * DAY_MS);
     restarted.restore(saved);
@@ -334,9 +334,9 @@ fn the_saved_file_drops_sessions_not_seen_for_thirty_days() {
 
 #[test]
 fn two_windows_saving_in_turn_keep_each_others_settings() {
-    use talaria_core::ultracode::SavedModes;
+    use talaria_core::hivecode::SavedModes;
     // Both windows read the same empty file at start-up.
-    let (mut first, mut second) = (UltracodeState::new(false), UltracodeState::new(false));
+    let (mut first, mut second) = (HivecodeState::new(false), HivecodeState::new(false));
     let mut file = SavedModes::default();
     let (s, t) = (SessionId::new("runtime-s"), SessionId::new("runtime-t"));
     second.adopt(&s, "stored-s");
@@ -345,19 +345,19 @@ fn two_windows_saving_in_turn_keep_each_others_settings() {
     first.adopt(&t, "stored-t");
     first.set(&t, true);
     file.merge(&first.take_saved(2 * DAY_MS).unwrap());
-    let mut restarted = UltracodeState::new(false);
+    let mut restarted = HivecodeState::new(false);
     restarted.restore(SavedModes::from_json(&file.to_json()).unwrap());
     assert!(restarted.adopt(&SessionId::new("runtime-1"), "stored-s"));
     assert!(restarted.adopt(&SessionId::new("runtime-2"), "stored-t"));
 
     // A window that only opens a session another window has since changed keeps that change.
-    let mut stale = UltracodeState::new(false);
+    let mut stale = HivecodeState::new(false);
     stale.restore(SavedModes::from_json(&file.to_json()).unwrap());
     second.set(&s, false);
     file.merge(&second.take_saved(3 * DAY_MS).unwrap());
     assert!(stale.adopt(&SessionId::new("runtime-3"), "stored-s"));
     file.merge(&stale.take_saved(4 * DAY_MS).unwrap());
-    let mut again = UltracodeState::new(false);
+    let mut again = HivecodeState::new(false);
     again.restore(file);
     assert!(!again.adopt(&SessionId::new("runtime-4"), "stored-s"));
 }
@@ -365,23 +365,23 @@ fn two_windows_saving_in_turn_keep_each_others_settings() {
 #[test]
 fn a_session_compacted_while_away_keeps_its_setting() {
     let (a1, w1) = (SessionId::new("runtime-a1"), SessionId::new("runtime-w1"));
-    let mut state = UltracodeState::new(false);
+    let mut state = HivecodeState::new(false);
     state.adopt(&a1, "stored-s");
     state.set(&a1, true);
     state.adopt(&w1, "stored-w");
     // The same runtime session comes back with the compaction's tip as its stored id.
     assert!(state.adopt(&a1, "stored-tip"));
     // A stored id that already has its own setting keeps it.
-    let mut other = UltracodeState::new(false);
+    let mut other = HivecodeState::new(false);
     other.adopt(&a1, "stored-s");
     other.set(&a1, true);
     other.adopt(&w1, "stored-w");
     other.set(&w1, false);
     assert!(!other.adopt(&a1, "stored-w"));
     // A resume by id answers with the id it was asked for: a stored id saved earlier.
-    let mut restarted = UltracodeState::new(false);
+    let mut restarted = HivecodeState::new(false);
     restarted.restore(
-        talaria_core::ultracode::SavedModes::from_json(
+        talaria_core::hivecode::SavedModes::from_json(
             r#"{"version":1,"sessions":{"stored-s":{"on":true,"seen_ms":0}}}"#,
         )
         .unwrap(),

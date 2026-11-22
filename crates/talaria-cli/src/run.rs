@@ -642,7 +642,7 @@ fn choice_hands_to_composer(keymap: &KeyMap, key: Key) -> bool {
 }
 
 /// The open `/effort` scale's key: the `/model` picker's effort keys move it and its scope key
-/// stages saving for new sessions, so a rebinding applies to both. Tab stages Ultracode,
+/// stages saving for new sessions, so a rebinding applies to both. Tab stages Hivecode,
 /// Home and End jump to the ends, Enter applies and Esc or Ctrl+C cancels.
 fn scale_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::models::ScaleKey> {
     use talaria_core::models::ScaleKey;
@@ -665,7 +665,7 @@ fn scale_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::models::ScaleKey
     match key.code {
         KeyCode::Home => Some(ScaleKey::Lowest),
         KeyCode::End => Some(ScaleKey::Highest),
-        KeyCode::Tab => Some(ScaleKey::ToggleUltracode),
+        KeyCode::Tab => Some(ScaleKey::ToggleHivecode),
         KeyCode::Enter => Some(ScaleKey::Apply),
         KeyCode::Esc => Some(ScaleKey::Cancel),
         _ => None,
@@ -1538,7 +1538,7 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         warning_count: view.state.map_or(0, |state| {
             u32::try_from(state.notices().warning_count()).unwrap_or(u32::MAX)
         }),
-        ultracode: view.ultracode,
+        hivecode: view.hivecode,
         profile: (view.profile != "default").then(|| view.profile.to_owned()),
         workflow_run: view
             .workflow_run
@@ -5661,25 +5661,25 @@ fn print_outcome(outcome: &Outcome) {
 }
 
 pub fn run(launch: Launch) -> ExitCode {
-    run_with_ultracode(launch, false)
+    run_with_hivecode(launch, false)
 }
 
-pub fn run_with_ultracode(launch: Launch, ultracode: bool) -> ExitCode {
-    run_selected(launch, ultracode, None)
+pub fn run_with_hivecode(launch: Launch, hivecode: bool) -> ExitCode {
+    run_selected(launch, hivecode, None)
 }
 
 pub fn run_remote(
     launch: Launch,
-    ultracode: bool,
+    hivecode: bool,
     cfg: hermes_client::remote::RemoteConfig,
     store: hermes_client::remote::TokenStore,
 ) -> ExitCode {
-    run_selected(launch, ultracode, Some((cfg, store)))
+    run_selected(launch, hivecode, Some((cfg, store)))
 }
 
 fn run_selected(
     mut launch: Launch,
-    ultracode: bool,
+    hivecode: bool,
     remote: Option<(
         hermes_client::remote::RemoteConfig,
         hermes_client::remote::TokenStore,
@@ -5708,7 +5708,7 @@ fn run_selected(
     let env = EnvView::from_process();
     notices.extend(detect::env_notices(&env));
     let settings = ThemeSettings {
-        ultracode,
+        hivecode,
         mode: loaded.config.theme.mode,
         look: Look {
             follow_hermes_skin: loaded.config.theme.follow_hermes_skin,
@@ -5824,7 +5824,7 @@ fn run_selected(
 
 /// The theme settings read before the terminal is set up.
 struct ThemeSettings {
-    ultracode: bool,
+    hivecode: bool,
     env: EnvView,
     mode: ThemeMode,
     look: Look,
@@ -6031,7 +6031,7 @@ fn session(
         setup,
         &mut screen,
         receiver,
-        settings.ultracode,
+        settings.hivecode,
         remote_audio,
     ));
     screen.restore();
@@ -6521,8 +6521,8 @@ mod tests {
             (KeyCode::Right, KeyModifiers::NONE, ScaleKey::Higher),
             (KeyCode::Home, KeyModifiers::NONE, ScaleKey::Lowest),
             (KeyCode::End, KeyModifiers::NONE, ScaleKey::Highest),
-            // Tab stages Ultracode here; it does not accept a completion.
-            (KeyCode::Tab, KeyModifiers::NONE, ScaleKey::ToggleUltracode),
+            // Tab stages Hivecode here; it does not accept a completion.
+            (KeyCode::Tab, KeyModifiers::NONE, ScaleKey::ToggleHivecode),
             (
                 KeyCode::Char('g'),
                 KeyModifiers::CONTROL,

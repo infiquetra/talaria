@@ -1,4 +1,4 @@
-//! A prompt Ultracode handles as a workflow reaches the model wrapped: the first one carries the
+//! A prompt Hivecode handles as a workflow reaches the model wrapped: the first one carries the
 //! whole workflow skill, later ones a one-line reminder. The screen shows only what the person
 //! typed, live, queued, in the queue preview and after a resume.
 
@@ -7,14 +7,14 @@ use crate::events;
 use events::{EPOCH, SESSION, ev, session_event};
 use hermes_contract::schemas::CanonicalSnapshot;
 use serde_json::{Value, json};
+use talaria_core::hivecode::{
+    FOLLOW_UP_REMINDER, follow_up_text, notice, replayed_request, retyped, typed_text,
+};
 use talaria_core::queue::{
     AdmissionId, Controls, IdSource, QueueIntent, QueuedRow, RowStatus, SubmissionId, update_queue,
 };
 use talaria_core::rewind::rewind_turns;
 use talaria_core::session::{Cell, Effect, Event, SessionId, SessionState, update};
-use talaria_core::ultracode::{
-    FOLLOW_UP_REMINDER, follow_up_text, notice, replayed_request, retyped, typed_text,
-};
 
 /// What Hermes expands a routed prompt into: the skill's header and body, then the request.
 const FULL: &str = "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\nPropose a workflow, then ask before starting it.\n\n[Skill directory: fixture-skills/talaria-workflows]\n\nThe user has provided the following instruction alongside the skill invocation: fix the parser";

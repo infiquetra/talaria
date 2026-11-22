@@ -205,7 +205,7 @@ login name and the gateway home.
 
 `cargo run -p smoke -- run --suite phase5 --talaria <binary>` checks the workflow
 screens and CLI in a Herdr pane. It has ten fail-fast steps: startup, plain-answer,
-workflows-empty, ultracode-status, quit, resume, builtins-cli, roster-cli, list-cli,
+workflows-empty, hivecode-status, quit, resume, builtins-cli, roster-cli, list-cli,
 and no-gateway. The default deadline is 600 seconds; the per-step limits total
 410 seconds. `--step-scale` scales polling budgets while paste guards and quiet
 periods keep their duration. The default suite remains `phase1`.
@@ -219,7 +219,7 @@ The suite never installs a Hermes skill or changes the profile to meet it.
 
 Only the plain answer and the fresh answer after resume start model turns. Both
 interactive launches use `--no-ensure`. The empty workflows view must close with
-Esc; `/ultracode status` must leave the toggle off without starting a turn. Resume
+Esc; `/hivecode status` must leave the toggle off without starting a turn. Resume
 must show the old token, answer a new token, quit successfully and return to a
 positively observed shell before any CLI command runs.
 

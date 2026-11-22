@@ -1,13 +1,13 @@
 //! The files behind workflow routing: the saved per-session switch and the local setup read.
 //! The application runs these off its update loop and posts the results as messages.
-use crate::ultracode::{SetupFacts, SkillCheck, TierCheck};
+use crate::hivecode::{SetupFacts, SkillCheck, TierCheck};
 use std::{
     collections::HashMap,
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use talaria_core::ultracode::{SavedChanges, SavedModes};
+use talaria_core::hivecode::{SavedChanges, SavedModes};
 use talaria_workflow::{builtins, skill, staffing::StaffingTable};
 
 /// The saved switch's file name in Talaria's home folder.

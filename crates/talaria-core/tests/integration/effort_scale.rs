@@ -1,5 +1,5 @@
 //! The `/effort` selector: a scale of Hermes's levels that Left and Right move along, with a
-//! staged Ultracode switch and a save-for-new-sessions switch that Enter applies together.
+//! staged Hivecode switch and a save-for-new-sessions switch that Enter applies together.
 
 use serde_json::json;
 use talaria_core::models::{
@@ -13,7 +13,7 @@ fn facts(current: Option<Effort>) -> ScaleFacts {
         wire: None,
         offered: Some(true),
         can_disable: None,
-        ultracode: false,
+        hivecode: false,
         profile: "work".into(),
     }
 }
@@ -105,7 +105,7 @@ fn enter_after_a_move_sets_the_level_for_this_session() {
         ScaleEffect::Apply {
             level: Some(Effort::Xhigh),
             save_default: false,
-            ultracode: None,
+            hivecode: None,
         }
     );
 }
@@ -123,40 +123,40 @@ fn the_save_switch_saves_the_level_for_new_sessions() {
         ScaleEffect::Apply {
             level: Some(Effort::High),
             save_default: true,
-            ultracode: None,
+            hivecode: None,
         }
     );
 }
 
 #[test]
-fn tab_stages_ultracode_and_enter_applies_it() {
+fn tab_stages_hivecode_and_enter_applies_it() {
     let mut scale = scale(Some(Effort::High));
-    press(&mut scale, &[ScaleKey::ToggleUltracode]);
-    assert!(scale.ultracode());
-    assert!(scale.ultracode_changed());
+    press(&mut scale, &[ScaleKey::ToggleHivecode]);
+    assert!(scale.hivecode());
+    assert!(scale.hivecode_changed());
     assert_eq!(
         press(&mut scale.clone(), &[ScaleKey::Apply]),
         ScaleEffect::Apply {
             level: None,
             save_default: false,
-            ultracode: Some(true),
+            hivecode: Some(true),
         }
     );
-    press(&mut scale, &[ScaleKey::ToggleUltracode]);
-    assert!(!scale.ultracode_changed());
+    press(&mut scale, &[ScaleKey::ToggleHivecode]);
+    assert!(!scale.hivecode_changed());
     assert_eq!(press(&mut scale, &[ScaleKey::Apply]), ScaleEffect::Cancel);
     // Effort and the switch together.
     let mut both = self::scale(Some(Effort::High));
     let effect = press(
         &mut both,
-        &[ScaleKey::Lower, ScaleKey::ToggleUltracode, ScaleKey::Apply],
+        &[ScaleKey::Lower, ScaleKey::ToggleHivecode, ScaleKey::Apply],
     );
     assert_eq!(
         effect,
         ScaleEffect::Apply {
             level: Some(Effort::Medium),
             save_default: false,
-            ultracode: Some(true),
+            hivecode: Some(true),
         }
     );
 }
@@ -168,7 +168,7 @@ fn escape_cancels_whatever_was_staged() {
         &mut scale,
         &[
             ScaleKey::Higher,
-            ScaleKey::ToggleUltracode,
+            ScaleKey::ToggleHivecode,
             ScaleKey::ToggleSave,
             ScaleKey::Cancel,
         ],

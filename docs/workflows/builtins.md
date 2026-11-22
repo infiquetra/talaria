@@ -13,7 +13,7 @@ talaria workflow builtins show review-branch
 talaria workflow builtins install
 talaria workflow builtins install --force --json
 talaria workflow builtins check review-branch --staffing ./staffing.toml
-talaria workflow builtins check ultracode --args '{"designers":2}'
+talaria workflow builtins check hivecode --args '{"designers":2}'
 ```
 
 `list` reports phases, role defaults, toolsets, worktree use, the default agent
@@ -142,7 +142,7 @@ The result includes `status` (`fixed-all`, `partial`, `none-fixed`, `no-failures
 Nothing is merged or pushed. Review each local branch before accepting it.
 Default maximum: **11 agents**; `1 + 2 * maxFixes`, at most **21**.
 
-## ultracode
+## hivecode
 
 Surveys code, compares independent designs, chooses a plan, implements it tests
 first, then calls `review-branch` as a child workflow. Phases: Understand, Design,
@@ -218,6 +218,6 @@ by default only when there is no process/session yolo, approval-mode bypass or
 saved pattern approval; `approvals.single_query_mode` can also enable approval.
 Plain `git push`, `git commit` and `git merge --ff-only` are not dangerous-command
 patterns in the pinned Hermes release. Prompts forbid pushing; only fixers and
-the ultracode implementer may commit, on their current local branch. No built-in
+the hivecode implementer may commit, on their current local branch. No built-in
 merges into the operator's checkout or pushes. Review commits yourself before
 accepting them. Secret-shaped diff text may be masked in stored Hermes results.

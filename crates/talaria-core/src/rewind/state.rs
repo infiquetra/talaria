@@ -531,7 +531,7 @@ impl RewindState {
         };
         view.title = text::actions_title(chosen.ordinal, &turn_age(chosen, now_ms));
         let prompt = chosen.prompt_text.as_deref().unwrap_or(&chosen.text_parts);
-        let prompt = crate::ultracode::shown_text(prompt);
+        let prompt = crate::hivecode::shown_text(prompt);
         let mut lines: Vec<&str> = prompt.lines().take(PROMPT_LINES).collect();
         if lines.iter().all(|line| line.trim().is_empty()) {
             lines = vec![chosen.preview.as_str()];

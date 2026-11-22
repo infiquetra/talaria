@@ -39,7 +39,7 @@ fn current_notice_uses_the_level_tone() {
     }
 
     assert_eq!(Segment::ALL.len(), 15);
-    assert_eq!(Segment::ALL.last().copied(), Some(Segment::Ultracode));
+    assert_eq!(Segment::ALL.last().copied(), Some(Segment::Hivecode));
 }
 
 #[test]

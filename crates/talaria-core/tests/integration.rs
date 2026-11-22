@@ -171,6 +171,14 @@ mod fleet_view_pane;
 mod fleet_view_rows;
 #[path = "integration/herdr_mapping.rs"]
 mod herdr_mapping;
+#[path = "integration/hivecode_authoring.rs"]
+mod hivecode_authoring;
+#[path = "integration/hivecode_notices.rs"]
+mod hivecode_notices;
+#[path = "integration/hivecode_route.rs"]
+mod hivecode_route;
+#[path = "integration/hivecode_screen.rs"]
+mod hivecode_screen;
 #[path = "integration/injected_messages.rs"]
 mod injected_messages;
 #[path = "integration/kanban_state.rs"]
@@ -349,14 +357,6 @@ mod text_sanitize;
 mod tool_generating;
 #[path = "integration/tool_view.rs"]
 mod tool_view;
-#[path = "integration/ultracode_authoring.rs"]
-mod ultracode_authoring;
-#[path = "integration/ultracode_notices.rs"]
-mod ultracode_notices;
-#[path = "integration/ultracode_route.rs"]
-mod ultracode_route;
-#[path = "integration/ultracode_screen.rs"]
-mod ultracode_screen;
 #[path = "integration/voice_barge_in.rs"]
 mod voice_barge_in;
 #[path = "integration/voice_client_core.rs"]

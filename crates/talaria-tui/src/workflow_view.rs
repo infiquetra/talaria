@@ -97,7 +97,7 @@ impl crate::live::LiveSection for WorkflowDock<'_> {
 /// The block in the workflow dock's place while a routed turn builds a workflow: what it is,
 /// how long it has run, and the step it is on. It holds still: only the seconds change.
 pub struct AuthoringDock<'a> {
-    view: &'a talaria_core::ultracode::authoring::AuthoringView,
+    view: &'a talaria_core::hivecode::authoring::AuthoringView,
     max_rows: u16,
     header: Style,
     hint: Style,
@@ -105,7 +105,7 @@ pub struct AuthoringDock<'a> {
 impl<'a> AuthoringDock<'a> {
     /// `max_rows` is 1 on a short screen, which draws the block as one row.
     pub fn new(
-        view: &'a talaria_core::ultracode::authoring::AuthoringView,
+        view: &'a talaria_core::hivecode::authoring::AuthoringView,
         max_rows: u16,
         header: Style,
         hint: Style,
@@ -118,7 +118,7 @@ impl<'a> AuthoringDock<'a> {
         }
     }
     pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
-        use talaria_core::ultracode::{authoring::elapsed_text, notice};
+        use talaria_core::hivecode::{authoring::elapsed_text, notice};
         if width == 0 || self.max_rows == 0 {
             return vec![];
         }
@@ -186,8 +186,8 @@ impl WorkflowView {
         if let Some(message) = picker.empty_message() {
             let lines = [
                 message,
-                "Turn Ultracode on with /ultracode on.",
-                "With Ultracode on, a plain prompt goes to the talaria-workflows skill,",
+                "Turn Hivecode on with /hivecode on.",
+                "With Hivecode on, a plain prompt goes to the talaria-workflows skill,",
                 "and the agent proposes a workflow and asks before starting it.",
             ];
             for (y, text) in (inner.y..inner.bottom()).zip(lines) {

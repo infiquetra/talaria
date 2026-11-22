@@ -1,4 +1,4 @@
-export const meta = {"name": "ultracode", "description": "Understand the code, compare independent designs, implement the chosen one test-first in a worktree, then review it with review-branch.", "whenToUse": "Use this to design, implement and review a substantive task.", "phases": [{"title": "Understand", "detail": "Survey the task and relevant code."}, {"title": "Design", "detail": "Propose independent approaches."}, {"title": "Choose", "detail": "Select a plan and its tests."}, {"title": "Implement", "detail": "Write tests and commit a local implementation."}, {"title": "Review", "detail": "Review independently and rank the evidence."}]};
+export const meta = {"name": "hivecode", "description": "Understand the code, compare independent designs, implement the chosen one test-first in a worktree, then review it with review-branch.", "whenToUse": "Use this to design, implement and review a substantive task.", "phases": [{"title": "Understand", "detail": "Survey the task and relevant code."}, {"title": "Design", "detail": "Propose independent approaches."}, {"title": "Choose", "detail": "Select a plan and its tests."}, {"title": "Implement", "detail": "Write tests and commit a local implementation."}, {"title": "Review", "detail": "Review independently and rank the evidence."}]};
 const DEFAULT_TIERS = {"scout": "survey", "designers": ["judge"], "chooser": "judge", "implementer": "builder"};
 
 // Each script is self-contained so installed copies remain ordinary editable files.
@@ -17,12 +17,12 @@ function material(value, cap = 4000) {
 }
 function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
 function shown(v) { const s = JSON.stringify(v); return s.length > 200 ? s.slice(0, 200) + '…' : s; }
-function fail(s) { throw new Error('ultracode: ' + s); }
+function fail(s) { throw new Error('hivecode: ' + s); }
 const REVIEW_SPEC = {base: 'ref', focus: 'focus', head: 'ref', lenses: 'lenses', maxDiffChars: [2000, 200000], maxFindings: [1, 20], tiers: {collector: 'tier', reviewers: 'tierlist', synthesizer: 'tier', verifier: 'tier'}};
 function checkArgs(spec, value, path = 'args') {
   if (value === undefined) value = {};
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail("'" + path + "' must be an object, got " + shown(value));
-  if (path === 'review' && ('base' in value || 'head' in value)) fail('review.base and review.head are set by ultracode');
+  if (path === 'review' && ('base' in value || 'head' in value)) fail('review.base and review.head are set by hivecode');
   const prefix = path === 'args' ? '' : path + '.';
   const keys = Object.keys(spec).sort();
   for (const k of Object.keys(value)) if (!keys.includes(k)) fail("unknown argument '" + prefix + k + "'; allowed: " + keys.join(', '));

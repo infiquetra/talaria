@@ -17,7 +17,7 @@ pub const STEPS: [&str; 10] = [
     "startup",
     "plain-answer",
     "workflows-empty",
-    "ultracode-status",
+    "hivecode-status",
     "quit",
     "resume",
     "builtins-cli",
@@ -52,7 +52,7 @@ pub fn script_5(modes: &[&str]) -> ScriptBuilder {
     let has = |mode: &str| modes.contains(&mode);
     let idle = fixture("idle.txt");
     let mut workflow = fixture("workflows-empty.txt");
-    let mut status = fixture("ultracode-status.txt");
+    let mut status = fixture("hivecode-status.txt");
     if has("workflows-missing") {
         workflow = workflow.replace(
             "no runs yet — talaria workflow run starts one",
@@ -61,7 +61,7 @@ pub fn script_5(modes: &[&str]) -> ScriptBuilder {
     }
     if has("status-missing") {
         status = status.replace(
-            "Ultracode is off for this session. Skill: not found in profile fixture.",
+            "Hivecode is off for this session. Skill: not found in profile fixture.",
             "status unavailable",
         );
     }
@@ -69,7 +69,7 @@ pub fn script_5(modes: &[&str]) -> ScriptBuilder {
         status.push_str("∴ thinking\n");
     }
     if has("toggle-on") {
-        status.push_str("model │ ultracode │ approvals: manual\n");
+        status.push_str("model │ hivecode │ approvals: manual\n");
     }
 
     let start = if has("startup-exit-1") {
@@ -185,7 +185,7 @@ pub fn script_5(modes: &[&str]) -> ScriptBuilder {
         )
         .on_first(workflow_esc)
         .on_first(
-            RuleBuilder::send_text(r"^/ultracode status$")
+            RuleBuilder::send_text(r"^/hivecode status$")
                 .clear()
                 .append(&status),
         )
@@ -299,7 +299,7 @@ pub fn script_5(modes: &[&str]) -> ScriptBuilder {
                     "<fix-failing-tests-workflow>",
                     "$1/workflows/fix-failing-tests.js",
                 )
-                .replace("<ultracode-workflow>", "$1/workflows/ultracode.js")
+                .replace("<hivecode-workflow>", "$1/workflows/hivecode.js")
                 .replace("<scratch>/config", "$1");
             format!("{value}\nexit=0\n")
         };
