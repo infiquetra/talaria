@@ -991,16 +991,13 @@
   {
    "key": "x_search.reasoning_effort",
    "kind": "constant",
-   "file": "hermes_constants.py",
-   "name": "VALID_REASONING_EFFORTS",
+   "file": "tools/x_search_tool.py",
+   "name": "X_SEARCH_REASONING_EFFORTS",
    "values": [
-    "minimal",
     "low",
     "medium",
     "high",
-    "xhigh",
-    "max",
-    "ultra"
+    "xhigh"
    ]
   }
  ],

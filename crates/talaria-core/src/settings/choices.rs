@@ -1155,13 +1155,10 @@ static SPECS: &[ChoiceSpec] = &[
         "x_search.reasoning_effort",
         &[
             v("", "Use the model's own default reasoning effort.").label("Model default"),
-            v("minimal", "Minimal reasoning effort."),
             v("low", "Low reasoning effort."),
             v("medium", "Medium reasoning effort."),
             v("high", "High reasoning effort."),
             v("xhigh", "Xhigh reasoning effort."),
-            v("max", "Max reasoning effort."),
-            v("ultra", "Ultra reasoning effort."),
         ],
     )
     .json(),

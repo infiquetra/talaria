@@ -514,7 +514,7 @@ CONFIG_CHOICE_SOURCES = [
     {"key": "wake_word.provider", "kind": "comment", "values": ["auto", "openwakeword", "sherpa", "porcupine"]},
     {"key": "wake_word.surface", "kind": "comment", "values": ["auto", "cli", "tui", "gui"]},
     {"key": "web.search_backend", "kind": "constant", "file": "agent/web_search_registry.py", "name": "_LEGACY_PREFERENCE"},
-    {"key": "x_search.reasoning_effort", "kind": "constant", "file": "hermes_constants.py", "name": "VALID_REASONING_EFFORTS"},
+    {"key": "x_search.reasoning_effort", "kind": "constant", "file": "tools/x_search_tool.py", "name": "X_SEARCH_REASONING_EFFORTS"},
 ]
 
 

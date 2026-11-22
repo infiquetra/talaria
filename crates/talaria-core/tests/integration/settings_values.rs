@@ -258,6 +258,21 @@ fn null_default_choice_saves_json() {
 }
 
 #[test]
+fn x_search_effort_refuses_values_its_reader_rejects() {
+    // Hermes's x_search tool accepts only its own four efforts, not the general effort list.
+    let effort = keyed("x_search.reasoning_effort", FieldKind::String, None);
+    for refused in ["minimal", "max", "ultra"] {
+        assert_eq!(
+            parse_input(&ValueKind::Choice, &effort, refused, None)
+                .unwrap_err()
+                .message,
+            "Choose one of: \"\", low, medium, high, xhigh.",
+            "{refused}"
+        );
+    }
+}
+
+#[test]
 fn schema_options_merge_with_the_built_in_list() {
     let provider = keyed(
         "tts.provider",

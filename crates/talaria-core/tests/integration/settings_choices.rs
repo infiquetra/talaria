@@ -173,6 +173,24 @@ fn every_spec_has_a_proof_entry() {
 }
 
 #[test]
+fn x_search_effort_is_proven_by_the_list_its_reader_checks() {
+    // The general effort list is wider than what the x_search tool accepts.
+    let proof = proof();
+    let entry = proof["choices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"] == "x_search.reasoning_effort")
+        .unwrap();
+    assert_eq!(entry["file"], "tools/x_search_tool.py");
+    assert_eq!(entry["name"], "X_SEARCH_REASONING_EFFORTS");
+    assert_eq!(
+        values("x_search.reasoning_effort"),
+        ["", "low", "medium", "high", "xhigh"]
+    );
+}
+
+#[test]
 fn spec_values_match_the_pinned_hermes_source() {
     let proof = proof();
     for spec in choice_specs() {
