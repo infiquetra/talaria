@@ -42,6 +42,90 @@ fn invalid_panel_values_emit_one_notice_and_use_false() {
 }
 
 #[test]
+fn reasoning_config_defaults_to_collapsed_and_reads_both_values() {
+    use talaria_core::layout::ReasoningDisplay;
+    let default = config::parse("");
+    assert_eq!(default.config.ui.reasoning, ReasoningDisplay::Collapsed);
+    for (value, expected) in [
+        ("collapsed", ReasoningDisplay::Collapsed),
+        ("full", ReasoningDisplay::Full),
+    ] {
+        let loaded = config::parse(&format!("[ui]\nreasoning = '{value}'\n"));
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+        assert_eq!(loaded.config.ui.reasoning, expected);
+    }
+    for value in ["'loud'", "true", "1"] {
+        let loaded = config::parse(&format!("[ui]\nreasoning = {value}\n"));
+        assert_eq!(loaded.config.ui.reasoning, ReasoningDisplay::Collapsed);
+        assert_eq!(
+            loaded.notices,
+            vec![
+                "[ui] reasoning must be \"collapsed\" or \"full\"; using \"collapsed\".".to_owned()
+            ]
+        );
+    }
+}
+
+#[test]
+fn thinking_changes_the_current_view_and_says_so() {
+    use talaria_core::layout::ReasoningDisplay;
+    let mut state = AppState::new("0123456789abcdef");
+    assert_eq!(state.view().layout.reasoning, ReasoningDisplay::Collapsed);
+    let committed = |effects: &[AppEffect]| -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::CommitLines(lines) => Some(lines.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    };
+
+    let effects = update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/thinking full".into())),
+    );
+    assert_eq!(state.view().layout.reasoning, ReasoningDisplay::Full);
+    assert_eq!(
+        committed(&effects),
+        vec![
+            "\u{b7} Thinking now shows in full in this view. Set [ui] reasoning = \"full\" in ~/.talaria/config.toml to keep it."
+                .to_owned()
+        ]
+    );
+
+    let effects = update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/thinking".into())),
+    );
+    assert_eq!(state.view().layout.reasoning, ReasoningDisplay::Collapsed);
+    assert_eq!(
+        committed(&effects),
+        vec![
+            "\u{b7} Thinking now shows as one line per block in this view; the transcript view shows it in full."
+                .to_owned()
+        ]
+    );
+
+    let effects = update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/thinking loud".into())),
+    );
+    assert_eq!(state.view().layout.reasoning, ReasoningDisplay::Collapsed);
+    assert_eq!(
+        committed(&effects),
+        vec!["\u{b7} Usage: /thinking [collapsed|full]".to_owned()]
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::LoadDraft(_))),
+        "a refused argument does not put the line back"
+    );
+}
+
+#[test]
 fn runtime_toggles_leave_the_config_file_unchanged() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();

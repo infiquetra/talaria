@@ -410,6 +410,55 @@ fn reasoning_marks(state: &SessionState) -> Vec<(String, bool)> {
         .collect()
 }
 
+/// Each reasoning cell's text and whether it is marked as its turn's only output.
+fn unanswered_marks(state: &SessionState) -> Vec<(String, bool)> {
+    state
+        .cells()
+        .iter()
+        .filter_map(|cell| match cell {
+            Cell::Reasoning(cell) => Some((cell.text.clone(), cell.no_reply)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn resumed(messages: Value, running: bool) -> SessionState {
+    let mut value = snapshot_json::base(SESSION);
+    value["running"] = json!(running);
+    value["message_count"] = json!(messages.as_array().map_or(0, Vec::len));
+    value["messages"] = messages;
+    drive::reduce_snapshot(snapshot_json::snapshot(value), Vec::new()).0
+}
+
+#[test]
+fn snapshot_marks_only_the_reply_less_final_reasoning() {
+    let messages = json!([
+        {"role": "user", "text": "first question"},
+        {"role": "assistant", "reasoning": "a", "text": ""},
+        {"role": "tool", "name": "terminal", "tool_call_id": "call-1", "context": "ls"},
+        {"role": "assistant", "reasoning": "b", "text": "answer"},
+        {"role": "user", "text": "second question"},
+        {"role": "assistant", "reasoning": "c", "text": ""}
+    ]);
+    assert_eq!(
+        unanswered_marks(&resumed(messages.clone(), false)),
+        vec![
+            ("a".to_owned(), false),
+            ("b".to_owned(), false),
+            ("c".to_owned(), true)
+        ]
+    );
+    assert_eq!(
+        unanswered_marks(&resumed(messages, true)),
+        vec![
+            ("a".to_owned(), false),
+            ("b".to_owned(), false),
+            ("c".to_owned(), false)
+        ],
+        "a turn still running has not ended in its reasoning yet"
+    );
+}
+
 fn resumed_mid_turn(messages: Value) -> SessionState {
     let mut value = snapshot_json::base(SESSION);
     value["last_sequence"] = json!(5);

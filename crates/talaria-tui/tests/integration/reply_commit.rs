@@ -313,6 +313,7 @@ fn end_of_turn_reasoning_follows_a_reply_already_partly_in_scrollback() {
         text: "why".into(),
         sealed: true,
         latest_step: true,
+        no_reply: false,
     });
     let text = "Part one.\n\nPart two.\n";
     // Nothing committed early: the reasoning keeps its place in front of the reply.

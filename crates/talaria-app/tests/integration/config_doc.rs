@@ -43,6 +43,21 @@ fn menu_bar_is_in_the_documented_ui_defaults_and_table() {
 }
 
 #[test]
+fn reasoning_is_in_the_documented_ui_defaults_and_table() {
+    let document = read_document();
+    assert!(
+        document.contains("reasoning = \"collapsed\""),
+        "document the collapsed default"
+    );
+    assert!(
+        document
+            .lines()
+            .any(|line| line.starts_with('|') && line.contains("`reasoning`")),
+        "document the ui setting in the table"
+    );
+}
+
+#[test]
 fn pane_settings_accept_each_option_and_fall_back_independently() {
     use talaria_app::panes::{DirectionSetting, MultiplexerSetting, PaneSettings};
     for (name, expected) in [

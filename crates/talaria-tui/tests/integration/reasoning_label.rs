@@ -1,10 +1,15 @@
 //! Each reasoning block starts with one quiet label. An answer does not.
 
+use std::time::{Duration, Instant};
+
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
+use talaria_core::layout::ReasoningDisplay;
 use talaria_core::session::{AssistantCell, Cell, CellId, ReasoningCell};
 use talaria_tui::history::CellLines;
-use talaria_tui::theme::cells::ThemedCells;
+use talaria_tui::theme::cells::{
+    ReasoningClock, ThemedCells, reasoning_collapses, reasoning_summary_lines,
+};
 use talaria_tui::theme::{
     ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors,
     ThemeInputs, resolve,
@@ -32,6 +37,7 @@ fn reasoning(id: u64, text: &str) -> Cell {
         text: text.to_string(),
         sealed: true,
         latest_step: false,
+        no_reply: false,
     })
 }
 
@@ -132,6 +138,7 @@ fn latest_step_reasoning_label_names_the_step() {
         text: text.to_string(),
         sealed: true,
         latest_step: true,
+        no_reply: false,
     });
     let lines = themed.lines(&late, WIDTH);
 
@@ -175,4 +182,176 @@ fn two_reasoning_blocks_each_get_one_label() {
     assert_eq!(reply.len(), 4, "each label adds one line");
     assert_eq!(reply[1].to_string(), first);
     assert_eq!(reply[3].to_string(), second);
+}
+
+fn block(lines: usize, sealed: bool, latest_step: bool, no_reply: bool) -> ReasoningCell {
+    ReasoningCell {
+        id: CellId::new(7),
+        text: (1..=lines)
+            .map(|line| format!("step {line} of the plan"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        sealed,
+        latest_step,
+        no_reply,
+    }
+}
+
+fn summary(cell: &ReasoningCell, took: Option<Duration>, key: Option<&str>) -> Vec<String> {
+    reasoning_summary_lines(cell, &theme(), took, key, WIDTH)
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Every painted span of the line is dim and in the reasoning colour, as the heading is.
+fn assert_quiet(line: &Line<'_>, reasoning: Style) {
+    let styles = painted(line);
+    assert!(!styles.is_empty(), "the line is drawn");
+    for style in styles {
+        assert!(
+            style.add_modifier.contains(Modifier::DIM),
+            "the line is dim"
+        );
+        assert_eq!(style.fg, reasoning.fg, "the line uses the reasoning colour");
+    }
+}
+
+#[test]
+fn collapsed_reasoning_is_one_quiet_line_naming_the_count_and_key() {
+    let theme = theme();
+    let cell = block(34, true, false, false);
+    let lines = reasoning_summary_lines(&cell, &theme, None, Some("Ctrl+O"), WIDTH);
+    assert_eq!(
+        lines.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        vec!["\u{2234} thinking (+34 lines, Ctrl+O to view)"]
+    );
+    assert_quiet(&lines[0], theme.reasoning);
+}
+
+#[test]
+fn collapsed_reasoning_without_a_key_names_the_view() {
+    assert_eq!(
+        summary(&block(34, true, false, false), None, None),
+        vec!["\u{2234} thinking (+34 lines in transcript view)"]
+    );
+}
+
+#[test]
+fn collapsed_latest_step_reasoning_says_so() {
+    assert_eq!(
+        summary(&block(34, true, true, false), None, Some("Ctrl+O")),
+        vec!["\u{2234} thinking, latest step (+34 lines, Ctrl+O to view)"]
+    );
+}
+
+#[test]
+fn one_line_of_reasoning_counts_in_the_singular() {
+    assert_eq!(
+        summary(&block(1, true, false, false), None, Some("Ctrl+O")),
+        vec!["\u{2234} thinking (+1 line, Ctrl+O to view)"]
+    );
+}
+
+#[test]
+fn timed_reasoning_leads_with_how_long_it_took() {
+    let cell = block(34, true, false, false);
+    assert_eq!(
+        summary(&cell, Some(Duration::from_millis(12_400)), Some("Ctrl+O")),
+        vec!["\u{2234} thought for 12s (+34 lines, Ctrl+O to view)"]
+    );
+    assert_eq!(
+        summary(&cell, Some(Duration::from_secs(75)), Some("Ctrl+O")),
+        vec!["\u{2234} thought for 1m 15s (+34 lines, Ctrl+O to view)"]
+    );
+    assert_eq!(
+        summary(&cell, Some(Duration::from_millis(400)), Some("Ctrl+O")),
+        vec!["\u{2234} thinking (+34 lines, Ctrl+O to view)"],
+        "under a second is not worth a duration"
+    );
+}
+
+#[test]
+fn streaming_reasoning_is_one_line_however_long_it_grows() {
+    assert_eq!(
+        summary(&block(4, false, false, false), None, Some("Ctrl+O")),
+        vec!["\u{2234} thinking\u{2026} (+4 lines, Ctrl+O to view)"]
+    );
+    assert_eq!(
+        summary(&block(200, false, false, false), None, Some("Ctrl+O")),
+        vec!["\u{2234} thinking\u{2026} (+200 lines, Ctrl+O to view)"]
+    );
+}
+
+#[test]
+fn collapsed_line_fits_a_narrow_terminal() {
+    let lines = reasoning_summary_lines(
+        &block(34, true, true, false),
+        &theme(),
+        None,
+        Some("Ctrl+O"),
+        20,
+    );
+    assert!(!lines.is_empty());
+    for line in &lines {
+        assert!(
+            line.width() <= 20,
+            "{:?} is wider than 20",
+            line.to_string()
+        );
+    }
+}
+
+#[test]
+fn only_answered_reasoning_collapses_and_only_when_collapsed() {
+    let answered = block(3, true, false, false);
+    let only_output = block(3, true, false, true);
+    assert!(reasoning_collapses(&answered, ReasoningDisplay::Collapsed));
+    assert!(!reasoning_collapses(
+        &only_output,
+        ReasoningDisplay::Collapsed
+    ));
+    assert!(!reasoning_collapses(&answered, ReasoningDisplay::Full));
+    assert!(!reasoning_collapses(&only_output, ReasoningDisplay::Full));
+    assert!(reasoning_collapses(
+        &block(3, false, false, false),
+        ReasoningDisplay::Collapsed
+    ));
+}
+
+#[test]
+fn the_reasoning_clock_times_only_blocks_it_saw_stream() {
+    let start = Instant::now();
+    let open = block(2, false, false, false);
+    let sealed = ReasoningCell {
+        sealed: true,
+        ..open.clone()
+    };
+    let mut clock = ReasoningClock::new();
+    clock.observe(&[Cell::Reasoning(open.clone())], start);
+    clock.observe(
+        &[Cell::Reasoning(sealed.clone())],
+        start + Duration::from_secs(12),
+    );
+    assert_eq!(
+        clock.took(sealed.id, start + Duration::from_secs(40)),
+        Some(Duration::from_secs(12)),
+        "the time stops when the block is sealed"
+    );
+
+    let mut unseen = ReasoningClock::new();
+    unseen.observe(&[Cell::Reasoning(sealed.clone())], start);
+    assert_eq!(
+        unseen.took(sealed.id, start + Duration::from_secs(5)),
+        None,
+        "a block that arrived whole has no duration"
+    );
+
+    let mut sealing = ReasoningClock::new();
+    sealing.observe(&[Cell::Reasoning(open)], start);
+    assert_eq!(
+        sealing.took(sealed.id, start + Duration::from_secs(3)),
+        Some(Duration::from_secs(3)),
+        "a block sealed since the last frame runs until now"
+    );
 }

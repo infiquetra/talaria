@@ -6638,6 +6638,116 @@ mod tests {
         assert_eq!(last_row(&rebound), "     … +7 lines (Ctrl+T to view)");
     }
 
+    /// A reasoning block of `lines` source lines.
+    fn reasoning_block(
+        lines: usize,
+        sealed: bool,
+        no_reply: bool,
+    ) -> talaria_core::session::ReasoningCell {
+        talaria_core::session::ReasoningCell {
+            id: CellId::new(2),
+            text: (1..=lines)
+                .map(|line| format!("weighing option {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            sealed,
+            latest_step: false,
+            no_reply,
+        }
+    }
+
+    #[test]
+    fn scrollback_reasoning_is_one_row_unless_full_or_the_only_output() {
+        use talaria_core::layout::ReasoningDisplay;
+        use talaria_tui::theme::cells::ReasoningClock;
+        let theme = std::sync::Arc::new(talaria_tui::theme::resolve(&ThemeInputs {
+            skin: None,
+            skipped: &[],
+            follow_hermes_skin: false,
+            polarity: (Polarity::Dark, PolaritySource::Config),
+            depth: (ColorDepth::None, DepthSource::Config),
+            motion: (Motion::Full, MotionSource::Default),
+            terminal: TerminalColors::default(),
+        }));
+        let keymap = KeyMap::defaults();
+        let in_force = super::InForce::new(&theme, &keymap);
+        let none = std::collections::HashMap::new();
+        let clock = ReasoningClock::new();
+        let now = Instant::now();
+        let rows = |display: ReasoningDisplay, key: Option<&str>, cell: &Cell| -> Vec<String> {
+            in_force
+                .cells(&none, key)
+                .reasoning(display, &clock, now)
+                .lines(cell, 100)
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        };
+        let answered = Cell::Reasoning(reasoning_block(34, true, false));
+        assert_eq!(
+            rows(ReasoningDisplay::Collapsed, Some("Ctrl+O"), &answered),
+            vec!["∴ thinking (+34 lines, Ctrl+O to view)"]
+        );
+        let entries = BTreeMap::from([("transcript_open".to_string(), vec!["ctrl+t".to_string()])]);
+        let (rebound, _) = KeyMap::from_entries(&entries);
+        let label = rebound.label(talaria_tui::keys::Action::TranscriptOpen);
+        assert_eq!(
+            rows(ReasoningDisplay::Collapsed, label.as_deref(), &answered),
+            vec!["∴ thinking (+34 lines, Ctrl+T to view)"]
+        );
+        let full = rows(ReasoningDisplay::Full, Some("Ctrl+O"), &answered);
+        assert_eq!(full.len(), 35, "the heading and every line, as before");
+        assert_eq!(full[0], "∴ thinking");
+        assert_eq!(
+            in_force.cells(&none, Some("Ctrl+O")).lines(&answered, 100),
+            in_force
+                .cells(&none, Some("Ctrl+O"))
+                .reasoning(ReasoningDisplay::Full, &clock, now)
+                .lines(&answered, 100),
+            "full draws exactly what the themed renderer draws"
+        );
+        let only_output = Cell::Reasoning(reasoning_block(34, true, true));
+        assert_eq!(
+            rows(ReasoningDisplay::Collapsed, Some("Ctrl+O"), &only_output).len(),
+            35,
+            "a turn whose only output is reasoning shows it in full"
+        );
+    }
+
+    #[test]
+    fn scrollback_reasoning_the_screen_saw_stream_says_how_long_it_took() {
+        use talaria_core::layout::ReasoningDisplay;
+        use talaria_tui::theme::cells::ReasoningClock;
+        let theme = std::sync::Arc::new(talaria_tui::theme::resolve(&ThemeInputs {
+            skin: None,
+            skipped: &[],
+            follow_hermes_skin: false,
+            polarity: (Polarity::Dark, PolaritySource::Config),
+            depth: (ColorDepth::None, DepthSource::Config),
+            motion: (Motion::Full, MotionSource::Default),
+            terminal: TerminalColors::default(),
+        }));
+        let keymap = KeyMap::defaults();
+        let in_force = super::InForce::new(&theme, &keymap);
+        let none = std::collections::HashMap::new();
+        let start = Instant::now();
+        let mut clock = ReasoningClock::new();
+        clock.observe(&[Cell::Reasoning(reasoning_block(3, false, false))], start);
+        let sealed = Cell::Reasoning(reasoning_block(34, true, false));
+        let rows: Vec<String> = in_force
+            .cells(&none, Some("Ctrl+O"))
+            .reasoning(
+                ReasoningDisplay::Collapsed,
+                &clock,
+                start + Duration::from_secs(12),
+            )
+            .lines(&sealed, 100)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(rows, vec!["∴ thought for 12s (+34 lines, Ctrl+O to view)"]);
+    }
+
     #[test]
     fn accepted_search_entry_restores_its_paste_placeholder() {
         let mut state = AppState::new("search-recall");

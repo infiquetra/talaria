@@ -61,6 +61,7 @@ pub fn reasoning(id: u64, text: &str) -> Cell {
         text: text.to_string(),
         sealed: true,
         latest_step: false,
+        no_reply: false,
     })
 }
 

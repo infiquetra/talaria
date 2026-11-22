@@ -726,6 +726,135 @@ fn completion_reasoning_in_a_tool_turn_is_the_latest_step() {
     assert_eq!(tools(&state)[0].status, ToolStatus::Succeeded);
 }
 
+/// Whether each reasoning cell is marked as the turn's only output, in order.
+fn unanswered(state: &SessionState) -> Vec<bool> {
+    reasoning(state).iter().map(|cell| cell.no_reply).collect()
+}
+
+fn tool_events(seq: u64) -> Vec<Event> {
+    vec![
+        ev(
+            seq,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "terminal"}),
+        ),
+        ev(
+            seq + 1,
+            "tool.complete",
+            json!({"tool_id": "call-1", "name": "terminal", "result": "ok"}),
+        ),
+    ]
+}
+
+#[test]
+fn a_turn_that_ends_in_reasoning_marks_it_unanswered() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "complete", "text": ""}),
+        ),
+    ]);
+    assert_eq!(unanswered(&state), vec![true]);
+    assert!(reasoning(&state)[0].sealed);
+}
+
+#[test]
+fn reasoning_followed_by_a_reply_is_answered() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(3, "message.delta", json!({"text": "done"})),
+        ev(
+            4,
+            "message.complete",
+            json!({"status": "complete", "text": "done"}),
+        ),
+    ]);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn reasoning_answered_only_by_the_completion_text_is_answered() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "complete", "text": "done"}),
+        ),
+    ]);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn reasoning_before_a_tool_is_answered() {
+    let mut events = vec![start(), ev(2, "reasoning.delta", json!({"text": "run it"}))];
+    events.extend(tool_events(3));
+    events.push(ev(
+        5,
+        "message.complete",
+        json!({"status": "complete", "text": ""}),
+    ));
+    let (state, _) = run(events);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn end_of_turn_reasoning_with_blank_text_is_unanswered() {
+    let mut events = vec![start()];
+    events.extend(tool_events(2));
+    events.push(ev(
+        4,
+        "message.complete",
+        json!({"status": "complete", "text": "", "reasoning": "last step"}),
+    ));
+    let (state, _) = run(events);
+    assert!(reasoning(&state)[0].latest_step);
+    assert_eq!(unanswered(&state), vec![true]);
+}
+
+#[test]
+fn reasoning_in_a_turn_that_already_replied_is_answered() {
+    let mut events = vec![start(), ev(2, "message.delta", json!({"text": "Plan"}))];
+    events.extend(tool_events(3));
+    events.push(ev(
+        5,
+        "message.complete",
+        json!({"status": "complete", "text": "", "reasoning": "last step"}),
+    ));
+    let (state, _) = run(events);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn an_interrupted_or_failed_turn_keeps_reasoning_collapsible() {
+    let (interrupted, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        Event::Interrupt,
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "interrupted", "text": ""}),
+        ),
+    ]);
+    assert_eq!(unanswered(&interrupted), vec![false]);
+    let (failed, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "error", "error": "boom"}),
+        ),
+    ]);
+    assert_eq!(unanswered(&failed), vec![false]);
+}
+
 #[test]
 fn completion_reasoning_that_repeats_this_turns_commentary_is_not_drawn_again() {
     let events = |reasoning: &str| {
