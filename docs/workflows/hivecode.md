@@ -195,7 +195,9 @@ talaria workflow roster --profile fixture --json
 The version 1 envelope contains the unchanged staffing report plus paths for Talaria's home,
 runs, workflows, and drafts; saved workflow names, paths, and descriptions; skill state;
 warnings; and an error. The drafts directory is created privately before gateway work.
-Broken or oversized scripts remain listed with a null description and a warning. Exit 2
+Broken or oversized scripts remain listed with a null description and a warning. When the
+installed talaria-workflows skill differs from the copy Talaria recorded at install, a warning
+says so and names the reinstall command, so the lead can tell the developer. Exit 2
 retains the full report with staffing problems. Exit 1 has a null report, gateway-independent
 local fields, and an error kind: home_unavailable, filesystem, staffing_invalid,
 gateway_unavailable, profile_unserved, or roster_failed. Roster discovery never ensures a gateway.

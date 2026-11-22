@@ -18,7 +18,7 @@ First obtain the available staffing and paths:
 @@TALARIA_COMMAND@@ workflow roster --profile @@TALARIA_PROFILE@@ --json
 ```
 
-Use the command exactly as rendered, including HERMES_HOME=. Exit 2 means a tier problem: report `report.check` and stop. Exit 1 means no usable roster: report `error.message` and stop. Use only usable tiers or a model and provider listed in `report.providers`; never invent a model name.
+Use the command exactly as rendered, including HERMES_HOME=. Exit 2 means a tier problem: report `report.check` and stop. Exit 1 means no usable roster: report `error.message` and stop. Show the developer every entry in `warnings`. Use only usable tiers or a model and provider listed in `report.providers`; never invent a model name.
 
 When the request ends with a line `Session model: <model> on <provider>`, that is the model the user picked for this session. Add `--session-model <model> --session-provider <provider>` to the roster command above and to `workflow run`, so `report.current` and every agent call that names no tier or model use that pair.
 
