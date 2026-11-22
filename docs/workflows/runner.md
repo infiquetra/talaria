@@ -67,11 +67,13 @@ all tier-check problems and warnings, and computes the cost estimate. A missing 
 means an empty table. No run folder exists until preflight succeeds. Unpriced work has unknown
 cost, rather than a zero estimate.
 
-Preflight also reads the literal `model` and `provider` names in the script's options objects
-and checks each against the roster. A name the roster cannot serve fails the run with exit 2
-before any agent starts, one line per unknown pair with its script line and the nearest known
-spelling. Names that are computed, or that sit beside a `profile` key, are checked when their
-agent starts. When an agent's call settles, the runner leaves its Hermes session with
+Preflight also reads each `agent()` call whose options object, written in the call itself,
+names both `model` and `provider` as plain strings, and checks that pair against the roster.
+A pair the roster cannot serve fails the run with exit 2 before any agent starts, one line per
+unknown pair with its script line and the nearest known spelling. Anything preflight cannot
+read for certain is checked when its agent starts instead: a call naming only a model, a name
+that is computed, options built elsewhere or changed by a later assignment, an object with a
+spread or computed key, and names beside a `profile` key. No script that would run is refused. When an agent's call settles, the runner leaves its Hermes session with
 `session.detach`, naming the subscription the create answer gave and the end reason
 `workflow_agent_done`, so Hermes ends the session once no other viewer holds it. The session
 socket serves no `session.close`. A detach the gateway refuses or does not answer within 15

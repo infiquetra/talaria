@@ -1,15 +1,18 @@
 //! A check of the literal model and provider names a script holds, run before any agent starts.
 //!
-//! A script names a model in an options object such as `{model: 'x', provider: 'y'}`. A typo
-//! there is otherwise found only when that agent starts, after earlier agents have spent.
+//! A call such as `agent('p', {model: 'x', provider: 'y'})` names its route in the call itself. A
+//! typo there is otherwise found only when that agent starts, after earlier agents have spent.
+//! The check judges only such pairs: anything it cannot read for certain, such as a spread, a
+//! later assignment or a call naming only a model, is left to the check made when the agent
+//! starts, so no script that would run is refused.
 use super::{Availability, Roster, display_safe, route::unusable};
 
-/// One literal route found in a script. `provider` is `None` when the object names no provider.
+/// One literal model and provider pair an `agent()` call names in its own options object.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScriptRoute {
     pub line: u32,
     pub model: String,
-    pub provider: Option<String>,
+    pub provider: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -140,50 +143,110 @@ fn lex(source: &str) -> Vec<(Tok, u32)> {
 
 #[derive(Default)]
 struct Frame {
+    /// The object is written as the second argument of an `agent()` call.
+    call_options: bool,
     model: Option<Value>,
     provider: Option<Value>,
     other_profile: bool,
+    /// A spread or computed key could replace a name at run time.
+    spread: bool,
 }
 enum Value {
     Literal(String, u32),
     Dynamic,
 }
+/// An open bracket: a call's argument list, an object literal, or an array.
+enum Open {
+    Paren { agent: bool, commas: u32 },
+    Brace(Frame),
+    Bracket,
+}
 
-/// Every options object of the script that names a model by a literal string. An object that
-/// names another profile, or whose model is computed, is left to the run itself.
+/// Every `agent()` call whose own options object names both its model and its provider by
+/// literal strings. A call whose options are built elsewhere, spread from another object, name
+/// another profile, or compute either name is left to the run itself.
 pub fn script_routes(source: &str) -> Vec<ScriptRoute> {
     let tokens = lex(source);
-    let mut stack: Vec<Frame> = Vec::new();
+    let mut stack: Vec<Open> = Vec::new();
     let mut routes = Vec::new();
+    let tok = |i: usize| tokens.get(i).map(|t| &t.0);
     for (index, (token, _)) in tokens.iter().enumerate() {
+        let previous = index.checked_sub(1).and_then(tok);
         match token {
-            Tok::Punct('{') => stack.push(Frame::default()),
+            Tok::Punct('(') => {
+                let agent = matches!(previous, Some(Tok::Ident(name)) if name == "agent")
+                    && !matches!(index.checked_sub(2).and_then(tok), Some(Tok::Punct('.')));
+                stack.push(Open::Paren { agent, commas: 0 });
+            }
+            Tok::Punct('[') => {
+                // A computed key could name the model or provider at run time.
+                if matches!(previous, Some(Tok::Punct('{' | ',')))
+                    && let Some(Open::Brace(frame)) = stack.last_mut()
+                {
+                    frame.spread = true;
+                }
+                stack.push(Open::Bracket);
+            }
+            Tok::Punct(')') => {
+                if matches!(stack.last(), Some(Open::Paren { .. })) {
+                    stack.pop();
+                }
+            }
+            Tok::Punct(']') => {
+                if matches!(stack.last(), Some(Open::Bracket)) {
+                    stack.pop();
+                }
+            }
+            Tok::Punct(',') => {
+                if let Some(Open::Paren { commas, .. }) = stack.last_mut() {
+                    *commas += 1;
+                }
+            }
+            Tok::Punct('.')
+                if matches!(previous, Some(Tok::Punct('{' | ',')))
+                    && tok(index + 1) == Some(&Tok::Punct('.'))
+                    && tok(index + 2) == Some(&Tok::Punct('.')) =>
+            {
+                if let Some(Open::Brace(frame)) = stack.last_mut() {
+                    frame.spread = true;
+                }
+            }
+            Tok::Punct('{') => {
+                let call_options = matches!(previous, Some(Tok::Punct(',')))
+                    && matches!(
+                        stack.last(),
+                        Some(Open::Paren {
+                            agent: true,
+                            commas: 1
+                        })
+                    );
+                stack.push(Open::Brace(Frame {
+                    call_options,
+                    ..Frame::default()
+                }));
+            }
             Tok::Punct('}') => {
-                let Some(frame) = stack.pop() else { continue };
-                if frame.other_profile {
+                let Some(Open::Brace(frame)) = stack.pop_if(|o| matches!(o, Open::Brace(_))) else {
+                    continue;
+                };
+                if !frame.call_options || frame.other_profile || frame.spread {
                     continue;
                 }
-                if let Some(Value::Literal(model, line)) = frame.model {
-                    match frame.provider {
-                        None => routes.push(ScriptRoute {
-                            line,
-                            model,
-                            provider: None,
-                        }),
-                        Some(Value::Literal(provider, _)) => routes.push(ScriptRoute {
-                            line,
-                            model,
-                            provider: Some(provider),
-                        }),
-                        Some(Value::Dynamic) => {}
-                    }
+                if let (Some(Value::Literal(model, line)), Some(Value::Literal(provider, _))) =
+                    (frame.model, frame.provider)
+                {
+                    routes.push(ScriptRoute {
+                        line,
+                        model,
+                        provider,
+                    });
                 }
             }
             Tok::Ident(key) | Tok::Str(key)
                 if matches!(key.as_str(), "model" | "provider" | "profile") =>
             {
-                let after_open = index > 0 && matches!(tokens[index - 1].0, Tok::Punct('{' | ','));
-                let Some(frame) = stack.last_mut().filter(|_| after_open) else {
+                let after_open = matches!(previous, Some(Tok::Punct('{' | ',')));
+                let Some(Open::Brace(frame)) = stack.last_mut().filter(|_| after_open) else {
                     continue;
                 };
                 let value = match (
@@ -240,7 +303,8 @@ fn nearest<'a>(wanted: &str, known: impl Iterator<Item = &'a str>) -> Option<&'a
 }
 
 /// One problem line per route the roster cannot serve, worded as the run's own refusal is,
-/// with the nearest known spelling when there is one.
+/// with the nearest known spelling when there is one. Each pair is judged as written, so a
+/// problem here is one the run would meet when that agent starts.
 pub fn check_script_routes(roster: &Roster, routes: &[ScriptRoute]) -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
     let mut problems = Vec::new();
@@ -254,97 +318,43 @@ pub fn check_script_routes(roster: &Roster, routes: &[ScriptRoute]) -> Vec<Strin
             .iter()
             .filter(|p| p.authenticated)
             .collect();
-        let problem = match &route.provider {
-            Some(provider) => {
-                let a = roster.availability(provider, &route.model, roster.taken_at());
-                let Some(reason) = unusable(&a) else {
-                    continue;
-                };
-                let hint = match a {
-                    Availability::Missing => {
-                        nearest(provider, roster.providers().iter().map(|p| p.slug.as_str())).map(
-                            |name| format!(" (nearest known provider: '{}')", display_safe(name)),
-                        )
-                    }
-                    Availability::NotOffered => {
-                        let here = roster
-                            .providers()
-                            .iter()
-                            .find(|p| p.slug == *provider)
-                            .and_then(|p| {
-                                nearest(&route.model, p.models.iter().map(String::as_str))
-                            });
-                        let elsewhere: Vec<_> = signed_in
-                            .iter()
-                            .filter(|p| p.models.contains(&route.model))
-                            .map(|p| display_safe(&p.slug))
-                            .collect();
-                        match (here, elsewhere.is_empty()) {
-                            (Some(name), _) => Some(format!(
-                                " (nearest known spelling: '{}')",
-                                display_safe(name)
-                            )),
-                            (None, false) => {
-                                Some(format!(" (offered by {})", elsewhere.join(", ")))
-                            }
-                            (None, true) => None,
-                        }
-                    }
-                    _ => None,
-                };
-                format!(
-                    "model '{model}' on '{}' is not usable: {reason}{}",
-                    display_safe(provider),
-                    hint.unwrap_or_default()
-                )
+        let provider = &route.provider;
+        let a = roster.availability(provider, &route.model, roster.taken_at());
+        let Some(reason) = unusable(&a) else {
+            continue;
+        };
+        let hint = match a {
+            Availability::Missing => {
+                nearest(provider, roster.providers().iter().map(|p| p.slug.as_str()))
+                    .map(|name| format!(" (nearest known provider: '{}')", display_safe(name)))
             }
-            None => {
-                let offered: Vec<_> = signed_in
+            Availability::NotOffered => {
+                let here = roster
+                    .providers()
+                    .iter()
+                    .find(|p| p.slug == *provider)
+                    .and_then(|p| nearest(&route.model, p.models.iter().map(String::as_str)));
+                let elsewhere: Vec<_> = signed_in
                     .iter()
                     .filter(|p| p.models.contains(&route.model))
+                    .map(|p| display_safe(&p.slug))
                     .collect();
-                match offered.as_slice() {
-                    [] => {
-                        let hint = signed_in
-                            .iter()
-                            .flat_map(|p| {
-                                p.models.iter().map(move |m| (m.as_str(), p.slug.as_str()))
-                            })
-                            .map(|(m, p)| (distance(&route.model, m), m, p))
-                            .filter(|(d, _, _)| *d <= (route.model.chars().count() / 3).max(3))
-                            .min_by_key(|(d, _, _)| *d)
-                            .map(|(_, m, p)| {
-                                format!(
-                                    " (nearest known spelling: '{}' on '{}')",
-                                    display_safe(m),
-                                    display_safe(p)
-                                )
-                            });
-                        format!(
-                            "model '{model}' is not offered by any signed-in provider{}",
-                            hint.unwrap_or_default()
-                        )
-                    }
-                    [one] => {
-                        let a = roster.availability(&one.slug, &route.model, roster.taken_at());
-                        match unusable(&a) {
-                            Some(reason) => format!(
-                                "model '{model}' on '{}' is not usable: {reason}",
-                                display_safe(&one.slug)
-                            ),
-                            None => continue,
-                        }
-                    }
-                    many => format!(
-                        "model '{model}' is offered by {}; name a provider",
-                        many.iter()
-                            .map(|p| display_safe(&p.slug))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
+                match (here, elsewhere.is_empty()) {
+                    (Some(name), _) => Some(format!(
+                        " (nearest known spelling: '{}')",
+                        display_safe(name)
+                    )),
+                    (None, false) => Some(format!(" (offered by {})", elsewhere.join(", "))),
+                    (None, true) => None,
                 }
             }
+            _ => None,
         };
+        let problem = format!(
+            "model '{model}' on '{}' is not usable: {reason}{}",
+            display_safe(provider),
+            hint.unwrap_or_default()
+        );
         problems.push(format!("script line {}: {problem}", route.line));
     }
     problems
@@ -355,44 +365,72 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn route(line: u32, model: &str, provider: Option<&str>) -> ScriptRoute {
+    fn route(line: u32, model: &str, provider: &str) -> ScriptRoute {
         ScriptRoute {
             line,
             model: model.into(),
-            provider: provider.map(str::to_owned),
+            provider: provider.into(),
         }
     }
 
     #[test]
     fn literal_pairs_are_found_wherever_the_options_sit() {
         let source = "const a = await agent('x', {label: 'a', model: 'm-one', provider: 'p-one'});\n\
-            const o = {'model': \"m-two\", \"provider\": 'p-two',};\n\
-            const b = await agent('y', {model: 'm-three'});";
+            const b = await agent(`y ${n}`, {'model': \"m-two\", \"provider\": 'p-two',});\n\
+            const c = await parallel([() => agent('z', {model: 'm-three', provider: 'p-three'})]);";
         assert_eq!(
             script_routes(source),
             vec![
-                route(1, "m-one", Some("p-one")),
-                route(2, "m-two", Some("p-two")),
-                route(3, "m-three", None),
+                route(1, "m-one", "p-one"),
+                route(2, "m-two", "p-two"),
+                route(3, "m-three", "p-three"),
             ]
         );
     }
 
     #[test]
-    fn names_that_are_not_routes_are_ignored() {
-        let source = "// {model: 'in-a-comment'}\n\
-            const text = 'model: \"in-a-string\"';\n\
-            const t = `{model: 'in-a-template'} ${ {model: 'inside'} }`;\n\
-            const re = /{model: 'x'}/;\n\
-            const dynamic = {model: pick(), provider: 'p'};\n\
-            const shorthand = {model, provider};\n\
-            const joined = {model: 'a' + 'b'};\n\
-            const other = {model: 'm', profile: 'elsewhere'};\n\
-            const key = {nested: {model: 'm-nested', provider: 'p-nested'}};\n";
+    fn a_provider_the_check_cannot_read_leaves_the_call_to_the_run() {
+        let source = "const route = {provider: 'beta-cloud'};\n\
+            await agent('a', {...route, model: 'shared'});\n\
+            await agent('b', {model: 'shared', provider: 'alpha-cloud', ...route});\n\
+            const o = {model: 'shared'};\n\
+            o.provider = 'beta-cloud';\n\
+            await agent('c', o);\n\
+            const p = {model: 'm-smal', provider: 'alpha-cloud'};\n\
+            p.model = 'm-small';\n\
+            await agent('d', p);\n\
+            await agent('e', {model: 'shared'});\n\
+            await agent('f', {model: 'shared', provider: pick()});\n\
+            await agent('g', {schema: {model: 'x', provider: 'y'}});\n\
+            await tool.agent('h', {model: 'x', provider: 'y'});\n\
+            await agent('i', {model: 'x', provider: 'y'}, {model: 'x2', provider: 'y2'});\n\
+            await agent(pick({model: 'x', provider: 'y'}), {model: 'm-large', provider: 'alpha-cloud'});\n\
+            await agent('j', {model: 'x', provider: 'y', [key]: 'z'});";
+        let routes = script_routes(source);
         assert_eq!(
-            script_routes(source),
-            vec![route(9, "m-nested", Some("p-nested"))]
+            routes,
+            vec![route(14, "x", "y"), route(15, "m-large", "alpha-cloud"),]
         );
+        // Only the literal pairs are judged.
+        assert_eq!(
+            check_script_routes(&roster(), &routes),
+            ["script line 14: model 'x' on 'y' is not usable: provider is not configured"]
+        );
+    }
+
+    #[test]
+    fn names_that_are_not_routes_are_ignored() {
+        let source = "// agent('c', {model: 'in-a-comment', provider: 'p'})\n\
+            const text = \"agent('s', {model: 'in-a-string', provider: 'p'})\";\n\
+            const t = `${agent('t', {model: 'in-a-template', provider: 'p'})}`;\n\
+            const re = /agent('r', {model: 'x', provider: 'p'})/;\n\
+            await agent('d', {model: pick(), provider: 'p'});\n\
+            await agent('s', {model, provider});\n\
+            await agent('j', {model: 'a' + 'b', provider: 'p'});\n\
+            await agent('o', {model: 'm', provider: 'p', profile: 'elsewhere'});\n\
+            await agent('n', {nested: {model: 'm-nested', provider: 'p-nested'}});\n\
+            await agent('ok', {model: 'm-ok', provider: 'p-ok'});\n";
+        assert_eq!(script_routes(source), vec![route(10, "m-ok", "p-ok")]);
     }
 
     fn roster() -> Roster {
@@ -416,16 +454,12 @@ mod tests {
         let problems = check_script_routes(
             &roster(),
             &[
-                route(3, "m-smal", Some("alpha-cloud")),
-                route(4, "m-smal", Some("alpha-cloud")),
-                route(5, "m-small", Some("alpha-clod")),
-                route(6, "g-one", Some("gamma-cloud")),
-                route(7, "m-large", Some("beta-cloud")),
-                route(8, "b-on", None),
-                route(9, "shared", None),
-                route(10, "nothing-alike-at-all", None),
-                route(11, "m-small", Some("alpha-cloud")),
-                route(12, "b-one", None),
+                route(3, "m-smal", "alpha-cloud"),
+                route(4, "m-smal", "alpha-cloud"),
+                route(5, "m-small", "alpha-clod"),
+                route(6, "g-one", "gamma-cloud"),
+                route(7, "m-large", "beta-cloud"),
+                route(11, "m-small", "alpha-cloud"),
             ],
         );
         assert_eq!(
@@ -435,9 +469,6 @@ mod tests {
                 "script line 5: model 'm-small' on 'alpha-clod' is not usable: provider is not configured (nearest known provider: 'alpha-cloud')",
                 "script line 6: model 'g-one' on 'gamma-cloud' is not usable: provider is not signed in",
                 "script line 7: model 'm-large' on 'beta-cloud' is not usable: model is not offered (offered by alpha-cloud)",
-                "script line 8: model 'b-on' is not offered by any signed-in provider (nearest known spelling: 'b-one' on 'beta-cloud')",
-                "script line 9: model 'shared' is offered by alpha-cloud, beta-cloud; name a provider",
-                "script line 10: model 'nothing-alike-at-all' is not offered by any signed-in provider",
             ]
         );
     }
