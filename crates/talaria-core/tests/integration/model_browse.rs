@@ -308,6 +308,53 @@ fn current_route_details_show_sent_effort_and_context() {
     let d = details(&s);
     assert!(!d.contains("sent as") && !d.contains("Context"), "{d}");
 }
+/// The picker with `shared` on provider `a` as the route in use and no context size yet.
+fn current_route_without_context() -> ModelsState {
+    let mut s = state();
+    s.update(ModelsInput::SessionEvent {
+        session_id: SID.into(),
+        type_name: "session.info".into(),
+        payload: json!({"model":"shared","provider":"a","reasoning_effort":"high"}),
+    });
+    assert!(!details(&s).contains("Context"), "{}", details(&s));
+    s
+}
+#[test]
+fn context_size_is_read_from_every_event_shape_hermes_sends() {
+    // The shapes are the ones in the recorded frames: `session.info` has only a top-level
+    // `context_length`, `message.complete` only `usage.context_max`, `session.usage` both.
+    for (type_name, payload) in [
+        (
+            "session.info",
+            json!({"model":"shared","provider":"a","reasoning_effort":"high","context_length":200000}),
+        ),
+        (
+            "message.complete",
+            json!({"status":"complete","text":"ok","usage":{"context_max":200000}}),
+        ),
+        (
+            "session.usage",
+            json!({"context_length":200000,"usage":{"context_max":200000}}),
+        ),
+    ] {
+        let mut s = current_route_without_context();
+        s.update(ModelsInput::SessionEvent {
+            session_id: SID.into(),
+            type_name: type_name.into(),
+            payload,
+        });
+        let d = details(&s);
+        assert!(d.contains("Context: 200K tokens"), "{type_name}: {d}");
+    }
+    // An unrelated event's `context_length` is not taken as the route's context size.
+    let mut s = current_route_without_context();
+    s.update(ModelsInput::SessionEvent {
+        session_id: SID.into(),
+        type_name: "tool.complete".into(),
+        payload: json!({"context_length":200000,"usage":{"context_max":200000}}),
+    });
+    assert!(!details(&s).contains("Context"), "{}", details(&s));
+}
 #[test]
 fn a_route_switch_forgets_the_old_routes_context_and_sent_effort() {
     let mut s = state();
@@ -352,14 +399,20 @@ fn setup_hints_from_unconfigured_providers_are_not_a_partial_catalogue() {
     );
 }
 #[test]
-fn a_signed_in_provider_warning_names_its_provider() {
+fn a_signed_in_provider_warning_shows_only_on_its_own_rows() {
     let mut result = catalog();
     result.providers[0].warning = Some("checking plan".into());
-    let s = open_loaded(result, Some("high"), starred());
-    assert_eq!(
-        s.view().unwrap().banner,
-        Some("Note from Alpha Provider: checking plan")
+    let mut s = open_loaded(result, Some("high"), starred());
+    assert_eq!(s.view().unwrap().banner, None);
+    type_filter(&mut s, "alpha shared");
+    assert!(
+        details(&s).contains("Warning: checking plan"),
+        "{}",
+        details(&s)
     );
+    press(&mut s, PickerKey::ClearFilter);
+    type_filter(&mut s, "beta shared");
+    assert!(!details(&s).contains("checking plan"), "{}", details(&s));
 }
 #[test]
 fn footer_names_left_right_effort_and_save_scope() {

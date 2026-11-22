@@ -75,11 +75,12 @@ rate limited, needs setup, no effort, current. Long identifiers end in an ellips
 a visible character or losing the badge. The count line names the current route and its effort.
 `no effort` means the catalogue does not advertise reasoning. It does not prove how a provider
 handled a previous request. Details wrap and show only what Hermes reported. For the current route
-they show the effort Hermes actually sends and the context window from `session.info`; for any
-other route they say Hermes limits the requested effort to what that route accepts, and leave out
-context, because `model.options` carries neither. Prices appear only when Hermes supplies them.
-A banner appears only for a warning from a configured provider, and names that provider; an
-unconfigured provider's setup hint appears as a Setup line on its Needs setup row.
+they show the effort Hermes actually sends, from `session.info`, and the context window, from
+`session.info`, `session.usage` or `message.complete`; for any other route they say Hermes limits
+the requested effort to what that route accepts, and leave out context, because `model.options`
+carries neither. Prices appear only when Hermes supplies them. A configured provider's warning
+appears as a Warning line in the details of that provider's own rows; an unconfigured provider's
+setup hint appears as a Setup line on its Needs setup row.
 Deferred changes say pending turn end; lost write replies say outcome unknown and are not resent.
 
 At 80×24, details sit below the list; at least 112×28 places them beside it. Below 60×16 the list is

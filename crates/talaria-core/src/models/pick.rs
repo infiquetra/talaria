@@ -599,19 +599,10 @@ impl ModelsState {
                     "No models found. Set up a provider with hermes model, then press ctrl+r."
                         .into()
                 });
-            } else if picker.failed.is_none()
-                && picker.feedback.is_none()
-                // An unconfigured provider's warning is its setup hint, shown on its own row.
-                && let Some(p) = catalog.result.providers.iter().find(|p| {
-                    p.authenticated == Some(true) && p.warning.as_ref().is_some_and(|w| !w.is_empty())
-                })
-            {
-                picker.banner = Some(format!(
-                    "Note from {}: {}",
-                    catalog.display_name(&p.slug).unwrap_or(&p.slug),
-                    p.warning.as_deref().unwrap_or_default()
-                ));
             }
+            // A provider's warning is shown in the details of that provider's own rows, as
+            // "Warning: ..." or, for a provider that is not set up, "Setup: ...". It is not a
+            // banner: a banner sits above every row and read as a note about the selected model.
         } else if picker.loading {
             picker.banner = Some("Loading models…".into());
         }
@@ -1377,6 +1368,12 @@ impl ModelsState {
         value: &Value,
         effects: &mut Vec<ModelsEffect>,
     ) {
+        if matches!(type_name, "session.usage" | "message.complete") {
+            if let Some(max) = context_size(type_name, value) {
+                self.sessions.entry(sid.into()).or_default().context_max = Some(max);
+            }
+            return;
+        }
         if !matches!(type_name, "session.info" | "session.updated") {
             return;
         }
@@ -1423,12 +1420,7 @@ impl ModelsState {
             {
                 session.effort_wire = Some((session.effort, wire.into()));
             }
-            if let Some(max) = body
-                .get("usage")
-                .and_then(|usage| usage.get("context_max"))
-                .and_then(Value::as_i64)
-                .filter(|max| *max > 0)
-            {
+            if let Some(max) = context_size(type_name, body) {
                 session.context_max = Some(max);
             }
             if self.foreground.as_deref() == Some(sid)
@@ -1641,6 +1633,20 @@ impl ModelsState {
             .fences_mut(session_id)
             .adopt(fences.revision, fences.execution_generation);
     }
+}
+
+/// The context size of the route in use, as Hermes reports it. `session.usage` and
+/// `message.complete` carry it as `usage.context_max`; `session.info` and `session.usage` carry
+/// it as a top-level `context_length`. Other events say nothing about it.
+fn context_size(type_name: &str, body: &Value) -> Option<i64> {
+    let nested = || body.get("usage")?.get("context_max")?.as_i64();
+    let top_level = || body.get("context_length")?.as_i64();
+    match type_name {
+        "session.info" | "session.usage" => nested().or_else(top_level),
+        "message.complete" => nested(),
+        _ => None,
+    }
+    .filter(|max| *max > 0)
 }
 
 #[cfg(test)]
