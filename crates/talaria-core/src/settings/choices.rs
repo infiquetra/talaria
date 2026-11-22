@@ -21,6 +21,29 @@ pub struct ChoiceSpec {
     pub custom: Option<&'static str>,
     pub schema: SchemaList,
     pub save: SaveAs,
+    /// A list that differs per install or profile, fetched when the chooser opens and merged
+    /// after the built-in rows.
+    pub runtime: Option<RuntimeList>,
+}
+
+/// A list of values that differs per install or profile, read from the gateway while settings are
+/// open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RuntimeList {
+    Skins,
+    Personalities,
+    TerminalBackends,
+    DashboardThemes,
+    ContextEngines,
+    /// The profiles the gateway serves.
+    Profiles,
+}
+
+/// One value a fetched list offers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeChoice {
+    pub value: String,
+    pub description: String,
 }
 
 /// How many values the editor picks.
@@ -91,6 +114,13 @@ impl ChoiceSpec {
             ..self
         }
     }
+
+    const fn runtime(self, list: RuntimeList) -> Self {
+        Self {
+            runtime: Some(list),
+            ..self
+        }
+    }
 }
 
 impl ChoiceValue {
@@ -114,6 +144,7 @@ const fn one(key: &'static str, items: &'static [ChoiceValue]) -> ChoiceSpec {
         custom: None,
         schema: SchemaList::Merge,
         save: SaveAs::Text,
+        runtime: None,
     }
 }
 
@@ -345,7 +376,8 @@ static SPECS: &[ChoiceSpec] = &[
         &[v("compressor", "Built-in lossy summarization.")],
     )
     .custom("The name of an installed context-engine plugin.")
-    .replace(),
+    .replace()
+    .runtime(RuntimeList::ContextEngines),
     one(
         "dashboard.theme",
         &[
@@ -364,7 +396,8 @@ static SPECS: &[ChoiceSpec] = &[
             v("cyberpunk", "Neon green on black."),
             v("rose", "Soft pink and warm ivory."),
         ],
-    ),
+    )
+    .runtime(RuntimeList::DashboardThemes),
     one(
         "database.journal_mode",
         &[
@@ -488,6 +521,33 @@ static SPECS: &[ChoiceSpec] = &[
         ],
     ),
     one(
+        "display.personality",
+        &[
+            v("", "No personality overlay on the system prompt.")
+                .label("No personality")
+                .aliases(&["none", "default", "neutral"]),
+            v("helpful", "A helpful, friendly assistant."),
+            v("concise", "Brief and to the point."),
+            v("technical", "Detailed, accurate technical information."),
+            v("creative", "Thinks outside the box and offers new ideas."),
+            v("teacher", "Explains concepts clearly with examples."),
+            v("kawaii", "Cute expressions and sparkles."),
+            v("catgirl", "A playful anime catgirl, nya."),
+            v("pirate", "Speaks like a tech-savvy buccaneer."),
+            v("shakespeare", "Flowery Shakespearean prose."),
+            v("surfer", "A laid-back surfer."),
+            v("noir", "A hard-boiled detective narrator."),
+            v("uwu", "Baby talk with uwu and OwO."),
+            v(
+                "philosopher",
+                "Looks for the deeper meaning in every question.",
+            ),
+            v("hype", "Loud, pumped-up enthusiasm."),
+        ],
+    )
+    .custom("The name of a personality defined in the profile's config.")
+    .runtime(RuntimeList::Personalities),
+    one(
         "display.pet.render_mode",
         &[
             v("auto", "Detect kitty, iTerm2 or sixel, else Unicode."),
@@ -543,7 +603,8 @@ static SPECS: &[ChoiceSpec] = &[
             v("charizard", "Volcanic theme: burnt orange and ember."),
         ],
     )
-    .custom("The name of a skin file in the profile's skins folder."),
+    .custom("The name of a skin file in the profile's skins folder.")
+    .runtime(RuntimeList::Skins),
     one(
         "display.tool_progress_grouping",
         &[
@@ -584,6 +645,18 @@ static SPECS: &[ChoiceSpec] = &[
         ],
     )
     .replace(),
+    one(
+        "kanban.default_assignee",
+        &[v("", "Use the default profile.").label("Default profile")],
+    )
+    .custom("A profile name.")
+    .runtime(RuntimeList::Profiles),
+    one(
+        "kanban.orchestrator_profile",
+        &[v("", "Use the default profile.").label("Default profile")],
+    )
+    .custom("A profile name.")
+    .runtime(RuntimeList::Profiles),
     one(
         "local_runtime.backend",
         &[
@@ -788,7 +861,8 @@ static SPECS: &[ChoiceSpec] = &[
             ),
             v("vercel_sandbox", "Vercel Sandbox cloud microVM."),
         ],
-    ),
+    )
+    .runtime(RuntimeList::TerminalBackends),
     one(
         "terminal.degraded_mode",
         &[

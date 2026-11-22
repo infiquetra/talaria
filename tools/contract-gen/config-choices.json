@@ -361,6 +361,29 @@
    ]
   },
   {
+   "key": "display.personality",
+   "kind": "constant",
+   "file": "hermes_cli/personality.py",
+   "name": "BUILTIN_PERSONALITIES",
+   "select": "keys",
+   "values": [
+    "helpful",
+    "concise",
+    "technical",
+    "creative",
+    "teacher",
+    "kawaii",
+    "catgirl",
+    "pirate",
+    "shakespeare",
+    "surfer",
+    "noir",
+    "uwu",
+    "philosopher",
+    "hype"
+   ]
+  },
+  {
    "key": "display.pet.render_mode",
    "kind": "constant",
    "file": "agent/pet/render.py",
@@ -442,6 +465,18 @@
     "natural",
     "custom"
    ]
+  },
+  {
+   "key": "kanban.default_assignee",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": []
+  },
+  {
+   "key": "kanban.orchestrator_profile",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": []
   },
   {
    "key": "local_runtime.backend",

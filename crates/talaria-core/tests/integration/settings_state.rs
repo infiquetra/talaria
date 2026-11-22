@@ -880,9 +880,10 @@ fn runtime_list_shows_builtins_then_merges_the_answer() {
         load_list("display.skin", RuntimeList::Skins)
     );
     let names = choice_names(&state);
-    assert_eq!(names.len(), 10, "{names:?}");
+    assert_eq!(names.len(), 11, "{names:?}");
     assert_eq!(names[0], "default");
-    assert_eq!(names[9], "Loading the list…");
+    assert_eq!(names[9], "Type a value…");
+    assert_eq!(names[10], "Loading the list…");
     assert_eq!(selected_choice(&state), "slate (current) (default)");
     let footer = state.view().footer;
     assert!(footer.ends_with("· Ctrl+R reload list"), "{footer}");
@@ -926,7 +927,7 @@ fn runtime_list_shows_builtins_then_merges_the_answer() {
     assert_eq!(selected_choice(&state), "example-user-skin");
     enter(&mut state);
     assert_eq!(state.view().screen, Screen::Browsing);
-    assert_eq!(state.view().rows[0].value, "example-user-skin");
+    assert_eq!(state.view().rows[0].value, "\"example-user-skin\"");
 }
 
 #[test]
@@ -965,7 +966,7 @@ fn runtime_list_failure_keeps_the_chooser_usable_and_ctrl_r_retries() {
     edit_key(&mut state, EditKey::Down);
     enter(&mut state);
     assert_eq!(state.view().screen, Screen::Browsing);
-    assert_eq!(state.view().rows[0].value, "docker");
+    assert_eq!(state.view().rows[0].value, "\"docker\"");
 }
 
 #[test]

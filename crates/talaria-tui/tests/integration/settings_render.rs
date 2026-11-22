@@ -459,3 +459,53 @@ fn chooser_draws_descriptions_and_marks() {
     let screen = paint(&mut term, &sink, &mut vt, &state.view());
     assert!(!screen.contains("type to filter"), "{screen}");
 }
+
+#[test]
+fn chooser_draws_the_list_failure_across_the_row() {
+    use talaria_core::settings::{
+        ConfigSchemaView, FieldKind, FieldView, SettingsAction, SettingsInput, SettingsKey,
+        SettingsSnapshot, SettingsState,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![FieldView {
+                key: "terminal.backend".into(),
+                kind: FieldKind::Select,
+                description: "Where commands run".into(),
+                category: "terminal".into(),
+                options: Some(vec![json!("local"), json!("docker")]),
+                searchable: false,
+                clearable: false,
+            }],
+            category_order: vec!["terminal".into()],
+        },
+        effective: json!({"terminal": {"backend": "local"}}),
+        raw: json!({}),
+        defaults: json!({"terminal": {"backend": "local"}}),
+    }));
+    state.update(SettingsInput::Key(SettingsKey::Action(
+        SettingsAction::Edit,
+    )));
+    let (mut term, sink, mut vt) = rig(100, 20);
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    assert!(screen.contains("Loading the list…"), "{screen}");
+    assert!(screen.contains("Ctrl+R reload list"), "{screen}");
+    state.update(SettingsInput::ChoicesFailed {
+        key: "terminal.backend".into(),
+        profile: "fixture".into(),
+        reason: "HTTP 500".into(),
+    });
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    for expected in [
+        "> local (current) (default)  Run directly on this machine.",
+        "Could not load the list (HTTP 500). Showing built-in names. Ctrl+R retries.",
+    ] {
+        assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
+    }
+}

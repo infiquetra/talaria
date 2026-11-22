@@ -2230,6 +2230,15 @@ pub enum AppEffect {
         service: Option<Arc<crate::settings::SettingsService>>,
         effect: talaria_core::settings::SettingsEffect,
     },
+    /// Read a `/config` list that only slash completion on the session socket offers.
+    SettingsChoices {
+        generation: u64,
+        profile: String,
+        key: String,
+        list: talaria_core::settings::RuntimeList,
+        client: Option<hermes_client::Client>,
+        session: Option<String>,
+    },
     DoctorGather,
     DoctorActiveWork,
     DoctorPost {
@@ -5601,6 +5610,27 @@ fn settings_input(
                 result.extend(local_effect(state, action, String::new(), String::new()))
             }
             SettingsEffect::CloseOverlay => {}
+            SettingsEffect::LoadChoices {
+                key,
+                list:
+                    list @ (talaria_core::settings::RuntimeList::Skins
+                    | talaria_core::settings::RuntimeList::Personalities),
+                ..
+            } => result.push(AppEffect::SettingsChoices {
+                generation: state.settings_generation,
+                profile: state.profile.clone(),
+                key,
+                list,
+                client: state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .cloned(),
+                session: state
+                    .opened
+                    .as_ref()
+                    .map(|opened| opened.session_id.clone()),
+            }),
             effect => {
                 if matches!(effect, SettingsEffect::Load { .. }) {
                     state.settings_generation = state.settings_generation.wrapping_add(1);
@@ -5967,10 +5997,11 @@ mod settings_wiring_tests {
         };
         let values =
             serde_json::json!({"display": {"skin": "default"}, "terminal": {"backend": "local"}});
+        let generation = state.settings_generation;
         update(
             &mut state,
             AppMessage::Settings {
-                generation: state.settings_generation,
+                generation,
                 profile: profile.clone(),
                 service: None,
                 input: SettingsInput::Loaded(SettingsSnapshot {
@@ -13009,6 +13040,40 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            AppEffect::SettingsChoices {
+                generation,
+                profile,
+                key,
+                list,
+                client,
+                session,
+            } => executor.send_later(async move {
+                use talaria_core::settings::{FailReason, SettingsInput};
+                let answer = match &client {
+                    Some(client) => {
+                        crate::settings::slash_choices(client, session.as_deref(), list).await
+                    }
+                    None => Err(FailReason::NotConnected.text()),
+                };
+                let input = match answer {
+                    Ok(items) => SettingsInput::ChoicesLoaded {
+                        key,
+                        profile: profile.clone(),
+                        items,
+                    },
+                    Err(reason) => SettingsInput::ChoicesFailed {
+                        key,
+                        profile: profile.clone(),
+                        reason,
+                    },
+                };
+                AppMessage::Settings {
+                    generation,
+                    profile,
+                    service: None,
+                    input,
+                }
+            }),
             AppEffect::DoctorGather => {
                 let service = crate::doctor::DoctorService::new(state.hermes_home.clone());
                 let profile = state.profile.clone();

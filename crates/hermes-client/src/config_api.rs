@@ -134,3 +134,63 @@ pub async fn config_write(rest: &RestClient, patch: &Value) -> Result<(), RestEr
     }
     Ok(())
 }
+
+/// One value a dashboard route offers for a setting whose values differ per profile.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ListedValue {
+    pub name: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// `ready`, `needs_setup` or `unavailable`, for a terminal backend.
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
+/// The terminal backends the ticket's profile offers, with a setup status each
+/// (`GET /api/tools/terminal/backends`).
+pub async fn terminal_backends(rest: &RestClient) -> Result<Vec<ListedValue>, RestError> {
+    #[derive(Deserialize)]
+    struct Reply {
+        backends: Vec<ListedValue>,
+    }
+    let reply: Reply = listed(rest, "/api/tools/terminal/backends").await?;
+    Ok(reply.backends)
+}
+
+/// The built-in and user dashboard themes of the ticket's profile (`GET /api/dashboard/themes`).
+pub async fn dashboard_themes(rest: &RestClient) -> Result<Vec<ListedValue>, RestError> {
+    #[derive(Deserialize)]
+    struct Reply {
+        themes: Vec<ListedValue>,
+    }
+    let reply: Reply = listed(rest, "/api/dashboard/themes").await?;
+    Ok(reply.themes)
+}
+
+/// The context engines installed for the ticket's profile: `providers.context_options` of
+/// `GET /api/dashboard/plugins/hub`, a route that accepts a native ticket.
+pub async fn context_engines(rest: &RestClient) -> Result<Vec<ListedValue>, RestError> {
+    #[derive(Deserialize)]
+    struct Providers {
+        #[serde(default)]
+        context_options: Vec<ListedValue>,
+    }
+    #[derive(Deserialize)]
+    struct Reply {
+        providers: Providers,
+    }
+    let reply: Reply = listed(rest, "/api/dashboard/plugins/hub").await?;
+    Ok(reply.providers.context_options)
+}
+
+async fn listed<T: serde::de::DeserializeOwned>(
+    rest: &RestClient,
+    path: &str,
+) -> Result<T, RestError> {
+    serde_json::from_value(rest.get_json(path).await?)
+        .map_err(|_| RestError::BadBody("invalid list reply".into()))
+}

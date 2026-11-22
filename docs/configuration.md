@@ -538,6 +538,17 @@ that table also corrects schema lists that name values Hermes does not read, suc
 takes values outside the list, such as plugin names or voice names, a last row
 `Type a value…` opens a text box that starts with the filter text. The command form below
 accepts the same values, and its refusal names them: `Choose one of: auto, managed, direct.`
+
+Some lists differ per machine or profile: skins, personalities, terminal backends, dashboard
+themes, context engines and the profile names the kanban keys take. Their choosers show the
+built-in names at once with a `Loading the list…` row and add the profile's own names when
+the gateway answers. Skins and personalities come from slash completion on the session
+connection; backends (with a setup status), themes and context engines come from the
+dashboard routes with the profile's own ticket; profile names are the ones the gateway
+serves. If the list cannot be read, the row says
+`Could not load the list (<reason>). Showing built-in names. Ctrl+R retries.` and the
+chooser stays usable. In a chooser, the `settings_reload` binding (Ctrl+R) asks for its list
+again instead of reloading every setting. A list is kept while settings stay open.
 Pending edits require confirmation before closing. Ctrl+Z suspends as usual.
 
 Secrets are fully masked. R reveals a selected secret once for ten seconds or until the

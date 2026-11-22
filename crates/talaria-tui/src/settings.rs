@@ -325,6 +325,7 @@ fn draw_chooser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
     let name_width = view
         .choices
         .iter()
+        .filter(|choice| !choice.status)
         .map(|choice| Line::from(sanitize(&choice.name).as_ref()).width())
         .max()
         .unwrap_or(0)
@@ -341,15 +342,20 @@ fn draw_chooser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
         .enumerate()
     {
         let selected = index == view.choice_cursor;
-        let text = format!(
-            "{} {}  {}",
-            if selected { ">" } else { " " },
-            column(&choice.name, name_width),
-            column(
-                &choice.description,
-                width.saturating_sub(name_width + 4).max(1)
+        let text = if choice.status {
+            // The list's loading or failure line takes the whole row.
+            format!("{} {}", if selected { ">" } else { " " }, choice.name)
+        } else {
+            format!(
+                "{} {}  {}",
+                if selected { ">" } else { " " },
+                column(&choice.name, name_width),
+                column(
+                    &choice.description,
+                    width.saturating_sub(name_width + 4).max(1)
+                )
             )
-        );
+        };
         let style = if selected {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
@@ -520,6 +526,17 @@ pub fn route_settings(view: &SettingsView, map: &KeyMap, key: &Key) -> Option<Se
         return map
             .resolve_settings(KeyContext::Settings, key)
             .map(SettingsKey::Action);
+    }
+    // A chooser takes the reload binding to ask for its fetched list again; a plain character
+    // still types into the filter.
+    if view.screen == Screen::Choosing
+        && (!matches!(key.code, KeyCode::Char(_)) || key.mods.ctrl || key.mods.alt)
+        && map.resolve_settings(KeyContext::Settings, key)
+            == Some(talaria_core::settings::SettingsAction::Reload)
+    {
+        return Some(SettingsKey::Action(
+            talaria_core::settings::SettingsAction::Reload,
+        ));
     }
     if key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other {
         return (key.code == KeyCode::Char('u')).then_some(SettingsKey::Edit(EditKey::ClearLine));

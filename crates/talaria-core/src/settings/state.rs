@@ -65,6 +65,18 @@ pub enum SettingsInput {
     },
     Loaded(SettingsSnapshot),
     LoadFailed(FailReason),
+    /// A list asked for by `SettingsEffect::LoadChoices`.
+    ChoicesLoaded {
+        key: String,
+        profile: String,
+        items: Vec<RuntimeChoice>,
+    },
+    /// The list could not be read; `reason` is plain words for the failure row.
+    ChoicesFailed {
+        key: String,
+        profile: String,
+        reason: String,
+    },
     Key(SettingsKey),
     /// A viewport-relative position computed by the presentation layer.
     ReviewScroll(usize),
@@ -82,12 +94,25 @@ pub enum SettingsInput {
 }
 #[derive(PartialEq)]
 pub enum SettingsEffect {
-    Load { profile: String },
+    Load {
+        profile: String,
+    },
+    /// Read a list that differs per profile, for the chooser open on `key`.
+    LoadChoices {
+        key: String,
+        list: RuntimeList,
+        profile: String,
+    },
     FetchFresh,
-    Write { patch: Value },
+    Write {
+        patch: Value,
+    },
     ReadBack,
     Notice(String),
-    ScheduleReveal { id: u64, after: Duration },
+    ScheduleReveal {
+        id: u64,
+        after: Duration,
+    },
     ForgetHistoryLine,
     OpenLocal(LocalAction),
     CloseOverlay,
@@ -115,6 +140,13 @@ pub enum FailReason {
     BadData,
     Ticket(String),
     NotLoopback,
+}
+impl FailReason {
+    /// The failure in plain words, as the settings screen shows it.
+    #[must_use]
+    pub fn text(&self) -> String {
+        text::reason(self)
+    }
 }
 #[derive(Clone, PartialEq)]
 pub enum SettingsKey {
@@ -212,6 +244,8 @@ pub struct SettingsRow {
 pub struct SettingsChoice {
     pub name: String,
     pub description: String,
+    /// A line about the fetched list, not a value: drawn across the row, never chosen.
+    pub status: bool,
 }
 #[derive(Clone)]
 enum ChoicePick {
@@ -220,6 +254,16 @@ enum ChoicePick {
     Keep,
     /// Opens the text editor for a value outside the list.
     Type,
+    /// Says whether a fetched list is loading or failed; Enter does nothing.
+    Status,
+}
+/// A fetched list while the overlay is open.
+#[derive(Clone)]
+enum ListState {
+    /// Asked for by the chooser open on this key.
+    Loading(String),
+    Loaded(Vec<RuntimeChoice>),
+    Failed(String),
 }
 #[derive(Clone)]
 struct ChoiceRow {
@@ -263,6 +307,7 @@ pub struct SettingsState {
     editor: Option<Editor>,
     choice_filter: String,
     choice_cursor: usize,
+    lists: BTreeMap<RuntimeList, ListState>,
     conflicts: Vec<Conflict>,
     fresh: Option<Value>,
     command: Option<Vec<(String, String)>>,
@@ -300,6 +345,8 @@ impl fmt::Debug for SettingsInput {
                 Self::Open { .. } => "Open",
                 Self::Command { .. } => "Command",
                 Self::LoadFailed(_) => "LoadFailed",
+                Self::ChoicesLoaded { .. } => "ChoicesLoaded",
+                Self::ChoicesFailed { .. } => "ChoicesFailed",
                 Self::Key(_) => "Key",
                 Self::FreshFailed(_) => "FreshFailed",
                 Self::Written(_) => "Written",
@@ -319,6 +366,7 @@ impl fmt::Debug for SettingsEffect {
                 .finish(),
             other => f.write_str(match other {
                 Self::Load { .. } => "Load",
+                Self::LoadChoices { .. } => "LoadChoices",
                 Self::FetchFresh => "FetchFresh",
                 Self::ReadBack => "ReadBack",
                 Self::Notice(_) => "Notice",
@@ -408,6 +456,7 @@ impl SettingsState {
             editor: None,
             choice_filter: String::new(),
             choice_cursor: 0,
+            lists: BTreeMap::new(),
             conflicts: Vec::new(),
             fresh: None,
             command: None,
@@ -508,6 +557,16 @@ impl SettingsState {
                 self.reloading = false;
                 Vec::new()
             }
+            SettingsInput::ChoicesLoaded {
+                key,
+                profile,
+                items,
+            } => self.list_answer(&key, &profile, ListState::Loaded(items)),
+            SettingsInput::ChoicesFailed {
+                key,
+                profile,
+                reason,
+            } => self.list_answer(&key, &profile, ListState::Failed(reason)),
             SettingsInput::Key(key) => {
                 self.reveal = None;
                 self.key(key)
@@ -905,7 +964,20 @@ impl SettingsState {
         if self.busy() {
             return Vec::new();
         }
+        if matches!(key, SettingsKey::Action(SettingsAction::Reload))
+            && self.screen == Screen::Choosing
+        {
+            // Ctrl+R in a chooser asks for its list again, never for every setting.
+            if let Some(list) = self.open_list()
+                && !matches!(self.lists.get(&list), Some(ListState::Loading(_)))
+            {
+                self.lists.remove(&list);
+                return self.request_list();
+            }
+            return Vec::new();
+        }
         if matches!(key, SettingsKey::Action(SettingsAction::Reload)) && self.snapshot.is_some() {
+            self.lists.clear();
             self.reloading = true;
             return vec![SettingsEffect::Load {
                 profile: self.profile.clone(),
@@ -1118,7 +1190,8 @@ impl SettingsState {
                         return self.request_close();
                     }
                 } else if !self.unverified {
-                    self.start_edit(action == SettingsAction::Toggle)
+                    self.start_edit(action == SettingsAction::Toggle);
+                    return self.request_list();
                 }
             }
             SettingsAction::Default => {
@@ -1168,6 +1241,72 @@ impl SettingsState {
         } else {
             self.screen = Screen::ConfirmDiscard;
             Vec::new()
+        }
+    }
+    /// The fetched list of the chooser that is open, when its key has one.
+    fn open_list(&self) -> Option<RuntimeList> {
+        if self.screen != Screen::Choosing {
+            return None;
+        }
+        self.selected()
+            .and_then(|field| choice_spec(&field.key))
+            .and_then(|spec| spec.runtime)
+    }
+    /// Ask for the open chooser's list unless it is loaded or already asked for.
+    fn request_list(&mut self) -> Vec<SettingsEffect> {
+        let (Some(list), Some(field)) = (self.open_list(), self.selected()) else {
+            return Vec::new();
+        };
+        if matches!(
+            self.lists.get(&list),
+            Some(ListState::Loading(_) | ListState::Loaded(_))
+        ) {
+            return Vec::new();
+        }
+        self.lists
+            .insert(list, ListState::Loading(field.key.clone()));
+        vec![SettingsEffect::LoadChoices {
+            key: field.key,
+            list,
+            profile: self.profile.clone(),
+        }]
+    }
+    /// Keep an answer only for this profile and for the chooser that asked and is still open.
+    fn list_answer(&mut self, key: &str, profile: &str, answer: ListState) -> Vec<SettingsEffect> {
+        let Some(list) = choice_spec(key).and_then(|spec| spec.runtime) else {
+            return Vec::new();
+        };
+        if profile != self.profile
+            || !matches!(self.lists.get(&list), Some(ListState::Loading(asked)) if asked == key)
+        {
+            return Vec::new();
+        }
+        if self.open_list() != Some(list) || self.selected().is_none_or(|field| field.key != key) {
+            // The chooser moved on: forget the request so the list is asked for again.
+            self.lists.remove(&list);
+            return Vec::new();
+        }
+        let rows = self.choice_rows();
+        let selected = rows.get(self.choice_cursor).map(|row| row.name.clone());
+        self.lists.insert(list, answer);
+        if let Some(name) = selected
+            && let Some(at) = self.choice_rows().iter().position(|row| row.name == name)
+        {
+            self.choice_cursor = at;
+        }
+        Vec::new()
+    }
+    /// Whether a value is missing from the key's fetched list. Before that list loads nobody
+    /// knows, so a key with one is not called unlisted.
+    fn unlisted_in_fetched(&self, key: &str, value: &Value) -> bool {
+        match choice_spec(key).and_then(|spec| spec.runtime) {
+            None => true,
+            Some(list) => match self.lists.get(&list) {
+                Some(ListState::Loaded(items)) => !items
+                    .iter()
+                    .any(|item| value.as_str() == Some(item.value.as_str())),
+                _ => false,
+            },
         }
     }
     fn start_edit(&mut self, toggle_only: bool) {
@@ -1310,6 +1449,41 @@ impl SettingsState {
                 pick: ChoicePick::Value(value),
             })
             .collect();
+        let spec = choice_spec(&field.key);
+        let list = spec
+            .and_then(|spec| spec.runtime)
+            .and_then(|list| self.lists.get(&list));
+        if let (Some(spec), Some(ListState::Loaded(items))) = (spec, list) {
+            for item in items {
+                let value = spec.saved(&item.value);
+                let listed = rows.iter_mut().find(|row| match &row.pick {
+                    ChoicePick::Value(listed) => {
+                        listed == &value
+                            || spec
+                                .items
+                                .iter()
+                                .find(|known| known.value == option_text(listed))
+                                .is_some_and(|known| known.aliases.contains(&item.value.as_str()))
+                    }
+                    _ => false,
+                });
+                match listed {
+                    // The gateway's words for a value Talaria also knows are the live ones.
+                    Some(row) => {
+                        if !item.description.is_empty() {
+                            row.description = item.description.clone();
+                        }
+                    }
+                    None => rows.push(ChoiceRow {
+                        name: item.value.clone(),
+                        description: item.description.clone(),
+                        current: current.is_some_and(|current| current == &value),
+                        default: default.is_some_and(|default| default == &value),
+                        pick: ChoicePick::Value(value),
+                    }),
+                }
+            }
+        }
         if let Some(current) = current.filter(|current| !current.is_null())
             && !rows.iter().any(|row| row.current)
         {
@@ -1325,7 +1499,7 @@ impl SettingsState {
                 default: false,
             });
         }
-        if let Some(hint) = choice_spec(&field.key).and_then(|spec| spec.custom) {
+        if let Some(hint) = spec.and_then(|spec| spec.custom) {
             rows.push(ChoiceRow {
                 pick: ChoicePick::Type,
                 name: "Type a value…".into(),
@@ -1334,15 +1508,31 @@ impl SettingsState {
                 default: false,
             });
         }
+        let status = match list {
+            Some(ListState::Loading(_)) => Some("Loading the list…".to_owned()),
+            Some(ListState::Failed(reason)) => Some(format!(
+                "Could not load the list ({reason}). Showing built-in names. Ctrl+R retries."
+            )),
+            _ => None,
+        };
+        if let Some(name) = status {
+            rows.push(ChoiceRow {
+                pick: ChoicePick::Status,
+                name,
+                description: String::new(),
+                current: false,
+                default: false,
+            });
+        }
         rows
     }
-    /// Indexes of the rows the filter keeps; "Type a value…" always stays.
+    /// Indexes of the rows the filter keeps; "Type a value…" and the list status always stay.
     fn visible_choices(&self, rows: &[ChoiceRow]) -> Vec<usize> {
         let filter = self.choice_filter.to_lowercase();
         rows.iter()
             .enumerate()
             .filter(|(_, row)| {
-                matches!(row.pick, ChoicePick::Type)
+                matches!(row.pick, ChoicePick::Type | ChoicePick::Status)
                     || row.name.to_lowercase().contains(&filter)
                     || row.description.to_lowercase().contains(&filter)
             })
@@ -1399,6 +1589,7 @@ impl SettingsState {
                 match &row.pick {
                     ChoicePick::Value(value) => self.pend(field.key, value.clone()),
                     ChoicePick::Keep => {}
+                    ChoicePick::Status => return Vec::new(),
                     ChoicePick::Type => {
                         let text = std::mem::take(&mut self.choice_filter);
                         self.editor = Some(Editor {
@@ -1500,6 +1691,7 @@ impl SettingsState {
                             .iter()
                             .any(|(value, item)| is_choice(current, value, *item))
                             && !(field.clearable && current.as_str() == Some(""))
+                            && self.unlisted_in_fetched(&field.key, current)
                     })
                 {
                     value.push_str(" (not in the list)");
@@ -1613,6 +1805,7 @@ impl SettingsState {
                         return SettingsChoice {
                             name: "••••••••".into(),
                             description: String::new(),
+                            status: false,
                         };
                     }
                     let mut name = row.name.clone();
@@ -1625,6 +1818,7 @@ impl SettingsState {
                     SettingsChoice {
                         name,
                         description: row.description.clone(),
+                        status: matches!(row.pick, ChoicePick::Status),
                     }
                 })
                 .collect();
@@ -1675,7 +1869,13 @@ impl SettingsState {
                 ),
                 Screen::Editing => "Enter save edit · Esc cancel".into(),
                 Screen::Choosing => {
-                    "type to filter · ↑↓ move · PgUp PgDn page · Enter choose · Esc cancel".into()
+                    let mut footer = String::from(
+                        "type to filter · ↑↓ move · PgUp PgDn page · Enter choose · Esc cancel",
+                    );
+                    if self.open_list().is_some() {
+                        footer.push_str(" · Ctrl+R reload list");
+                    }
+                    footer
                 }
                 _ => "Enter edit · / filter · a review · ? help · Esc close".into(),
             }
