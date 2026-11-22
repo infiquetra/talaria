@@ -260,7 +260,7 @@ async fn registry_client(home: &Path, name: &str) -> Result<RestClient, Registry
         .map_err(|error| RegistryFailure::NotSent(sentence(&error.to_string())))?;
     let profile = endpoint
         .resolve_profile(name)
-        .map_err(|_| RegistryFailure::NotSent(format!("the gateway does not serve {name}")))?;
+        .map_err(|_| RegistryFailure::Gone("the gateway no longer serves it".into()))?;
     let origin = endpoint.api_origin().to_owned();
     let minter = Arc::new(ProfileRegistryMinter::new(
         home.to_path_buf(),
@@ -289,6 +289,14 @@ fn registry_failure(error: RegistryError, home: &Path) -> RegistryFailure {
             detail
                 .as_deref()
                 .map_or_else(|| "forbidden".to_owned(), |text| scrub_reason(text, home))
+        )),
+        // Hermes answers 404 when the profile's folder is not there any more.
+        RegistryError::Failed {
+            status: 404,
+            detail,
+        } => RegistryFailure::Gone(detail.map_or_else(
+            || "Hermes has no profile by that name".to_owned(),
+            |text| sentence(&scrub_reason(&text, home)),
         )),
         RegistryError::Failed { status, detail } => RegistryFailure::Refused(detail.map_or_else(
             || format!("HTTP {status}"),

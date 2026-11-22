@@ -278,6 +278,8 @@ pub struct ModelRolesState {
     pub(super) notice: Vec<String>,
     pub(super) help: bool,
     pub(super) run: Option<Run>,
+    /// The last main route Hermes saved on this page, as (provider, model).
+    pub(super) main_saved: Option<(String, String)>,
     pub(super) saved_default: Option<(String, String)>,
 }
 
@@ -303,6 +305,7 @@ impl ModelRolesState {
             notice: Vec::new(),
             help: false,
             run: None,
+            main_saved: None,
             saved_default: None,
         };
         (state, super::flow::load_effects())
@@ -362,6 +365,12 @@ impl ModelRolesState {
 
     pub fn view(&self) -> RolesView {
         self.build_view()
+    }
+
+    /// The main model Hermes saved while the page was open, as (provider, model), so the
+    /// profile list can show it at once.
+    pub fn saved_main_route(&self) -> Option<(String, String)> {
+        self.main_saved.clone()
     }
 
     /// Names the profile Talaria is connected to, so the page can tell the user where a

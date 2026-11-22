@@ -204,6 +204,10 @@ impl ModelRolesState {
         out.push(Item::pick(Kind::MainModel, model));
         out.push(Item::pick(Kind::MainContext, self.context_line()));
         match self.info.value() {
+            // What Hermes reported belongs to the saved model, not the staged one.
+            _ if self.edits.main_route.is_some() => {
+                out.push(Item::plain(text::CAPABILITIES_AFTER_SAVE));
+            }
             Some(info) => {
                 let caps = &info.capabilities;
                 if caps.is_empty() {
@@ -267,6 +271,9 @@ impl ModelRolesState {
                     text::CHANGED_MARK
                 )
             };
+        }
+        if self.edits.main_route.is_some() {
+            return text::CONTEXT_AFTER_SAVE.to_owned();
         }
         match self.info.value() {
             None if matches!(self.info, Load::Pending) => "Context window: checking...".to_owned(),

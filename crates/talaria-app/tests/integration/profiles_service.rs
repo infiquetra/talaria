@@ -703,15 +703,25 @@ async fn delete_and_rename_use_a_registry_ticket_for_that_profile() {
         other => panic!("the launch profile is refused: {other:?}"),
     }
 
-    // A profile the gateway does not serve gets no ticket and no request.
+    // A profile the gateway does not serve gets no ticket and no request, and the list is
+    // read again because it is out of date.
     let before = gateway.profile_registry_requests().len();
     assert_eq!(
         talaria_app::profiles::delete_profile(&home, "fixture-z").await,
-        Err(RegistryFailure::NotSent(
-            "the gateway does not serve fixture-z".to_owned()
+        Err(RegistryFailure::Gone(
+            "the gateway no longer serves it".to_owned()
         ))
     );
     assert_eq!(gateway.profile_registry_requests().len(), before);
+
+    // A profile Hermes no longer has is gone too, in Hermes's own words.
+    gateway.script_profile_registry(404, json!({"detail": "Profile 'fixture' does not exist."}));
+    assert_eq!(
+        talaria_app::profiles::delete_profile(&home, "fixture").await,
+        Err(RegistryFailure::Gone(
+            "Profile 'fixture' does not exist".to_owned()
+        ))
+    );
 
     // Rename sends the new name on the same grant and reads the name Hermes kept.
     gateway.script_profile_registry(200, json!({"ok": true, "name": "fixture-r", "path": "x"}));

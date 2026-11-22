@@ -5084,11 +5084,28 @@ fn model_roles_effects(
         .any(|effect| matches!(effect, RolesEffect::Close))
     {
         let back_to_profiles = state.model_roles_return_to_profiles;
+        let saved = state
+            .model_roles
+            .as_ref()
+            .and_then(talaria_core::model_roles::ModelRolesState::saved_main_route);
+        let name = state.model_roles_profile.clone();
         close_model_roles(state);
-        if back_to_profiles {
-            return profiles_input(state, ProfilesInput::Open);
+        let mut result = Vec::new();
+        if let Some((provider, model)) = saved {
+            // The list shows the saved model at once, before Hermes is read again.
+            result.extend(profiles_input(
+                state,
+                ProfilesInput::ModelSaved {
+                    name,
+                    provider,
+                    model,
+                },
+            ));
         }
-        return Vec::new();
+        if back_to_profiles {
+            result.extend(profiles_input(state, ProfilesInput::Open));
+        }
+        return result;
     }
     if effects.is_empty() {
         return Vec::new();
@@ -18365,6 +18382,53 @@ mod profiles_action_tests {
             AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Escape))),
         );
         assert!(!state.profiles.is_open());
+    }
+
+    /// A main model saved on the page shows in the list the moment the page closes.
+    #[test]
+    fn a_main_model_saved_on_the_models_page_shows_in_the_list_at_once() {
+        use talaria_core::model_roles::{ApplyReply, ApplyStep, AssignOutcome};
+        let model_cell = |state: &AppState| {
+            state
+                .profiles
+                .view()
+                .rows
+                .into_iter()
+                .find(|row| row.name_cell == "default")
+                .map(|row| row.model_cell)
+        };
+        let mut state = loaded();
+        key(&mut state, KeyAction::Models);
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Applied {
+                step: ApplyStep::MainModel,
+                reply: ApplyReply::Assigned(AssignOutcome::Main {
+                    provider: "fixture-provider".to_owned(),
+                    model: "fixture-model".to_owned(),
+                    stale: Vec::new(),
+                }),
+            })),
+        );
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Escape))),
+        );
+        assert!(state.profiles.is_open());
+        assert_eq!(
+            model_cell(&state).as_deref(),
+            Some("fixture-model · fixture-provider")
+        );
+
+        // Closing without a save leaves the list as Hermes last reported it.
+        let mut state = loaded();
+        let before = model_cell(&state);
+        key(&mut state, KeyAction::Models);
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Escape))),
+        );
+        assert_eq!(model_cell(&state), before);
     }
 
     /// Over a remote gateway the registry routes need this machine's control socket, so delete

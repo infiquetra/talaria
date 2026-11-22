@@ -93,6 +93,11 @@ fn list_height(view: &ProfilesView, area: Rect) -> usize {
     }
 }
 
+/// The row the narrow layout keeps under the list for a progress line.
+fn progress_height(view: &ProfilesView, area: Rect) -> usize {
+    usize::from(area.width < 100 && matches!(view.panel, Panel::Progress(_)))
+}
+
 pub(super) fn notice_height(view: &ProfilesView, area: Rect) -> usize {
     view.confirm
         .as_ref()
@@ -109,7 +114,9 @@ pub fn list_page_size(view: &ProfilesView, area: Rect) -> usize {
     }
     let height = list_height(view, area);
     let below_list = usize::from(area.height).saturating_sub(1 + height);
-    height.saturating_sub(notice_height(view, area).saturating_sub(below_list))
+    height.saturating_sub(
+        notice_height(view, area).saturating_sub(below_list) + progress_height(view, area),
+    )
 }
 
 fn detail(detail: &DetailView, area: Rect, buffer: &mut Buffer) {
@@ -383,6 +390,19 @@ impl ProfilesRenderer {
             };
             match &view.panel {
                 Panel::Detail(d) if area.width >= 100 => detail(d, panel_area, buffer),
+                Panel::Progress(line) if area.width >= 100 => {
+                    put(buffer, panel_area, 0, line, Style::default());
+                }
+                // Narrow: the line sits under the rows the list keeps free for it.
+                Panel::Progress(line) => {
+                    put(
+                        buffer,
+                        area,
+                        1 + list_page_size(view, area),
+                        line,
+                        Style::default(),
+                    );
+                }
                 Panel::Form(_)
                 | Panel::Review(_)
                 | Panel::DescriptionInput { .. }

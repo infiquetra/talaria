@@ -22,7 +22,7 @@ pub fn explain(state: &ServeState, name: &str) -> Explanation {
         ServeState::Stopped => ("stopped", format!("This profile's service was stopped (hermes -p {name} gateway stop). Start it again with: hermes -p {name} gateway start"), format!("hermes -p {name} gateway start")),
         ServeState::OwnGateway => ("own gateway", format!("This profile runs its own gateway, so this gateway does not serve it. To serve it here, stop that gateway (hermes -p {name} gateway stop) and remove gateway.standalone: true from its config if it is set."), format!("hermes -p {name} gateway stop, then rescan with R in /profiles")),
         ServeState::HostSingle { reason } => ("not served", format!("This gateway serves only its own profile: {}", reason.chars().take(300).collect::<String>()), "hermes gateway migrate --multiplex".into()),
-        ServeState::Starting => ("starting", "Created moments ago. The gateway usually serves a new profile within 30 seconds.".into(), "wait up to 40 s, then refresh".into()),
+        ServeState::Starting => ("starting", "Created or renamed moments ago. The gateway usually serves a new name within 30 seconds.".into(), "wait up to 40 s, then refresh".into()),
         ServeState::NeverDiscovered => ("not discovered", "The gateway never discovered this profile. It may opt out with gateway.standalone: true in its config, or it was created after the gateway's last scan. Press R to ask the gateway to rescan now.".into(), "rescan with R in /profiles".into()),
         ServeState::Unknown => ("unknown", String::new(), String::new()),
     };

@@ -498,7 +498,7 @@ fn explanations_are_exact() {
         (
             ServeState::Starting,
             "starting",
-            "Created moments ago. The gateway usually serves a new profile within 30 seconds.",
+            "Created or renamed moments ago. The gateway usually serves a new name within 30 seconds.",
             "wait up to 40 s, then refresh",
         ),
         (

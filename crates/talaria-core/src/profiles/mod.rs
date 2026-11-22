@@ -32,7 +32,7 @@ pub enum ServeState {
         /// The scrubbed reason.
         reason: String,
     },
-    /// Created moments ago by this process.
+    /// Created or renamed moments ago by this process.
     Starting,
     /// The gateway never discovered it.
     NeverDiscovered,
@@ -131,6 +131,8 @@ pub enum DeleteOutcome {
 pub enum RegistryFailure {
     /// Nothing was sent; the words say why.
     NotSent(String),
+    /// The profile is not there any more, so nothing changed; the words say why.
+    Gone(String),
     /// The gateway gave no ticket for the profile; the words say why.
     NoTicket(String),
     /// Hermes refused or failed, in its own words.
@@ -279,6 +281,15 @@ pub enum ProfilesInput {
     Topology(u64, Result<HostTopology, String>),
     /// A describe call answered.
     Described(u64, String, Result<Description, CallFailure>),
+    /// The model roles page saved this main model for the profile.
+    ModelSaved {
+        /// The profile name.
+        name: String,
+        /// The provider Hermes saved.
+        provider: String,
+        /// The model Hermes saved.
+        model: String,
+    },
     /// A key was pressed.
     Key(KeyAction),
     /// An unbound key dismisses the shown notice without changing a text field.
@@ -499,6 +510,8 @@ pub enum Panel {
     Delete(TypedInput),
     /// The new name of a profile.
     Rename(TypedInput),
+    /// One line while Hermes deletes or renames a profile.
+    Progress(String),
     /// The narrow-layout detail.
     NarrowDetail(DetailView),
     /// No panel.
@@ -609,7 +622,9 @@ pub struct ProfilesState {
     page_size: usize,
     confirm: Option<Confirm>,
     creating: Option<CreateRequest>,
-    registry: Option<String>,
+    registry: Option<RegistryRequest>,
+    /// The clock reading of the last input, for the seconds a registry request has waited.
+    clock_ms: u64,
     create_form: Option<FormView>,
     configuring: Option<Review>,
     rescanning: bool,
@@ -625,6 +640,17 @@ pub struct ProfilesState {
 }
 
 const NOT_SENT: &str = "Not sent: Talaria is not connected to the gateway. Nothing changed.";
+
+/// The end of the create notice, dropped once the list shows the profile served.
+const WAITING: &str = " Waiting for the gateway to serve it...";
+
+/// The create notice without its waiting part.
+fn created_line(name: &str, keys_copied: bool) -> String {
+    format!(
+        "Created profile {name}. Provider keys copied: {}.",
+        if keys_copied { "yes" } else { "no" }
+    )
+}
 
 fn cut_words(text: &str) -> String {
     text.chars().take(300).collect()
@@ -737,6 +763,15 @@ struct TypedEdit {
     error: Option<String>,
 }
 
+/// A delete or rename sent to Hermes and not yet answered.
+#[derive(Clone, Debug)]
+struct RegistryRequest {
+    name: String,
+    /// The new name of a rename; `None` for a delete.
+    new_name: Option<String>,
+    started_ms: u64,
+}
+
 #[derive(Clone, Debug)]
 struct SoulEdit {
     name: String,
@@ -784,6 +819,8 @@ enum Confirm {
 enum Timer {
     Describe(String),
     Refresh,
+    /// Count the seconds of a registry request.
+    Progress,
     Expire,
 }
 
@@ -828,6 +865,7 @@ impl ProfilesState {
             confirm: None,
             creating: None,
             registry: None,
+            clock_ms: 0,
             create_form: None,
             configuring: None,
             rescanning: false,
@@ -1575,6 +1613,10 @@ impl ProfilesState {
                 let Some(name) = self.selected.clone() else {
                     return;
                 };
+                if let Some(text) = self.busy(&name) {
+                    self.notice(text, effects);
+                    return;
+                }
                 self.detail_visible = false;
                 if key == KeyAction::EditDescription {
                     if let Some(Ok(description)) = self.descriptions.get(&name) {
@@ -1655,6 +1697,10 @@ impl ProfilesState {
             return;
         };
         let name = row.name.clone();
+        if let Some(text) = self.busy(&name) {
+            self.notice(text, effects);
+            return;
+        }
         if row.state != ServeState::Served {
             let explanation = self.explanation(row);
             let mut text = format!(
@@ -1704,7 +1750,10 @@ impl ProfilesState {
                 "Talaria {verb}s profiles only through a gateway on this machine. On the gateway's machine, run: {command}"
             ))
         } else if self.registry.is_some() {
-            Some("A delete or rename is already in progress.".to_owned())
+            Some(
+                self.busy(&name)
+                    .unwrap_or_else(|| "A delete or rename is already in progress.".to_owned()),
+            )
         } else if row.is_default || name == "default" {
             Some(if delete {
                 "Hermes never deletes the default profile: it is the Hermes home itself. To remove everything, run: hermes uninstall".to_owned()
@@ -1764,7 +1813,7 @@ impl ProfilesState {
         }
         if delete {
             if edit.input.text.trim() == edit.name {
-                self.registry = Some(edit.name.clone());
+                self.start_registry(edit.name.clone(), None, effects);
                 effects.push(ProfilesEffect::Delete { name: edit.name });
             } else {
                 edit.error = Some(format!(
@@ -1777,7 +1826,7 @@ impl ProfilesState {
         }
         match validate_new_name(&edit.input.text, &self.known_names()) {
             Ok(new_name) => {
-                self.registry = Some(edit.name.clone());
+                self.start_registry(edit.name.clone(), Some(new_name.clone()), effects);
                 effects.push(ProfilesEffect::Rename {
                     name: edit.name,
                     new_name,
@@ -1787,6 +1836,73 @@ impl ProfilesState {
                 edit.error = Some(error.to_string());
                 self.panel = EditPanel::Rename(edit);
             }
+        }
+    }
+
+    /// Remember the request sent to Hermes and start counting its seconds.
+    fn start_registry(
+        &mut self,
+        name: String,
+        new_name: Option<String>,
+        effects: &mut Vec<ProfilesEffect>,
+    ) {
+        self.registry = Some(RegistryRequest {
+            name,
+            new_name,
+            started_ms: self.clock_ms,
+        });
+        self.schedule(1_000, Timer::Progress, effects);
+    }
+
+    /// The one-line refusal for any action on a profile Hermes is deleting or renaming now.
+    fn busy(&self, name: &str) -> Option<String> {
+        let request = self
+            .registry
+            .as_ref()
+            .filter(|request| request.name == name)?;
+        let verb = if request.new_name.is_some() {
+            "renamed"
+        } else {
+            "deleted"
+        };
+        Some(format!(
+            "{name} is being {verb}. Wait until Hermes answers."
+        ))
+    }
+
+    /// The panel line while a delete or rename waits for Hermes.
+    fn progress_line(&self) -> Option<String> {
+        let request = self.registry.as_ref()?;
+        let seconds = self.clock_ms.saturating_sub(request.started_ms) / 1_000;
+        let name = &request.name;
+        Some(match &request.new_name {
+            None => format!("Deleting {name}: Hermes is stopping its gateway ({seconds} s)."),
+            Some(new_name) => format!(
+                "Renaming {name} to {new_name}: Hermes is stopping its gateway ({seconds} s)."
+            ),
+        })
+    }
+
+    /// Forget a profile Hermes deleted, or move it to its new name, so the list never shows
+    /// it as before. A just-created name would otherwise come back as "starting".
+    fn forget(&mut self, name: &str, new_name: Option<&str>) {
+        self.created.retain(|(created, _)| created != name);
+        self.descriptions.remove(name);
+        self.model_queue.retain(|queued| queued != name);
+        let Some(new_name) = new_name else {
+            self.rows.retain(|row| row.name != name);
+            return;
+        };
+        // The gateway has never served the new name, so it reads "starting" like a create.
+        self.created.retain(|(created, _)| created != new_name);
+        self.created.push((new_name.to_owned(), self.clock_ms));
+        if self.rows.iter().any(|row| row.name == new_name) {
+            self.rows.retain(|row| row.name != name);
+        } else if let Some(row) = self.rows.iter_mut().find(|row| row.name == name) {
+            if row.display_name == row.name {
+                row.display_name = new_name.to_owned();
+            }
+            new_name.clone_into(&mut row.name);
         }
     }
 
@@ -1832,6 +1948,10 @@ impl ProfilesState {
             RegistryFailure::NotSent(words) => {
                 (format!("Not sent: {words}. Nothing changed."), false)
             }
+            RegistryFailure::Gone(words) => (
+                format!("Could not {verb} {name}: {words}. The list below is fresh."),
+                true,
+            ),
         }
     }
 
@@ -1843,6 +1963,13 @@ impl ProfilesState {
         effects: &mut Vec<ProfilesEffect>,
     ) {
         self.registry = None;
+        if matches!(
+            result,
+            Err(RegistryFailure::Unknown | RegistryFailure::Gone(_))
+        ) {
+            // Hermes may have removed it; only a fresh list may show it again.
+            self.created.retain(|(created, _)| created != &name);
+        }
         let (text, refresh) = match result {
             Ok(text) => (text, true),
             Err(failure) if delete => Self::registry_failure("delete", "deleted", &name, failure),
@@ -2047,6 +2174,21 @@ impl ProfilesState {
         }
     }
 
+    /// Read the list again while the gateway picks up a new name, from `first_ms` on, and
+    /// stop calling it "starting" after 40 seconds.
+    fn follow_new_name(&mut self, first_ms: u64, effects: &mut Vec<ProfilesEffect>) {
+        if !self.open {
+            return;
+        }
+        for after in [0, 5_000, 15_000, 35_000]
+            .into_iter()
+            .filter(|after| *after >= first_ms)
+        {
+            self.schedule(after, Timer::Refresh, effects);
+        }
+        self.schedule(40_000, Timer::Expire, effects);
+    }
+
     fn created_answer(
         &mut self,
         result: Result<CreatedProfile, CallFailure>,
@@ -2079,23 +2221,8 @@ impl ProfilesState {
                     });
                 }
                 self.create_form = None;
-                if self.open {
-                    for after in [0, 5_000, 15_000, 35_000, 40_000] {
-                        self.schedule(
-                            after,
-                            if after == 40_000 {
-                                Timer::Expire
-                            } else {
-                                Timer::Refresh
-                            },
-                            effects,
-                        );
-                    }
-                }
-                format!(
-                    "Created profile {name}. Provider keys copied: {}. Waiting for the gateway to serve it...",
-                    if created.keys_copied { "yes" } else { "no" }
-                )
+                self.follow_new_name(0, effects);
+                format!("{}{WAITING}", created_line(&name, created.keys_copied))
             }
             Err(CallFailure::Unknown | CallFailure::Unreadable) => {
                 if self.open {
@@ -2207,6 +2334,7 @@ impl ProfilesState {
     /// Apply one input at one monotonic clock reading.
     pub fn update(&mut self, input: ProfilesInput, now_ms: u64) -> Vec<ProfilesEffect> {
         let before = self.view();
+        self.clock_ms = now_ms;
         let selected_before = self.selected.clone();
         let tick = matches!(&input, ProfilesInput::Tick { .. });
         let mut effects = Vec::new();
@@ -2230,6 +2358,9 @@ impl ProfilesState {
                     .collect();
                 for after in remaining {
                     self.schedule(after, Timer::Expire, &mut effects);
+                }
+                if self.registry.is_some() {
+                    self.schedule(1_000, Timer::Progress, &mut effects);
                 }
             }
             ProfilesInput::Closed => {
@@ -2265,6 +2396,22 @@ impl ProfilesState {
             ProfilesInput::Described(generation, name, result) if self.accept(generation) => {
                 self.described(normalize_profile_name(&name), result, &mut effects);
                 self.read_next_model(&mut effects);
+            }
+            ProfilesInput::ModelSaved {
+                name,
+                provider,
+                model,
+            } => {
+                let name = normalize_profile_name(&name);
+                let filled = |value: &String| (!value.is_empty()).then(|| value.clone());
+                if let Some(row) = self.rows.iter_mut().find(|row| row.name == name) {
+                    row.model = filled(&model);
+                    row.provider = filled(&provider);
+                }
+                if let Some(Ok(description)) = self.descriptions.get_mut(&name) {
+                    description.model_default = model;
+                    description.model_provider = provider;
+                }
             }
             ProfilesInput::Key(key) if self.open => {
                 if self.confirm.is_none() {
@@ -2311,6 +2458,9 @@ impl ProfilesState {
                 self.created_answer(result, now_ms, &mut effects)
             }
             ProfilesInput::DeleteAnswered(name, result) => {
+                if result.is_ok() {
+                    self.forget(&name, None);
+                }
                 let result = result.map(|outcome| match outcome {
                     DeleteOutcome::Deleted => format!("Deleted profile {name}."),
                     DeleteOutcome::SettlementPending { retry_command } => format!(
@@ -2323,11 +2473,16 @@ impl ProfilesState {
                 let result = result.map(|new_name| {
                     let new_name = normalize_profile_name(&new_name);
                     let text = format!("Renamed profile {name} to {new_name}.");
+                    self.forget(&name, Some(&new_name));
                     if self.selected.as_ref() == Some(&name) {
                         self.selected = Some(new_name);
                     }
                     text
                 });
+                if result.is_ok() {
+                    // The answer refreshes at once; these follow until the gateway serves it.
+                    self.follow_new_name(5_000, &mut effects);
+                }
                 self.registry_answered(name, result, false, &mut effects);
             }
             ProfilesInput::ConfigureAnswered(name, section, result) => {
@@ -2360,12 +2515,16 @@ impl ProfilesState {
                         self.describe(name, false, &mut effects)
                     }
                     Timer::Refresh => self.refresh(&mut effects),
-                    Timer::Expire | Timer::Describe(_) => {}
+                    Timer::Progress if self.registry.is_some() => {
+                        self.schedule(1_000, Timer::Progress, &mut effects);
+                    }
+                    Timer::Progress | Timer::Expire | Timer::Describe(_) => {}
                 }
             }
             _ => return Vec::new(),
         }
         self.reclassify(now_ms);
+        self.drop_waiting();
         self.ensure_selection();
         if self.open
             && self.loaded
@@ -2385,6 +2544,28 @@ impl ProfilesState {
             effects.push(ProfilesEffect::Redraw);
         }
         effects
+    }
+
+    /// Drop the waiting part of a create notice once the list shows that profile served.
+    fn drop_waiting(&mut self) {
+        for (name, _) in &self.created {
+            if !self
+                .rows
+                .iter()
+                .any(|row| &row.name == name && row.state == ServeState::Served)
+            {
+                continue;
+            }
+            for keys_copied in [true, false] {
+                let done = created_line(name, keys_copied);
+                let waiting = format!("{done}{WAITING}");
+                for notice in &mut self.notices {
+                    if *notice == waiting {
+                        notice.clone_from(&done);
+                    }
+                }
+            }
+        }
     }
 
     /// What a loaded list with no rows says. "No profiles" is true only when the gateway
@@ -2428,10 +2609,23 @@ impl ProfilesState {
             EditPanel::Delete(edit) => Panel::Delete(self.typed_view(edit, true)),
             EditPanel::Rename(edit) => Panel::Rename(self.typed_view(edit, false)),
             EditPanel::Review { review, .. } => Panel::Review(self.review_lines(review)),
+            // In the narrow layout a detail the user asked for wins; it carries the line.
+            EditPanel::None
+                if self.registry.is_some()
+                    && !(self.narrow
+                        && self.narrow_detail
+                        && self.detail_visible
+                        && selected.is_some()) =>
+            {
+                Panel::Progress(self.progress_line().unwrap_or_default())
+            }
             EditPanel::None => match selected.and_then(|index| visible.get(index)) {
                 Some(row) if self.detail_visible => {
-                    let detail = self.detail(row);
+                    let mut detail = self.detail(row);
                     if self.narrow_detail {
+                        if let Some(line) = self.progress_line() {
+                            detail.lines.insert(0, line);
+                        }
                         Panel::NarrowDetail(detail)
                     } else {
                         Panel::Detail(detail)
@@ -2456,7 +2650,12 @@ impl ProfilesState {
                 (&self.keys.delete, "delete"),
             ]),
             rows: visible.iter().map(|row| {
-                let explanation = self.explanation(row);
+                let mut explanation = self.explanation(row);
+                let busy = self.registry.as_ref().filter(|request| request.name == row.name);
+                if let Some(request) = busy {
+                    explanation.label = if request.new_name.is_some() { "renaming" } else { "deleting" };
+                    explanation.next_step = "wait for Hermes".to_owned();
+                }
                 RowView {
                     name_cell: if row.display_name != row.name { format!("{} ({})", row.display_name, row.name) } else { row.name.clone() },
                     label: explanation.label.into(),

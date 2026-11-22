@@ -496,6 +496,13 @@ fn expected(view: &ProfilesView, cols: usize, rows: usize) -> (Vec<String>, Opti
                 if let Panel::Detail(detail) = &view.panel {
                     paint_detail(&mut screen, 2 + list_len, detail, cols);
                 }
+                if let Panel::Progress(line) = &view.panel {
+                    screen[2 + list_len] = cut(&s(line), cols);
+                }
+            } else if let Panel::Progress(line) = &view.panel {
+                // The narrow list gives up its last free row to the progress line.
+                paint_list(&mut screen, 1, rows - 1, view, cols, notice.len() + 1);
+                screen[rows - notice.len() - 1] = cut(&s(line), cols);
             } else {
                 paint_list(&mut screen, 1, rows - 1, view, cols, notice.len());
             }
@@ -652,6 +659,16 @@ fn snapshots_at_four_sizes() {
     });
     check(&rename, 100, 30);
     check(&rename, 38, 20);
+
+    // While Hermes deletes a profile, the panel shows one line and the list stays.
+    let mut progress = main_view();
+    progress.panel =
+        Panel::Progress("Deleting fixture: Hermes is stopping its gateway (12 s).".to_owned());
+    check(&progress, 100, 30);
+    check(&progress, 38, 20);
+    progress.notice = Some("fixture is being deleted. Wait until Hermes answers.".to_owned());
+    check(&progress, 38, 20);
+    check(&progress, 100, 30);
 
     // An empty list says how to create a profile.
     let mut empty = main_view();
