@@ -448,6 +448,11 @@ impl HivecodeState {
             None => {}
         }
     }
+    /// A routed prompt that named the session model may never reach the conversation: the next
+    /// routed prompt names it again.
+    pub fn forget_model(&mut self, id: &SessionId) {
+        self.named.remove(id);
+    }
     /// Forget the skill when the session's conversation is no longer the one it went into: a
     /// new stored id, or a compaction that may have dropped it.
     pub fn note_epoch(&mut self, id: &SessionId, epoch: &SkillEpoch) {

@@ -86,6 +86,14 @@ pub struct Foreground<'a> {
     pub session: &'a SessionId,
     pub profile: &'a str,
 }
+/// An edit of a queued routed prompt: the row's submission id and text before, and the
+/// submission id and text Hermes admits in its place.
+pub struct Retype<'a> {
+    pub input_id: &'a str,
+    pub submission_id: &'a str,
+    pub old: &'a str,
+    pub new: &'a str,
+}
 /// How often the runs folder is read while a routed prompt waits for its run.
 const SCAN_EVERY_MS: u64 = 2_000;
 /// How long a watch lives after the routed prompt that last armed it. The agent proposes a
@@ -725,15 +733,39 @@ impl HivecodeService {
     pub fn model_sent(&mut self, session: &SessionId, text: &str) {
         self.state.model_sent(session, text);
     }
-    /// A queued routed prompt shown as `old` was edited to `new`: its turn's block follows the
-    /// edited text. The oldest prompt not yet started with that text is the one edited.
-    pub fn retype_authoring(&mut self, session: &SessionId, old: &str, new: &str) {
-        if let Some(authoring) = self.authoring.get_mut(session).and_then(|queue| {
-            queue
-                .iter_mut()
-                .find(|authoring| authoring.started_ms.is_none() && authoring.typed == old)
-        }) {
-            authoring.typed = new.to_owned();
+    /// A routed prompt that named the session model never started: the next one names it.
+    pub fn forget_model(&mut self, session: &SessionId) {
+        self.state.forget_model(session);
+    }
+    /// A queued routed prompt was edited: its turn's block follows the edited text. The prompt
+    /// is found by the submission id its queue row carries; only a row without one is matched
+    /// by its text, oldest first. Hermes admits the edit under its new submission id at the back
+    /// of the queue, so the prompt's entry moves there too.
+    pub fn retype_authoring(&mut self, session: &SessionId, edit: &Retype<'_>) {
+        let Some(queue) = self.authoring.get_mut(session) else {
+            return;
+        };
+        // A retried edit was already applied.
+        if queue
+            .iter()
+            .any(|authoring| authoring.submission_id == edit.submission_id)
+        {
+            return;
+        }
+        let Some(at) = queue.iter().position(|authoring| {
+            authoring.started_ms.is_none()
+                && if edit.input_id.is_empty() {
+                    authoring.typed == edit.old
+                } else {
+                    authoring.submission_id == edit.input_id
+                }
+        }) else {
+            return;
+        };
+        if let Some(mut authoring) = queue.remove(at) {
+            authoring.submission_id = edit.submission_id.to_owned();
+            edit.new.clone_into(&mut authoring.typed);
+            queue.push_back(authoring);
         }
     }
     /// The notice a session that opens with Hivecode on prints.

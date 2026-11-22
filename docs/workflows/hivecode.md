@@ -247,6 +247,8 @@ with a line `Session model: <model> on <provider>` naming the pair the session r
 lead can pass it to those two flags and to the same flags on `workflow run`. A later routed
 prompt that carries the reminder ends with the same line whenever the pair differs from the one
 last sent in the conversation, for example after `/model` or once the provider becomes known.
+A prompt with the line that is removed from the queue, refused or never confirmed does not count
+as sent, and while one still waits in the queue the next routed prompt names the pair again.
 The line is for the model only: it never shows on screen, live or replayed, in the queue
 preview, or in an edit.
 

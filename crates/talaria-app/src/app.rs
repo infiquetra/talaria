@@ -4754,6 +4754,13 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         let session = SessionId::new(opened.session_id.clone());
         state.hivecode.rearm(&session);
     }
+    // A prompt that named the session model never started: the next routed prompt names it.
+    if let Some(opened) = state.opened.as_mut()
+        && opened.state.queue.take_model_dropped()
+    {
+        let session = SessionId::new(opened.session_id.clone());
+        state.hivecode.forget_model(&session);
+    }
     effects.extend(connectors_effects);
     effects.extend(commit_ready(state));
     if !turn_running(state) {
@@ -6667,6 +6674,7 @@ fn route(
             // An edited routed prompt keeps its building block.
             Effect::ReplaceQueued {
                 ref admission_id,
+                ref submission_id,
                 ref text,
                 ..
             } if talaria_core::hivecode::typed_text(text).is_some() => {
@@ -6679,9 +6687,13 @@ fn route(
                         .find(|row| row.admission_id == *admission_id)
                 {
                     let session = SessionId::new(opened.session_id.clone());
-                    let old = talaria_core::hivecode::shown_text(&row.text).to_owned();
-                    let new = talaria_core::hivecode::shown_text(text).to_owned();
-                    state.hivecode.retype_authoring(&session, &old, &new);
+                    let edit = crate::hivecode::Retype {
+                        input_id: &row.input_id.0,
+                        submission_id: &submission_id.0,
+                        old: talaria_core::hivecode::shown_text(&row.text),
+                        new: talaria_core::hivecode::shown_text(text),
+                    };
+                    state.hivecode.retype_authoring(&session, &edit);
                 }
                 effects.push(AppEffect::Queue(effect));
             }
@@ -7665,16 +7677,20 @@ fn skill_epoch(opened: &OpenedSession) -> talaria_core::hivecode::SkillEpoch {
 
 /// Say which conversation the open session holds before a prompt is routed. A prompt that
 /// carried the whole skill and still waits in the queue may yet be removed, so the next routed
-/// prompt carries the skill as well.
+/// prompt carries the skill as well; the same holds for a prompt that named the session model.
 fn hivecode_note_conversation(state: &mut AppState, session: &SessionId) {
     let Some(opened) = state.opened.as_ref() else {
         return;
     };
     let epoch = skill_epoch(opened);
     let waiting = opened.state.queue.skill_waiting();
+    let model_waiting = opened.state.queue.model_waiting();
     state.hivecode.note_epoch(session, &epoch);
     if waiting {
         state.hivecode.rearm(session);
+    }
+    if model_waiting {
+        state.hivecode.forget_model(session);
     }
 }
 
@@ -19758,6 +19774,132 @@ mod hivecode_visibility_tests {
     }
 
     #[test]
+    fn editing_the_second_of_two_identical_queued_routed_prompts_keeps_both_blocks() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = frame(&mut state, "message.start", json!({}));
+        state.now_ms = 1_000;
+        let mut inputs = vec![];
+        for _ in 0..2 {
+            let _ = enter(&mut state, "fix the parser");
+            inputs.push(sent_id(&dispatched(&mut state, "fix the parser")));
+        }
+        let row = |admission: &str, input: &str, sequence: i64| talaria_core::queue::QueuedRow {
+            admission_id: talaria_core::queue::AdmissionId(admission.into()),
+            input_id: talaria_core::queue::SubmissionId(input.into()),
+            text: expanded("fix the parser"),
+            status: talaria_core::queue::RowStatus::Queued,
+            outcome: None,
+            controls: talaria_core::queue::Controls {
+                steer: true,
+                replace: true,
+            },
+            steering: false,
+            sequence,
+            execution_generation: Some(1),
+        };
+        state.opened.as_mut().unwrap().state.queue.rows = vec![
+            row("admission-1", &inputs[0], 1),
+            row("admission-2", &inputs[1], 2),
+        ];
+        // Edit the newest queued copy.
+        let _ = queue_intent(&mut state, QueueIntent::EnterSelection);
+        let _ = queue_intent(&mut state, QueueIntent::BeginEdit);
+        let effects = queue_intent(
+            &mut state,
+            QueueIntent::SaveEdit("fix the parser and the lexer".into()),
+        );
+        let (replaced, old) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Queue(Effect::ReplaceQueued {
+                    submission_id,
+                    admission_id,
+                    ..
+                }) => Some((submission_id.clone(), admission_id.0.clone())),
+                _ => None,
+            })
+            .expect("the edit replaces the row");
+        assert_eq!(old, "admission-2");
+        let receipt = serde_json::from_value(json!({"admission_id": "admission-3",
+            "authority_epoch": 1, "execution_generation": null, "outcome": null,
+            "ref": {"profile_id": "fixture", "session_id": "session"}, "sequence": 3,
+            "status": "queued"}))
+        .unwrap();
+        let _ = update(
+            &mut state,
+            AppMessage::PromptDone {
+                events: vec![Event::QueueCallResult {
+                    action: QueueAction::Edit,
+                    admission_id: Some(talaria_core::queue::AdmissionId("admission-2".into())),
+                    submission_id: Some(replaced),
+                    result: receipt,
+                }],
+                notices: Vec::new(),
+                masked: None,
+            },
+        );
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let start = |state: &mut AppState, admission: &str| {
+            let raw = {
+                let opened = state.opened.as_ref().unwrap();
+                json!({"session_id": opened.session_id, "replay_epoch": opened.cursor.replay_epoch,
+                    "seq": opened.cursor.last_sequence + 1, "type": "message.start",
+                    "admission_id": admission, "payload": {}})
+            };
+            let _ = update(
+                state,
+                AppMessage::Link(LinkEvent::Inbound {
+                    item: Inbound::Event(hermes_client::channel::InboundEvent {
+                        generation: hermes_client::channel::Generation(1),
+                        frame: EventFrame::from_params(&raw).unwrap(),
+                        raw,
+                    }),
+                    replayed: false,
+                }),
+            );
+        };
+        // The unedited copy runs first and shows its block and its line.
+        start(&mut state, "admission-1");
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("fix the parser")
+        );
+        assert!(stage(&state).is_some(), "the first copy shows the block");
+        state.now_ms = 11_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Which tests matter?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Hivecode finished in 10s without writing a workflow script."]
+        );
+        // Then the edited prompt runs and keeps its own block and line.
+        start(&mut state, "admission-3");
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("fix the parser and the lexer")
+        );
+        assert!(stage(&state).is_some(), "the edited prompt shows the block");
+        state.now_ms = 14_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Which tests matter?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Hivecode finished in 3s without writing a workflow script."]
+        );
+    }
+
+    #[test]
     fn a_refused_routed_prompt_leaves_no_block_for_a_later_turn() {
         let mut state = opened("session");
         turn_on(&mut state, "session");
@@ -20065,6 +20207,90 @@ mod hivecode_visibility_tests {
         let _ = turn(&mut state, "complete");
         let effects = enter(&mut state, "and the docs");
         assert_eq!(sent(&effects), [reminder("and the docs")]);
+    }
+
+    #[test]
+    fn a_switched_model_whose_prompt_never_ran_goes_with_the_next_routed_prompt() {
+        let reminder = talaria_core::hivecode::follow_up_text;
+        let with_b =
+            |typed: &str| format!("{}\nSession model: model-b on provider-a", reminder(typed));
+        let mut state = opened("session");
+        {
+            let opened = state.opened.as_mut().unwrap();
+            opened.info.model = Some("model-a".into());
+            opened.info.provider = Some("provider-a".into());
+        }
+        turn_on(&mut state, "session");
+        let effects = enter(&mut state, "fix the parser");
+        let first = command_line(&effects).expect("the first prompt carries the skill");
+        let request = first.trim_start_matches("/talaria-workflows ").to_owned();
+        let _ = dispatched_line(&mut state, "fix the parser", &request);
+        let _ = turn(&mut state, "complete");
+        // The user switches model; the prompt that names it is refused by Hermes.
+        state.model = Some("model-b".into());
+        let effects = enter(&mut state, "add a lexer test");
+        assert_eq!(sent(&effects), [with_b("add a lexer test")]);
+        let _ = update(
+            &mut state,
+            AppMessage::SubmitDone {
+                submission_id: sent_id(&effects),
+                outcome: ExecuteOutcome::Refused {
+                    reason: "invalid_params".into(),
+                },
+            },
+        );
+        let effects = enter(&mut state, "add a parser test");
+        assert_eq!(sent(&effects), [with_b("add a parser test")]);
+        // The next one waits in the queue behind a running turn, and is removed from it.
+        let _ = turn(&mut state, "complete");
+        state.model = Some("model-c".into());
+        let _ = frame(&mut state, "message.start", json!({}));
+        let effects = enter(&mut state, "add a docs test");
+        let line =
+            |typed: &str| format!("{}\nSession model: model-c on provider-a", reminder(typed));
+        assert_eq!(sent(&effects), [line("add a docs test")]);
+        state.opened.as_mut().unwrap().state.queue.rows = vec![talaria_core::queue::QueuedRow {
+            admission_id: talaria_core::queue::AdmissionId("admission-1".into()),
+            input_id: talaria_core::queue::SubmissionId(sent_id(&effects)),
+            text: line("add a docs test"),
+            status: talaria_core::queue::RowStatus::Queued,
+            outcome: None,
+            controls: talaria_core::queue::Controls {
+                steer: true,
+                replace: true,
+            },
+            steering: false,
+            sequence: 1,
+            execution_generation: Some(1),
+        }];
+        // While it waits, a routed prompt names the model again: the first may yet be removed.
+        let effects = enter(&mut state, "add a config test");
+        assert_eq!(sent(&effects), [line("add a config test")]);
+        let receipt = serde_json::from_value(json!({"admission_id": "admission-1",
+            "authority_epoch": 1, "execution_generation": null, "outcome": "cancelled",
+            "ref": {"profile_id": "fixture", "session_id": "session"}, "sequence": 1,
+            "status": "terminal"}))
+        .unwrap();
+        let _ = update(
+            &mut state,
+            AppMessage::PromptDone {
+                events: vec![Event::QueueCallResult {
+                    action: QueueAction::Remove,
+                    admission_id: Some(talaria_core::queue::AdmissionId("admission-1".into())),
+                    submission_id: None,
+                    result: receipt,
+                }],
+                notices: Vec::new(),
+                masked: None,
+            },
+        );
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let effects = enter(&mut state, "add a cli test");
+        assert_eq!(sent(&effects), [line("add a cli test")]);
     }
 
     #[test]
