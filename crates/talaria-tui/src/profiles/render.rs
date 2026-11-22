@@ -51,7 +51,7 @@ fn put(buffer: &mut Buffer, area: Rect, row: usize, text: &str, style: Style) {
     );
 }
 
-fn wrapped(text: &str, width: usize) -> Vec<String> {
+pub(super) fn wrapped(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return Vec::new();
     }
@@ -138,6 +138,8 @@ fn list(
                 &format!("No profile matches \"{filter}\"."),
                 Style::default(),
             );
+        } else if let Some(empty) = &view.empty {
+            put(buffer, area, 0, empty, Style::default());
         }
         return;
     }
@@ -312,7 +314,9 @@ impl ProfilesRenderer {
             if let Panel::NarrowDetail(d) = &view.panel {
                 detail(d, area, buffer);
             }
-        } else if view.filter.is_some() && view.rows.is_empty() && matches!(view.panel, Panel::None)
+        } else if (view.filter.is_some() || view.empty.is_some())
+            && view.rows.is_empty()
+            && matches!(view.panel, Panel::None)
         {
             list(
                 view,
@@ -339,7 +343,11 @@ impl ProfilesRenderer {
             );
             let panel_open = matches!(
                 view.panel,
-                Panel::Form(_) | Panel::Review(_) | Panel::DescriptionInput { .. }
+                Panel::Form(_)
+                    | Panel::Review(_)
+                    | Panel::DescriptionInput { .. }
+                    | Panel::Delete(_)
+                    | Panel::Rename(_)
             );
             if area.width >= 100 || !panel_open {
                 list(
@@ -375,8 +383,12 @@ impl ProfilesRenderer {
             };
             match &view.panel {
                 Panel::Detail(d) if area.width >= 100 => detail(d, panel_area, buffer),
-                Panel::Form(_) | Panel::Review(_) | Panel::DescriptionInput { .. } => {
-                    let lines = form::lines(&view.panel);
+                Panel::Form(_)
+                | Panel::Review(_)
+                | Panel::DescriptionInput { .. }
+                | Panel::Delete(_)
+                | Panel::Rename(_) => {
+                    let lines = form::lines(&view.panel, width);
                     for (i, line) in lines
                         .iter()
                         .enumerate()

@@ -192,6 +192,25 @@ impl RestClient {
         body: Option<Vec<u8>>,
         opts: RequestOpts,
     ) -> Result<Vec<u8>, RestError> {
+        let (status, bytes, ticket) = self.exchange(method, path, body, opts).await?;
+        map_reply(
+            method,
+            path,
+            status,
+            bytes,
+            ticket.as_ref().map(Ticket::expose),
+        )
+    }
+
+    /// Send one request and return the raw status and body, with the ticket it carried so a
+    /// caller can redact it. A 401 is retried once with a fresh ticket, as every request is.
+    pub(crate) async fn exchange(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Vec<u8>>,
+        opts: RequestOpts,
+    ) -> Result<(u16, Vec<u8>, Option<Ticket>), RestError> {
         validate_path(path)?;
         if !path.starts_with("/api/plugins/kanban/")
             && body
@@ -222,23 +241,18 @@ impl RestClient {
                 if status == 401 && opts.ticket && attempt == 0 {
                     continue;
                 }
-                return map_reply(
-                    method,
-                    path,
-                    status,
-                    bytes,
-                    ticket.as_ref().map(Ticket::expose),
-                );
+                return Ok((status, bytes));
             }
             Err(RestError::Unauthorized)
         };
-        tokio::time::timeout(deadline, operation)
+        let (status, bytes) = tokio::time::timeout(deadline, operation)
             .await
             .unwrap_or_else(|_| {
                 Err(RestError::Timeout {
                     sent: sent.load(Ordering::Relaxed),
                 })
-            })
+            })?;
+        Ok((status, bytes, ticket))
     }
 
     async fn attempt(

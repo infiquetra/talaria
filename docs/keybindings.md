@@ -255,6 +255,8 @@ Typing `/` in the composer opens the slash command palette under the composer. A
 | Profiles refresh | R | Refresh the view. | `profiles_refresh` |
 | Profiles rescan | Shift+R | Use profiles rescan. | `profiles_rescan` |
 | Profiles new | N | Use profiles new. | `profiles_new` |
+| Profiles delete | D | Delete the selected profile after you type its name. | `profiles_delete` |
+| Profiles rename | Shift+N | Rename the selected profile. | `profiles_rename` |
 | Profiles description | E | Use profiles description. | `profiles_description` |
 | Profiles soul | S | Use profiles soul. | `profiles_soul` |
 | Profiles models | M | Open the selected profile's models page; Enter does the same. | `profiles_models` |

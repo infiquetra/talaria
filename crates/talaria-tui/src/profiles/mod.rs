@@ -42,6 +42,8 @@ pub fn key_labels(map: &KeyMap) -> KeyLabels {
         refresh: label(Action::ProfilesRefresh),
         rescan: label(Action::ProfilesRescan),
         new: label(Action::ProfilesNew),
+        delete: label(Action::ProfilesDelete),
+        rename: label(Action::ProfilesRename),
         description: label(Action::ProfilesDescription),
         soul: label(Action::ProfilesSoul),
     }
@@ -89,6 +91,8 @@ pub fn key_action(map: &KeyMap, key: &Key, text_focus: bool) -> Option<KeyAction
         Action::ProfilesRefresh => Some(KeyAction::Refresh),
         Action::ProfilesRescan => Some(KeyAction::Rescan),
         Action::ProfilesNew => Some(KeyAction::New),
+        Action::ProfilesDelete => Some(KeyAction::Delete),
+        Action::ProfilesRename => Some(KeyAction::Rename),
         Action::ProfilesDescription => Some(KeyAction::EditDescription),
         Action::ProfilesSoul => Some(KeyAction::EditSoul),
         Action::ProfilesModels => Some(KeyAction::Models),

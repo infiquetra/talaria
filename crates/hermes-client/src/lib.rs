@@ -29,6 +29,7 @@ pub mod mcp_api;
 pub mod memory_api;
 pub mod messaging_api;
 pub mod model_roles_api;
+pub mod profiles_api;
 pub mod providers_api;
 pub mod record;
 pub mod redact;

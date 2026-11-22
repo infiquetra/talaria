@@ -1663,6 +1663,60 @@ mod ticket {
         assert_eq!(mock.connections(), seen, "scope mismatch connected");
     }
 
+    /// Renaming or deleting a profile rides Hermes's own registry grant, bound to that profile.
+    #[tokio::test]
+    async fn mint_ticket_asks_for_the_profile_registry_grant() {
+        assert!(
+            Scope::host(Purpose::NativeProfileRegistry).is_err(),
+            "a registry grant names one profile"
+        );
+        let home = Home::new();
+        ensure_fixture(home.path());
+        let canonical = home.canonical();
+        let fixture = format!("{canonical}/profiles/fixture");
+        let mock = serve(
+            &home.path().join("gateway.sock"),
+            {
+                let canonical = canonical.clone();
+                let fixture = fixture.clone();
+                move |origin| {
+                    vec![
+                        ControlReply::Line(text(&identify_reply(&canonical, origin))),
+                        ControlReply::Issue {
+                            profile_id: fixture,
+                            instance_id: INSTANCE_ID.to_string(),
+                            expired: false,
+                        },
+                    ]
+                }
+            },
+            WsPlan::Idle,
+        )
+        .await;
+        let endpoint = discover_with(home.path(), &never())
+            .await
+            .expect("discover");
+        let profile = endpoint.resolve_profile("fixture").expect("fixture");
+        let _ = mint_ticket(
+            home.path(),
+            &endpoint,
+            &profile,
+            Purpose::NativeProfileRegistry,
+            Scope::profile(),
+        )
+        .await
+        .expect("registry ticket");
+        let requests = mock.requests();
+        assert_eq!(requests.len(), 2, "identify and one ticket request");
+        assert_ticket_line(
+            &requests[1],
+            &fixture,
+            INSTANCE_ID,
+            "native-profile-registry",
+            "profile",
+        );
+    }
+
     #[tokio::test]
     async fn ticket_is_a_secret() {
         static_assertions::assert_not_impl_any!(Ticket: std::fmt::Display, Clone, serde::Serialize);

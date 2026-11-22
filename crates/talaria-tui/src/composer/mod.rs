@@ -830,6 +830,8 @@ impl Composer {
             | Action::ProfilesRefresh
             | Action::ProfilesRescan
             | Action::ProfilesNew
+            | Action::ProfilesDelete
+            | Action::ProfilesRename
             | Action::ProfilesDescription
             | Action::ProfilesSoul
             | Action::ProfilesModels

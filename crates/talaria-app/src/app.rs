@@ -2580,6 +2580,7 @@ fn profiles_input(state: &mut AppState, input: ProfilesInput) -> Vec<AppEffect> 
         state.profiles_ticks.remove(token);
     }
     state.profiles.set_connected_profile(&state.profile);
+    state.profiles.set_remote_gateway(state.remote_gateway);
     let produced = state.profiles.update(input, state.now_ms);
     let mut effects = Vec::new();
     for effect in produced {
@@ -12276,6 +12277,15 @@ async fn profiles_without_client(
             ProfilesInput::Described(generation, name, Err(CallFailure::NotSent))
         }
         ProfilesEffect::Create(_) => ProfilesInput::CreateAnswered(Err(CallFailure::NotSent)),
+        // Rename and delete ride a ticket of their own, not the session socket.
+        ProfilesEffect::Delete { name } => {
+            let result = crate::profiles::delete_profile(&home, &name).await;
+            ProfilesInput::DeleteAnswered(name, result)
+        }
+        ProfilesEffect::Rename { name, new_name } => {
+            let result = crate::profiles::rename_profile(&home, &name, &new_name).await;
+            ProfilesInput::RenameAnswered(name, result)
+        }
         ProfilesEffect::Configure { name, section, .. } => {
             ProfilesInput::ConfigureAnswered(name, section, Err(CallFailure::NotSent))
         }
@@ -17767,6 +17777,36 @@ mod profiles_action_tests {
         assert!(!state.profiles.is_open());
     }
 
+    /// Over a remote gateway the registry routes need this machine's control socket, so delete
+    /// and rename are refused before anything is typed or sent.
+    #[test]
+    fn delete_and_rename_are_refused_over_a_remote_gateway() {
+        for (action, words) in [
+            (
+                KeyAction::Delete,
+                "Talaria deletes profiles only through a gateway on this machine. On the gateway's machine, run: hermes profile delete default",
+            ),
+            (
+                KeyAction::Rename,
+                "Talaria renames profiles only through a gateway on this machine. On the gateway's machine, run: hermes profile rename default NEW-NAME",
+            ),
+        ] {
+            let mut state = loaded();
+            state.attached_to_remote_gateway();
+            let effects = key(&mut state, action);
+            assert!(
+                !effects.iter().any(|effect| matches!(
+                    effect,
+                    AppEffect::Profiles(
+                        ProfilesEffect::Delete { .. } | ProfilesEffect::Rename { .. }
+                    )
+                )),
+                "{words}"
+            );
+            assert_eq!(state.profiles.view().notice.as_deref(), Some(words));
+        }
+    }
+
     #[test]
     fn models_page_for_another_profile_closes_when_the_connection_moves() {
         let mut state = loaded();
@@ -17905,7 +17945,11 @@ mod profiles_action_tests {
         let mut screen = Rebound::default();
         sync_models(&mut state, &mut screen);
         let drawn = screen.drawn.expect("the profiles screen is drawn");
-        assert_eq!(drawn.hints.first().map(String::as_str), Some("F5 models"));
+        // Creating a profile leads the hints; the rebound models key follows it.
+        assert_eq!(
+            drawn.hints.get(..2),
+            Some(&["n new profile".to_owned(), "F5 models".to_owned()][..])
+        );
         assert!(
             !drawn.hints.iter().any(|hint| hint.ends_with("connect")),
             "{:?}",
