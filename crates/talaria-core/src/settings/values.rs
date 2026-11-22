@@ -1,5 +1,5 @@
 use super::{
-    ChoiceSpec, ChoiceValue, FieldKind, FieldView, ManyStore, OwnKind, Pick, RuntimeChoice,
+    ChoiceSpec, ChoiceValue, FieldKind, FieldView, Fold, ManyStore, OwnKind, Pick, RuntimeChoice,
     SchemaList, choice_spec, contains_secret_key, env_reference_names, number_spec,
     secrets::has_env_reference,
 };
@@ -267,7 +267,9 @@ pub fn parse_input(
             let spec = choice_spec(&field.key);
             let listed = listed_choices(field);
             if let Some((value, item)) = listed.iter().find(|(value, item)| match item {
-                Some(item) => item.value == text || item.aliases.contains(&text),
+                Some(item) => spec
+                    .and_then(|spec| reads_as(spec, text))
+                    .is_some_and(|read| std::ptr::eq(read, *item)),
                 None => option_text(value) == text,
             }) {
                 Ok(match item {
@@ -411,7 +413,7 @@ pub(crate) fn listed_choices(field: &FieldView) -> Vec<(Value, Option<&'static C
         for option in field.options.iter().flatten() {
             if !listed
                 .iter()
-                .any(|(value, item)| is_choice(option, value, *item))
+                .any(|(value, item)| is_choice(spec, option, value, *item))
             {
                 listed.push((option.clone(), None));
             }
@@ -419,13 +421,47 @@ pub(crate) fn listed_choices(field: &FieldView) -> Vec<(Value, Option<&'static C
     }
     listed
 }
-/// Whether `value` selects the listed `choice`, directly, through one of its aliases, or as the
-/// JSON boolean Hermes reads like a listed `true` or `false`.
-pub(crate) fn is_choice(value: &Value, choice: &Value, item: Option<&ChoiceValue>) -> bool {
+/// Whether `value` selects the listed `choice`, directly, as another spelling Hermes reads as its
+/// row (see [`reads_as`]), or as the JSON boolean Hermes reads like a listed `true` or `false`.
+/// The row's own word stored as text where the row saves JSON is not a match.
+pub(crate) fn is_choice(
+    spec: Option<&ChoiceSpec>,
+    value: &Value,
+    choice: &Value,
+    item: Option<&ChoiceValue>,
+) -> bool {
     value == choice
-        || item.is_some_and(|item| value.as_str().is_some_and(|s| item.aliases.contains(&s)))
+        || item.is_some_and(|item| {
+            value
+                .as_str()
+                .filter(|text| *text != item.value)
+                .and_then(|text| reads_as(spec?, text))
+                .is_some_and(|read| std::ptr::eq(read, item))
+        })
         || matches!((value, choice), (Value::Bool(flag), Value::String(word))
             if word == if *flag { "true" } else { "false" })
+}
+/// The row of `spec` Hermes reads the stored `text` as: compared the way Hermes compares it for
+/// the key, by value first, then by alias, then for a language by its base tag.
+pub(crate) fn reads_as<'a>(spec: &'a ChoiceSpec, text: &str) -> Option<&'a ChoiceValue> {
+    let word = match spec.fold {
+        Fold::Exact => text.to_owned(),
+        Fold::Word => text.trim().to_lowercase(),
+        Fold::Language => text.trim().to_lowercase().replace('_', "-"),
+    };
+    let named = |word: &str| spec.items.iter().find(|item| item.value == word);
+    named(&word)
+        .or_else(|| {
+            spec.items
+                .iter()
+                .find(|item| item.aliases.contains(&word.as_str()))
+        })
+        .or_else(|| {
+            (spec.fold == Fold::Language)
+                .then(|| word.split('-').next())
+                .flatten()
+                .and_then(named)
+        })
 }
 /// One value a chooser offers, in display order.
 #[derive(Clone, Debug, PartialEq)]
@@ -560,7 +596,7 @@ pub fn offered_value(
             let offers = choice_offers(field, fetched);
             if offers
                 .iter()
-                .any(|offer| is_choice(value, &offer.value, offer.item))
+                .any(|offer| is_choice(spec, value, &offer.value, offer.item))
                 || held.is_some()
             {
                 return Some(value.clone());

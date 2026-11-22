@@ -1911,6 +1911,65 @@ fn a_stored_spelling_hermes_reads_as_a_listed_value_marks_that_row_current() {
 }
 
 #[test]
+fn a_stored_spelling_hermes_normalises_marks_the_row_it_reads_as() {
+    // Hermes trims and lowercases these words before it reads them; for a language it also turns
+    // underscores into hyphens and falls back from a regional tag to its base language.
+    for (key, stored, row) in [
+        ("display.language", "zh-CN", "zh"),
+        ("display.language", "pt_BR", "pt"),
+        ("display.language", "de-BE", "de"),
+        ("display.language", " ZH_tw ", "zh-hant"),
+        // Not an alias, so Hermes falls back to the base tag: simplified Chinese.
+        ("display.language", "zh-Hant-HK", "zh"),
+        ("agent.service_tier", "Fast", "fast"),
+        ("desktop.disable_gpu", "Yes", "true"),
+        ("browser.engine", "Chrome", "auto"),
+        ("display.personality", "None", "No personality"),
+        ("display.personality", "Helpful", "helpful"),
+    ] {
+        let (section, name) = key.split_once('.').unwrap();
+        let mut state = browsing(&[key], json!({ section: { name: stored } }));
+        let value = state.view().rows[0].value.clone();
+        assert!(
+            !value.contains("not in the list"),
+            "{key} {stored}: {value}"
+        );
+        action(&mut state, SettingsAction::Edit);
+        let names = choice_names(&state);
+        assert!(
+            names.contains(&format!("{row} (current, saved as {stored}) (default)")),
+            "{key} {stored}: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name.contains("not in the list")),
+            "{key} {stored}: {names:?}"
+        );
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.contains("(current"))
+                .count(),
+            1,
+            "{key} {stored}: {names:?}"
+        );
+        // The cursor opens on that row, and Enter keeps the stored spelling.
+        enter(&mut state);
+        assert_eq!(state.view().screen, Screen::Browsing, "{key} {stored}");
+        assert_eq!(state.view().rows[0].marker, "", "{key} {stored}");
+    }
+    // A language whose base Hermes does not ship stays unlisted.
+    let state = browsing(
+        &["display.language"],
+        json!({"display": {"language": "xx-YY"}}),
+    );
+    assert!(
+        state.view().rows[0].value.ends_with("(not in the list)"),
+        "{}",
+        state.view().rows[0].value
+    );
+}
+
+#[test]
 fn toolset_and_skill_keys_tick_names_from_the_fetched_lists() {
     let mut state = browsing(
         &["toolsets", "agent.disabled_toolsets", "skills.auto_load"],

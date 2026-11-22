@@ -1538,11 +1538,12 @@ impl SettingsState {
             .get(&field.key)
             .or_else(|| snapshot.and_then(|s| lookup(&s.effective, &field.key)));
         let default = snapshot.and_then(|s| lookup(&s.defaults, &field.key));
+        let spec = choice_spec(&field.key);
         let mut rows: Vec<ChoiceRow> = choice_offers(&field, self.fetched(&field.key))
             .into_iter()
             .map(|offer| {
                 let selected =
-                    current.filter(|current| is_choice(current, &offer.value, offer.item));
+                    current.filter(|current| is_choice(spec, current, &offer.value, offer.item));
                 ChoiceRow {
                     name: match (offer.item, offer.fetched) {
                         (Some(item), _) => item.label.unwrap_or(item.value).to_owned(),
@@ -1560,12 +1561,11 @@ impl SettingsState {
                         .filter(|current| option_text(current) != option_text(&offer.value))
                         .map(option_text),
                     default: default
-                        .is_some_and(|default| is_choice(default, &offer.value, offer.item)),
+                        .is_some_and(|default| is_choice(spec, default, &offer.value, offer.item)),
                     pick: ChoicePick::Value(offer.value),
                 }
             })
             .collect();
-        let spec = choice_spec(&field.key);
         if let Some(current) = current.filter(|current| !current.is_null())
             && !rows.iter().any(|row| row.current)
         {
@@ -1949,10 +1949,9 @@ impl SettingsState {
                     && !is_secret_key(&field.key)
                     && !raw.is_some_and(has_env_reference)
                     && current.is_some_and(|current| {
-                        !listed_choices(field)
-                            .iter()
-                            .any(|(value, item)| is_choice(current, value, *item))
-                            && !(field.clearable && current.as_str() == Some(""))
+                        !listed_choices(field).iter().any(|(value, item)| {
+                            is_choice(choice_spec(&field.key), current, value, *item)
+                        }) && !(field.clearable && current.as_str() == Some(""))
                             && self.unlisted_in_fetched(&field.key, current)
                     })
                 {

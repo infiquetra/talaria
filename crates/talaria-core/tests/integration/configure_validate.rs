@@ -851,3 +851,32 @@ fn toolset_and_skill_lists_take_the_names_the_profile_offers() {
         );
     }
 }
+
+#[test]
+fn proposals_take_a_spelling_hermes_normalises_to_a_listed_value() {
+    let ctx = choice_context(
+        &[
+            ("agent.service_tier", FieldKind::Select, None),
+            ("display.language", FieldKind::String, None),
+            ("browser.engine", FieldKind::String, None),
+        ],
+        json!({"agent": {"service_tier": ""}, "display": {"language": "en"}, "browser": {"engine": "auto"}}),
+    );
+    for (key, value) in [
+        ("agent.service_tier", json!("Fast")),
+        ("display.language", json!("pt_BR")),
+        ("display.language", json!("de-BE")),
+        ("browser.engine", json!("Chrome")),
+    ] {
+        assert_eq!(
+            proposed(&ctx, key, value.clone()).status,
+            RowStatus::Ready,
+            "{key} = {value}"
+        );
+    }
+    // A word Hermes reads as nothing it knows is still refused.
+    assert!(matches!(
+        proposed(&ctx, "agent.service_tier", json!("Fastest")).status,
+        RowStatus::Invalid(_)
+    ));
+}

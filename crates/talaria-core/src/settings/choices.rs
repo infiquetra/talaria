@@ -23,6 +23,8 @@ pub struct ChoiceSpec {
     pub ask: &'static str,
     pub schema: SchemaList,
     pub save: SaveAs,
+    /// How Hermes compares a stored word with the listed values before it reads it.
+    pub fold: Fold,
     /// A list that differs per install or profile, fetched when the chooser opens and merged
     /// after the built-in rows.
     pub runtime: Option<RuntimeList>,
@@ -109,6 +111,18 @@ pub enum SaveAs {
     List,
 }
 
+/// How Hermes reads a stored word before comparing it with the values it knows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+    /// Exactly as stored.
+    Exact,
+    /// Trimmed and lowercased.
+    Word,
+    /// Trimmed, lowercased, underscores as hyphens, and a regional tag such as `de-be` read as
+    /// its base language when no alias names it.
+    Language,
+}
+
 /// One row of a key's list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChoiceValue {
@@ -163,6 +177,10 @@ impl ChoiceSpec {
         }
     }
 
+    const fn fold(self, fold: Fold) -> Self {
+        Self { fold, ..self }
+    }
+
     const fn runtime(self, list: RuntimeList) -> Self {
         Self {
             runtime: Some(list),
@@ -193,6 +211,7 @@ const fn one(key: &'static str, items: &'static [ChoiceValue]) -> ChoiceSpec {
         ask: "",
         schema: SchemaList::Merge,
         save: SaveAs::Text,
+        fold: Fold::Exact,
         runtime: None,
     }
 }
@@ -603,7 +622,8 @@ static SPECS: &[ChoiceSpec] = &[
             )
             .aliases(&["ultra"]),
         ],
-    ),
+    )
+    .fold(Fold::Word),
     one(
         "agent.text_verbosity",
         &[
@@ -725,7 +745,8 @@ static SPECS: &[ChoiceSpec] = &[
                 "Lightpanda, one per session: faster, no screenshots.",
             ),
         ],
-    ),
+    )
+    .fold(Fold::Word),
     one(
         "code_execution.mode",
         &[
@@ -843,7 +864,8 @@ static SPECS: &[ChoiceSpec] = &[
             v("true", "Always software rendering.").aliases(&["1", "yes", "on"]),
             v("false", "Always keep the GPU on.").aliases(&["0", "no", "off"]),
         ],
-    ),
+    )
+    .fold(Fold::Word),
     one(
         "desktop.ozone_platform_hint",
         &[
@@ -1022,7 +1044,8 @@ static SPECS: &[ChoiceSpec] = &[
             ]),
         ],
     )
-    .custom("The code of a language from an installed language pack."),
+    .custom("The code of a language from an installed language pack.")
+    .fold(Fold::Language),
     one(
         "display.memory_notifications",
         &[
@@ -1057,6 +1080,7 @@ static SPECS: &[ChoiceSpec] = &[
         ],
     )
     .custom("The name of a personality defined in the profile's config.")
+    .fold(Fold::Word)
     .runtime(RuntimeList::Personalities),
     one(
         "display.pet.render_mode",

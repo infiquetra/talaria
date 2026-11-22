@@ -540,7 +540,10 @@ that table also corrects schema lists that name values Hermes does not read, suc
 `<value> (current, not in the list)`, and Enter on it keeps it unchanged. A stored spelling
 Hermes reads as a listed value, such as `priority` for `fast` in `agent.service_tier`, marks
 that value's row as `fast (current, saved as priority)`, and Enter on it keeps the stored
-spelling. `display.language` lists the languages Hermes ships, such as `en`, `de` and
+spelling. Where Hermes ignores case and spaces, as for `agent.service_tier`,
+`browser.engine`, `desktop.disable_gpu` and `display.personality`, so does the chooser; for
+`display.language` it also reads `_` as `-` and a regional code such as `de-BE` as its
+language, `de`. `display.language` lists the languages Hermes ships, such as `en`, `de` and
 `zh-hant`; a language pack's own code goes in `Type a value…`. Where Hermes also
 takes values outside the list, such as plugin names or voice names, a last row
 `Type a value…` opens a text box that starts with the filter text. The command form below
