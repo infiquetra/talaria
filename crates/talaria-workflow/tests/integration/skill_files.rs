@@ -273,3 +273,36 @@ fn render_is_deterministic_and_substitutes() {
         assert!(render("fixture", "talaria", Path::new(root)).is_err());
     }
 }
+#[test]
+fn the_lead_plans_and_never_builds_the_deliverable_itself() {
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    for marker in [
+        "Never write the deliverable in this session",
+        "first phase",
+        "after a background completion",
+        "workflow resume --json <run-id>",
+    ] {
+        assert!(s.contains(marker), "missing {marker}");
+    }
+    for (name, text) in &all {
+        let lower = text.to_lowercase();
+        for forbidden in ["runnable slice", "vertical slice", "scaffold first"] {
+            assert!(!lower.contains(forbidden), "{name}: {forbidden}");
+        }
+    }
+}
+#[test]
+fn drafts_use_an_extension_hermes_does_not_lint() {
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    assert!(
+        s.contains(".workflow`"),
+        "the skill names the draft extension"
+    );
+    for (name, text) in &all {
+        for js in ["relative.js", "<script.js>"] {
+            assert!(!text.contains(js), "{name} still names a .js draft");
+        }
+    }
+}

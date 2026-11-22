@@ -94,6 +94,66 @@ impl crate::live::LiveSection for WorkflowDock<'_> {
     }
 }
 
+/// The block in the workflow dock's place while a routed turn builds a workflow: what it is,
+/// how long it has run, and the step it is on. It holds still: only the seconds change.
+pub struct AuthoringDock<'a> {
+    view: &'a talaria_core::ultracode::authoring::AuthoringView,
+    max_rows: u16,
+    header: Style,
+    hint: Style,
+}
+impl<'a> AuthoringDock<'a> {
+    /// `max_rows` is 1 on a short screen, which draws the block as one row.
+    pub fn new(
+        view: &'a talaria_core::ultracode::authoring::AuthoringView,
+        max_rows: u16,
+        header: Style,
+        hint: Style,
+    ) -> Self {
+        Self {
+            view,
+            max_rows,
+            header,
+            hint,
+        }
+    }
+    pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        use talaria_core::ultracode::{authoring::elapsed_text, notice};
+        if width == 0 || self.max_rows == 0 {
+            return vec![];
+        }
+        let progress = &self.view.progress;
+        let row = |text: String| sanitize(&text).into_owned();
+        if self.max_rows == 1 {
+            let short = row(format!(
+                "⚙ {}",
+                notice::authoring_short(progress, self.view.elapsed_ms)
+            ));
+            return vec![Line::styled(cut_to_width(&short, width), self.header)];
+        }
+        let title = row(format!(
+            "⚙ {} · {}",
+            notice::AUTHORING_TITLE,
+            elapsed_text(self.view.elapsed_ms)
+        ));
+        let step = row(format!("  {}", notice::authoring_step(progress)));
+        vec![
+            Line::styled(cut_to_width(&title, width), self.header),
+            Line::styled(cut_to_width(&step, width), self.hint),
+        ]
+    }
+}
+impl crate::live::LiveSection for AuthoringDock<'_> {
+    fn height(&self, width: u16) -> u16 {
+        u16::try_from(self.lines(width).len()).unwrap_or(u16::MAX)
+    }
+    fn render(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        for (y, line) in (0..area.height).zip(self.lines(area.width)) {
+            buf.set_line(area.x, area.y + y, &line, area.width);
+        }
+    }
+}
+
 pub struct WorkflowView;
 impl WorkflowView {
     pub fn render_picker(

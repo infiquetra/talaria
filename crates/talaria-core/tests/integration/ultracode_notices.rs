@@ -3,7 +3,7 @@
 use talaria_core::ultracode::notice;
 
 /// The one way every notice says what Ultracode does with a prompt.
-const SKILL_ROLE: &str = "With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it.";
+const SKILL_ROLE: &str = "With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
 
 fn explains_skill_role(text: &str) {
     assert!(
@@ -27,20 +27,10 @@ fn never_says_a_prompt_runs_by_itself(text: &str) {
 
 #[test]
 fn every_routing_notice_says_the_agent_asks_first() {
-    for text in [
-        notice::ON,
-        notice::ON_REMOTE,
-        notice::ROUTED,
-        notice::ROUTED_REMOTE,
-        notice::ONE_SHOT,
-    ] {
+    for text in [notice::ON, notice::ON_REMOTE] {
+        assert!(text.contains("is handled as a workflow"), "{text}");
         assert!(
-            text.contains("goes to the talaria-workflows skill"),
-            "{text}"
-        );
-        assert!(
-            text.contains("the agent proposes a workflow and asks before starting it")
-                || text.contains("The agent proposes a workflow and asks before starting it"),
+            text.contains("the agent proposes a workflow and asks before starting it"),
             "{text}"
         );
         never_says_a_prompt_runs_by_itself(text);
@@ -138,21 +128,10 @@ fn remote_on_notice_says_runs_start_on_the_gateway_machine() {
 }
 
 #[test]
-fn routed_notice_says_agent_asks_before_starting() {
-    assert_eq!(
-        notice::ROUTED,
-        "Ultracode: this prompt goes to the talaria-workflows skill. The agent proposes a workflow and asks before starting it; a started run shows above the composer."
-    );
-    assert!(notice::ROUTED_REMOTE.contains("asks before starting it"));
-    assert!(notice::ROUTED_REMOTE.contains("gateway's machine"));
-    assert!(notice::ROUTED_REMOTE.contains("talaria workflow list"));
-}
-
-#[test]
 fn bypass_notice_names_the_command_and_the_way_to_route() {
     assert_eq!(
         notice::bypassed("goal"),
-        "Ultracode does not apply to /goal; it goes to Hermes as typed. To send the task to the talaria-workflows skill, send it as a plain prompt without /goal."
+        "Ultracode does not apply to /goal; it goes to Hermes as typed. To have the task handled as a workflow, send it as a plain prompt without /goal."
     );
     assert!(notice::bypassed("q").contains("/q;"));
 }
@@ -176,4 +155,76 @@ fn run_notices_name_key_and_workflows_command() {
         "Workflow run failed: review-branch (run-0001). Type /workflows to see the result."
     );
     assert_eq!(notice::BRANCH_CARRIED, "Ultracode stays on in this branch.");
+}
+
+#[test]
+fn the_switch_is_announced_on_open_and_after_an_interrupt() {
+    assert_eq!(
+        notice::OPENED_ON,
+        "Ultracode is on in this session: a plain prompt is handled as a workflow. /ultracode off to stop."
+    );
+    assert_eq!(
+        notice::STILL_ON,
+        "Ultracode is still on: your next plain prompt is handled as a workflow too."
+    );
+    for text in [notice::ON, notice::ON_REMOTE] {
+        assert!(text.contains("resumed after a restart"), "{text}");
+    }
+}
+
+#[test]
+fn a_changed_skill_says_who_changed_it_what_it_causes_and_how_to_fix_it() {
+    let changes = [
+        "changed:SKILL.md".to_owned(),
+        "added:references/extra.md".to_owned(),
+    ];
+    let text = notice::skill_changed("fixture", &changes);
+    for phrase in [
+        "talaria-workflows skill in profile fixture",
+        "changed by another program",
+        "Hermes's self-improvement review",
+        "changed SKILL.md",
+        "added references/extra.md",
+        "may not follow Talaria's instructions",
+        "hermes -p fixture curator lock talaria-workflows",
+    ] {
+        assert!(text.contains(phrase), "{phrase:?}: {text}");
+    }
+    assert!(
+        notice::skill_changed("default", &changes)
+            .contains("run: hermes -p default curator lock talaria-workflows"),
+        "without -p Hermes uses the profile chosen with hermes profile use"
+    );
+    assert!(notice::skill_outdated("fixture").contains("older than the copy in this Talaria"));
+    assert_eq!(
+        notice::reinstall_offer("fixture"),
+        "Reinstall Talaria's talaria-workflows skill into profile fixture now? The installed copy is backed up first. [y/N]"
+    );
+    assert!(
+        notice::reinstall_declined("fixture")
+            .contains("talaria workflow skill install --force --profile fixture")
+    );
+}
+
+#[test]
+fn missing_setup_is_one_notice_with_the_commands() {
+    let both = notice::setup_missing(
+        "fixture",
+        Some("no tiers are configured"),
+        &["review-branch".to_owned(), "research".to_owned()],
+    );
+    for phrase in [
+        "Workflow setup is incomplete",
+        "Staffing tiers: no tiers are configured",
+        "staffing.toml",
+        "talaria workflow roster --profile fixture",
+        "Built-in workflows not installed: review-branch, research",
+        "talaria workflow builtins install",
+    ] {
+        assert!(both.contains(phrase), "{phrase:?}: {both}");
+    }
+    let tiers_only = notice::setup_missing("fixture", Some("no tiers are configured"), &[]);
+    assert!(!tiers_only.contains("Built-in"), "{tiers_only}");
+    let builtins_only = notice::setup_missing("fixture", None, &["research".to_owned()]);
+    assert!(!builtins_only.contains("Staffing"), "{builtins_only}");
 }

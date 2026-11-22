@@ -61,10 +61,13 @@ pub(crate) fn note_submit(state: &mut SessionState, text: &str, submission_id: &
 
 /// A submit will start no turn: forget it.
 pub(crate) fn submit_failed(state: &mut SessionState, submission_id: &str) {
-    state
+    if let Some(entry) = state
         .queue
         .ledger
-        .remove(&SubmissionId(submission_id.to_string()));
+        .remove(&SubmissionId(submission_id.to_string()))
+    {
+        note_dropped(state, &entry.text);
+    }
     state
         .queue
         .fifo_of
@@ -201,7 +204,10 @@ fn draw_started_row(state: &mut SessionState, row: &QueuedRow) {
                 .submissions
                 .iter()
                 .find(|entry| entry.id == row.input_id.0)
-                .map_or_else(|| row.text.clone(), |entry| entry.text.clone());
+                .map_or_else(
+                    || crate::ultracode::shown_text(&row.text).to_owned(),
+                    |entry| entry.text.clone(),
+                );
             state.user(display);
         }
         forget_waiting(state, id);
@@ -254,10 +260,11 @@ pub(crate) fn start_cell(state: &mut SessionState, admission: Option<&str>, inje
                 .find(|entry| entry.id == key.0)
                 .map(|entry| entry.text.clone())
                 .unwrap_or_else(|| {
-                    state
+                    let sent = state
                         .queue
                         .row(&id)
-                        .map_or(entry.text, |row| row.text.clone())
+                        .map_or(entry.text, |row| row.text.clone());
+                    crate::ultracode::shown_text(&sent).to_owned()
                 });
             state.user(text);
         }
@@ -664,7 +671,19 @@ fn take_row(state: &mut SessionState, id: &AdmissionId) -> Option<String> {
     state.queue.known.remove(id);
     drop_entries_of(state, id);
     state.queue.fix_selection(&counted_before);
-    from_row.or(from_ledger)
+    let text = from_row.or(from_ledger);
+    if let Some(text) = &text {
+        note_dropped(state, text);
+    }
+    text
+}
+
+/// A prompt left the queue without being seen to start. When it carried the whole workflow
+/// skill, the conversation may not hold the skill, so the next routed prompt sends it again.
+fn note_dropped(state: &mut SessionState, sent: &str) {
+    if crate::ultracode::loads_skill(sent) {
+        state.queue.skill_dropped = true;
+    }
 }
 
 fn on_cancel_receipt(
@@ -696,6 +715,8 @@ fn on_cancel_receipt(
 /// Hand text back to the person. The reducer cannot see the composer, so the text is also
 /// shown in the transcript: nothing is lost and no draft is touched.
 pub(super) fn take_back(state: &mut SessionState, text: String) {
+    note_dropped(state, &text);
+    let text = crate::ultracode::shown_text(&text).to_owned();
     state.queue.returned.push(text.clone());
     note(
         state,
@@ -1031,13 +1052,17 @@ fn settle_submit(state: &mut SessionState, key: &SubmissionId) -> Vec<Effect> {
     let text = entry.text.clone();
     state.queue.ledger.remove(key);
     state.submissions.retain(|entry| entry.id != key.0);
+    note_dropped(state, &text);
     note(
         state,
         NoticeKind::Warning,
         notices::PROMPT_UNCONFIRMED.to_string(),
     );
     if !text.is_empty() {
-        state.queue.returned.push(text);
+        state
+            .queue
+            .returned
+            .push(crate::ultracode::shown_text(&text).to_owned());
     }
     Vec::new()
 }

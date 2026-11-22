@@ -56,6 +56,15 @@ pub(crate) fn classify_user_row(
     if kind == Some("hidden") {
         return UserRow::Skip;
     }
+    // A prompt Ultracode routed shows what the person typed, never the skill or its command.
+    if let Some(typed) = crate::ultracode::typed_text(text) {
+        return UserRow::Typed(typed.to_owned());
+    }
+    if kind == Some("skill_invocation")
+        && let Some(request) = crate::ultracode::replayed_request(text)
+    {
+        return UserRow::Typed(request.to_owned());
+    }
     let folded = fold_user_text(text);
     if let Some(plan) = folded
         .as_ref()

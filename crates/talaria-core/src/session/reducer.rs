@@ -154,9 +154,10 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
                 state.user(display.clone());
             }
             crate::queue::flow::note_submit(state, text, submission_id, placed);
+            // A waiting submit draws its cell later from this text: what the person typed.
             state.submissions.push_back(super::state::Submission {
                 id: submission_id.clone(),
-                text: text.clone(),
+                text: display.clone(),
                 attachments: Vec::new(),
                 placed,
             });

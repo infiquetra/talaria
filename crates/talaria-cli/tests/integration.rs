@@ -86,6 +86,8 @@ mod stream_args;
 mod stream_process;
 #[path = "integration/voice_vim.rs"]
 mod voice_vim;
+#[path = "integration/workflow_authoring.rs"]
+mod workflow_authoring;
 #[path = "integration/workflow_builtins_live.rs"]
 mod workflow_builtins_live;
 #[path = "integration/workflow_cli.rs"]

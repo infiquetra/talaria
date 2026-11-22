@@ -9,7 +9,7 @@ Start with a pure literal header: `export const meta = {name:'name', description
 | `pipeline(items, ...stages)` | Each item moves through function stages independently. A stage receives previous result, original item, index. |
 | `phase(title)` | Change the current instance's phase and narrate it. |
 | `log(message)` | Narration, cut at 4,000 characters. |
-| `workflow(nameOrRef, args?)` | Run a saved name or `{scriptPath:'relative.js'}` as a child. Children cannot create grandchildren. |
+| `workflow(nameOrRef, args?)` | Run a saved name or `{scriptPath:'relative.workflow'}` as a child. Children cannot create grandchildren. |
 | `now()` | Fixed run-start timestamp, restored on resume. |
 | `random(key)` | Deterministic number in [0,1) for a nonempty string key and stored seed. |
 | `args` | JSON input; undefined when omitted. |

@@ -183,6 +183,36 @@ fn detach_outlives_parent() {
 }
 
 #[test]
+fn a_draft_with_the_workflow_extension_runs() {
+    let temp = tempfile::tempdir().unwrap();
+    let draft = temp.path().join("drafts/fixture-draft.workflow");
+    fs::create_dir_all(draft.parent().unwrap()).unwrap();
+    fs::copy(fixture("scripts/slow.js"), &draft).unwrap();
+    let out = output(
+        command(temp.path(), "foreground-wire.json")
+            .args([
+                "workflow",
+                "run",
+                "--json",
+                "--profile",
+                "fixture",
+                "--runs-dir",
+            ])
+            .arg(temp.path().join("runs"))
+            .arg(&draft),
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).lines().any(|line| {
+            serde_json::from_str::<Value>(line)
+                .is_ok_and(|v| v["event"] == "run_finished" && v["outcome"] == "completed")
+        }),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
 fn list_output_shapes() {
     let temp = tempfile::tempdir().unwrap();
     let runs = temp.path().join("runs");

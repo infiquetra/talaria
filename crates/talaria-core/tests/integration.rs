@@ -345,10 +345,14 @@ mod text_sanitize;
 mod tool_generating;
 #[path = "integration/tool_view.rs"]
 mod tool_view;
+#[path = "integration/ultracode_authoring.rs"]
+mod ultracode_authoring;
 #[path = "integration/ultracode_notices.rs"]
 mod ultracode_notices;
 #[path = "integration/ultracode_route.rs"]
 mod ultracode_route;
+#[path = "integration/ultracode_screen.rs"]
+mod ultracode_screen;
 #[path = "integration/voice_barge_in.rs"]
 mod voice_barge_in;
 #[path = "integration/voice_client_core.rs"]

@@ -293,6 +293,19 @@ pub fn inspect(
         changed_files: changes,
     })
 }
+/// One digest over every file in an installed skill folder, so one change can be told from the
+/// next.
+pub fn installed_digest(dir: &Path) -> io::Result<String> {
+    let (files, special) = scan(dir)?;
+    let mut hasher = Sha256::new();
+    for (path, hash) in &files {
+        hasher.update(format!("{path}\0{hash}\n"));
+    }
+    for entry in &special {
+        hasher.update(format!("{entry}\n"));
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
 pub(crate) fn render_hashes(files: &[RenderedFile]) -> BTreeMap<String, String> {
     files
         .iter()

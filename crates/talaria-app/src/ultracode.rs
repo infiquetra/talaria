@@ -1,12 +1,14 @@
 //! Workflow routing decisions; the application executes every read through its event channel.
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use talaria_core::{
     commands::{CommandCatalog, CommandOutcome, ErrorView, SlashLine, describe_error},
-    session::SessionId,
+    session::{Cell, SessionId, TurnOutcome, TurnState},
     ultracode::{
-        SKILL_COMMAND, SkillAvailability, SubmitRoute, UltracodeCommand, UltracodeState, notice,
-        route_submit, skill_availability,
+        SKILL_COMMAND, SavedChanges, SavedModes, SkillAvailability, SkillEpoch, SubmitRoute,
+        UltracodeCommand, UltracodeState,
+        authoring::{AuthoringEnd, AuthoringStage, AuthoringView, RunFacts, resume},
+        follow_up_text, notice, route_submit, skill_availability,
     },
 };
 use talaria_workflow::runner::{RunStatus, RunSummary};
@@ -16,6 +18,11 @@ pub enum Action {
         session: SessionId,
         profile: String,
         command: UltracodeCommand,
+    },
+    /// Read the local workflow setup: the installed skill, staffing tiers and built-ins.
+    CheckSetup {
+        session: SessionId,
+        profile: String,
     },
     RunCommand {
         session: SessionId,
@@ -33,7 +40,41 @@ pub enum Action {
         session: SessionId,
         profile: String,
     },
+    /// Replace a changed or older install with this Talaria's copy, backing it up first.
+    ReinstallSkill {
+        session: SessionId,
+        profile: String,
+    },
     Changed,
+}
+/// The installed skill compared with its install record and this Talaria's copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillCheck {
+    Unchanged,
+    /// Another program changed the files; `changes` are the inspection's entries.
+    Modified {
+        changes: Vec<String>,
+        digest: String,
+    },
+    /// An unchanged install from an older Talaria.
+    Outdated {
+        digest: String,
+    },
+    /// Not installed by Talaria, or not readable: nothing to compare.
+    Unknown,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TierCheck {
+    Present,
+    Missing,
+    Unreadable(String),
+}
+/// What a setup read found on this machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupFacts {
+    pub skill: SkillCheck,
+    pub tiers: TierCheck,
+    pub missing_builtins: Vec<String>,
 }
 pub struct Foreground<'a> {
     pub session: &'a SessionId,
@@ -74,15 +115,86 @@ fn is_active(status: RunStatus) -> bool {
     matches!(status, RunStatus::Running | RunStatus::Parked)
 }
 
+/// A routed prompt's turn while the agent builds a workflow.
+#[derive(Debug, Clone)]
+struct Authoring {
+    /// The prompt's submission: a refused one never starts a turn.
+    submission_id: String,
+    /// What the person typed: the text of the prompt's cell.
+    typed: String,
+    /// How many cells the session held when the prompt was sent; its cell comes after them.
+    from: usize,
+    /// Wall-clock milliseconds when the prompt was sent: a run started since is this turn's.
+    since_wall_ms: i64,
+    /// When the turn started, in the application's clock.
+    started_ms: Option<u64>,
+    /// What an earlier turn left waiting for approval, once this turn started after it.
+    carried: Option<Carried>,
+}
+
+/// A script an earlier routed turn wrote and asked to start, and how long building it took.
+#[derive(Debug, Clone)]
+struct Carried {
+    script: String,
+    elapsed_ms: u64,
+}
+
+impl Authoring {
+    /// Where the prompt's cell is, once it is drawn.
+    fn cell(&self, cells: &[Cell]) -> Option<usize> {
+        cells
+            .iter()
+            .enumerate()
+            .skip(self.from)
+            .rev()
+            .find(|(_, cell)| matches!(cell, Cell::User(user) if user.text == self.typed))
+            .map(|(at, _)| at)
+    }
+    /// The turn's step, counting from the script an earlier turn left waiting.
+    fn progress(
+        &self,
+        cells: &[Cell],
+        at: usize,
+    ) -> talaria_core::ultracode::authoring::AuthoringProgress {
+        let script = self.carried.as_ref().map(|carried| carried.script.as_str());
+        resume(script, &cells[at + 1..])
+    }
+    /// How long the workflow has been building: this turn, and any earlier turn it follows.
+    fn elapsed_ms(&self, started_ms: u64, now_ms: u64) -> u64 {
+        let carried = self
+            .carried
+            .as_ref()
+            .map_or(0, |carried| carried.elapsed_ms);
+        carried.saturating_add(now_ms.saturating_sub(started_ms))
+    }
+}
+
 pub struct UltracodeService {
     state: UltracodeState,
     profiles: HashMap<SessionId, String>,
     asked: HashSet<SessionId>,
     kept: HashSet<SessionId>,
     pending: HashMap<SessionId, String>,
+    /// Sessions whose pending offer is a reinstall of a changed or older skill.
+    reinstall: HashSet<SessionId>,
+    /// The skill change last reported for each profile, by digest.
+    warned_skill: HashMap<String, String>,
+    /// The missing setup last reported for each profile.
+    warned_setup: HashMap<String, String>,
+    /// Sessions that routed a prompt in this process.
+    routed: HashSet<SessionId>,
+    /// Sessions whose next open says nothing, because a notice about the switch is already shown.
+    announced: HashSet<SessionId>,
+    /// True until the first session opens when Talaria was started with Ultracode on: that
+    /// session is turned on even if it was saved as off.
+    launch_on: bool,
     remote: bool,
     watches: HashMap<SessionId, RunWatch>,
     tracked: HashMap<SessionId, RunSummary>,
+    /// Each session's routed prompts, oldest first: the front one's turn runs or comes next.
+    authoring: HashMap<SessionId, VecDeque<Authoring>>,
+    /// The script each session's last routed turn wrote and left waiting for approval.
+    carried: HashMap<SessionId, Carried>,
     next_scan_ms: Option<u64>,
     scanning: bool,
 }
@@ -99,9 +211,17 @@ impl UltracodeService {
             asked: HashSet::new(),
             kept: HashSet::new(),
             pending: HashMap::new(),
+            reinstall: HashSet::new(),
+            warned_skill: HashMap::new(),
+            warned_setup: HashMap::new(),
+            routed: HashSet::new(),
+            announced: HashSet::new(),
+            launch_on: default_on,
             remote: false,
             watches: HashMap::new(),
             tracked: HashMap::new(),
+            authoring: HashMap::new(),
+            carried: HashMap::new(),
             next_scan_ms: None,
             scanning: false,
         }
@@ -129,6 +249,18 @@ impl UltracodeService {
     }
     pub fn answer_install(&mut self, session: &SessionId, line: &str) -> Option<Vec<Action>> {
         let profile = self.pending.remove(session)?;
+        if self.reinstall.remove(session) {
+            let declined = Action::Notice(notice::reinstall_declined(&profile));
+            return Some(match line.trim() {
+                "y" | "Y" | "yes" => vec![Action::ReinstallSkill {
+                    session: session.clone(),
+                    profile,
+                }],
+                "" | "n" | "N" | "no" => vec![declined],
+                // A prompt typed instead of an answer is not lost.
+                _ => vec![declined, Action::RestoreComposer(line.into())],
+            });
+        }
         Some(vec![if line.trim() == "y" {
             Action::InstallSkill {
                 session: session.clone(),
@@ -140,6 +272,225 @@ impl UltracodeService {
     }
     pub fn bind(&mut self, session: &SessionId, profile: &str) {
         self.profiles.insert(session.clone(), profile.into());
+    }
+    /// Start from the settings an earlier run saved.
+    pub fn restore(&mut self, saved: SavedModes) {
+        self.state.restore(saved);
+    }
+    /// The runtime session belongs to stored session `stored`. True when it opens with
+    /// Ultracode on and nothing has said so yet.
+    pub fn adopt(&mut self, session: &SessionId, stored: &str) -> bool {
+        let mut on = self.state.adopt(session, stored);
+        if std::mem::take(&mut self.launch_on) && !on {
+            self.state.set(session, true);
+            on = true;
+        }
+        let announced = self.announced.remove(session);
+        on && !announced
+    }
+    /// A notice about the session's switch is already shown; its next open says nothing.
+    pub fn mark_announced(&mut self, session: &SessionId) {
+        self.announced.insert(session.clone());
+    }
+    /// Hermes moved the session to a new stored id.
+    pub fn rotate(&mut self, session: &SessionId, stored: &str) {
+        self.state.rotate(session, stored);
+    }
+    /// The changes to merge into the settings file, when a setting changed or a session with
+    /// one was opened.
+    pub fn take_saved(&mut self, now_ms: i64) -> Option<SavedChanges> {
+        self.state.take_saved(now_ms)
+    }
+    /// A read of the local setup, for a session on a local gateway.
+    pub fn setup_check(&self, session: &SessionId) -> Option<Action> {
+        if self.remote {
+            return None;
+        }
+        Some(Action::CheckSetup {
+            session: session.clone(),
+            profile: self
+                .profiles
+                .get(session)
+                .map_or("default", String::as_str)
+                .into(),
+        })
+    }
+    /// Report what a setup read found, each finding once until it changes. A changed or older
+    /// skill offers the reinstall through the install offer's yes-or-no answer.
+    pub fn on_setup(
+        &mut self,
+        session: &SessionId,
+        profile: &str,
+        facts: SetupFacts,
+    ) -> Vec<Action> {
+        let mut actions = vec![];
+        let tiers = match facts.tiers {
+            TierCheck::Present => None,
+            TierCheck::Missing => Some(notice::NO_TIERS.to_owned()),
+            TierCheck::Unreadable(reason) => {
+                Some(format!("staffing.toml could not be read ({reason})"))
+            }
+        };
+        if tiers.is_none() && facts.missing_builtins.is_empty() {
+            self.warned_setup.remove(profile);
+        } else {
+            let key = format!("{tiers:?}{:?}", facts.missing_builtins);
+            if self.warned_setup.get(profile) != Some(&key) {
+                self.warned_setup.insert(profile.into(), key);
+                actions.push(Action::Notice(notice::setup_missing(
+                    profile,
+                    tiers.as_deref(),
+                    &facts.missing_builtins,
+                )));
+            }
+        }
+        let (warning, digest) = match facts.skill {
+            SkillCheck::Modified { changes, digest } => {
+                (notice::skill_changed(profile, &changes), digest)
+            }
+            SkillCheck::Outdated { digest } => (notice::skill_outdated(profile), digest),
+            SkillCheck::Unchanged => {
+                self.warned_skill.remove(profile);
+                return actions;
+            }
+            SkillCheck::Unknown => return actions,
+        };
+        if self.warned_skill.get(profile) == Some(&digest) {
+            return actions;
+        }
+        self.warned_skill.insert(profile.into(), digest);
+        actions.push(Action::Notice(warning));
+        actions.push(Action::Notice(notice::reinstall_offer(profile)));
+        self.pending.insert(session.clone(), profile.into());
+        self.reinstall.insert(session.clone());
+        actions
+    }
+    /// The session routed a prompt, so an interrupt there says Ultracode is still on.
+    pub fn note_routed(&mut self, session: &SessionId) {
+        self.routed.insert(session.clone());
+    }
+    /// A routed prompt was sent while the session held `cells` cells, at wall-clock `wall_ms`:
+    /// its turn shows the building block. A prompt sent while an earlier routed turn runs waits
+    /// behind it.
+    pub fn begin_authoring(
+        &mut self,
+        session: &SessionId,
+        submission_id: &str,
+        typed: &str,
+        cells: usize,
+        wall_ms: i64,
+    ) {
+        self.authoring
+            .entry(session.clone())
+            .or_default()
+            .push_back(Authoring {
+                submission_id: submission_id.to_owned(),
+                typed: typed.to_owned(),
+                from: cells,
+                since_wall_ms: wall_ms,
+                started_ms: None,
+                carried: None,
+            });
+    }
+    /// The submission was refused, so its prompt starts no turn.
+    pub fn submission_failed(&mut self, submission_id: &str) {
+        for queue in self.authoring.values_mut() {
+            queue.retain(|authoring| authoring.submission_id != submission_id);
+        }
+        self.authoring.retain(|_, queue| !queue.is_empty());
+    }
+    /// The run the routed turn started, once the runs watch found it.
+    fn authoring_run(&self, session: &SessionId, authoring: &Authoring) -> Option<&RunSummary> {
+        self.tracked(session)
+            .filter(|run| run.started_at_ms >= authoring.since_wall_ms)
+    }
+    /// Follow the routed turn: note when it starts, and when it ends give the one line it
+    /// leaves in the transcript.
+    pub fn observe_authoring(
+        &mut self,
+        session: &SessionId,
+        cells: &[Cell],
+        turn: &TurnState,
+        now_ms: u64,
+    ) -> Option<String> {
+        let running = *turn == TurnState::Running;
+        let queue = self.authoring.get_mut(session)?;
+        let Some(started_ms) = queue.front()?.started_ms else {
+            if !running {
+                return None;
+            }
+            // The turn that runs belongs to the newest prompt cell. Routed prompts queued in
+            // front of its own never got a turn, so they are dropped.
+            let newest = cells.iter().rposition(|cell| matches!(cell, Cell::User(_)));
+            let own = queue
+                .iter()
+                .position(|authoring| newest.is_some() && authoring.cell(cells) == newest)?;
+            queue.drain(..own);
+            if let Some(front) = queue.front_mut() {
+                front.started_ms = Some(now_ms);
+                front.carried = self.carried.remove(session);
+            }
+            return None;
+        };
+        if running {
+            return None;
+        }
+        let authoring = queue.pop_front()?;
+        if queue.is_empty() {
+            self.authoring.remove(session);
+        }
+        let at = authoring.cell(cells)?;
+        let end = match turn {
+            TurnState::Finished(TurnOutcome::Completed) => AuthoringEnd::Completed,
+            TurnState::Finished(TurnOutcome::Interrupted) => AuthoringEnd::Interrupted,
+            _ => AuthoringEnd::Failed,
+        };
+        let progress = authoring.progress(cells, at);
+        let elapsed_ms = authoring.elapsed_ms(started_ms, now_ms);
+        // A script written and not started waits for the person's answer: the next routed turn
+        // goes on from it.
+        if end == AuthoringEnd::Completed
+            && self.authoring_run(session, &authoring).is_none()
+            && progress.stage != AuthoringStage::Running
+            && let Some(script) = &progress.script
+        {
+            self.carried.insert(
+                session.clone(),
+                Carried {
+                    script: script.clone(),
+                    elapsed_ms,
+                },
+            );
+        }
+        let run = self.authoring_run(session, &authoring).map(|run| RunFacts {
+            name: &run.name,
+            status: run.status.as_str(),
+            agents: run.agents_total_known,
+        });
+        Some(notice::authoring_ended(&progress, end, elapsed_ms, run))
+    }
+    /// The building block, while the routed turn runs and no run it started is tracked: from
+    /// then on the run dock shows in its place.
+    pub fn authoring_view(
+        &self,
+        session: &SessionId,
+        cells: &[Cell],
+        now_ms: u64,
+    ) -> Option<AuthoringView> {
+        let authoring = self.authoring.get(session)?.front()?;
+        let started_ms = authoring.started_ms?;
+        if self.authoring_run(session, authoring).is_some() {
+            return None;
+        }
+        let at = authoring.cell(cells)?;
+        Some(AuthoringView {
+            progress: authoring.progress(cells, at),
+            elapsed_ms: authoring.elapsed_ms(started_ms, now_ms),
+        })
+    }
+    pub fn after_interrupt(&self, session: &SessionId) -> Option<Action> {
+        (self.routed.contains(session) && self.state.is_on(session))
+            .then(|| Action::Notice(notice::STILL_ON.into()))
     }
     pub fn handle_local_command(
         &mut self,
@@ -158,6 +509,9 @@ impl UltracodeService {
             || (command == UltracodeCommand::Toggle && self.state.is_on(session))
         {
             self.state.set(session, false);
+            // A script left waiting is not carried into a routed turn after Ultracode is on
+            // again. Prompts already sent as workflows keep their blocks.
+            self.carried.remove(session);
             vec![Action::Notice(notice::OFF.into()), Action::Changed]
         } else {
             vec![Action::FetchCatalog {
@@ -192,6 +546,8 @@ impl UltracodeService {
         let text = match availability {
             SkillAvailability::Installed { .. } => {
                 self.state.set(session, true);
+                // Typing the command again sends the whole skill with the next prompt.
+                self.state.rearm(session);
                 let text = if self.remote {
                     notice::ON_REMOTE
                 } else {
@@ -220,13 +576,16 @@ impl UltracodeService {
                 command_line,
                 one_shot,
             } => {
+                // The building block shows once the turn starts; no line is printed here.
                 let mut actions = vec![];
-                if one_shot {
-                    actions.push(Action::Notice(notice::ONE_SHOT.into()));
-                } else if self.remote {
-                    actions.push(Action::Notice(notice::ROUTED_REMOTE.into()));
-                } else {
-                    actions.push(Action::Notice(notice::ROUTED.into()));
+                // The conversation holds the skill already: the prompt goes with a reminder.
+                if !one_shot && self.state.skill_loaded(session) {
+                    actions.push(Action::SubmitCommand {
+                        text: follow_up_text(text),
+                        display: text.into(),
+                        submission_id: crate::commands::fresh_submission_id(),
+                    });
+                    return Some(actions);
                 }
                 actions.push(Action::RunCommand {
                     session: session.clone(),
@@ -246,18 +605,17 @@ impl UltracodeService {
         let profile = self.profiles.get(session).map_or("default", String::as_str);
         let failure = match outcome {
             Ok(value) if value["type"] == "skill" && value["name"] == "talaria-workflows" => {
-                if let (Some(text), Some(display)) = (
-                    value["message"].as_str().filter(|s| !s.trim().is_empty()),
-                    value["display"].as_str(),
-                ) {
+                if let Some(text) = value["message"].as_str().filter(|s| !s.trim().is_empty()) {
                     let mut actions = vec![];
                     if let Some(notice) = value["notice"].as_str().filter(|s| !s.trim().is_empty())
                     {
                         actions.push(Action::Notice(notice.into()));
                     }
+                    // The cell shows what the person typed, never Hermes's `display`, which
+                    // names the skill command.
                     actions.push(Action::SubmitCommand {
                         text: text.into(),
-                        display: display.into(),
+                        display: original_text.into(),
                         submission_id: crate::commands::fresh_submission_id(),
                     });
                     return actions;
@@ -292,7 +650,9 @@ impl UltracodeService {
                 match describe_error(&line, &error, None) {
                     CommandOutcome::Refused { message, .. }
                     | CommandOutcome::Failed { message }
-                    | CommandOutcome::OutcomeUnknown { message } => message,
+                    | CommandOutcome::OutcomeUnknown { message } => {
+                        message.replace(SKILL_COMMAND, notice::REQUEST)
+                    }
                     _ => "The workflow command did not return a skill.".into(),
                 }
             }
@@ -301,6 +661,18 @@ impl UltracodeService {
             Action::Notice(failure),
             Action::RestoreComposer(original_text.into()),
         ]
+    }
+    /// The whole skill went into the session's conversation `epoch`.
+    pub fn skill_sent(&mut self, session: &SessionId, epoch: SkillEpoch) {
+        self.state.skill_sent(session, epoch);
+    }
+    /// Say which conversation the session holds now, before a prompt is routed.
+    pub fn note_epoch(&mut self, session: &SessionId, epoch: &SkillEpoch) {
+        self.state.note_epoch(session, epoch);
+    }
+    /// The session's conversation may have lost the skill: its next routed prompt sends it whole.
+    pub fn rearm(&mut self, session: &SessionId) {
+        self.state.rearm(session);
     }
     pub fn status_input(&self, foreground: Option<&SessionId>) -> bool {
         foreground.is_some_and(|id| self.state.is_on(id))

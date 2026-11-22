@@ -70,6 +70,14 @@ pub struct QueuedRow {
     pub execution_generation: Option<i64>,
 }
 
+/// A row as the screen shows it: a routed prompt shows what the person typed.
+fn shown_row(row: &QueuedRow) -> QueuedRow {
+    QueuedRow {
+        text: crate::ultracode::shown_text(&row.text).to_owned(),
+        ..row.clone()
+    }
+}
+
 /// How long to wait for a fanout after a lost queue reply.
 pub const RECONCILE_WAIT: Duration = Duration::from_secs(5);
 
@@ -160,6 +168,9 @@ pub struct QueueState {
     pub(crate) verify: Option<Vec<AdmissionId>>,
     /// Text the person should get back, oldest first, until taken.
     pub(crate) returned: Vec<String>,
+    /// True when a prompt that carried the whole workflow skill left without starting, until
+    /// taken.
+    pub(crate) skill_dropped: bool,
     /// True once an unreadable queue frame has been noted for this session.
     pub(crate) decode_noted: bool,
     /// Counter for submission ids minted without an [`IdSource`].
@@ -361,7 +372,7 @@ impl QueueState {
     /// Issue 232. Queue and steer.
     #[must_use]
     pub fn view(&self, running: bool) -> QueueView {
-        let rows: Vec<QueuedRow> = self.counted().cloned().collect();
+        let rows: Vec<QueuedRow> = self.counted().map(shown_row).collect();
         let selected = self
             .selection
             .as_ref()
@@ -372,7 +383,7 @@ impl QueueState {
                 .rows
                 .iter()
                 .filter(|row| row.steering && row.status == RowStatus::Started)
-                .cloned()
+                .map(shown_row)
                 .collect(),
             selected,
             paused: self.paused(),
@@ -394,6 +405,13 @@ impl QueueState {
     #[must_use]
     pub fn take_returned(&mut self) -> Vec<String> {
         std::mem::take(&mut self.returned)
+    }
+
+    /// True when a prompt that carried the whole workflow skill was removed, refused or never
+    /// confirmed since the last call, so the conversation may not hold the skill. Clears it.
+    #[must_use]
+    pub fn take_skill_dropped(&mut self) -> bool {
+        std::mem::take(&mut self.skill_dropped)
     }
 
     /// Rows that count toward the indicator, in sequence order.

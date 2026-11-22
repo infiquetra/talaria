@@ -71,6 +71,13 @@ pub(crate) fn rebuild_after_rewind(
                 ))];
             }
         };
+    // Hermes rewinds in place, keeping the stored id and the compaction count, so nothing else
+    // tells that the prompt that carried the whole workflow skill may be gone.
+    state
+        .ultracode
+        .rearm(&talaria_core::session::SessionId::new(
+            fresh.session_id.clone(),
+        ));
     let mut old = state.opened.take();
     if let Some(old) = &mut old {
         carry_over(&mut old.state, &mut fresh.state);

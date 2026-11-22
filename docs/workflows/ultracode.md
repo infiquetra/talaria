@@ -53,25 +53,92 @@ In an interactive Talaria session:
 ```
 
 Bare `/ultracode` toggles. Turning on and checking status read a fresh command catalogue.
+
+On a local gateway Talaria also checks the workflow setup when Ultracode turns on, when a
+session opens with it on, and before each routed prompt. Each finding is reported once until it
+changes:
+
+- The installed skill files are compared by hash with the install record. When another program
+  changed them, most often Hermes's background self-improvement review, which rewrites skills it
+  has used, Talaria says which files changed, that the agent may not follow Talaria's
+  instructions (for example it may build the project itself instead of proposing a workflow),
+  and asks `Reinstall Talaria's talaria-workflows skill into profile <name> now? The installed
+  copy is backed up first. [y/N]`. An install from an older Talaria gets the same question.
+  `y` reinstalls with `--force`. Any other answer keeps the installed copy and prints the
+  command; a prompt typed instead of an answer goes back to the composer.
+- Missing staffing tiers and missing built-in workflows give one notice that names what is
+  missing and the commands: add `[tiers.<name>]` tables to `staffing.toml` and check them with
+  `talaria workflow roster --profile <name>`; install the built-ins with
+  `talaria workflow builtins install`.
+
+To stop Hermes from changing the skill again, lock it in Hermes. Talaria does not do this for
+you, because the lock lives in Hermes's own state (`skills/.usage.json`). Name the profile
+every time, `-p default` included: without `-p`, Hermes runs in the profile chosen with
+`hermes profile use`, which may not be the one that holds the changed skill.
+
+```sh
+hermes -p <profile> curator lock talaria-workflows
+```
+
+A locked skill stays readable and usable; the agent and the background review can no longer
+edit it. `hermes -p <profile> curator unlock talaria-workflows` undoes it.
 A missing skill on a local session asks once: `Install talaria-workflows into profile <name> now? [y/N]`. `y` installs it and prints the installer's result. Any other answer prints the install command. A session started with `--remote` does not ask; its notice says the skill must be installed on the machine that runs the gateway. Check that the skill is enabled in Hermes if it
 is installed but absent from the catalogue. A quick command, plugin, or alias that takes
 `/talaria-workflows` is refused. A project-local skill can take precedence over the installed
 copy; status shows the catalogue's reported origin.
 
-The toggle belongs to a session and lives only in this Talaria process. A `/branch` copy
-starts with its parent's setting and says `Ultracode stays on in this branch.`; a reconnect to
-the same stored session keeps it. Other sessions keep their own setting. The foreground
+The toggle belongs to a stored session. Talaria saves it in `workflow-mode.json` in its home
+folder (`$TALARIA_CONFIG_DIR`, or `~/.talaria`), keyed by the stored session id, so it is kept
+after a reconnect, after a return from another session (such as an agent's session opened from
+the workflow view), when Hermes compacts the session into a new stored id, and after a restart
+with `talaria --resume`. Sessions not opened for 30 days are dropped from the file. Several
+Talaria windows share the file: each save takes a lock on `workflow-mode.json.lock` beside it
+and merges that window's changes into the file, so a setting saved in one window is kept when
+another window saves. A `/branch`
+copy starts with its parent's setting and says `Ultracode stays on in this branch.` Other
+sessions keep their own setting. A session that opens with Ultracode on prints
+`Ultracode is on in this session: a plain prompt is handled as a workflow. /ultracode off to stop.`
+After you interrupt a turn in a session that has routed a prompt, Talaria prints
+`Ultracode is still on: your next plain prompt is handled as a workflow too.` The foreground
 session controls the `ultracode` status segment, shown after the model and dropped first when
-space is tight. Start interactive sessions on with `talaria --ultracode`. Print mode does not
-use this flag.
+space is tight. Start interactive sessions on with `talaria --ultracode`. The flag turns on
+the session it opens even when that session was saved as off; other sessions keep their
+saved setting. Print mode does not use this flag.
 
-Each routed prompt prints `Ultracode: this prompt goes to the talaria-workflows skill.` before
-it is sent. The agent then proposes a workflow and asks before it starts one. While Ultracode
+While a routed prompt's turn runs, a block above the composer, in the place the workflow dock
+uses, shows that the agent is building a workflow, how long the turn has run, and the step it
+is on:
+
+```text
+⚙ Ultracode · building a workflow · 1m 05s
+  Step 2 of 5: writing the workflow script · fix-parser.workflow
+```
+
+The steps are planning the workflow, writing the workflow script, checking the script,
+waiting for your approval (or waiting for your answer, when the agent asks before any script
+is written), and running the workflow. Talaria reads them from the turn's tool calls: a write
+to a `.workflow` file or a script in the drafts folder names the script, reading it back or a
+command that names it is checking, an open question is waiting, and `talaria workflow run` is
+running. When the agent writes a script and ends its turn to ask whether to start it, your
+reply's turn goes on from that script at step 4 (reading your answer), and the time counts
+both turns. Once Talaria finds the run the turn started, the workflow dock takes the block's
+place. On a screen shorter than 16 rows the block is one row
+(`⚙ Ultracode · writing the workflow script · 1m 05s`). It does not move; only its seconds
+change, and the screen wakes once a second only while the block is on screen.
+
+When the turn ends, the block leaves one line in the transcript that says how it ended, for
+example `Ultracode built the workflow in 3m 20s: fix-parser is running (7 agents so far).`,
+`Ultracode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your
+approval to start it.`, or, for an interrupted turn,
+`Ultracode stopped: interrupted while writing the workflow script (fix-parser.workflow) after
+1m 05s. No workflow started.` A turn interrupted after it sent `talaria workflow run`, before
+Talaria found the run, says the workflow may still be running. The agent proposes a workflow
+and asks before it starts one.
+While Ultracode
 is on, a slash command that carries a prompt (`/goal`, `/bg`, `/queue`, `/steer`, `/btw` and
 `/plan`, with their aliases) still goes to Hermes as typed, after a one-line notice that names
-the command and says to send the prompt without it to send the task to the talaria-workflows
-skill. `/goal`
-subcommands such as `/goal status` print no notice.
+the command and says to send the prompt without it to have the task handled as a workflow.
+`/goal` subcommands such as `/goal status` print no notice.
 
 After a routed prompt, Talaria checks the local runs folder every two seconds for a run of
 the same profile that started after the prompt. It keeps checking for an hour after the last
@@ -97,11 +164,26 @@ underscore, and hyphen count as word characters: `ULTRACODE:` matches, `ultracod
 `pre-ultracode`, and `ultracode_x` do not. Non-ASCII letters are separators. Empty prompts,
 slash commands, and shell commands keep their existing behavior.
 
-A routed prompt becomes `/talaria-workflows <original text>` on the normal command service.
-Only a skill directive named `talaria-workflows` is submitted. Hermes's message is sent byte
-for byte, and its display string becomes the user cell. Errors and collisions send no prompt
-and restore the original composer text. Inner tabs and newlines remain in the message; Hermes
-may collapse them in the display. Busy sessions use the existing prompt queue.
+The first routed prompt of a session in this Talaria process becomes
+`/talaria-workflows <original text>` on the normal command service. Only a skill directive named
+`talaria-workflows` is submitted, and Hermes's message, the whole skill with the request at its
+end, is sent byte for byte. Errors and collisions send no prompt and restore the original
+composer text. Inner tabs and newlines remain in the message. Later routed prompts in the same
+conversation skip the command service: they send the typed text after one model-facing line
+saying that the workflow mode is on and the skill already loaded in the conversation applies.
+The whole skill goes again with the first routed prompt after Hermes compacts the session,
+after the session is opened under a new stored id, after a rewind or a restore, after
+`/ultracode on` is typed again, and after a prompt that carried it is removed from the queue,
+refused, or never confirmed.
+A prompt containing the keyword with the toggle off always carries the whole skill. Busy
+sessions use the existing prompt queue.
+
+The screen shows only what was typed. The user cell, a prompt waiting in the queue, its
+preview and edit, the rewind list, and the history replayed after a resume, a reconnect or a
+return to the session never show the skill command, the skill text or the reminder line. The
+proposed workflow and the approval question show as usual. The prompt history file records the
+typed text. Hermes replays a routed prompt as one line, so a multi-line request comes back with
+its line breaks collapsed.
 
 The lead first reads:
 
@@ -117,11 +199,17 @@ retains the full report with staffing problems. Exit 1 has a null report, gatewa
 local fields, and an error kind: home_unavailable, filesystem, staffing_invalid,
 gateway_unavailable, profile_unserved, or roster_failed. Roster discovery never ensures a gateway.
 
-The lead uses a listed built-in path or writes a draft script. It runs foreground workflows
+The lead uses a listed built-in path or writes a draft script named `<name>.workflow` in the
+drafts folder. The `.workflow` extension keeps Hermes's file-write lint, which checks `.js`
+files with `node --check` and flags the top-level `return` every workflow script ends with as
+`Illegal return statement`, from reporting an error on every draft; `talaria workflow run`
+accepts any extension. The skill tells the lead never to write the deliverable in the
+authoring session: anything the workers must share goes in the workflow's first phase. It runs foreground workflows
 in a background terminal with completion notification and waits using that process's returned
 session id. The final `run_finished` JSON line supplies the run id, outcome, result, and spend.
 Detached work is polled with `workflow list --json`; a completed run's result is retrieved with
-`workflow resume --json <run-id>`. Interrupted work resumes under the same id. A parked call
+`workflow resume --json <run-id>`, which the lead also uses after a background completion whose
+output was cut short. Interrupted work resumes under the same id. A parked call
 requires the developer to choose the printed `workflow resolve` command's fail, rerun, or abort
 resolution. The lead never chooses a new paid attempt alone.
 
