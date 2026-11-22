@@ -2387,6 +2387,16 @@ impl KeyMap {
             .collect()
     }
 
+    /// The label of the first key bound to a settings action, for a hint; `None` when unbound.
+    #[must_use]
+    pub fn settings_label(&self, action: SettingsAction) -> Option<String> {
+        SETTINGS_BINDINGS
+            .iter()
+            .position(|(held, _, _)| *held == action)
+            .and_then(|index| self.chords[Binding::Settings(index).index()].first())
+            .map(KeyChord::label)
+    }
+
     /// Resolve a key in the settings screen.
     pub fn resolve_settings(&self, context: KeyContext, key: &Key) -> Option<SettingsAction> {
         if context != KeyContext::Settings {

@@ -1,6 +1,7 @@
 use super::{
-    ChoiceSpec, ChoiceValue, FieldKind, FieldView, ManyStore, OwnKind, Pick, SchemaList,
-    choice_spec, contains_secret_key, env_reference_names, number_spec, secrets::has_env_reference,
+    ChoiceSpec, ChoiceValue, FieldKind, FieldView, ManyStore, OwnKind, Pick, RuntimeChoice,
+    SchemaList, choice_spec, contains_secret_key, env_reference_names, number_spec,
+    secrets::has_env_reference,
 };
 use serde_json::Value;
 use std::fmt;
@@ -342,7 +343,11 @@ fn parse_many(spec: &ChoiceSpec, text: &str, current: Option<&Value>) -> Result<
         .map(str::trim)
         .filter(|name| !name.is_empty())
     {
-        if !spec.items.iter().any(|item| item.value == name) && !held.iter().any(|h| h == name) {
+        // A key that takes the user's own entries keeps any name.
+        if spec.custom.is_none()
+            && !spec.items.iter().any(|item| item.value == name)
+            && !held.iter().any(|h| h == name)
+        {
             unlisted.push(name);
         } else if !picks.iter().any(|pick| pick == name) {
             picks.push(name.to_owned());
@@ -414,10 +419,206 @@ pub(crate) fn listed_choices(field: &FieldView) -> Vec<(Value, Option<&'static C
     }
     listed
 }
-/// Whether `value` selects the listed `choice`, directly or through one of its aliases.
+/// Whether `value` selects the listed `choice`, directly, through one of its aliases, or as the
+/// JSON boolean Hermes reads like a listed `true` or `false`.
 pub(crate) fn is_choice(value: &Value, choice: &Value, item: Option<&ChoiceValue>) -> bool {
     value == choice
         || item.is_some_and(|item| value.as_str().is_some_and(|s| item.aliases.contains(&s)))
+        || matches!((value, choice), (Value::Bool(flag), Value::String(word))
+            if word == if *flag { "true" } else { "false" })
+}
+/// One value a chooser offers, in display order.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Offer {
+    pub(crate) value: Value,
+    /// The built-in row, when Talaria knows the value.
+    pub(crate) item: Option<&'static ChoiceValue>,
+    /// The name a fetched list gives a value only that list offers.
+    pub(crate) fetched: Option<String>,
+    pub(crate) description: String,
+}
+/// Merge a fetched list into `offers`: the gateway's words for a value Talaria also knows are the
+/// live ones, and a value only the gateway names gets a row of its own.
+fn merge_fetched(offers: &mut Vec<Offer>, spec: &ChoiceSpec, fetched: &[RuntimeChoice]) {
+    for choice in fetched {
+        let value = spec.saved(&choice.value);
+        let known = offers.iter_mut().find(|offer| {
+            offer.value == value
+                || offer
+                    .item
+                    .is_some_and(|item| item.aliases.contains(&choice.value.as_str()))
+        });
+        match known {
+            Some(offer) => {
+                if !choice.description.is_empty() {
+                    offer.description = choice.description.clone();
+                }
+            }
+            None => offers.push(Offer {
+                value,
+                item: None,
+                fetched: Some(choice.value.clone()),
+                description: choice.description.clone(),
+            }),
+        }
+    }
+}
+/// The rows a single choice offers: the built-in and schema values of [`listed_choices`], then
+/// the values a fetched list adds once it has loaded.
+pub(crate) fn choice_offers(field: &FieldView, fetched: Option<&[RuntimeChoice]>) -> Vec<Offer> {
+    let mut offers: Vec<Offer> = listed_choices(field)
+        .into_iter()
+        .map(|(value, item)| Offer {
+            description: item
+                .map(|item| item.description.to_owned())
+                .unwrap_or_default(),
+            value,
+            item,
+            fetched: None,
+        })
+        .collect();
+    if let (Some(spec), Some(fetched)) = (choice_spec(&field.key), fetched) {
+        merge_fetched(&mut offers, spec, fetched);
+    }
+    offers
+}
+/// The names a multiple choice offers to tick: the built-in rows, then the names a fetched list
+/// adds once it has loaded.
+pub(crate) fn many_offers(spec: &ChoiceSpec, fetched: Option<&[RuntimeChoice]>) -> Vec<Offer> {
+    let mut offers: Vec<Offer> = spec
+        .items
+        .iter()
+        .map(|item| Offer {
+            value: Value::String(item.value.into()),
+            item: Some(item),
+            fetched: None,
+            description: item.description.into(),
+        })
+        .collect();
+    if let Some(fetched) = fetched {
+        // A ticked name is saved as itself, whatever the key's single-value saving rule.
+        let names = ChoiceSpec {
+            save: super::SaveAs::Text,
+            ..*spec
+        };
+        merge_fetched(&mut offers, &names, fetched);
+    }
+    offers
+}
+fn plain(text: &str) -> bool {
+    !text.chars().any(char::is_control)
+}
+/// What `value` is saved as when it is proposed for a key edited with a chooser, or `None` when
+/// the chooser does not offer it. The chooser's rows come from the same lists, so the two never
+/// disagree: the listed and fetched rows, the value held now, and any text where the key also
+/// takes the user's own entries. A listed word given as text is saved as the chooser saves it.
+#[must_use]
+pub fn offered_value(
+    field: &FieldView,
+    value: &Value,
+    current: Option<&Value>,
+    fetched: Option<&[RuntimeChoice]>,
+) -> Option<Value> {
+    let spec = choice_spec(&field.key);
+    let held = current.filter(|current| !current.is_null() && *current == value);
+    match spec.map(|spec| (spec, spec.pick)) {
+        Some((spec, Pick::Many { store, .. })) => {
+            let shaped = match store {
+                ManyStore::List => value
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(Value::is_string)),
+                ManyStore::CommaString => value.is_string(),
+            };
+            let offers = many_offers(spec, fetched);
+            let held = current.map(picked_names).unwrap_or_default();
+            let offered = |name: &String| {
+                offers
+                    .iter()
+                    .any(|offer| offer.value.as_str() == Some(name.as_str()))
+                    || held.contains(name)
+                    || (spec.custom.is_some() && plain(name))
+            };
+            (shaped && picked_names(value).iter().all(offered)).then(|| value.clone())
+        }
+        Some((spec, Pick::Mixed { own, .. })) => {
+            if let Some(item) = spec
+                .items
+                .iter()
+                .find(|item| value.as_str() == Some(item.value) || spec.saved(item.value) == *value)
+            {
+                return Some(spec.saved(item.value));
+            }
+            let own = match own {
+                OwnKind::Number => value.as_u64().is_some(),
+                OwnKind::List => value
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(|item| item.as_str().is_some_and(plain))),
+            };
+            (own || held.is_some()).then(|| value.clone())
+        }
+        _ => {
+            let offers = choice_offers(field, fetched);
+            if offers
+                .iter()
+                .any(|offer| is_choice(value, &offer.value, offer.item))
+                || held.is_some()
+            {
+                return Some(value.clone());
+            }
+            let text = value.as_str()?;
+            if let Some(offer) = offers.iter().find(|offer| {
+                offer.item.is_some_and(|item| item.value == text)
+                    || offer.fetched.as_deref() == Some(text)
+            }) {
+                return Some(offer.value.clone());
+            }
+            if text.is_empty() && field.clearable {
+                return Some(value.clone());
+            }
+            spec.filter(|spec| spec.custom.is_some() && plain(text))
+                .map(|spec| spec.saved(text))
+        }
+    }
+}
+/// The values the chooser of `field` lists, and whether it also takes the user's own entries;
+/// `None` for a key edited without a chooser.
+#[must_use]
+pub fn offered_options(
+    field: &FieldView,
+    fetched: Option<&[RuntimeChoice]>,
+) -> Option<(Vec<Value>, bool)> {
+    let spec = choice_spec(&field.key);
+    match spec.map(|spec| (spec, spec.pick)) {
+        Some((spec, Pick::Many { .. })) => Some((
+            many_offers(spec, fetched)
+                .into_iter()
+                .map(|offer| offer.value)
+                .collect(),
+            spec.custom.is_some(),
+        )),
+        Some((spec, Pick::Mixed { .. })) => Some((
+            spec.items
+                .iter()
+                .map(|item| spec.saved(item.value))
+                .collect(),
+            true,
+        )),
+        Some((spec, Pick::One)) => Some((
+            choice_offers(field, fetched)
+                .into_iter()
+                .map(|offer| offer.value)
+                .collect(),
+            spec.custom.is_some(),
+        )),
+        None if field.kind == FieldKind::Select => Some((
+            choice_offers(field, None)
+                .into_iter()
+                .map(|offer| offer.value)
+                .collect(),
+            false,
+        )),
+        None => None,
+    }
 }
 pub(crate) fn option_text(value: &Value) -> String {
     value

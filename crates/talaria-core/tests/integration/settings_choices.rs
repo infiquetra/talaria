@@ -65,7 +65,12 @@ fn every_spec_value_is_unique_within_its_key() {
 #[test]
 fn every_spec_row_has_a_one_line_description() {
     for spec in choice_specs() {
-        assert!(!spec.items.is_empty(), "{} has no rows", spec.key);
+        // A key whose names all come from a fetched list may have no built-in rows.
+        assert!(
+            !spec.items.is_empty() || spec.runtime.is_some(),
+            "{} has no rows",
+            spec.key
+        );
         for item in spec.items {
             let text = item.description;
             assert!(
@@ -144,6 +149,9 @@ fn keys_whose_values_differ_per_profile_fetch_their_list() {
         ("context.engine", RuntimeList::ContextEngines),
         ("kanban.default_assignee", RuntimeList::Profiles),
         ("kanban.orchestrator_profile", RuntimeList::Profiles),
+        ("toolsets", RuntimeList::Toolsets),
+        ("agent.disabled_toolsets", RuntimeList::Toolsets),
+        ("skills.auto_load", RuntimeList::Skills),
     ] {
         assert_eq!(choice_spec(key).unwrap().runtime, Some(list), "{key}");
     }
@@ -157,9 +165,8 @@ fn keys_whose_values_differ_per_profile_fetch_their_list() {
 
 #[test]
 fn keys_left_for_later_have_no_spec_yet() {
-    // The language flag and keys present only after the pin come later.
+    // Keys present only after the pin come later.
     for key in [
-        "display.language",
         "gateway.sessiondb_loop_guard",
         "voice.auto_tts_mode",
         "bedrock.region",
@@ -407,4 +414,49 @@ fn number_specs_state_a_range_a_step_and_a_unit() {
         .map(|spec| spec.key)
         .collect();
     assert_eq!(blank_keys.len(), 13, "{blank_keys:?}");
+}
+
+#[test]
+fn display_language_lists_the_languages_hermes_ships() {
+    let spec = choice_spec("display.language").expect("display.language has a chooser");
+    assert_eq!(spec.pick, Pick::One);
+    assert_eq!(spec.save, SaveAs::Text);
+    assert_eq!(spec.items[0].value, "en");
+    assert_eq!(spec.items.len(), 17);
+    // A language pack adds languages the bundled list lacks.
+    assert!(spec.custom.is_some());
+    // Hermes reads its aliases, such as a region tag, as the bundled language.
+    let pt = spec.items.iter().find(|item| item.value == "pt").unwrap();
+    assert!(pt.aliases.contains(&"pt-br"), "{:?}", pt.aliases);
+    let proof = proof();
+    let entry = proof["choices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"] == "display.language")
+        .expect("a proof entry for display.language");
+    assert_eq!(entry["file"], "agent/i18n.py");
+    assert_eq!(entry["name"], "SUPPORTED_LANGUAGES");
+}
+
+#[test]
+fn toolset_and_skill_keys_tick_fetched_names_and_take_own_entries() {
+    for (key, empty) in [
+        ("toolsets", None),
+        ("agent.disabled_toolsets", Some("None disabled")),
+        ("skills.auto_load", Some("No skills")),
+    ] {
+        let spec = choice_spec(key).unwrap();
+        assert_eq!(
+            spec.pick,
+            Pick::Many {
+                ordered: false,
+                empty_label: empty,
+                store: ManyStore::List
+            },
+            "{key}"
+        );
+        assert!(spec.custom.is_some(), "{key}");
+    }
+    assert_eq!(values("toolsets"), ["hermes-cli"]);
 }

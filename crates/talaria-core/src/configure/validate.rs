@@ -3,8 +3,9 @@ use super::{
     CapKind, Change, Context, McpSource, Proposal, Screen, SecretDetector, Section, WITHHELD,
 };
 use crate::settings::{
-    FieldView, OwnKind, Pick, ReadOnlyReason, ValueKind, apply_effect, choice_spec,
-    contains_secret_key, env_reference_names, is_secret_key, number_spec, value_kind,
+    FieldView, OwnKind, Pick, ReadOnlyReason, RuntimeChoice, RuntimeList, ValueKind, apply_effect,
+    choice_spec, contains_secret_key, env_reference_names, is_secret_key, number_spec,
+    offered_value, value_kind,
 };
 use serde_json::Value;
 use std::borrow::Cow;
@@ -175,6 +176,28 @@ fn available<T>(section: &Section<T>) -> &[T] {
         Section::Unavailable(_) => &[],
     }
 }
+/// The list a key's chooser fetches, when the context already holds it: the served profiles, the
+/// toolsets or the skills.
+pub(crate) fn fetched_list(ctx: &Context, key: &str) -> Option<Vec<RuntimeChoice>> {
+    let choice = |name: &String| RuntimeChoice {
+        value: name.clone(),
+        description: String::new(),
+    };
+    let i = &ctx.inventory;
+    let names = |section: &Section<super::CapRow>| match section {
+        Section::Available(rows) => Some(rows.iter().map(|row| choice(&row.name)).collect()),
+        Section::Unavailable(_) => None,
+    };
+    match choice_spec(key)?.runtime? {
+        RuntimeList::Profiles => match &i.profiles {
+            Section::Available(rows) => Some(rows.iter().map(choice).collect()),
+            Section::Unavailable(_) => None,
+        },
+        RuntimeList::Toolsets => names(&i.toolsets),
+        RuntimeList::Skills => names(&i.skills),
+        _ => None,
+    }
+}
 fn missing_section(change: &Change, ctx: &Context) -> Option<&'static str> {
     let i = &ctx.inventory;
     let mut needs = Vec::new();
@@ -279,7 +302,8 @@ fn validate_one(row: &mut Row, ctx: &Context, detect: SecretDetector) -> RowStat
                 ValueKind::ReadOnly(_) => return invalid("this setting cannot be edited here"),
                 _ => {}
             }
-            match check_value(&kind, field, value) {
+            let fetched = fetched_list(ctx, key);
+            match check_proposed(&kind, field, value, current, fetched.as_deref()) {
                 Ok(v) => *value = v,
                 Err(reason) => return invalid(reason),
             }
@@ -574,6 +598,23 @@ fn on_off(enabled: bool) -> &'static str {
     if enabled { "on" } else { "off" }
 }
 pub fn check_value(kind: &ValueKind, field: &FieldView, value: &Value) -> Result<Value, String> {
+    check_proposed(kind, field, value, None, None)
+}
+/// Check a proposed value against its editor. A key edited with a chooser takes what that chooser
+/// offers: its rows, the `current` value, a `fetched` list already loaded, and any text where the
+/// key takes the user's own entries.
+pub fn check_proposed(
+    kind: &ValueKind,
+    field: &FieldView,
+    value: &Value,
+    current: Option<&Value>,
+    fetched: Option<&[RuntimeChoice]>,
+) -> Result<Value, String> {
+    if matches!(kind, ValueKind::Choice | ValueKind::Many | ValueKind::Mixed)
+        && let Some(saved) = offered_value(field, value, current, fetched)
+    {
+        return Ok(saved);
+    }
     if let Some(spec) = number_spec(&field.key)
         && matches!(kind, ValueKind::Integer | ValueKind::Float)
     {
@@ -613,47 +654,8 @@ pub fn check_value(kind: &ValueKind, field: &FieldView, value: &Value) -> Result
             .is_some_and(|v| v.iter().all(Value::is_string)),
         ValueKind::JsonList => value.is_array(),
         ValueKind::Nullable => !value.is_array() && !value.is_object(),
-        ValueKind::Choice => {
-            value.is_string()
-                && field
-                    .options
-                    .as_ref()
-                    .is_some_and(|options| options.contains(value))
-        }
-        ValueKind::Many => choice_spec(&field.key).is_some_and(|spec| match spec.pick {
-            Pick::Many { store, .. } => {
-                let names = crate::settings::picked_names(value);
-                let shaped = match store {
-                    crate::settings::ManyStore::List => value
-                        .as_array()
-                        .is_some_and(|items| items.iter().all(Value::is_string)),
-                    crate::settings::ManyStore::CommaString => value.is_string(),
-                };
-                shaped
-                    && names
-                        .iter()
-                        .all(|name| spec.items.iter().any(|item| item.value == *name))
-            }
-            _ => false,
-        }),
-        ValueKind::Mixed => choice_spec(&field.key).is_some_and(|spec| {
-            let Pick::Mixed { own, .. } = spec.pick else {
-                return false;
-            };
-            // A listed word, as typed or as the editor saves it (true and false as booleans).
-            let listed = spec
-                .items
-                .iter()
-                .any(|item| value.as_str() == Some(item.value) || spec.saved(item.value) == *value);
-            listed
-                || match own {
-                    OwnKind::Number => value.as_u64().is_some(),
-                    OwnKind::List => value
-                        .as_array()
-                        .is_some_and(|items| items.iter().all(Value::is_string)),
-                }
-        }),
-        ValueKind::ReadOnly(_) => false,
+        // Checked above against what the chooser offers.
+        ValueKind::Choice | ValueKind::Many | ValueKind::Mixed | ValueKind::ReadOnly(_) => false,
     };
     if ok {
         Ok(value.clone())

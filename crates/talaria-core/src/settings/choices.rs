@@ -39,6 +39,10 @@ pub enum RuntimeList {
     ContextEngines,
     /// The profiles the gateway serves.
     Profiles,
+    /// The toolsets the profile offers.
+    Toolsets,
+    /// The skills installed for the profile.
+    Skills,
 }
 
 /// One value a fetched list offers.
@@ -534,6 +538,15 @@ static SPECS: &[ChoiceSpec] = &[
             v("off", "No coding brief."),
         ],
     ),
+    many(
+        "agent.disabled_toolsets",
+        false,
+        Some("None disabled"),
+        ManyStore::List,
+        &[],
+    )
+    .custom("Toolset names, separated by commas; Hermes skips a name it does not know.")
+    .runtime(RuntimeList::Toolsets),
     mixed(
         "agent.execution_guidance",
         "Own list…",
@@ -577,8 +590,8 @@ static SPECS: &[ChoiceSpec] = &[
         &[
             v("", "Normal speed (fast mode off).")
                 .label("Normal")
-                .aliases(&["normal"]),
-            v("fast", "Fast mode on every request."),
+                .aliases(&["normal", "default", "standard", "off", "none"]),
+            v("fast", "Fast mode on every request.").aliases(&["priority", "on"]),
             v(
                 "auto",
                 "Fast mode for the first fast_auto_seconds of every turn.",
@@ -587,7 +600,8 @@ static SPECS: &[ChoiceSpec] = &[
             v(
                 "ultrafast",
                 "OpenAI ultrafast tier; only some models accept it.",
-            ),
+            )
+            .aliases(&["ultra"]),
         ],
     ),
     one(
@@ -826,8 +840,8 @@ static SPECS: &[ChoiceSpec] = &[
         "desktop.disable_gpu",
         &[
             v("auto", "Disable the GPU only on remote displays."),
-            v("true", "Always software rendering."),
-            v("false", "Always keep the GPU on."),
+            v("true", "Always software rendering.").aliases(&["1", "yes", "on"]),
+            v("false", "Always keep the GPU on.").aliases(&["0", "no", "off"]),
         ],
     ),
     one(
@@ -948,6 +962,67 @@ static SPECS: &[ChoiceSpec] = &[
             v("tui", "Ink terminal interface."),
         ],
     ),
+    one(
+        "display.language",
+        &[
+            v("en", "English.").aliases(&["english", "en-us", "en-gb"]),
+            v("af", "Afrikaans.").aliases(&["afrikaans", "af-za"]),
+            v("ar", "Arabic.").aliases(&[
+                "arabic",
+                "العربية",
+                "ar-sa",
+                "ar-eg",
+                "ar-ae",
+                "ar-ma",
+                "ar-dz",
+            ]),
+            v("de", "German.").aliases(&["german", "deutsch", "de-de", "de-at", "de-ch"]),
+            v("es", "Spanish.")
+                .aliases(&["spanish", "español", "espanol", "es-es", "es-mx", "es-ar"]),
+            v("fr", "French.").aliases(&[
+                "french",
+                "français",
+                "france",
+                "fr-fr",
+                "fr-be",
+                "fr-ca",
+                "fr-ch",
+            ]),
+            v("ga", "Irish.").aliases(&["irish", "gaeilge", "ga-ie"]),
+            v("hu", "Hungarian.").aliases(&["hungarian", "magyar", "hu-hu"]),
+            v("it", "Italian.").aliases(&["italian", "italiano", "it-it", "it-ch"]),
+            v("ja", "Japanese.").aliases(&["japanese", "jp", "ja-jp"]),
+            v("ko", "Korean.").aliases(&["korean", "한국어", "ko-kr"]),
+            v("pt", "Portuguese.").aliases(&[
+                "portuguese",
+                "português",
+                "portugues",
+                "pt-pt",
+                "pt-br",
+                "brazilian",
+                "brasileiro",
+            ]),
+            v("ru", "Russian.").aliases(&["russian", "русский", "ru-ru"]),
+            v("tr", "Turkish.").aliases(&["turkish", "türkçe", "tr-tr"]),
+            v("uk", "Ukrainian.").aliases(&[
+                "ukrainian",
+                "ukrainisch",
+                "українська",
+                "uk-ua",
+                "ua",
+            ]),
+            v("zh", "Chinese, simplified.")
+                .aliases(&["chinese", "mandarin", "zh-cn", "zh-hans", "zh-sg"]),
+            v("zh-hant", "Chinese, traditional.").aliases(&[
+                "traditional-chinese",
+                "traditional_chinese",
+                "zh-tw",
+                "zh-hk",
+                "zh-mo",
+            ]),
+        ],
+    )
+    .custom("The code of a language from an installed language pack."),
     one(
         "display.memory_notifications",
         &[
@@ -1253,6 +1328,15 @@ static SPECS: &[ChoiceSpec] = &[
             v("off", "No notice."),
         ],
     ),
+    many(
+        "skills.auto_load",
+        false,
+        Some("No skills"),
+        ManyStore::List,
+        &[],
+    )
+    .custom("Skill names, separated by commas; Hermes skips a name it cannot find.")
+    .runtime(RuntimeList::Skills),
     one(
         "streaming.transport",
         &[
@@ -1409,6 +1493,15 @@ static SPECS: &[ChoiceSpec] = &[
             v("off", "Always the bare bridge."),
         ],
     ),
+    many(
+        "toolsets",
+        false,
+        None,
+        ManyStore::List,
+        &[v("hermes-cli", "The standard toolset of the Hermes CLI.")],
+    )
+    .custom("Toolset names, separated by commas; Hermes skips a name it does not know.")
+    .runtime(RuntimeList::Toolsets),
     one(
         "tts.edge.voice",
         &[

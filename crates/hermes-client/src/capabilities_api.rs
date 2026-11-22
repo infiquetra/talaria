@@ -117,6 +117,10 @@ async fn read<T: DeserializeOwned>(
 pub async fn skills_list(rest: &RestClient, profile: &str) -> Result<Vec<SkillDto>, RestError> {
     read(rest, format!("/api/skills?profile={}", encode(profile)), 30).await
 }
+/// The skills of the profile the ticket belongs to; the request names no profile.
+pub async fn own_skills_list(rest: &RestClient) -> Result<Vec<SkillDto>, RestError> {
+    read(rest, "/api/skills".to_owned(), 30).await
+}
 pub async fn skill_toggle(
     rest: &RestClient,
     profile: &str,
@@ -215,6 +219,10 @@ pub async fn toolsets_list(rest: &RestClient, profile: &str) -> Result<Vec<Tools
         30,
     )
     .await
+}
+/// The toolsets of the profile the ticket belongs to; the request names no profile.
+pub async fn own_toolsets_list(rest: &RestClient) -> Result<Vec<ToolsetDto>, RestError> {
+    read(rest, "/api/tools/toolsets".to_owned(), 30).await
 }
 pub async fn toolset_toggle(
     rest: &RestClient,

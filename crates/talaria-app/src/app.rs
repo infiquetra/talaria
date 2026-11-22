@@ -520,6 +520,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn profiles_key_labels(&self) -> talaria_core::profiles::KeyLabels {
         talaria_core::profiles::KeyLabels::default()
     }
+    /// The label of the key bound to reloading settings, named by the chooser's hints.
+    fn settings_reload_key(&self) -> Option<String> {
+        Some("Ctrl+R".into())
+    }
     /// The number of profiles rows visible above notices in this terminal.
     fn profiles_page_size(&self, view: &ProfilesView) -> usize {
         let (width, height) = self.pane_size();
@@ -2565,6 +2569,7 @@ fn model_card_blocked(state: &AppState) -> bool {
 fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
     let (width, _) = screen.pane_size();
     state.profiles.set_key_labels(screen.profiles_key_labels());
+    state.settings.set_reload_key(screen.settings_reload_key());
     let page_size = screen.profiles_page_size(&state.profiles.view());
     state.profiles.set_layout(width, page_size);
     if state.profiles.is_open() {
@@ -18478,6 +18483,92 @@ mod profiles_action_tests {
             "{:?}",
             drawn.hints
         );
+    }
+}
+
+#[cfg(test)]
+mod settings_reload_key_tests {
+    use super::*;
+    use talaria_core::settings::{
+        ConfigSchemaView, FieldKind, FieldView, SettingsAction, SettingsInput, SettingsKey,
+        SettingsSnapshot,
+    };
+
+    /// A terminal whose keymap binds reloading settings to F5.
+    struct ReloadOnF5;
+    impl ComposerDeadline for ReloadOnF5 {
+        fn tick(&mut self, _: Instant) {}
+        fn next_tick(&self) -> Option<Instant> {
+            None
+        }
+    }
+    impl StatusHost for ReloadOnF5 {
+        fn on_tick(&mut self, _: Instant) {}
+        fn next_wake(&self, _: Instant) -> Option<Instant> {
+            None
+        }
+        fn shutdown(&mut self) -> impl Future<Output = ()> + Send {
+            std::future::ready(())
+        }
+    }
+    impl Screen for ReloadOnF5 {
+        type Input = ();
+        fn input(&mut self, _: (), _: &View<'_>, _: Instant) -> Vec<UserAction> {
+            Vec::new()
+        }
+        fn draw(&mut self, _: &View<'_>) {}
+        fn commit_lines(&mut self, _: Vec<String>) {}
+        fn commit_context(&mut self, _block: &ContextBlock) {}
+        fn commit_cells(&mut self, _: &[Cell]) {}
+        fn load_draft(&mut self, _: &str) {}
+        fn restore(&mut self) {}
+        fn settings_reload_key(&self) -> Option<String> {
+            Some("F5".into())
+        }
+    }
+
+    #[test]
+    fn the_chooser_hint_names_the_terminal_reload_key() {
+        let mut state = AppState::new("settings-test");
+        state.settings.update(SettingsInput::Open {
+            profile: "fixture".into(),
+            filter: None,
+        });
+        state
+            .settings
+            .update(SettingsInput::Loaded(SettingsSnapshot {
+                profile: "fixture".into(),
+                schema: ConfigSchemaView {
+                    fields: vec![FieldView {
+                        key: "terminal.backend".into(),
+                        kind: FieldKind::String,
+                        description: String::new(),
+                        category: "general".into(),
+                        options: None,
+                        searchable: false,
+                        clearable: false,
+                    }],
+                    category_order: vec!["general".into()],
+                },
+                effective: serde_json::json!({"terminal": {"backend": "local"}}),
+                raw: serde_json::json!({}),
+                defaults: serde_json::json!({}),
+            }));
+        state
+            .settings
+            .update(SettingsInput::Key(SettingsKey::Action(
+                SettingsAction::Edit,
+            )));
+        assert!(
+            state
+                .settings
+                .view()
+                .footer
+                .ends_with("· Ctrl+R reload list")
+        );
+        sync_models(&mut state, &mut ReloadOnF5);
+        let footer = state.settings.view().footer;
+        assert!(footer.ends_with("· F5 reload list"), "{footer}");
     }
 }
 

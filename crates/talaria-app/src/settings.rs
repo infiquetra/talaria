@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use hermes_client::Client;
+use hermes_client::capabilities_api;
 use hermes_client::config_api::{self, ConfigSchema, ListedValue};
 use hermes_client::rest::{RestClient, RestError, RestOptions, TicketMinter};
 use hermes_client::rpc::{CallError, CallOptions};
@@ -112,13 +113,38 @@ impl SettingsService {
             RuntimeList::TerminalBackends => config_api::terminal_backends(&rest).await,
             RuntimeList::DashboardThemes => config_api::dashboard_themes(&rest).await,
             RuntimeList::ContextEngines => config_api::context_engines(&rest).await,
+            // A toolset's label is a display name; a skill has only its description.
+            RuntimeList::Toolsets => capabilities_api::own_toolsets_list(&rest)
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(|row| ListedValue {
+                            name: row.name,
+                            label: Some(row.label),
+                            description: Some(row.description),
+                            status: None,
+                            detail: None,
+                        })
+                        .collect()
+                }),
+            RuntimeList::Skills => capabilities_api::own_skills_list(&rest).await.map(|rows| {
+                rows.into_iter()
+                    .map(|row| ListedValue {
+                        name: row.name,
+                        label: None,
+                        description: Some(row.description),
+                        status: None,
+                        detail: None,
+                    })
+                    .collect()
+            }),
             RuntimeList::Skins | RuntimeList::Personalities | RuntimeList::Profiles => {
                 return Err(FailReason::NotConnected);
             }
         }
         .map_err(read_failure)?;
         // A theme's label is its display name; a backend's label only repeats its name.
-        let labelled = list == RuntimeList::DashboardThemes;
+        let labelled = matches!(list, RuntimeList::DashboardThemes | RuntimeList::Toolsets);
         Ok(rows
             .into_iter()
             .map(|row| listed_choice(row, labelled))

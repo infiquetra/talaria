@@ -411,6 +411,46 @@ async fn choice_lists_read_the_edited_profiles_routes() {
 }
 
 #[tokio::test]
+async fn toolset_and_skill_lists_read_the_edited_profiles_own_routes() {
+    let mock = MockRest::start().await.with_capabilities();
+    let minter = Arc::new(CountingMinter::default());
+    let service = build_service(Some(mock.origin()), minter);
+    assert!(matches!(
+        service.execute(load("fixture")).await.as_slice(),
+        [SettingsInput::Loaded(_)]
+    ));
+    let start = mock.requests().await.len();
+    let toolsets = listed(
+        &service
+            .execute(list("agent.disabled_toolsets", RuntimeList::Toolsets))
+            .await,
+        "agent.disabled_toolsets",
+    );
+    assert_eq!(toolsets.len(), 4);
+    assert_eq!(toolsets[0], choice("web", "Synthetic toolset."));
+    let skills = listed(
+        &service
+            .execute(list("skills.auto_load", RuntimeList::Skills))
+            .await,
+        "skills.auto_load",
+    );
+    assert_eq!(
+        skills[0],
+        choice("fixture-skill-a", "Synthetic fixture skill.")
+    );
+    // The ticket names the profile, so the reads name none.
+    let requests = mock.requests().await;
+    let sent: Vec<_> = requests[start..]
+        .iter()
+        .map(|r| (r.method.as_str(), r.path.as_str()))
+        .collect();
+    assert_eq!(
+        sent,
+        [("GET", "/api/tools/toolsets"), ("GET", "/api/skills")]
+    );
+}
+
+#[tokio::test]
 async fn skin_and_personality_lists_come_from_slash_completion() {
     let (mock, client, _inbound) = crate::mock_gateway::MockGateway::start().await;
     mock.set_skin_names(&["default", "example-user-skin"]);

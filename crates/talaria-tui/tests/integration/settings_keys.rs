@@ -79,6 +79,25 @@ fn settings_context_resolves_first_and_rebinds() {
 }
 
 #[test]
+fn the_chooser_names_the_reload_key_the_user_bound() {
+    assert_eq!(
+        KeyMap::defaults().settings_label(SettingsAction::Reload),
+        Some("Ctrl+R".to_owned())
+    );
+    let mut entries = BTreeMap::new();
+    entries.insert("settings_reload".to_owned(), vec!["f5".to_owned()]);
+    let (rebound, notices) = KeyMap::from_entries(&entries);
+    assert!(notices.is_empty(), "{notices:?}");
+    assert_eq!(
+        rebound.settings_label(SettingsAction::Reload),
+        Some("F5".to_owned())
+    );
+    entries.insert("settings_reload".to_owned(), Vec::new());
+    let (unbound, _) = KeyMap::from_entries(&entries);
+    assert_eq!(unbound.settings_label(SettingsAction::Reload), None);
+}
+
+#[test]
 fn ctrl_r_reaches_the_chooser_and_typing_still_filters() {
     let map = KeyMap::defaults();
     let choosing = view(Screen::Choosing, true);

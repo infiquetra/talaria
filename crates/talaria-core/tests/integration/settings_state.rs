@@ -1066,8 +1066,11 @@ fn personality_chooser_offers_no_overlay_and_the_builtins() {
     );
     action(&mut state, SettingsAction::Edit);
     let names = choice_names(&state);
-    // Hermes reads "none" as no overlay, so a stored "none" selects that row.
-    assert_eq!(names[0], "No personality (current) (default)");
+    // Hermes reads "none" as no overlay, so a stored "none" selects that row, spelled as saved.
+    assert_eq!(
+        names[0],
+        "No personality (current, saved as none) (default)"
+    );
     assert_eq!(names[1], "helpful");
     assert_eq!(names[14], "hype");
     loaded(
@@ -1760,4 +1763,234 @@ fn delegation_behaviour_keys_open_an_editor_and_route_keys_do_not() {
     action(&mut state, SettingsAction::Edit);
     assert_eq!(state.view().screen, Screen::Browsing);
     assert!(!state.view().banner.is_empty());
+}
+
+#[test]
+fn a_shared_list_answer_reaches_the_other_key_that_uses_it() {
+    let mut state = browsing(
+        &["kanban.default_assignee", "kanban.orchestrator_profile"],
+        json!({"kanban": {"default_assignee": "", "orchestrator_profile": ""}}),
+    );
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("kanban.default_assignee", RuntimeList::Profiles)
+    );
+    // Leave before the answer, then open the other key that shares the profile list.
+    escape(&mut state);
+    action(&mut state, SettingsAction::Down);
+    assert!(action(&mut state, SettingsAction::Edit).is_empty());
+    assert_eq!(choice_names(&state).last().unwrap(), "Loading the list…");
+    loaded(
+        &mut state,
+        "kanban.default_assignee",
+        vec![listed("fixture", ""), listed("example-work", "")],
+    );
+    assert_eq!(
+        choice_names(&state),
+        [
+            "Default profile (current) (default)",
+            "fixture",
+            "example-work",
+            "Type a value…"
+        ]
+    );
+}
+
+#[test]
+fn a_shared_list_failure_reaches_the_other_key_that_uses_it() {
+    let mut state = browsing(
+        &["kanban.default_assignee", "kanban.orchestrator_profile"],
+        json!({"kanban": {"default_assignee": "", "orchestrator_profile": ""}}),
+    );
+    action(&mut state, SettingsAction::Edit);
+    escape(&mut state);
+    action(&mut state, SettingsAction::Down);
+    action(&mut state, SettingsAction::Edit);
+    state.update(SettingsInput::ChoicesFailed {
+        key: "kanban.default_assignee".into(),
+        profile: "fixture".into(),
+        reason: "no reply within 15 s".into(),
+    });
+    assert_eq!(
+        choice_names(&state).last().unwrap(),
+        "Could not load the list (no reply within 15 s). Showing built-in names. Ctrl+R retries."
+    );
+}
+
+#[test]
+fn the_reload_hint_names_the_bound_key_or_none() {
+    let mut state = browsing(
+        &["terminal.backend"],
+        json!({"terminal": {"backend": "local"}}),
+    );
+    state.set_reload_key(Some("F5".into()));
+    action(&mut state, SettingsAction::Edit);
+    state.update(SettingsInput::ChoicesFailed {
+        key: "terminal.backend".into(),
+        profile: "fixture".into(),
+        reason: "no reply within 15 s".into(),
+    });
+    assert_eq!(
+        choice_names(&state).last().unwrap(),
+        "Could not load the list (no reply within 15 s). Showing built-in names. F5 retries."
+    );
+    let footer = state.view().footer;
+    assert!(footer.ends_with("· F5 reload list"), "{footer}");
+    assert!(!footer.contains("Ctrl+R"), "{footer}");
+    // With the reload action unbound, no key is named at all.
+    state.set_reload_key(None);
+    assert_eq!(
+        choice_names(&state).last().unwrap(),
+        "Could not load the list (no reply within 15 s). Showing built-in names."
+    );
+    let footer = state.view().footer;
+    assert!(!footer.contains("reload list"), "{footer}");
+    // The label survives closing and reopening settings.
+    state.set_reload_key(Some("F5".into()));
+    escape(&mut state);
+    action(&mut state, SettingsAction::Close);
+    assert_eq!(state.view().screen, Screen::Closed);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![field("terminal.backend", FieldKind::String, "general")],
+            category_order: vec!["general".into()],
+        },
+        effective: json!({"terminal": {"backend": "local"}}),
+        raw: json!({}),
+        defaults: json!({"terminal": {"backend": "local"}}),
+    }));
+    action(&mut state, SettingsAction::Edit);
+    let footer = state.view().footer;
+    assert!(footer.ends_with("· F5 reload list"), "{footer}");
+}
+
+#[test]
+fn a_stored_spelling_hermes_reads_as_a_listed_value_marks_that_row_current() {
+    // A legacy boolean: Hermes reads true as "always disable".
+    let mut state = browsing(
+        &["desktop.disable_gpu"],
+        json!({"desktop": {"disable_gpu": true}}),
+    );
+    let row = state.view().rows[0].value.clone();
+    assert!(!row.contains("not in the list"), "{row}");
+    action(&mut state, SettingsAction::Edit);
+    let names = choice_names(&state);
+    assert_eq!(names, ["auto", "true (current) (default)", "false"]);
+    // Enter on that row keeps the stored value: nothing is staged.
+    assert_eq!(selected_choice(&state), "true (current) (default)");
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(state.view().rows[0].marker, "");
+
+    // A word Hermes reads as fast is shown on the fast row with its own spelling.
+    let mut state = browsing(
+        &["agent.service_tier"],
+        json!({"agent": {"service_tier": "priority"}}),
+    );
+    let row = state.view().rows[0].value.clone();
+    assert!(!row.contains("not in the list"), "{row}");
+    action(&mut state, SettingsAction::Edit);
+    assert_eq!(
+        selected_choice(&state),
+        "fast (current, saved as priority) (default)"
+    );
+    assert!(
+        !choice_names(&state)
+            .iter()
+            .any(|name| name.contains("not in the list")),
+        "{:?}",
+        choice_names(&state)
+    );
+    enter(&mut state);
+    assert_eq!(state.view().rows[0].marker, "");
+}
+
+#[test]
+fn toolset_and_skill_keys_tick_names_from_the_fetched_lists() {
+    let mut state = browsing(
+        &["toolsets", "agent.disabled_toolsets", "skills.auto_load"],
+        json!({
+            "toolsets": ["hermes-cli"],
+            "agent": {"disabled_toolsets": ["example-old-toolset"]},
+            "skills": {"auto_load": []},
+        }),
+    );
+    // The enabled toolsets.
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("toolsets", RuntimeList::Toolsets)
+    );
+    let names = choice_names(&state);
+    assert_eq!(names[0], "[x] hermes-cli");
+    assert_eq!(names.last().unwrap(), "Loading the list…");
+    assert!(names.iter().any(|name| name == "Own entries…"), "{names:?}");
+    assert!(state.view().footer.ends_with("· Ctrl+R reload list"));
+    loaded(
+        &mut state,
+        "toolsets",
+        vec![
+            listed("web", "Web Search: Search the web."),
+            listed("terminal", ""),
+        ],
+    );
+    let names = choice_names(&state);
+    assert_eq!(
+        names,
+        ["[x] hermes-cli", "[ ] web", "[ ] terminal", "Own entries…"]
+    );
+    move_to(&mut state, "[ ] web");
+    space(&mut state);
+    enter(&mut state);
+    assert_eq!(state.view().rows[0].marker, "*");
+
+    // The disabled toolsets share the list; a held name the list lacks keeps its row.
+    action(&mut state, SettingsAction::Down);
+    assert!(action(&mut state, SettingsAction::Edit).is_empty());
+    let names = choice_names(&state);
+    assert_eq!(names[0], "[ ] None disabled");
+    assert!(
+        names.contains(&"[x] example-old-toolset (not in the list)".to_owned()),
+        "{names:?}"
+    );
+    escape(&mut state);
+
+    // The skills loaded automatically ask for the skill list; a failure keeps Ctrl+R.
+    action(&mut state, SettingsAction::Down);
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("skills.auto_load", RuntimeList::Skills)
+    );
+    state.update(SettingsInput::ChoicesFailed {
+        key: "skills.auto_load".into(),
+        profile: "fixture".into(),
+        reason: "HTTP 500".into(),
+    });
+    assert_eq!(
+        choice_names(&state).last().unwrap(),
+        "Could not load the list (HTTP 500). Showing built-in names. Ctrl+R retries."
+    );
+    assert_eq!(
+        action(&mut state, SettingsAction::Reload),
+        load_list("skills.auto_load", RuntimeList::Skills)
+    );
+    loaded(
+        &mut state,
+        "skills.auto_load",
+        vec![listed("notes", "Take notes.")],
+    );
+    // An own entry is typed as a list of names.
+    move_to(&mut state, "Own entries…");
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Editing);
+    for c in "notes, example-own-skill".chars() {
+        ch_key(&mut state, c);
+    }
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(state.view().rows[2].value, "[notes, example-own-skill]");
 }
