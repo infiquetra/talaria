@@ -482,6 +482,98 @@ fn rows_fit_every_width() {
         .unwrap();
 }
 
+/// A question row as a resumed snapshot restores it: the stored `args`, the stored result when
+/// the gateway sent one, and no outcome.
+fn restored_question(result: Option<String>) -> ToolCell {
+    // synthetic: two questions, one picked from the choices and one typed
+    let mut tool = cell("clarify", ToolStatus::Unknown);
+    tool.args = Some(json!({"questions": [
+        {"question": "Which parser should the build use first?", "choices": ["The fast one", "The strict one"]},
+        {"question": "And what scope?"}
+    ]}));
+    tool.result = result;
+    tool
+}
+
+#[test]
+fn a_restored_question_shows_what_was_asked_and_the_answer() {
+    let result = json!({"responses": [
+        {"question": "Which parser should the build use first?",
+         "choices_offered": ["The fast one", "The strict one"],
+         "status": "answered", "user_response": "The strict one"},
+        {"question": "And what scope?", "choices_offered": null,
+         "status": "answered", "user_response": "Only the tokenizer and its tests, nothing else in the tree"}
+    ], "outcome": "submitted"})
+    .to_string();
+    let lines = tool_lines(&restored_question(Some(result)), &options(40));
+    assert_eq!(
+        rows(&lines),
+        vec![
+            "⏺ Question".to_string(),
+            "  ⎿  Which parser should the build use".to_string(),
+            "     first?".to_string(),
+            "     → The strict one".to_string(),
+            "     And what scope?".to_string(),
+            "     → Only the tokenizer and its".to_string(),
+            "       tests, nothing else in the tree".to_string(),
+        ]
+    );
+
+    // A question left unanswered and a multi-select answer.
+    let result = json!({"responses": [
+        {"question": "Which parser should the build use first?", "choices_offered": null,
+         "status": "skipped", "user_response": null},
+        {"question": "And what scope?", "choices_offered": ["lexer", "parser"],
+         "status": "answered", "user_response": ["lexer", "parser"]}
+    ], "outcome": "submitted"})
+    .to_string();
+    let lines = tool_lines(&restored_question(Some(result)), &options(80));
+    assert_eq!(
+        rows(&lines)[1..],
+        [
+            "  ⎿  Which parser should the build use first?".to_string(),
+            "     → no answer".to_string(),
+            "     And what scope?".to_string(),
+            "     → lexer, parser".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_restored_question_without_its_result_shows_the_question_alone() {
+    // The pinned gateway sends a clarify row's arguments but not its result; a result that is
+    // not the clarify JSON reads the same.
+    for result in [None, Some("not json".to_string())] {
+        let lines = tool_lines(&restored_question(result.clone()), &options(80));
+        assert_eq!(
+            rows(&lines),
+            vec![
+                "⏺ Question".to_string(),
+                "  ⎿  Which parser should the build use first?".to_string(),
+                "     And what scope?".to_string(),
+            ],
+            "result: {result:?}"
+        );
+    }
+    // With neither, the row is the bare title it always was.
+    let bare = cell("clarify", ToolStatus::Unknown);
+    assert_eq!(rows(&tool_lines(&bare, &options(80))), vec!["⏺ Question"]);
+}
+
+#[test]
+fn a_live_question_draws_no_body() {
+    // The prompt cell beside it already shows the question and the answer.
+    let mut tool = restored_question(Some(
+        json!({"responses": [{"question": "Which parser should the build use first?",
+            "status": "answered", "user_response": "The strict one"}], "outcome": "submitted"})
+        .to_string(),
+    ));
+    tool.status = ToolStatus::Succeeded;
+    tool.duration_s = Some(4.0);
+    let lines = tool_lines(&tool, &options(80));
+    assert_eq!(rows(&lines), vec!["⏺ Question  ✓ · 4.0s"]);
+}
+
 #[test]
 fn no_color_keeps_signs_and_marks() {
     let mut shell = cell("terminal", ToolStatus::Failed);
