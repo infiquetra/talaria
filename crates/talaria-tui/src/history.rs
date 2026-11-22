@@ -169,6 +169,42 @@ pub(crate) fn word_wrapped(text: &str, width: u16) -> Vec<String> {
     lines
 }
 
+/// Plain text lines the app commits, such as connect, switch and branch notices, as rows for
+/// `width`.
+///
+/// A line that fits is kept as it is. A longer line that starts with the notice marker `· ` is
+/// word-wrapped with a two-space hanging indent, like a notice cell; any other longer line is
+/// word-wrapped with no indent. A line whose shape carries meaning is left to the plain hard
+/// wrap: one that starts with whitespace, one whose text under the marker starts with whitespace,
+/// one that holds a box-drawing character (a table or a rule), and one that holds a control
+/// character.
+pub fn committed_text_rows(lines: Vec<String>, width: u16) -> Vec<Line<'static>> {
+    const MARKER: &str = "\u{b7} ";
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    for line in lines {
+        let columns: usize = line
+            .graphemes(true)
+            .map(|grapheme| usize::from(grapheme_width(grapheme)))
+            .sum();
+        let preformatted = line.starts_with(char::is_whitespace)
+            || line
+                .strip_prefix(MARKER)
+                .is_some_and(|text| text.starts_with(char::is_whitespace))
+            || line
+                .chars()
+                .any(|c| c.is_control() || ('\u{2500}'..='\u{257f}').contains(&c));
+        if columns <= usize::from(width) || preformatted {
+            rows.extend(wrap_lines(vec![Line::from(line)], width));
+        } else if let Some(text) = line.strip_prefix(MARKER) {
+            rows.extend(prefixed_wrapped(MARKER, text, Style::default(), width));
+        } else {
+            rows.extend(word_wrapped(&line, width).into_iter().map(Line::from));
+        }
+    }
+    rows
+}
+
 /// Split on `\n`, with `\r\n` counting as one break. A lone `\r` stays in the text.
 pub(crate) fn split_lines(text: &str) -> impl Iterator<Item = &str> {
     text.split('\n')

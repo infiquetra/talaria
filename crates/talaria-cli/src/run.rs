@@ -4795,7 +4795,17 @@ impl Screen for TuiScreen {
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
-        self.commit_workspace_lines(lines.into_iter().map(Line::from).collect());
+        if lines.is_empty() {
+            return;
+        }
+        // The workspace view wraps at its own width, so it keeps the lines unwrapped; scrollback
+        // gets them word-wrapped at the terminal's width.
+        self.workspace_history.push(WorkspaceCommit::Lines(
+            lines.iter().cloned().map(Line::from).collect(),
+        ));
+        let width = self.terminal.viewport().width;
+        let rows = talaria_tui::history::committed_text_rows(lines, width);
+        let _ = self.terminal.commit_lines(rows);
     }
 
     fn commit_context(&mut self, block: &ContextBlock) {

@@ -639,3 +639,65 @@ fn ledger_holds_back_everything_behind_a_live_cell() {
     assert_eq!(ledger.take_ready(&more), &more[4..6]);
     assert!(ledger.take_ready(&more).is_empty());
 }
+
+fn committed_text(lines: &[&str], width: u16) -> Vec<String> {
+    talaria_tui::history::committed_text_rows(
+        lines.iter().map(|line| (*line).to_owned()).collect(),
+        width,
+    )
+    .iter()
+    .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect())
+    .collect()
+}
+
+#[test]
+fn a_committed_notice_line_breaks_between_words_under_a_hanging_indent() {
+    let rows = committed_text(
+        &[
+            "\u{b7} Connected to profile example. To start on this profile next time: talaria --profile example",
+        ],
+        60,
+    );
+    assert_eq!(
+        rows,
+        [
+            "\u{b7} Connected to profile example. To start on this profile",
+            "  next time: talaria --profile example",
+        ]
+    );
+}
+
+#[test]
+fn a_committed_plain_line_breaks_between_words_with_no_indent() {
+    let rows = committed_text(
+        &["Transcript refreshed after the gateway came back with news"],
+        31,
+    );
+    assert_eq!(
+        rows,
+        [
+            "Transcript refreshed after the",
+            "gateway came back with news"
+        ]
+    );
+}
+
+#[test]
+fn committed_lines_that_fit_or_are_preformatted_keep_their_shape() {
+    // A line that fits is untouched, spacing and all.
+    assert_eq!(committed_text(&["\u{b7} a   b"], 20), ["\u{b7} a   b"]);
+    // Leading indentation, an indented line under the marker, and a table border carry
+    // meaning, so they keep the terminal's plain hard wrap.
+    assert_eq!(
+        committed_text(&["    indented output that runs long"], 20),
+        ["    indented output ", "that runs long"]
+    );
+    assert_eq!(
+        committed_text(&["\u{b7}   nested item that runs long"], 20),
+        ["\u{b7}   nested item that", " runs long"]
+    );
+    assert_eq!(
+        committed_text(&["\u{2502} cell one \u{2502} cell two \u{2502}"], 12),
+        ["\u{2502} cell one \u{2502}", " cell two \u{2502}"]
+    );
+}
