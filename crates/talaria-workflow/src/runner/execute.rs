@@ -1168,6 +1168,21 @@ async fn execute_inner(
             finished_at_ms: 0,
             summary: Value::Null,
         },
+        // The script let the budget error end it: the run ended on its budget, with no result.
+        RunOutcome::Failed { error } if exhausted && error.name == "BudgetExhaustedError" => {
+            OutcomeFile {
+                v: 1,
+                outcome: "budget_exhausted".into(),
+                result: None,
+                error: Some(FailureView {
+                    name: error.name,
+                    message: error.message,
+                }),
+                reason: gate.budget_stop().or(budget_reason),
+                finished_at_ms: 0,
+                summary: Value::Null,
+            }
+        }
         RunOutcome::Failed { error } => OutcomeFile {
             v: 1,
             outcome: "failed".into(),

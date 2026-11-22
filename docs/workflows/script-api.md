@@ -94,7 +94,8 @@ Once either configured total is reached, new live agents reject with `BudgetExha
 Under the runner, agents that are still running when the total is reached are stopped, and
 their calls reject with the same error. The message names what was spent, for example
 `token budget exhausted (spent 1000 of 500)`. Catch the error to return partial results; the
-run then ends as `budget_exhausted` rather than completed. `budget.spent()` includes the token
+run then ends as `budget_exhausted` rather than completed. A script that does not catch it
+also ends as `budget_exhausted`, with no result. `budget.spent()` includes the token
 usage running agents have streamed so far, so it can grow while an agent is still working.
 [Staffing and budgets](staffing.md#spend-and-budgets) says what the budget guarantees.
 Already paid replayed calls bypass this check. The engine does no accounting itself. Negative

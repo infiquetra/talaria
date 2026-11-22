@@ -1371,6 +1371,37 @@ fn token_budget_stops_running_agents_and_refuses_new_ones() {
 }
 
 #[test]
+fn a_script_that_lets_the_budget_error_end_it_ends_on_its_budget() {
+    // The script does not catch the budget error, so it has no result; the run still ended
+    // because of its budget, not because the script was wrong.
+    let h = Harness::new(
+        "await agent('hold usage:1000 worker', {label:'worker'}); return 'unreached';",
+    );
+    let mut req = h.request();
+    req.budget_tokens = Some(500);
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "budget_exhausted");
+    let outcome: Value =
+        serde_json::from_slice(&fs::read(folder.join("outcome.json")).unwrap()).unwrap();
+    assert_eq!(outcome["outcome"], "budget_exhausted");
+    assert_eq!(outcome["error"]["name"], "BudgetExhaustedError");
+    assert_eq!(
+        outcome["reason"],
+        "token budget exhausted (spent 1000 of 500)"
+    );
+    assert!(outcome["result"].is_null(), "{outcome}");
+    let summary = talaria_workflow::runner::runs::discover_runs(&h.runs);
+    assert_eq!(summary[0].status.as_str(), "budget_exhausted");
+}
+
+#[test]
 fn token_budget_sends_a_failed_stop_again() {
     // The first interrupt times out. Without a second one the held agent would run on past the
     // budget and the run would never finish.
@@ -1503,7 +1534,7 @@ fn folder_state(dir: &Path) -> BTreeMap<PathBuf, (Vec<u8>, std::time::SystemTime
 
 #[test]
 fn resume_without_a_budget_flag_keeps_the_run_budget() {
-    // The script lets the refusal fail the run, so a resume runs it again.
+    // The script lets the refusal end the run on its budget, so a resume runs it again.
     let h = Harness::new(
         "const first = await agent('first', {label:'first'}); const second = await agent('second', {label:'second'}); return [first, second];",
     );
@@ -1512,7 +1543,7 @@ fn resume_without_a_budget_flag_keeps_the_run_budget() {
     let worker = Worker::start(Start::New(req), services(&h.wire, true));
     let folder = run_folder(&worker);
     let (exit, _) = worker.finish();
-    assert_eq!(exit.code, 1, "{:?}", exit.problems);
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
     let target = folder.file_name().unwrap().to_string_lossy().into_owned();
     let (exit, events) =
         Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true)).finish();
@@ -1520,8 +1551,8 @@ fn resume_without_a_budget_flag_keeps_the_run_budget() {
         .iter()
         .find(|e| e["event"] == "run_finished")
         .unwrap();
-    assert_eq!(finished["outcome"], "failed", "{events:?}");
-    assert_eq!(exit.code, 1, "{:?}", exit.problems);
+    assert_eq!(finished["outcome"], "budget_exhausted", "{events:?}");
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
     // The refused agent is refused again: nothing new reaches Hermes.
     assert_eq!(
         h.wire
