@@ -49,6 +49,15 @@ struct WireState {
     released: BTreeSet<String>,
     unconfirmed: bool,
     failing_interrupts: u32,
+    stale_subscriptions: bool,
+    /// The connection number; each reconnect gives every resumed session a new subscription.
+    generation: u64,
+    /// The sessions the link follows; a reconnect resumes each of them.
+    tracked: BTreeSet<String>,
+    /// The sessions a reconnect resumed, in order.
+    resumed: Vec<String>,
+    /// The connection drops and comes back on the first receipt read for this session.
+    reconnect_at: Option<String>,
 }
 #[derive(Clone)]
 struct Session {
@@ -81,6 +90,16 @@ impl CountingWireFactory {
     fn fail_interrupts(&self, count: u32) {
         self.inner.lock().unwrap().failing_interrupts = count;
     }
+    /// Every detach names a subscription the gateway no longer holds.
+    fn stale_subscriptions(&self) {
+        self.inner.lock().unwrap().stale_subscriptions = true;
+    }
+    fn reconnect_at(&self, session_id: &str) {
+        self.inner.lock().unwrap().reconnect_at = Some(session_id.into());
+    }
+    fn resumed(&self) -> Vec<String> {
+        self.inner.lock().unwrap().resumed.clone()
+    }
     fn hold_stops(&self) {
         self.hold_stop.store(true, Ordering::SeqCst);
     }
@@ -103,11 +122,44 @@ impl WireFactory for CountingWireFactory {
         })
     }
 }
-fn snapshot(session_id: &str, session: &Session) -> Value {
+/// The gateway's subscription for a session on one connection.
+fn subscription(session_id: &str, generation: u64) -> String {
+    match generation {
+        0 | 1 => format!("subscription-{session_id}"),
+        n => format!("subscription-{session_id}-{n}"),
+    }
+}
+fn snapshot(session_id: &str, session: &Session, generation: u64) -> Value {
     json!({"session_id":session_id,"stored_session_id":session_id,"messages":[],"message_count":0,
         "running":false,"authority_epoch":1,"replay_epoch":"epoch","last_sequence":0,
-        "subscription_id":"subscription","revision":1,"execution_generation":1,"pending":[],"prompts":[],
+        "subscription_id":subscription(session_id, generation),"revision":1,"execution_generation":1,"pending":[],"prompts":[],
         "info":{"desktop_protocol":"hermes-gateway-v1","source":"tool","model":session.model,"provider":session.provider}})
+}
+/// On the first receipt read for the chosen session the connection drops and comes back: the
+/// link resumes every session it follows, and the gateway gives each a new subscription.
+fn reconnect(
+    inner: &Mutex<WireState>,
+    events: &tokio_mpsc::Sender<WireEvent>,
+    params: &Map<String, Value>,
+) -> bool {
+    let mut state = inner.lock().unwrap();
+    if state.reconnect_at.is_none()
+        || state.reconnect_at.as_deref() != params["session_id"].as_str()
+    {
+        return false;
+    }
+    state.reconnect_at = None;
+    state.generation = state.generation.max(1) + 1;
+    let generation = state.generation;
+    let _ = events.try_send(WireEvent::Reconnected { generation });
+    for session in state.tracked.clone() {
+        state.resumed.push(session.clone());
+        let _ = events.try_send(WireEvent::Reattached {
+            subscription_id: subscription(&session, generation),
+            session_id: session,
+        });
+    }
+    true
 }
 fn receipt(session_id: &str, session: &Session, status: &str, include_result: bool) -> Value {
     let terminal = status == "terminal";
@@ -147,6 +199,10 @@ impl Wire for CountingWire {
             {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
+            if method == "prompt.receipt" && reconnect(&inner, &events, &params) {
+                // Give the port time to read the reconnect before the answer arrives.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
             let mut state = inner.lock().unwrap();
             state.calls.push(Frame {
                 method: method.into(),
@@ -177,11 +233,11 @@ impl Wire for CountingWire {
                         state.requests.insert(request_id, id.clone());
                         id
                     };
-                    snapshot(&session_id, &state.sessions[&session_id])
+                    snapshot(&session_id, &state.sessions[&session_id], state.generation)
                 }
                 "session.resume" => {
                     let id = params["session_id"].as_str().unwrap();
-                    snapshot(id, &state.sessions[id])
+                    snapshot(id, &state.sessions[id], state.generation)
                 }
                 "prompt.submit" => {
                     let id = params["session_id"].as_str().unwrap();
@@ -262,16 +318,34 @@ impl Wire for CountingWire {
                     }
                 }
                 "session.list" => json!({"sessions":[],"scope":"live"}),
-                "session.close" => json!({"closed":true,"messages":[]}),
+                // The pinned gateway serves no `session.close` on the session socket.
+                "session.close" => {
+                    return Err(WireError::Refused {
+                        code: -32601,
+                        message: "unknown_method".into(),
+                        data: Value::Null,
+                    });
+                }
+                "session.detach" => {
+                    let id = params["session_id"].as_str().unwrap();
+                    json!({"session_id":id,"subscription_id":params["subscription_id"],
+                        "detached":!state.stale_subscriptions
+                            && params["subscription_id"] == subscription(id, state.generation).as_str()})
+                }
                 _ => return Err(WireError::Other(format!("unexpected method: {method}"))),
             };
             Ok(result)
         })
     }
     fn generation(&self) -> u64 {
-        1
+        self.inner.lock().unwrap().generation.max(1)
     }
-    fn track(&self, _session_id: &str, _cursor: Cursor) {}
+    fn track(&self, session_id: &str, _cursor: Cursor) {
+        self.inner.lock().unwrap().tracked.insert(session_id.into());
+    }
+    fn untrack(&self, session_id: &str) {
+        self.inner.lock().unwrap().tracked.remove(session_id);
+    }
     fn resync(&self, _session_id: &str, _cursor: Cursor) {}
     fn take_events(&self) -> Option<tokio_mpsc::Receiver<WireEvent>> {
         self.events.lock().unwrap().take()
@@ -697,25 +771,87 @@ fn resume_keeps_the_session_model_the_run_started_with() {
 }
 
 #[test]
-fn a_finished_agent_session_is_closed_in_hermes() {
+fn a_finished_agent_session_is_ended_in_hermes() {
     let h = Harness::new("return await agent('review', {label:'review', tier:'first'});");
-    let (exit, _) = Worker::start(Start::New(h.request()), services(&h.wire, true)).finish();
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
     assert_eq!(exit.code, 0);
     let frames = h.wire.frames();
-    let closes: Vec<_> = frames
+    let methods: Vec<_> = frames.iter().map(|f| f.method.as_str()).collect();
+    assert!(!methods.contains(&"session.close"), "{methods:?}");
+    let detaches: Vec<_> = frames
         .iter()
-        .filter(|f| f.method == "session.close")
+        .filter(|f| f.method == "session.detach")
+        .collect();
+    assert_eq!(detaches.len(), 1, "{methods:?}");
+    // The subscription the create answer named, with an end reason so Hermes ends the session.
+    let params = &detaches[0].params;
+    assert_eq!(params.len(), 3, "{params:?}");
+    assert_eq!(params["session_id"], "session-1");
+    assert_eq!(params["subscription_id"], "subscription-session-1");
+    let reason = params["end_reason"].as_str().unwrap();
+    assert!(
+        reason.len() <= 32
+            && reason.starts_with(|c: char| c.is_ascii_lowercase())
+            && reason.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+        "{reason}"
+    );
+    // The detach comes after the answer was read, never before.
+    let position = |method: &str| frames.iter().rposition(|f| f.method == method).unwrap();
+    assert!(position("session.detach") > position("prompt.receipt"));
+    assert!(
+        !records(&folder).iter().any(|r| r["event"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("not ended"))),
+        "a detach the gateway accepted is not reported"
+    );
+
+    // A detach the gateway turns down is noted in the journal and changes nothing else.
+    let h = Harness::new("return await agent('review', {label:'review', tier:'first'});");
+    h.wire.stale_subscriptions();
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let notes: Vec<String> = records(&folder)
+        .iter()
+        .filter_map(|r| r["event"]["message"].as_str().map(str::to_owned))
+        .filter(|m| m.contains("not ended"))
+        .collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("session session-1"), "{notes:?}");
+}
+
+#[test]
+fn an_agent_session_is_ended_after_the_connection_comes_back() {
+    let h = Harness::new(
+        "await agent('first', {label:'one', tier:'first'});\nreturn await agent('second', {label:'two', tier:'first'});",
+    );
+    h.wire.reconnect_at("session-2");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    // The first session was already ended, so the reconnect must not resume it.
+    assert_eq!(h.wire.resumed(), ["session-2"]);
+    // The second session's detach names the subscription the reconnect gave it.
+    let frames = h.wire.frames();
+    let detaches: Vec<_> = frames
+        .iter()
+        .filter(|f| f.method == "session.detach")
+        .map(|f| f.params["subscription_id"].clone())
         .collect();
     assert_eq!(
-        closes.len(),
-        1,
-        "{:?}",
-        frames.iter().map(|f| &f.method).collect::<Vec<_>>()
+        detaches,
+        ["subscription-session-1", "subscription-session-2-2"]
     );
-    assert_eq!(closes[0].params["session_id"], "session-1");
-    // The close comes after the answer was read, never before.
-    let position = |method: &str| frames.iter().rposition(|f| f.method == method).unwrap();
-    assert!(position("session.close") > position("prompt.receipt"));
+    let notes: Vec<String> = records(&folder)
+        .iter()
+        .filter_map(|r| r["event"]["message"].as_str().map(str::to_owned))
+        .filter(|m| m.contains("not ended"))
+        .collect();
+    assert!(notes.is_empty(), "{notes:?}");
 }
 
 #[test]
@@ -1341,6 +1477,114 @@ fn budget_exhausted_run_resumes_with_a_larger_budget() {
             .filter(|f| f.method == "prompt.submit")
             .count(),
         2
+    );
+}
+
+/// Every file under a run folder with its bytes and modification time.
+fn folder_state(dir: &Path) -> BTreeMap<PathBuf, (Vec<u8>, std::time::SystemTime)> {
+    let mut files = BTreeMap::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in fs::read_dir(&next).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let modified = fs::metadata(&path).unwrap().modified().unwrap();
+                files.insert(
+                    path.strip_prefix(dir).unwrap().to_path_buf(),
+                    (fs::read(&path).unwrap(), modified),
+                );
+            }
+        }
+    }
+    files
+}
+
+#[test]
+fn resume_without_a_budget_flag_keeps_the_run_budget() {
+    // The script lets the refusal fail the run, so a resume runs it again.
+    let h = Harness::new(
+        "const first = await agent('first', {label:'first'}); const second = await agent('second', {label:'second'}); return [first, second];",
+    );
+    let mut req = h.request();
+    req.budget_tokens = Some(10);
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 1, "{:?}", exit.problems);
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let (exit, events) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true)).finish();
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "failed", "{events:?}");
+    assert_eq!(exit.code, 1, "{:?}", exit.problems);
+    // The refused agent is refused again: nothing new reaches Hermes.
+    assert_eq!(
+        h.wire
+            .frames()
+            .iter()
+            .filter(|f| f.method == "prompt.submit")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn reading_a_finished_run_with_resume_changes_nothing_in_its_folder() {
+    let h = Harness::new("return await agent('only', {label:'only'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let before = folder_state(&folder);
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let (exit, events) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["result"], "READY");
+    assert!(
+        folder_state(&folder) == before,
+        "a completed run's folder changed"
+    );
+
+    // A run the budget ended keeps its budget, so reading it starts nothing either.
+    let h = Harness::new(
+        "const first = await agent('first', {label:'first'}); let second; try { second = await agent('second', {label:'second'}); } catch (e) { second = e.name; } return [first, second];",
+    );
+    let mut req = h.request();
+    req.budget_tokens = Some(10);
+    let worker = Worker::start(Start::New(req), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
+    let before = folder_state(&folder);
+    let frames = h.wire.frames().len();
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let (exit, events) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 4, "{:?}", exit.problems);
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "budget_exhausted");
+    assert_eq!(finished["result"], json!(["READY", "BudgetExhaustedError"]));
+    assert_eq!(
+        h.wire.frames().len(),
+        frames,
+        "reading the result called Hermes"
+    );
+    assert!(
+        folder_state(&folder) == before,
+        "a budget-exhausted run's folder changed"
     );
 }
 

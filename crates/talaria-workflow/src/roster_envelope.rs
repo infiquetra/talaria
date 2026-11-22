@@ -1,5 +1,9 @@
 //! Gateway-independent roster context, with an explicit failure envelope.
-use crate::{engine::parse_script, skill::SkillInspection, staffing::RosterReport};
+use crate::{
+    engine::parse_script,
+    skill::{SkillInspection, SkillState},
+    staffing::RosterReport,
+};
 use serde::Serialize;
 use std::{
     fs, io,
@@ -117,11 +121,25 @@ pub struct RosterEnvelope {
     pub warnings: Vec<String>,
     pub error: Option<EnvelopeError>,
 }
+/// The warning a model reading the roster gets when the skill it follows is not the one Talaria
+/// installed.
+fn changed_skill(profile: &str, skill: &SkillInspection) -> Option<String> {
+    (skill.state == SkillState::Modified).then(|| {
+        let n = skill.changed_files.len();
+        format!(
+            "The talaria-workflows skill in profile {profile} differs from the copy Talaria installed ({n} file{} changed), so its instructions may not be Talaria's. Tell the developer; they can restore it with: talaria workflow skill install --force --profile {profile}",
+            if n == 1 { "" } else { "s" }
+        )
+    })
+}
 pub fn build_envelope(
     profile: &str,
-    local: LocalParts,
+    mut local: LocalParts,
     report: Result<RosterReport, (RosterErrorKind, String)>,
 ) -> (RosterEnvelope, i32) {
+    if let Some(warning) = local.skill.as_ref().and_then(|s| changed_skill(profile, s)) {
+        local.warnings.push(warning);
+    }
     let skill = local
         .skill
         .map(|s| EnvelopeSkill {

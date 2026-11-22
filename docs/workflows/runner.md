@@ -67,12 +67,20 @@ all tier-check problems and warnings, and computes the cost estimate. A missing 
 means an empty table. No run folder exists until preflight succeeds. Unpriced work has unknown
 cost, rather than a zero estimate.
 
-Preflight also reads the literal `model` and `provider` names in the script's options objects
-and checks each against the roster. A name the roster cannot serve fails the run with exit 2
-before any agent starts, one line per unknown pair with its script line and the nearest known
-spelling. Names that are computed, or that sit beside a `profile` key, are checked when their
-agent starts. When an agent's call settles, its Hermes session is closed (`session.close`; the
-stored session stays resumable). A failed close is ignored.
+Preflight also reads each `agent()` call whose options object, written in the call itself,
+names both `model` and `provider` as plain strings, and checks that pair against the roster.
+A pair the roster cannot serve fails the run with exit 2 before any agent starts, one line per
+unknown pair with its script line and the nearest known spelling. Anything preflight cannot
+read for certain is checked when its agent starts instead: a call naming only a model, a name
+that is computed, options built elsewhere or changed by a later assignment, an object with a
+spread or computed key, and names beside a `profile` key. No script that would run is refused. When an agent's call settles, the runner leaves its Hermes session with
+`session.detach`, naming the subscription the create answer gave (or, after the connection
+came back, the one the resume gave) and the end reason `workflow_agent_done`, so Hermes ends
+the session once no other viewer holds it. The runner then stops following the session, so a
+later reconnect does not resume it and open it again. The session socket serves no
+`session.close`. A detach the gateway refuses or does not answer within 15
+seconds is noted as one journal log line and changes nothing else; Hermes then ends the
+session itself, after its orphan grace period, once the runner's connection closes.
 
 The manifest records the parsed workflow name, actual script hash, version, profile, input,
 roster, and the finite-only approval-policy intent. The deterministic seed hashes the original
@@ -95,12 +103,17 @@ the same recorder implementation. The resulting log keeps one header and increas
 
 `resume` accepts a run id or folder, an optional replacement `--script`, staffing and budget
 overrides, `--cwd`, location flags, `--record`, and `--json`. A locked run refuses a second
-runner. Use `resolve` to answer its parked calls while it remains alive.
+runner. Use `resolve` to answer its parked calls while it remains alive. A resume keeps the
+token and money budget recorded in the manifest's roster snapshot; `--budget-tokens` or
+`--budget-usd` replaces only the one it names.
 
 A completed execution replays its stored `outcome.json` result without connecting to the
-gateway or executing the script. If a completed run predates that file, the runner reports
+gateway or executing the script, and so does a budget-exhausted run resumed without a budget
+flag (exit 4, with a line saying a larger budget continues it). Neither changes any file in
+the run folder. If a completed run predates that file, the runner reports
 the missing result and the journal's finish summary; it never reruns paid work to recover a
-display value. Failed, aborted, interrupted, and budget-exhausted runs open a new execution.
+display value. Failed, aborted and interrupted runs, and budget-exhausted runs given a new
+budget, open a new execution.
 Their unchanged completed calls remain reusable through journal replay.
 Before admitting new work, resume reattaches the unfinished sessions recorded in the
 journal. Their terminal results still come from receipts through the backend.

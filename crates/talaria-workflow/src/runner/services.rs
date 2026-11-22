@@ -82,6 +82,9 @@ impl Wire for ReceiptOptionsWire {
     fn track(&self, session_id: &str, cursor: Cursor) {
         self.0.track(session_id, cursor);
     }
+    fn untrack(&self, session_id: &str) {
+        self.0.untrack(session_id);
+    }
     fn resync(&self, session_id: &str, cursor: Cursor) {
         self.0.resync(session_id, cursor);
     }

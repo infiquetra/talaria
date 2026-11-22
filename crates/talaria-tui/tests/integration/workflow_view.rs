@@ -222,8 +222,7 @@ fn empty_list_names_the_filter_and_the_key_that_changes_it() {
 #[test]
 fn an_expired_message_gives_the_footer_back_to_the_key_hints() {
     use talaria_workflow::progress::live::{ProgressInput, ProgressKey, update};
-    let hints =
-        "↑↓ select · enter open · s steer · x stop · r restart · p pause · f filter · esc close";
+    let hints = "↑↓ select · ← fold · → unfold · enter open · s steer · x stop · r restart · p pause · f filter · esc close";
     let mut state = ProgressState::new(RunProgress::from_records(&manifest(), &review_lines()));
     update(&mut state, ProgressInput::Clock { now_ms: 1_000 });
     update(&mut state, ProgressInput::Key(ProgressKey::PauseRun));
@@ -239,4 +238,32 @@ fn an_expired_message_gives_the_footer_back_to_the_key_hints() {
         .expect("border");
     assert!(rows[bottom - 2].contains(hints), "{back}");
     assert!(!back.contains("run already finished"), "{back}");
+}
+
+#[test]
+fn the_run_list_reads_token_counts_in_thousands_and_millions() {
+    use talaria_workflow::runner::{RunStatus, RunSummary};
+    let row = |tokens: Option<u64>| RunSummary {
+        run_id: "01JB2X9Q4M8Z7K3T5V6W8Y0A1C".into(),
+        name: "review-branch".into(),
+        profile: "fixture".into(),
+        started_at_ms: 1_000,
+        status: RunStatus::Completed,
+        agents_finished: 3,
+        agents_total_known: 3,
+        parked: 0,
+        tokens_spent: tokens,
+        money_spent_usd: None,
+        run_dir: "/runs/example".into(),
+        warning: None,
+    };
+    for (tokens, shown) in [
+        (Some(5_812_345), "5.8M tokens"),
+        (Some(412_345), "412.3k tokens"),
+        (Some(950), "950 tokens"),
+        (None, "tokens -"),
+    ] {
+        let text = talaria_tui::workflow_view::picker_row(&row(tokens));
+        assert!(text.contains(&format!("  {shown}  ")), "{text}");
+    }
 }

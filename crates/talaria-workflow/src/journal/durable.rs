@@ -178,8 +178,9 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         }
         finished
     }
-    /// Close the call's session in Hermes once its outcome is recorded; left open, it lingers
-    /// until the gateway's own cleanup. A failed close changes nothing the run depends on.
+    /// End the call's session in Hermes once its outcome is recorded; left open, it lingers
+    /// until the runner's connection closes. A failed end changes nothing the run depends on,
+    /// so it is only noted in the journal.
     async fn close_session(&self, key: &str) {
         let Ok(history) = self.journal.history(key) else {
             return;
@@ -188,11 +189,26 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             return;
         };
         let profile = launch.profile.clone();
-        let _ = tokio::time::timeout(
+        let failure = match tokio::time::timeout(
             Duration::from_secs(15),
-            self.port.close_session(profile, session),
+            self.port.close_session(profile, session.clone()),
         )
-        .await;
+        .await
+        {
+            Ok(Ok(())) => return,
+            Ok(Err(PortError::Refused { reason, detail, .. })) => detail.unwrap_or(reason),
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "no answer within 15 seconds".into(),
+        };
+        let _ = self
+            .journal
+            .record_engine_event(&crate::engine::EngineEvent::Log {
+                message: format!(
+                    "runner: agent session {session} was not ended in Hermes ({failure}); Hermes ends it when the run's connection closes"
+                ),
+                workflow_path: vec![],
+            })
+            .await;
     }
     async fn run(&self, request: AgentRequest) -> Result<AgentOutcome, JournalError> {
         let launch = match self.resolver.resolve(&request) {

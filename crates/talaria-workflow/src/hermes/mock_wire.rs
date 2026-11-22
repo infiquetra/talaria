@@ -40,6 +40,7 @@ enum Command {
         reply: oneshot::Sender<Result<Value, WireError>>,
     },
     Track(String, String, Cursor),
+    Untrack(String, String),
     Emit(String, Box<WireEvent>),
     Shutdown,
 }
@@ -163,6 +164,11 @@ impl ScriptedWire {
                             state.tracked.insert(session);
                         }
                     }
+                    Command::Untrack(profile, session) => {
+                        if let Some(state) = profiles.get_mut(&profile) {
+                            state.tracked.remove(&session);
+                        }
+                    }
                     Command::Emit(profile, event) => {
                         if let Some(state) = profiles.get(&profile) {
                             let _ = state.events.send(*event).await;
@@ -179,10 +185,20 @@ impl ScriptedWire {
                                 .send(Err(WireError::NotServed("profile is not scripted".into())));
                             continue;
                         };
+                        if method == "session.detach" {
+                            // Ending a finished agent's session is bookkeeping: scripts need not
+                            // list it, and it must not use up the step of a later call.
+                            let _ = reply.send(Ok(json!({"session_id":params["session_id"],
+                                "subscription_id":params["subscription_id"],"detached":true})));
+                            continue;
+                        }
                         if method == "session.close" {
-                            // Closing a finished agent's session is bookkeeping: scripts need
-                            // not list it, and it must not use up the step of a later call.
-                            let _ = reply.send(Ok(json!({"closed":true,"messages":[]})));
+                            // The pinned gateway serves no `session.close` on the session socket.
+                            let _ = reply.send(Err(WireError::Refused {
+                                code: -32601,
+                                message: "unknown_method".into(),
+                                data: Value::Null,
+                            }));
                             continue;
                         }
                         if state.reconnect {
@@ -202,6 +218,7 @@ impl ScriptedWire {
                                 } else {
                                     WireEvent::Reattached {
                                         session_id: session.clone(),
+                                        subscription_id: format!("{session}-{generation}"),
                                     }
                                 };
                                 let _ = state.events.send(event).await;
@@ -476,6 +493,11 @@ impl Wire for ProfileWire {
             session_id.into(),
             cursor,
         ));
+    }
+    fn untrack(&self, session_id: &str) {
+        let _ = self
+            .tx
+            .send(Command::Untrack(self.profile.clone(), session_id.into()));
     }
     fn resync(&self, session_id: &str, cursor: Cursor) {
         self.history

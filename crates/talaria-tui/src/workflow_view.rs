@@ -207,23 +207,7 @@ impl WorkflowView {
             .selected_index()
             .saturating_sub(room.saturating_sub(1));
         for (i, row) in picker.rows().iter().enumerate().skip(start).take(room) {
-            let text = format!(
-                "{}  {}  {}  agents {}/{}  parked {}  tokens {}  money {}{}",
-                row.run_id,
-                row.name,
-                row.status.as_str(),
-                row.agents_finished,
-                row.agents_total_known,
-                row.parked,
-                row.tokens_spent
-                    .map_or_else(|| "-".into(), |n| n.to_string()),
-                row.money_spent_usd
-                    .map_or_else(|| "-".into(), |n| format!("{n:.4}")),
-                row.warning
-                    .as_ref()
-                    .map_or_else(String::new, |w| format!("  {w}")),
-            );
-            Paragraph::new(sanitize(&text).into_owned())
+            Paragraph::new(sanitize(&picker_row(row)).into_owned())
                 .style(if i == picker.selected_index() {
                     theme.selected
                 } else {
@@ -411,7 +395,7 @@ impl WorkflowView {
             }
         }
         if inner.height >= 2 {
-            let footer=state.confirmation_text().map(str::to_owned).or_else(||state.footer.clone()).unwrap_or_else(||"↑↓ select · enter open · s steer · x stop · r restart · p pause · f filter · esc close".into());
+            let footer=state.confirmation_text().map(str::to_owned).or_else(||state.footer.clone()).unwrap_or_else(||"↑↓ select · ← fold · → unfold · enter open · s steer · x stop · r restart · p pause · f filter · esc close".into());
             put(inner.bottom() - 2, footer, theme.muted, buf);
         }
         if let Some(text) = &state.steer_input {
@@ -585,6 +569,28 @@ pub fn key_input(
             Action::ProgressConfirm => K::Confirm,
             _ => return None,
         },
+    )
+}
+
+/// One run in the run list, before it is cleaned for the screen.
+pub fn picker_row(row: &talaria_workflow::runner::RunSummary) -> String {
+    format!(
+        "{}  {}  {}  agents {}/{}  parked {}  {}  money {}{}",
+        row.run_id,
+        row.name,
+        row.status.as_str(),
+        row.agents_finished,
+        row.agents_total_known,
+        row.parked,
+        row.tokens_spent.map_or_else(
+            || "tokens -".into(),
+            |n| format!("{} tokens", format_tokens(n))
+        ),
+        row.money_spent_usd
+            .map_or_else(|| "-".into(), |n| format!("{n:.4}")),
+        row.warning
+            .as_ref()
+            .map_or_else(String::new, |w| format!("  {w}")),
     )
 }
 

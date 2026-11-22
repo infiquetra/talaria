@@ -18,7 +18,7 @@ First obtain the available staffing and paths:
 @@TALARIA_COMMAND@@ workflow roster --profile @@TALARIA_PROFILE@@ --json
 ```
 
-Use the command exactly as rendered, including HERMES_HOME=. Exit 2 means a tier problem: report `report.check` and stop. Exit 1 means no usable roster: report `error.message` and stop. Use only usable tiers or a model and provider listed in `report.providers`; never invent a model name.
+Use the command exactly as rendered, including HERMES_HOME=. Exit 2 means a tier problem: report `report.check` and stop. Exit 1 means no usable roster: report `error.message` and stop. Show the developer every entry in `warnings`. Use only usable tiers or a model and provider listed in `report.providers`; never invent a model name.
 
 When the request ends with a line `Session model: <model> on <provider>`, that is the model the user picked for this session. Add `--session-model <model> --session-provider <provider>` to the roster command above and to `workflow run`, so `report.current` and every agent call that names no tier or model use that pair.
 
@@ -35,7 +35,7 @@ terminal(command="@@TALARIA_COMMAND@@ workflow run --profile @@TALARIA_PROFILE@@
 process_manage(action="wait", session_id="<returned process session_id>", timeout=600)
 ```
 
-Keep the returned process session_id; it differs from the conversation id. If the output after a background completion is empty or cut short, read the finished run's result with `@@TALARIA_COMMAND@@ workflow resume --json <run-id>`; it prints the stored result without doing paid work again. Repeat the wait while that process runs. Never launch a second run for the same task. For work that must outlive this session, add --detach and keep the printed run id.
+Keep the returned process session_id; it differs from the conversation id. If the output after a background completion is empty or cut short, find the run's status with `@@TALARIA_COMMAND@@ workflow list --json`. When it is completed or budget_exhausted, `@@TALARIA_COMMAND@@ workflow resume --json <run-id>` prints the stored result without doing paid work again. For any other status, report it and ask the developer: resume would run the unfinished agents again. Repeat the wait while that process runs. Never launch a second run for the same task. For work that must outlive this session, add --detach and keep the printed run id.
 
 The final foreground line is {"event":"run_finished",...}. Read its `run_id`, `outcome`, `result`, and `spend`. Report the run id, findings or changes, and spend. For a detached run, poll:
 
@@ -43,13 +43,13 @@ The final foreground line is {"event":"run_finished",...}. Read its `run_id`, `o
 @@TALARIA_COMMAND@@ workflow list --json
 ```
 
-Find its run_id until status is completed. Then retrieve its saved result without executing work again:
+Find its run_id until status is completed or budget_exhausted. Then retrieve its saved result without executing work again:
 
 ```sh
 @@TALARIA_COMMAND@@ workflow resume --json <run-id>
 ```
 
-Report failed, aborted, or parked status and ask the developer how to proceed. Continue an interrupted run with:
+Report failed, aborted, budget_exhausted, or parked status and ask the developer how to proceed. A budget_exhausted run continues only with a larger --budget-usd or --budget-tokens that the developer approves for it. Continue an interrupted run with:
 
 ```sh
 @@TALARIA_COMMAND@@ workflow resume <run-id>

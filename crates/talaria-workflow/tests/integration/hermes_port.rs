@@ -382,6 +382,7 @@ async fn attach_resumes_once_per_connection() {
         "fixture",
         WireEvent::Reattached {
             session_id: "session".into(),
+            subscription_id: "subscription-2".into(),
         },
     );
     port.attach("fixture".into(), "session".into())
