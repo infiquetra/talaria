@@ -3005,6 +3005,8 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
                 RebuildMode::AfterRewind { notice },
             )),
             RewindEffect::ReturnPrompt { text, attachments } => {
+                // A routed prompt comes back as typed; sending it routes it again.
+                let text = talaria_core::ultracode::shown_text(&text).to_owned();
                 effects.extend(return_prompt(state, text, attachments));
             }
             RewindEffect::Submit(text) => {
@@ -3017,7 +3019,7 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
                 effects.extend(reduce(
                     state,
                     Event::Submit {
-                        display: text.clone(),
+                        display: talaria_core::ultracode::shown_text(&text).to_owned(),
                         text,
                         submission_id,
                         attachments: Vec::new(),
@@ -4281,6 +4283,9 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                     state
                         .ultracode
                         .arm(&session, &profile, since_ms, state.now_ms);
+                    if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
+                        state.ultracode.skill_sent(&session, epoch);
+                    }
                 }
                 if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&state.profile))) {
                     state.ultracode.record_shown(&session);
@@ -7433,6 +7438,14 @@ fn commands_follow(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect>
     commands_input(state, input)
 }
 
+/// The conversation the open session holds: its stored id and how often Hermes compacted it.
+fn skill_epoch(opened: &OpenedSession) -> talaria_core::ultracode::SkillEpoch {
+    talaria_core::ultracode::SkillEpoch {
+        stored: opened.stored_session_id.clone(),
+        compressions: opened.state.usage().compressions.unwrap_or(0),
+    }
+}
+
 /// Apply workflow routing through the existing session events and effects.
 fn ultracode_actions(
     state: &mut AppState,
@@ -9051,7 +9064,23 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
         if let Some(actions) = state.ultracode.answer_install(&session, &text) {
             return ultracode_actions(state, actions);
         }
+        if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
+            state.ultracode.note_epoch(&session, &epoch);
+        }
         if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
+            // A prompt sent with the reminder goes straight to Hermes, like a plain one.
+            if actions
+                .iter()
+                .any(|action| matches!(action, crate::ultracode::Action::SubmitCommand { .. }))
+            {
+                if state.link_failed {
+                    return vec![
+                        notice_lines(LINK_STOPPED_NOTICE),
+                        AppEffect::LoadDraft(text),
+                    ];
+                }
+                clear_submitted_draft(state);
+            }
             return ultracode_actions(state, actions);
         }
     }
@@ -10260,6 +10289,9 @@ fn opened_session(
                 effects.extend(apply_ultracode(state, actions, false));
                 continue;
             }
+            if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
+                state.ultracode.note_epoch(&session, &epoch);
+            }
             if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
                 if state
                     .held_attachments
@@ -10438,7 +10470,7 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
             .ledger
             .get(&SubmissionId(id.clone()))
             .filter(|entry| entry.retried)
-            .map(|entry| entry.text.clone())
+            .map(|entry| talaria_core::ultracode::shown_text(&entry.text).to_owned())
     });
     let mut effects = reduce(
         state,
@@ -18584,6 +18616,189 @@ mod ultracode_visibility_tests {
             [format!("\u{b7} {}", notice::ROUTED)],
             "{effects:?}"
         );
+    }
+
+    /// A frame from Hermes for the open session, numbered after the last one.
+    fn frame(state: &mut AppState, kind: &str, payload: Value) -> Vec<AppEffect> {
+        let opened = state.opened.as_mut().unwrap();
+        let raw = json!({"session_id": opened.session_id, "replay_epoch": opened.cursor.replay_epoch,
+            "seq": opened.cursor.last_sequence + 1, "type": kind, "payload": payload});
+        update(
+            state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: Inbound::Event(hermes_client::channel::InboundEvent {
+                    generation: hermes_client::channel::Generation(1),
+                    frame: EventFrame::from_params(&raw).unwrap(),
+                    raw,
+                }),
+                replayed: false,
+            }),
+        )
+    }
+
+    /// What Hermes expands a routed prompt into.
+    fn expanded(typed: &str) -> String {
+        format!(
+            "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\n\nThe user has provided the following instruction alongside the skill invocation: {typed}"
+        )
+    }
+
+    fn loads_skill(effects: &[AppEffect]) -> bool {
+        effects.iter().any(|effect| {
+            matches!(
+                effect,
+                AppEffect::Ultracode {
+                    action: crate::ultracode::Action::RunCommand { .. },
+                    ..
+                }
+            )
+        })
+    }
+
+    fn sent(effects: &[AppEffect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::Send(Effect::SendPrompt { text, .. }) => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn user_cells(state: &AppState) -> Vec<String> {
+        state
+            .opened
+            .as_ref()
+            .unwrap()
+            .state
+            .cells()
+            .iter()
+            .filter_map(|cell| match cell {
+                Cell::User(user) => Some(user.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Type `typed` into the composer and press Enter.
+    fn enter(state: &mut AppState, typed: &str) -> Vec<AppEffect> {
+        state.draft = typed.into();
+        state.caret = state.draft.len();
+        submit(state, typed.into())
+    }
+
+    /// Hermes answers the skill dispatch of a routed prompt.
+    fn dispatched(state: &mut AppState, typed: &str) -> Vec<AppEffect> {
+        let reply = json!({"type": "skill", "name": "talaria-workflows",
+            "message": expanded(typed), "display": format!("/talaria-workflows {typed}")});
+        update(
+            state,
+            AppMessage::UltracodeDone {
+                session: SessionId::new("session"),
+                original_text: typed.into(),
+                outcome: Ok(reply),
+            },
+        )
+    }
+
+    fn turn(state: &mut AppState, status: &str) -> Vec<AppEffect> {
+        let mut effects = frame(state, "message.start", json!({}));
+        effects.extend(frame(
+            state,
+            "message.complete",
+            json!({"text": "Here is the proposed workflow.", "status": status}),
+        ));
+        effects
+    }
+
+    #[test]
+    fn workflow_prompts_show_what_was_typed_and_load_the_skill_once() {
+        let reminder = talaria_core::ultracode::follow_up_text;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let mut screen = vec![];
+
+        // The first prompt goes to Hermes for the whole skill.
+        let effects = enter(&mut state, "fix the parser");
+        assert!(loads_skill(&effects), "{effects:?}");
+        assert_eq!(lines(&effects), [format!("\u{b7} {}", notice::ROUTED)]);
+        assert!(state.draft.is_empty());
+        screen.extend(lines(&effects));
+        let effects = dispatched(&mut state, "fix the parser");
+        assert_eq!(sent(&effects), [expanded("fix the parser")]);
+        assert_eq!(user_cells(&state), ["fix the parser"]);
+        screen.extend(lines(&effects));
+        screen.extend(lines(&turn(&mut state, "complete")));
+
+        // A short reply and a new task carry the reminder, not the skill.
+        for typed in ["go ahead", "now add a test for the lexer"] {
+            let effects = enter(&mut state, typed);
+            assert!(!loads_skill(&effects), "{effects:?}");
+            assert_eq!(sent(&effects), [reminder(typed)]);
+            assert_eq!(lines(&effects), [format!("\u{b7} {}", notice::ROUTED)]);
+            assert!(state.draft.is_empty(), "the composer clears");
+            assert_eq!(user_cells(&state).last().map(String::as_str), Some(typed));
+            screen.extend(lines(&effects));
+            screen.extend(lines(&turn(&mut state, "complete")));
+        }
+
+        // An interrupted routed turn leaves the skill in the conversation.
+        let effects = enter(&mut state, "and the docs");
+        assert_eq!(sent(&effects), [reminder("and the docs")]);
+        screen.extend(lines(&turn(&mut state, "interrupted")));
+        let effects = enter(&mut state, "keep going");
+        assert_eq!(sent(&effects), [reminder("keep going")]);
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("keep going")
+        );
+        screen.extend(lines(&effects));
+
+        // A prompt sent while that turn runs waits, then shows what was typed.
+        screen.extend(lines(&frame(&mut state, "message.start", json!({}))));
+        let effects = enter(&mut state, "then tidy the docs");
+        assert_eq!(sent(&effects), [reminder("then tidy the docs")]);
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("keep going")
+        );
+        screen.extend(lines(&effects));
+        screen.extend(lines(&frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok"}),
+        )));
+        screen.extend(lines(&turn(&mut state, "complete")));
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("then tidy the docs")
+        );
+
+        // After a compaction the next routed prompt loads the whole skill again.
+        screen.extend(lines(&frame(
+            &mut state,
+            "session.usage",
+            json!({"usage": {"compressions": 1}}),
+        )));
+        let effects = enter(&mut state, "go on");
+        assert!(loads_skill(&effects), "{effects:?}");
+        assert!(sent(&effects).is_empty());
+
+        let mut shown = screen;
+        shown.extend(user_cells(&state));
+        for line in &shown {
+            for hidden in [
+                "/talaria-workflows",
+                "[IMPORTANT",
+                "Fixture workflow guide",
+                "[Talaria workflow mode",
+            ] {
+                assert!(
+                    !line.contains(hidden),
+                    "{hidden:?} reached the screen: {line:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -5,8 +5,8 @@ use talaria_core::{
     commands::{CommandCatalog, CommandOutcome, ErrorView, SlashLine, describe_error},
     session::SessionId,
     ultracode::{
-        SKILL_COMMAND, SkillAvailability, SubmitRoute, UltracodeCommand, UltracodeState, notice,
-        route_submit, skill_availability,
+        SKILL_COMMAND, SkillAvailability, SkillEpoch, SubmitRoute, UltracodeCommand,
+        UltracodeState, follow_up_text, notice, route_submit, skill_availability,
     },
 };
 use talaria_workflow::runner::{RunStatus, RunSummary};
@@ -192,6 +192,8 @@ impl UltracodeService {
         let text = match availability {
             SkillAvailability::Installed { .. } => {
                 self.state.set(session, true);
+                // Typing the command again sends the whole skill with the next prompt.
+                self.state.rearm(session);
                 let text = if self.remote {
                     notice::ON_REMOTE
                 } else {
@@ -228,6 +230,15 @@ impl UltracodeService {
                 } else {
                     actions.push(Action::Notice(notice::ROUTED.into()));
                 }
+                // The conversation holds the skill already: the prompt goes with a reminder.
+                if !one_shot && self.state.skill_loaded(session) {
+                    actions.push(Action::SubmitCommand {
+                        text: follow_up_text(text),
+                        display: text.into(),
+                        submission_id: crate::commands::fresh_submission_id(),
+                    });
+                    return Some(actions);
+                }
                 actions.push(Action::RunCommand {
                     session: session.clone(),
                     original_text: text.into(),
@@ -246,18 +257,17 @@ impl UltracodeService {
         let profile = self.profiles.get(session).map_or("default", String::as_str);
         let failure = match outcome {
             Ok(value) if value["type"] == "skill" && value["name"] == "talaria-workflows" => {
-                if let (Some(text), Some(display)) = (
-                    value["message"].as_str().filter(|s| !s.trim().is_empty()),
-                    value["display"].as_str(),
-                ) {
+                if let Some(text) = value["message"].as_str().filter(|s| !s.trim().is_empty()) {
                     let mut actions = vec![];
                     if let Some(notice) = value["notice"].as_str().filter(|s| !s.trim().is_empty())
                     {
                         actions.push(Action::Notice(notice.into()));
                     }
+                    // The cell shows what the person typed, never Hermes's `display`, which
+                    // names the skill command.
                     actions.push(Action::SubmitCommand {
                         text: text.into(),
-                        display: display.into(),
+                        display: original_text.into(),
                         submission_id: crate::commands::fresh_submission_id(),
                     });
                     return actions;
@@ -292,7 +302,9 @@ impl UltracodeService {
                 match describe_error(&line, &error, None) {
                     CommandOutcome::Refused { message, .. }
                     | CommandOutcome::Failed { message }
-                    | CommandOutcome::OutcomeUnknown { message } => message,
+                    | CommandOutcome::OutcomeUnknown { message } => {
+                        message.replace(SKILL_COMMAND, notice::REQUEST)
+                    }
                     _ => "The workflow command did not return a skill.".into(),
                 }
             }
@@ -301,6 +313,14 @@ impl UltracodeService {
             Action::Notice(failure),
             Action::RestoreComposer(original_text.into()),
         ]
+    }
+    /// The whole skill went into the session's conversation `epoch`.
+    pub fn skill_sent(&mut self, session: &SessionId, epoch: SkillEpoch) {
+        self.state.skill_sent(session, epoch);
+    }
+    /// Say which conversation the session holds now, before a prompt is routed.
+    pub fn note_epoch(&mut self, session: &SessionId, epoch: &SkillEpoch) {
+        self.state.note_epoch(session, epoch);
     }
     pub fn status_input(&self, foreground: Option<&SessionId>) -> bool {
         foreground.is_some_and(|id| self.state.is_on(id))

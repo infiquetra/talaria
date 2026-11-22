@@ -140,3 +140,42 @@ fn carry_copies_explicit_state_to_child() {
     assert!(!default_on.carry(&parent, &child));
     assert!(!default_on.is_on(&child), "an explicit off is carried too");
 }
+
+#[test]
+fn the_full_skill_goes_once_per_conversation_until_it_changes() {
+    use talaria_core::ultracode::SkillEpoch;
+    let a = SessionId::new("fixture-a");
+    let reconnected = SessionId::new("fixture-a2");
+    let epoch = |stored: &str, compressions| SkillEpoch {
+        stored: stored.into(),
+        compressions,
+    };
+    let mut state = UltracodeState::new(true);
+    assert!(
+        !state.skill_loaded(&a),
+        "the first routed prompt carries it"
+    );
+    state.skill_sent(&a, epoch("stored-a", 0));
+    state.note_epoch(&a, &epoch("stored-a", 0));
+    assert!(state.skill_loaded(&a), "later prompts get the reminder");
+    state.carry(&a, &reconnected);
+    state.note_epoch(&reconnected, &epoch("stored-a", 0));
+    assert!(
+        state.skill_loaded(&reconnected),
+        "a reconnect keeps the conversation"
+    );
+    state.note_epoch(&a, &epoch("stored-a", 1));
+    assert!(!state.skill_loaded(&a), "a compaction may have dropped it");
+    state.skill_sent(&a, epoch("stored-a", 1));
+    state.note_epoch(&a, &epoch("stored-other", 1));
+    assert!(
+        !state.skill_loaded(&a),
+        "a new stored id is a new conversation"
+    );
+    state.skill_sent(&a, epoch("stored-other", 1));
+    state.rearm(&a);
+    assert!(
+        !state.skill_loaded(&a),
+        "typing the command again re-arms it"
+    );
+}

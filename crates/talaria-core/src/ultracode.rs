@@ -5,6 +5,67 @@ use crate::{
 };
 use std::collections::HashMap;
 pub const SKILL_COMMAND: &str = "/talaria-workflows";
+/// The model-facing line in front of a routed prompt once the skill is in the conversation.
+/// It never shows on screen, live or replayed.
+pub const FOLLOW_UP_REMINDER: &str = "[Talaria workflow mode is on: the talaria-workflows skill already loaded in this conversation applies to this message.]";
+/// The start of the message Hermes builds for a `/talaria-workflows` invocation, and the
+/// markers around the person's request in it: `build_skill_invocation_message` and
+/// `append_user_instruction` in Hermes's `agent/skill_commands.py` at the pinned revision.
+const SCAFFOLD_HEAD: &str = "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill,";
+const SCAFFOLD_LOADED: &str = "The full skill content is loaded below.]";
+const SCAFFOLD_REQUEST: &str =
+    "The user has provided the following instruction alongside the skill invocation: ";
+const SCAFFOLD_RUNTIME_NOTE: &str = "\n\n[Runtime note:";
+/// What a routed prompt sends once the skill is in the conversation: the reminder, then what
+/// the person typed.
+pub fn follow_up_text(typed: &str) -> String {
+    format!("{FOLLOW_UP_REMINDER}\n\n{typed}")
+}
+/// What the person typed, when `text` is what a routed prompt sent the model: the whole skill
+/// with the request at its end, or the reminder in front of it. `None` for any other text.
+pub fn typed_text(text: &str) -> Option<&str> {
+    if let Some(rest) = text.strip_prefix(FOLLOW_UP_REMINDER) {
+        return rest.strip_prefix("\n\n");
+    }
+    if !text.starts_with(SCAFFOLD_HEAD) || !text.contains(SCAFFOLD_LOADED) {
+        return None;
+    }
+    // The skill body may quote the marker, so the person's request follows the last one.
+    let rest = &text[text.rfind(SCAFFOLD_REQUEST)? + SCAFFOLD_REQUEST.len()..];
+    Some(
+        rest.find(SCAFFOLD_RUNTIME_NOTE)
+            .map_or(rest, |end| &rest[..end]),
+    )
+}
+/// What the screen shows for text a prompt sent: what the person typed for a routed prompt,
+/// the text itself otherwise.
+pub fn shown_text(text: &str) -> &str {
+    typed_text(text).unwrap_or(text)
+}
+/// The request of a replayed `/talaria-workflows <request>` row. Hermes writes a routed
+/// prompt that way when it replays a session.
+pub fn replayed_request(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(SKILL_COMMAND)?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some(rest.trim()).filter(|request| !request.is_empty())
+}
+/// `typed` with the model-facing part of `sent` in front, so an edited routed prompt stays
+/// routed. Any other `sent` gives `typed` alone.
+pub fn retyped(sent: &str, typed: &str) -> String {
+    match typed_text(sent) {
+        Some(old) if sent.ends_with(old) => format!("{}{typed}", &sent[..sent.len() - old.len()]),
+        _ => typed.to_owned(),
+    }
+}
+/// The conversation a full copy of the skill went into: the stored session, and how many
+/// times Hermes had compacted it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillEpoch {
+    pub stored: String,
+    pub compressions: i64,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubmitRoute {
     Plain,
@@ -70,12 +131,15 @@ pub fn contains_keyword(text: &str) -> bool {
 pub struct UltracodeState {
     default_on: bool,
     sessions: HashMap<SessionId, bool>,
+    /// Sessions whose conversation holds the whole skill, and the conversation it went into.
+    skill: HashMap<SessionId, SkillEpoch>,
 }
 impl UltracodeState {
     pub fn new(default_on: bool) -> Self {
         Self {
             default_on,
             sessions: HashMap::new(),
+            skill: HashMap::new(),
         }
     }
     pub fn is_on(&self, id: &SessionId) -> bool {
@@ -89,7 +153,29 @@ impl UltracodeState {
         if let Some(on) = self.sessions.get(from).copied() {
             self.set(to, on);
         }
+        if let Some(epoch) = self.skill.get(from).cloned() {
+            self.skill.insert(to.clone(), epoch);
+        }
         self.is_on(to)
+    }
+    /// True when the session's conversation already holds the whole skill, so a routed prompt
+    /// sends the reminder instead.
+    pub fn skill_loaded(&self, id: &SessionId) -> bool {
+        self.skill.contains_key(id)
+    }
+    pub fn skill_sent(&mut self, id: &SessionId, epoch: SkillEpoch) {
+        self.skill.insert(id.clone(), epoch);
+    }
+    /// Forget the skill when the session's conversation is no longer the one it went into: a
+    /// new stored id, or a compaction that may have dropped it.
+    pub fn note_epoch(&mut self, id: &SessionId, epoch: &SkillEpoch) {
+        if self.skill.get(id).is_some_and(|sent| sent != epoch) {
+            self.skill.remove(id);
+        }
+    }
+    /// Send the whole skill with the session's next routed prompt.
+    pub fn rearm(&mut self, id: &SessionId) {
+        self.skill.remove(id);
     }
     pub fn toggle(&mut self, id: &SessionId) -> bool {
         let on = !self.is_on(id);
@@ -152,19 +238,23 @@ pub fn skill_availability(catalog: &CommandCatalog) -> SkillAvailability {
 pub mod notice {
     use super::SkillAvailability;
     /// What Ultracode does with a prompt, in the words every notice shares.
-    pub const SKILL_ROLE: &str = "With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it.";
-    pub const ON: &str = "Ultracode on for this session. With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
-    pub const ON_REMOTE: &str = "Ultracode on for this session. With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
-    pub const ROUTED: &str = "Ultracode: this prompt goes to the talaria-workflows skill. The agent proposes a workflow and asks before starting it; a started run shows above the composer.";
-    pub const ROUTED_REMOTE: &str = "Ultracode: this prompt goes to the talaria-workflows skill. The agent proposes a workflow and asks before starting it. The run starts on the gateway's machine, so this window cannot show it; talaria workflow list there lists it.";
+    pub const SKILL_ROLE: &str = "With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
+    pub const ON: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
+    pub const ON_REMOTE: &str = "Ultracode on for this session. With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
+    /// The one line a routed prompt prints.
+    pub const ROUTED: &str = "Ultracode: handling this prompt as a workflow.";
+    pub const ROUTED_REMOTE: &str =
+        "Ultracode: handling this prompt as a workflow on the gateway's machine.";
     pub const BRANCH_CARRIED: &str = "Ultracode stays on in this branch.";
     pub const OFF: &str = "Ultracode off for this session.";
-    pub const ONE_SHOT: &str = "Ultracode: this prompt goes to the talaria-workflows skill (keyword ultracode). The agent proposes a workflow and asks before starting it.";
+    pub const ONE_SHOT: &str = "Ultracode (keyword ultracode): handling this prompt as a workflow.";
+    /// Names the routed request in an error Talaria words for a slash command.
+    pub const REQUEST: &str = "the workflow request";
     pub const NO_SESSION: &str = "No session to set ultracode on.";
     pub const USAGE: &str = "Usage: /ultracode [on|off|status]";
     pub fn bypassed(command: &str) -> String {
         format!(
-            "Ultracode does not apply to /{command}; it goes to Hermes as typed. To send the task to the talaria-workflows skill, send it as a plain prompt without /{command}."
+            "Ultracode does not apply to /{command}; it goes to Hermes as typed. To have the task handled as a workflow, send it as a plain prompt without /{command}."
         )
     }
     fn open_with(key: Option<&str>, what: &str) -> String {
@@ -205,7 +295,7 @@ pub mod notice {
     }
     pub fn collision(profile: &str) -> String {
         format!(
-            "A quick or plugin command named /talaria-workflows in profile {profile} hides the skill, so nothing was sent. {SKILL_ROLE} Rename that command, then try again."
+            "A quick or plugin command with the talaria-workflows skill's name in profile {profile} hides the skill, so nothing was sent. {SKILL_ROLE} Rename that command, then try again."
         )
     }
     pub fn status(on: bool, profile: &str, skill: &SkillAvailability) -> String {

@@ -201,7 +201,10 @@ fn draw_started_row(state: &mut SessionState, row: &QueuedRow) {
                 .submissions
                 .iter()
                 .find(|entry| entry.id == row.input_id.0)
-                .map_or_else(|| row.text.clone(), |entry| entry.text.clone());
+                .map_or_else(
+                    || crate::ultracode::shown_text(&row.text).to_owned(),
+                    |entry| entry.text.clone(),
+                );
             state.user(display);
         }
         forget_waiting(state, id);
@@ -254,10 +257,11 @@ pub(crate) fn start_cell(state: &mut SessionState, admission: Option<&str>, inje
                 .find(|entry| entry.id == key.0)
                 .map(|entry| entry.text.clone())
                 .unwrap_or_else(|| {
-                    state
+                    let sent = state
                         .queue
                         .row(&id)
-                        .map_or(entry.text, |row| row.text.clone())
+                        .map_or(entry.text, |row| row.text.clone());
+                    crate::ultracode::shown_text(&sent).to_owned()
                 });
             state.user(text);
         }
@@ -696,6 +700,7 @@ fn on_cancel_receipt(
 /// Hand text back to the person. The reducer cannot see the composer, so the text is also
 /// shown in the transcript: nothing is lost and no draft is touched.
 pub(super) fn take_back(state: &mut SessionState, text: String) {
+    let text = crate::ultracode::shown_text(&text).to_owned();
     state.queue.returned.push(text.clone());
     note(
         state,
@@ -1037,7 +1042,10 @@ fn settle_submit(state: &mut SessionState, key: &SubmissionId) -> Vec<Effect> {
         notices::PROMPT_UNCONFIRMED.to_string(),
     );
     if !text.is_empty() {
-        state.queue.returned.push(text);
+        state
+            .queue
+            .returned
+            .push(crate::ultracode::shown_text(&text).to_owned());
     }
     Vec::new()
 }

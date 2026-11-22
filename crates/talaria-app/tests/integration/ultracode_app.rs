@@ -4,7 +4,7 @@ use talaria_app::ultracode::{Action, Foreground, UltracodeService};
 use talaria_core::session::ids::SessionId;
 use talaria_core::{
     commands::{CatalogResult, CommandCatalog, ErrorView},
-    ultracode::{UltracodeCommand, notice},
+    ultracode::{SkillEpoch, UltracodeCommand, follow_up_text, notice},
 };
 fn session() -> SessionId {
     SessionId::new("fixture-session")
@@ -159,7 +159,10 @@ async fn routed_submit_frames() {
         })
         .expect("skill submission");
     assert_eq!(text, reply["message"].as_str().unwrap());
-    assert_eq!(display, reply["display"].as_str().unwrap());
+    assert_eq!(
+        display, "What is 2 + 2? Answer in one word.",
+        "the cell shows what was typed, never the skill command"
+    );
     assert!(!submission_id.is_empty());
     let payload = talaria_app::sessions::submit_params(session, text, submission_id);
     let _ = client
@@ -201,7 +204,7 @@ async fn routed_submit_frames() {
     ));
 }
 #[test]
-fn multiline_message_and_collapsed_display() {
+fn multiline_message_and_typed_display() {
     let id = session();
     let service = on();
     let original = "a  b\tc\nd";
@@ -209,7 +212,7 @@ fn multiline_message_and_collapsed_display() {
     assert!(actions.iter().any(|a| matches!(a,Action::RunCommand{command_line,..} if command_line=="/talaria-workflows a  b\tc\nd")));
     let reply = json!({"type":"skill","name":"talaria-workflows","message":"a  b\tc\nd","display":"/talaria-workflows a b c d"});
     let actions = service.on_command_outcome(&id, original, Ok(reply));
-    assert!(actions.iter().any(|a| matches!(a,Action::SubmitCommand{text,display,..} if text==original && display=="/talaria-workflows a b c d")));
+    assert!(actions.iter().any(|a| matches!(a,Action::SubmitCommand{text,display,..} if text==original && display==original)));
 }
 #[test]
 fn failures_restore_composer_and_never_fall_back() {
@@ -246,7 +249,11 @@ fn slash_shell_and_keyword_paths() {
     assert!(service.intercept_submit(&id, "!ls").is_none());
     let off = UltracodeService::new(false);
     let actions = off.intercept_submit(&id, "please ultracode this").unwrap();
-    assert!(actions.iter().any(|a| matches!(a,Action::Notice(v) if v=="Ultracode: this prompt goes to the talaria-workflows skill (keyword ultracode). The agent proposes a workflow and asks before starting it.")));
+    assert!(
+        actions
+            .iter()
+            .any(|a| matches!(a,Action::Notice(v) if v==notice::ONE_SHOT))
+    );
     assert!(!off.status_input(Some(&id)));
 }
 
@@ -528,6 +535,127 @@ fn routed_prompt_announces_routing() {
     remote.set_remote(true);
     let actions = remote.intercept_submit(&id, "fix the parser").unwrap();
     assert_eq!(actions[0], Action::Notice(notice::ROUTED_REMOTE.into()));
+}
+
+fn skill_reply(instruction: &str) -> Value {
+    json!({"type": "skill", "name": "talaria-workflows",
+        "message": format!("fixture skill body\n\nThe user has provided the following instruction alongside the skill invocation: {instruction}"),
+        "display": format!("/talaria-workflows {instruction}")})
+}
+
+fn epoch(stored: &str, compressions: i64) -> SkillEpoch {
+    SkillEpoch {
+        stored: stored.into(),
+        compressions,
+    }
+}
+
+/// What a routed prompt sends to the model and shows on screen, when it skips Hermes.
+fn follow_up(actions: &[Action]) -> Option<(&str, &str)> {
+    actions.iter().find_map(|action| match action {
+        Action::SubmitCommand { text, display, .. } => Some((text.as_str(), display.as_str())),
+        _ => None,
+    })
+}
+
+#[test]
+fn routed_prompt_cell_shows_typed_text() {
+    let id = session();
+    let service = on();
+    let actions = service.on_command_outcome(&id, "fix it", Ok(skill_reply("fix it")));
+    let (text, display) = follow_up(&actions).expect("skill submission");
+    assert!(text.starts_with("fixture skill body"), "{text}");
+    assert_eq!(display, "fix it");
+    assert!(
+        actions.iter().all(
+            |action| !matches!(action, Action::Notice(text) if text.contains("talaria-workflows"))
+        ),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn later_routed_prompts_send_a_reminder_with_the_typed_text() {
+    let id = session();
+    let mut service = on();
+    let first = service.intercept_submit(&id, "fix the parser").unwrap();
+    assert!(
+        first
+            .iter()
+            .any(|action| matches!(action, Action::RunCommand { .. })),
+        "the first routed prompt loads the whole skill: {first:?}"
+    );
+    service.skill_sent(&id, epoch("stored", 0));
+    for typed in ["go ahead", "now add a test for the lexer", "keep going"] {
+        service.note_epoch(&id, &epoch("stored", 0));
+        let actions = service.intercept_submit(&id, typed).unwrap();
+        assert_eq!(actions[0], Action::Notice(notice::ROUTED.into()));
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::RunCommand { .. })),
+            "{actions:?}"
+        );
+        let (text, display) = follow_up(&actions).expect("a direct submit");
+        assert_eq!(text, follow_up_text(typed));
+        assert_eq!(display, typed);
+    }
+    service.note_epoch(&id, &epoch("stored", 1));
+    let compacted = service.intercept_submit(&id, "go ahead").unwrap();
+    assert!(
+        compacted
+            .iter()
+            .any(|action| matches!(action, Action::RunCommand { .. })),
+        "after a compaction the whole skill goes again: {compacted:?}"
+    );
+}
+
+#[test]
+fn ultracode_on_again_sends_the_whole_skill_next() {
+    let id = session();
+    let mut service = on();
+    service.skill_sent(&id, epoch("stored", 0));
+    let _ = service.handle_local_command("on", foreground(&id));
+    let _ = service.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(catalog())));
+    let actions = service.intercept_submit(&id, "go ahead").unwrap();
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, Action::RunCommand { .. })),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn keyword_prompt_always_loads_the_whole_skill() {
+    let id = session();
+    let mut off = UltracodeService::new(false);
+    off.skill_sent(&id, epoch("stored", 0));
+    let actions = off.intercept_submit(&id, "please ultracode this").unwrap();
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, Action::RunCommand { .. })),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn a_failed_dispatch_never_names_the_skill_command() {
+    let id = session();
+    for failure in [
+        Err(ErrorView::TimedOut),
+        Err(ErrorView::NotConnected),
+        Err(ErrorView::LocalBug),
+        Err(rpc("unknown_reason")),
+    ] {
+        let actions = on().on_command_outcome(&id, "fix it", failure);
+        for action in &actions {
+            if let Action::Notice(text) = action {
+                assert!(!text.contains("/talaria-workflows"), "{text}");
+            }
+        }
+    }
 }
 
 #[test]

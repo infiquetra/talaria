@@ -3,7 +3,7 @@
 use talaria_core::ultracode::notice;
 
 /// The one way every notice says what Ultracode does with a prompt.
-const SKILL_ROLE: &str = "With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it.";
+const SKILL_ROLE: &str = "With Ultracode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
 
 fn explains_skill_role(text: &str) {
     assert!(
@@ -27,20 +27,17 @@ fn never_says_a_prompt_runs_by_itself(text: &str) {
 
 #[test]
 fn every_routing_notice_says_the_agent_asks_first() {
-    for text in [
-        notice::ON,
-        notice::ON_REMOTE,
-        notice::ROUTED,
-        notice::ROUTED_REMOTE,
-        notice::ONE_SHOT,
-    ] {
+    for text in [notice::ON, notice::ON_REMOTE] {
+        assert!(text.contains("is handled as a workflow"), "{text}");
         assert!(
-            text.contains("goes to the talaria-workflows skill"),
+            text.contains("the agent proposes a workflow and asks before starting it"),
             "{text}"
         );
+        never_says_a_prompt_runs_by_itself(text);
+    }
+    for text in [notice::ROUTED, notice::ROUTED_REMOTE, notice::ONE_SHOT] {
         assert!(
-            text.contains("the agent proposes a workflow and asks before starting it")
-                || text.contains("The agent proposes a workflow and asks before starting it"),
+            text.contains("handling this prompt as a workflow"),
             "{text}"
         );
         never_says_a_prompt_runs_by_itself(text);
@@ -138,21 +135,26 @@ fn remote_on_notice_says_runs_start_on_the_gateway_machine() {
 }
 
 #[test]
-fn routed_notice_says_agent_asks_before_starting() {
+fn routed_notice_is_one_short_line() {
     assert_eq!(
         notice::ROUTED,
-        "Ultracode: this prompt goes to the talaria-workflows skill. The agent proposes a workflow and asks before starting it; a started run shows above the composer."
+        "Ultracode: handling this prompt as a workflow."
     );
-    assert!(notice::ROUTED_REMOTE.contains("asks before starting it"));
-    assert!(notice::ROUTED_REMOTE.contains("gateway's machine"));
-    assert!(notice::ROUTED_REMOTE.contains("talaria workflow list"));
+    assert_eq!(
+        notice::ROUTED_REMOTE,
+        "Ultracode: handling this prompt as a workflow on the gateway's machine."
+    );
+    assert_eq!(
+        notice::ONE_SHOT,
+        "Ultracode (keyword ultracode): handling this prompt as a workflow."
+    );
 }
 
 #[test]
 fn bypass_notice_names_the_command_and_the_way_to_route() {
     assert_eq!(
         notice::bypassed("goal"),
-        "Ultracode does not apply to /goal; it goes to Hermes as typed. To send the task to the talaria-workflows skill, send it as a plain prompt without /goal."
+        "Ultracode does not apply to /goal; it goes to Hermes as typed. To have the task handled as a workflow, send it as a plain prompt without /goal."
     );
     assert!(notice::bypassed("q").contains("/q;"));
 }

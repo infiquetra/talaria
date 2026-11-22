@@ -349,6 +349,8 @@ mod tool_view;
 mod ultracode_notices;
 #[path = "integration/ultracode_route.rs"]
 mod ultracode_route;
+#[path = "integration/ultracode_screen.rs"]
+mod ultracode_screen;
 #[path = "integration/voice_barge_in.rs"]
 mod voice_barge_in;
 #[path = "integration/voice_client_core.rs"]

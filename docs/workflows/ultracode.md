@@ -65,13 +65,12 @@ session controls the `ultracode` status segment, shown after the model and dropp
 space is tight. Start interactive sessions on with `talaria --ultracode`. Print mode does not
 use this flag.
 
-Each routed prompt prints `Ultracode: this prompt goes to the talaria-workflows skill.` before
-it is sent. The agent then proposes a workflow and asks before it starts one. While Ultracode
+Each routed prompt prints one line, `Ultracode: handling this prompt as a workflow.`, before it
+is sent. The agent then proposes a workflow and asks before it starts one. While Ultracode
 is on, a slash command that carries a prompt (`/goal`, `/bg`, `/queue`, `/steer`, `/btw` and
 `/plan`, with their aliases) still goes to Hermes as typed, after a one-line notice that names
-the command and says to send the prompt without it to send the task to the talaria-workflows
-skill. `/goal`
-subcommands such as `/goal status` print no notice.
+the command and says to send the prompt without it to have the task handled as a workflow.
+`/goal` subcommands such as `/goal status` print no notice.
 
 After a routed prompt, Talaria checks the local runs folder every two seconds for a run of
 the same profile that started after the prompt. It keeps checking for an hour after the last
@@ -97,11 +96,24 @@ underscore, and hyphen count as word characters: `ULTRACODE:` matches, `ultracod
 `pre-ultracode`, and `ultracode_x` do not. Non-ASCII letters are separators. Empty prompts,
 slash commands, and shell commands keep their existing behavior.
 
-A routed prompt becomes `/talaria-workflows <original text>` on the normal command service.
-Only a skill directive named `talaria-workflows` is submitted. Hermes's message is sent byte
-for byte, and its display string becomes the user cell. Errors and collisions send no prompt
-and restore the original composer text. Inner tabs and newlines remain in the message; Hermes
-may collapse them in the display. Busy sessions use the existing prompt queue.
+The first routed prompt of a session in this Talaria process becomes
+`/talaria-workflows <original text>` on the normal command service. Only a skill directive named
+`talaria-workflows` is submitted, and Hermes's message, the whole skill with the request at its
+end, is sent byte for byte. Errors and collisions send no prompt and restore the original
+composer text. Inner tabs and newlines remain in the message. Later routed prompts in the same
+conversation skip the command service: they send the typed text after one model-facing line
+saying that the workflow mode is on and the skill already loaded in the conversation applies.
+The whole skill goes again with the first routed prompt after Hermes compacts the session,
+after the session is opened under a new stored id, and after `/ultracode on` is typed again.
+A prompt containing the keyword with the toggle off always carries the whole skill. Busy
+sessions use the existing prompt queue.
+
+The screen shows only what was typed. The user cell, a prompt waiting in the queue, its
+preview and edit, the rewind list, and the history replayed after a resume, a reconnect or a
+return to the session never show the skill command, the skill text or the reminder line. The
+proposed workflow and the approval question show as usual. The prompt history file records the
+typed text. Hermes replays a routed prompt as one line, so a multi-line request comes back with
+its line breaks collapsed.
 
 The lead first reads:
 

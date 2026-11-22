@@ -70,6 +70,14 @@ pub struct QueuedRow {
     pub execution_generation: Option<i64>,
 }
 
+/// A row as the screen shows it: a routed prompt shows what the person typed.
+fn shown_row(row: &QueuedRow) -> QueuedRow {
+    QueuedRow {
+        text: crate::ultracode::shown_text(&row.text).to_owned(),
+        ..row.clone()
+    }
+}
+
 /// How long to wait for a fanout after a lost queue reply.
 pub const RECONCILE_WAIT: Duration = Duration::from_secs(5);
 
@@ -361,7 +369,7 @@ impl QueueState {
     /// Issue 232. Queue and steer.
     #[must_use]
     pub fn view(&self, running: bool) -> QueueView {
-        let rows: Vec<QueuedRow> = self.counted().cloned().collect();
+        let rows: Vec<QueuedRow> = self.counted().map(shown_row).collect();
         let selected = self
             .selection
             .as_ref()
@@ -372,7 +380,7 @@ impl QueueState {
                 .rows
                 .iter()
                 .filter(|row| row.steering && row.status == RowStatus::Started)
-                .cloned()
+                .map(shown_row)
                 .collect(),
             selected,
             paused: self.paused(),
