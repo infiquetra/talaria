@@ -2,13 +2,50 @@
 
 use talaria_core::ultracode::notice;
 
+/// The one way every notice says what Ultracode does with a prompt.
+const SKILL_ROLE: &str = "With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it.";
+
 fn explains_skill_role(text: &str) {
-    for phrase in ["substantive prompts", "Talaria workflows", "skill"] {
-        assert!(
-            text.contains(phrase),
-            "notice must explain the skill's role ({phrase:?}): {text}"
-        );
+    assert!(
+        text.contains(SKILL_ROLE),
+        "notice must explain the skill's role in the shared words: {text}"
+    );
+    never_says_a_prompt_runs_by_itself(text);
+}
+
+/// A prompt never starts a run by itself, so no notice may say it does.
+fn never_says_a_prompt_runs_by_itself(text: &str) {
+    for phrase in [
+        "runs as a workflow",
+        "run as Talaria workflows",
+        "runs substantive",
+        "run the task as a workflow",
+    ] {
+        assert!(!text.contains(phrase), "{phrase:?}: {text}");
     }
+}
+
+#[test]
+fn every_routing_notice_says_the_agent_asks_first() {
+    for text in [
+        notice::ON,
+        notice::ON_REMOTE,
+        notice::ROUTED,
+        notice::ROUTED_REMOTE,
+        notice::ONE_SHOT,
+    ] {
+        assert!(
+            text.contains("goes to the talaria-workflows skill"),
+            "{text}"
+        );
+        assert!(
+            text.contains("the agent proposes a workflow and asks before starting it")
+                || text.contains("The agent proposes a workflow and asks before starting it"),
+            "{text}"
+        );
+        never_says_a_prompt_runs_by_itself(text);
+    }
+    never_says_a_prompt_runs_by_itself(&notice::bypassed("goal"));
 }
 
 #[test]
@@ -115,7 +152,7 @@ fn routed_notice_says_agent_asks_before_starting() {
 fn bypass_notice_names_the_command_and_the_way_to_route() {
     assert_eq!(
         notice::bypassed("goal"),
-        "Ultracode does not apply to /goal; it goes to Hermes as typed. To run the task as a workflow, send it as a plain prompt without /goal."
+        "Ultracode does not apply to /goal; it goes to Hermes as typed. To send the task to the talaria-workflows skill, send it as a plain prompt without /goal."
     );
     assert!(notice::bypassed("q").contains("/q;"));
 }

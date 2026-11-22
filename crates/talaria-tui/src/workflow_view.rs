@@ -126,8 +126,9 @@ impl WorkflowView {
         if let Some(message) = picker.empty_message() {
             let lines = [
                 message,
-                "Runs start when Ultracode is on (/ultracode on) and you send a plain prompt,",
-                "or when the agent uses the talaria-workflows skill.",
+                "Turn Ultracode on with /ultracode on.",
+                "With Ultracode on, a plain prompt goes to the talaria-workflows skill,",
+                "and the agent proposes a workflow and asks before starting it.",
             ];
             for (y, text) in (inner.y..inner.bottom()).zip(lines) {
                 Paragraph::new(text)

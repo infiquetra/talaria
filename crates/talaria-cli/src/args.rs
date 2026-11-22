@@ -58,7 +58,7 @@ pub struct Cli {
     pub no_ensure: bool,
     #[arg(long)]
     pub remote: Option<String>,
-    /// Route substantive interactive prompts through workflow agents.
+    /// Start interactive sessions with Ultracode on: plain prompts go to the talaria-workflows skill.
     #[arg(long, global = true)]
     pub ultracode: bool,
     /// Start a session in the background and return.

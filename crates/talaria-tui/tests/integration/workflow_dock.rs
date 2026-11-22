@@ -88,10 +88,15 @@ fn empty_picker_says_how_runs_start_and_lists_keys() {
     let screen = rows.join("\n");
     for phrase in [
         "no runs yet — talaria workflow run starts one",
-        "/ultracode on",
-        "talaria-workflows skill",
+        "Turn Ultracode on with /ultracode on.",
+        "With Ultracode on, a plain prompt goes to the talaria-workflows skill,",
+        "and the agent proposes a workflow and asks before starting it.",
         "esc close",
     ] {
         assert!(screen.contains(phrase), "{phrase:?}:\n{screen}");
     }
+    assert!(
+        !screen.contains("Runs start when"),
+        "a prompt does not start a run by itself:\n{screen}"
+    );
 }

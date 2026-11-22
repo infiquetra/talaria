@@ -16,7 +16,7 @@ pub enum LocalAction {
     Layout,
     /// View a journaled workflow run.
     Workflows,
-    /// Route substantive prompts through the workflow skill.
+    /// Send plain prompts to the talaria-workflows skill.
     Ultracode,
     /// Open the gateway health check.
     Doctor,
@@ -436,7 +436,7 @@ const BUILTIN: &[LocalCommand] = &[
     LocalCommand {
         name: "ultracode",
         aliases: &[],
-        summary: "Route substantive prompts through workflow agents",
+        summary: "Send plain prompts to the talaria-workflows skill",
         args_hint: "[on|off|status]",
         takes_argument: true,
         action: LocalAction::Ultracode,

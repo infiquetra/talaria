@@ -151,18 +151,20 @@ pub fn skill_availability(catalog: &CommandCatalog) -> SkillAvailability {
 }
 pub mod notice {
     use super::SkillAvailability;
-    pub const ON: &str = "Ultracode on for this session: substantive prompts run as Talaria workflows through the talaria-workflows skill. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
-    pub const ON_REMOTE: &str = "Ultracode on for this session: substantive prompts run as Talaria workflows through the talaria-workflows skill. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
+    /// What Ultracode does with a prompt, in the words every notice shares.
+    pub const SKILL_ROLE: &str = "With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it.";
+    pub const ON: &str = "Ultracode on for this session. With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
+    pub const ON_REMOTE: &str = "Ultracode on for this session. With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
     pub const ROUTED: &str = "Ultracode: this prompt goes to the talaria-workflows skill. The agent proposes a workflow and asks before starting it; a started run shows above the composer.";
     pub const ROUTED_REMOTE: &str = "Ultracode: this prompt goes to the talaria-workflows skill. The agent proposes a workflow and asks before starting it. The run starts on the gateway's machine, so this window cannot show it; talaria workflow list there lists it.";
     pub const BRANCH_CARRIED: &str = "Ultracode stays on in this branch.";
     pub const OFF: &str = "Ultracode off for this session.";
-    pub const ONE_SHOT: &str = "This prompt runs as a workflow (keyword ultracode).";
+    pub const ONE_SHOT: &str = "Ultracode: this prompt goes to the talaria-workflows skill (keyword ultracode). The agent proposes a workflow and asks before starting it.";
     pub const NO_SESSION: &str = "No session to set ultracode on.";
     pub const USAGE: &str = "Usage: /ultracode [on|off|status]";
     pub fn bypassed(command: &str) -> String {
         format!(
-            "Ultracode does not apply to /{command}; it goes to Hermes as typed. To run the task as a workflow, send it as a plain prompt without /{command}."
+            "Ultracode does not apply to /{command}; it goes to Hermes as typed. To send the task to the talaria-workflows skill, send it as a plain prompt without /{command}."
         )
     }
     fn open_with(key: Option<&str>, what: &str) -> String {
@@ -188,22 +190,22 @@ pub mod notice {
     }
     pub fn missing(profile: &str) -> String {
         format!(
-            "Ultracode needs the talaria-workflows skill in profile {profile}. Ultracode runs substantive prompts as Talaria workflows through that skill. Install it with: talaria workflow skill install --profile {profile}"
+            "Ultracode needs the talaria-workflows skill in profile {profile}. {SKILL_ROLE} Install it with: talaria workflow skill install --profile {profile}"
         )
     }
     pub fn unknown(reason: &str) -> String {
         format!(
-            "Cannot check for the talaria-workflows skill yet: {reason}. Ultracode runs substantive prompts as Talaria workflows through that skill. Try again once connected."
+            "Cannot check for the talaria-workflows skill yet: {reason}. {SKILL_ROLE} Try again once connected."
         )
     }
     pub fn unavailable(profile: &str) -> String {
         format!(
-            "The talaria-workflows skill in profile {profile} could not be loaded. Ultracode runs substantive prompts as Talaria workflows through that skill. Reinstall it with: talaria workflow skill install --force --profile {profile}"
+            "The talaria-workflows skill in profile {profile} could not be loaded. {SKILL_ROLE} Reinstall it with: talaria workflow skill install --force --profile {profile}"
         )
     }
     pub fn collision(profile: &str) -> String {
         format!(
-            "A quick or plugin command named /talaria-workflows in profile {profile} hides the skill, so nothing was sent. Ultracode runs substantive prompts as Talaria workflows through that skill. Rename that command, then try again."
+            "A quick or plugin command named /talaria-workflows in profile {profile} hides the skill, so nothing was sent. {SKILL_ROLE} Rename that command, then try again."
         )
     }
     pub fn status(on: bool, profile: &str, skill: &SkillAvailability) -> String {

@@ -1,6 +1,7 @@
 # Ultracode workflows
 
-Ultracode routes substantive prompts through the `talaria-workflows` Hermes skill. The lead
+With Ultracode on, a plain prompt goes to the `talaria-workflows` Hermes skill, and the agent
+proposes a workflow and asks before starting it. A prompt never starts a run by itself. The lead
 uses the roster to choose configured tiers or models, proposes a workflow, asks for an explicit
 yes for that run, then runs it with the Talaria workflow runner. Trivial requests can be answered
 directly. A previous yes never authorizes another run.
@@ -68,7 +69,8 @@ Each routed prompt prints `Ultracode: this prompt goes to the talaria-workflows 
 it is sent. The agent then proposes a workflow and asks before it starts one. While Ultracode
 is on, a slash command that carries a prompt (`/goal`, `/bg`, `/queue`, `/steer`, `/btw` and
 `/plan`, with their aliases) still goes to Hermes as typed, after a one-line notice that names
-the command and says to send the prompt without it to run the task as a workflow. `/goal`
+the command and says to send the prompt without it to send the task to the talaria-workflows
+skill. `/goal`
 subcommands such as `/goal status` print no notice.
 
 After a routed prompt, Talaria checks the local runs folder every two seconds for a run of
@@ -81,12 +83,14 @@ shows a dock line above the composer (`⚙ Workflow <name> · running · 3/10 ag
 open`), and adds the agent count to the status segment (`ultracode · 3/10 agents`), which is
 then kept on a narrow line. When the run ends it prints `Workflow run <outcome>: …` and the
 dock line goes away. The view never opens by itself. `workflow_view` (Alt+W) opens the latest
-run of the foreground session, or the run list when it has none. A session started with
+run that this Talaria window saw start after an Ultracode-routed prompt in the foreground
+session, or the run list when it saw none. A run started some other way, or in another window,
+is reached through the run list. A session started with
 `--remote` runs workflows on the gateway's machine, so Talaria does not watch for them and the
 routing notice says so. Two Talaria windows on one profile can both announce the same run.
 
-With the toggle off, the whole word `ultracode` anywhere in a substantive prompt routes just
-that prompt and shows a one-shot notice. Matching ignores ASCII case. Letters, digits,
+With the toggle off, the whole word `ultracode` anywhere in a plain prompt sends just that
+prompt to the talaria-workflows skill and shows a one-shot notice. Matching ignores ASCII case. Letters, digits,
 underscore, and hyphen count as word characters: `ULTRACODE:` matches, `ultracoder`,
 `pre-ultracode`, and `ultracode_x` do not. Non-ASCII letters are separators. Empty prompts,
 slash commands, and shell commands keep their existing behavior.

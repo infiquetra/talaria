@@ -246,7 +246,7 @@ fn slash_shell_and_keyword_paths() {
     assert!(service.intercept_submit(&id, "!ls").is_none());
     let off = UltracodeService::new(false);
     let actions = off.intercept_submit(&id, "please ultracode this").unwrap();
-    assert!(actions.iter().any(|a| matches!(a,Action::Notice(v) if v=="This prompt runs as a workflow (keyword ultracode).")));
+    assert!(actions.iter().any(|a| matches!(a,Action::Notice(v) if v=="Ultracode: this prompt goes to the talaria-workflows skill (keyword ultracode). The agent proposes a workflow and asks before starting it.")));
     assert!(!off.status_input(Some(&id)));
 }
 
