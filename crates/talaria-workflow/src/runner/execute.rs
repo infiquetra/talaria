@@ -995,7 +995,8 @@ async fn execute_inner(
     let mut stopping: Option<futures::future::BoxFuture<'static, Vec<String>>> = None;
     let mut stopped = None;
     let mut stop_requested = false;
-    let mut last_heartbeat = tokio::time::Instant::now();
+    // The gate starts open; only a change is journaled, so script logs stay in view.
+    let mut journaled_paused = false;
     let outcome = loop {
         tokio::select! {
             unsettled=async {match stopping.as_mut(){Some(f)=>f.await,None=>std::future::pending().await}},if stopping.is_some()=>{stopped=Some(unsettled);stopping=None;},
@@ -1026,12 +1027,12 @@ async fn execute_inner(
                 Some(Input::Signal|Input::Poll)=>{
                     let signal=matches!(message,Some(Input::Signal));
                     let pending=RunControl::pending(&dir);gate.set_paused(stop_requested || pending.pause.is_some());
-                    if last_heartbeat.elapsed() >= Duration::from_secs(1) {
+                    if gate.is_paused() != journaled_paused {
                         journal.record_engine_event(&EngineEvent::Log {
                             message: if gate.is_paused() { "runner: admission gate paused" } else { "runner: admission gate open" }.into(),
                             workflow_path: vec![],
                         }).await.map_err(|e| e.to_string())?;
-                        last_heartbeat = tokio::time::Instant::now();
+                        journaled_paused = gate.is_paused();
                     }
                     if (signal||pending.stop.is_some()) && !stop_requested {
                         stop_requested = true;

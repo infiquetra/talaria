@@ -991,6 +991,10 @@ fn progress_view(folder: &Path) -> (RunDir, ProgressState, u64) {
 }
 
 fn poll_view(dir: &RunDir, view: &mut ProgressState, offset: &mut u64) {
+    // The app probes the run lock before it reads the journal, so a runner that finishes
+    // between the two reads is never reported as gone.
+    let alive = talaria_workflow::runner::runs::runner_alive(dir.path()).unwrap();
+    update(view, ProgressInput::Runner { alive });
     let (lines, next) = JournalReader::read_from(dir.path(), *offset).unwrap();
     *offset = next;
     update(view, ProgressInput::Journal(lines));
@@ -1288,6 +1292,13 @@ fn progress_control_files_match_view() {
             &mut view,
             ProgressInput::Controls(RunControl::pending(&dir)),
         );
+        // The app probes the lock on every poll; the runner has exited and released it.
+        update(
+            &mut view,
+            ProgressInput::Runner {
+                alive: talaria_workflow::runner::runs::runner_alive(dir.path()).unwrap(),
+            },
+        );
         update(
             &mut view,
             ProgressInput::Clock {
@@ -1410,7 +1421,7 @@ fn parallel_waiters_are_queued_and_cancelled_by_stop() {
 }
 
 #[test]
-fn paused_runner_heartbeats_keep_the_view_answered() {
+fn paused_runner_journals_the_gate_once_and_its_lock_keeps_the_view_answered() {
     let h = Harness::new(
         "await agent('hold first',{label:'first'}); return await parallel([() => agent('second',{label:'second'}), () => agent('third',{label:'third'}), () => agent('fourth',{label:'fourth'})]);",
     );
@@ -1459,11 +1470,21 @@ fn paused_runner_heartbeats_keep_the_view_answered() {
             .count(),
         3
     );
-    let heartbeats: Vec<_> = records(&folder)
+    // The gate is journaled when it changes, not every second, so script logs stay visible.
+    let gate_lines: Vec<_> = records(&folder)
         .into_iter()
-        .filter(|r| r["t"] == "engine" && r["event"]["message"] == "runner: admission gate paused")
+        .filter(|r| {
+            r["t"] == "engine"
+                && r["event"]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.starts_with("runner: admission gate"))
+        })
         .collect();
-    assert!(heartbeats.len() >= 5, "{heartbeats:?}");
+    assert_eq!(gate_lines.len(), 1, "{gate_lines:?}");
+    assert_eq!(
+        gate_lines[0]["event"]["message"],
+        "runner: admission gate paused"
+    );
     assert_eq!(
         h.wire
             .frames()

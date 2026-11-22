@@ -259,7 +259,16 @@ impl WorkflowView {
             .unwrap_or(0);
         let start = selection.saturating_sub(room.saturating_sub(1));
         if nodes.len() == 1 && !state.progress.agents.is_empty() && y < inner.bottom() {
-            put(y, "no agents match this filter".into(), theme.muted, buf);
+            // Name the real cause and the key that brings the rows back.
+            let text = if state.collapsed.contains(&NodeKey::Run) {
+                "everything is collapsed · → expands".to_owned()
+            } else {
+                format!(
+                    "no agents match the {} filter · f changes it",
+                    state.filter.as_str()
+                )
+            };
+            put(y, text, theme.muted, buf);
             y += 1;
         }
         for node in nodes.iter().skip(start).take(room) {

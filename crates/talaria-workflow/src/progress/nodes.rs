@@ -97,6 +97,7 @@ impl Counts {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RunNode {
     pub name: String,
+    pub run_id: String,
     pub state: RunState,
     pub previous_execution: Option<RunState>,
     pub started_at_ms: Option<i64>,

@@ -3,7 +3,8 @@
 Open `/workflows <run-folder>` to inspect a workflow journal. The view uses the
 manifest and complete journal lines before subscribing to running sessions.
 Closing it with Escape leaves the run running and retains the selection for
-reopening. The open view polls the journal every 250 ms, including while disconnected.
+reopening; reopening unfolds every row and clears any message or confirmation.
+The view opens with the first agent selected. The open view polls the journal every 250 ms, including while disconnected.
 Gateway subscriptions, agent controls and opening a session use the manifest's profile, even when Talaria was launched with a different profile.
 Run discovery and the picker become available with the runner integration.
 
@@ -11,16 +12,23 @@ The tree groups journal keys under their workflow and phase, with child
 workflows and Hermes subagents nested below their parent. Subagents do not
 increase the run's agent count. Rows show the journal's model, provider,
 duration and usage; selected agents show their prompt, last tool and recent
-output. Filters cycle through all, working, needs-you and failed.
+output. Filters cycle through all, working, needs-you and failed. The header
+names any filter other than all, and an empty list says which filter hides the
+agents and that `f` changes it.
 
 Agent states are done, failed, skipped, unknown (unresolved journal attention),
 ended (engine ended without a journal outcome), waiting (an outstanding
 approval or clarification), stopping, running and queued. A recorded outcome
 wins over later live activity. Run states are running, completed, failed and
-aborted. A resumed execution keeps the previous outcome separately. After a
-minute without new journal lines, a running view adds `no live runner detected`.
+aborted. A resumed execution keeps the previous outcome separately. The view
+checks the run lock on every poll. When no runner holds it, a running view adds
+`runner not running — talaria workflow resume <run-id> continues it`. Only when
+the lock cannot be read does a minute without new journal lines add
+`no live runner detected`. The runner journals its admission gate only when the
+gate opens or pauses, so script logs stay visible.
 
-Use the arrow keys to select and collapse rows, Enter to open an agent, `s` to
+Use the arrow keys to select and collapse rows (the run header never
+collapses), Enter to open an agent, `s` to
 steer, `x` to stop an agent, `r` to request restart on the next resume, `p` to
 pause or resume, `shift+x` to stop the run, and `f` to cycle filters. Restart
 and stop-run require a second matching key or `y` within three seconds. The
@@ -31,7 +39,13 @@ create-new request files under `control/`; a request is not proof that a
 runner acted. Pause needs journal evidence; stop finishes only when the
 journal records the outcome. A warning after ten seconds says when no runner
 answered. Restart remains pending for the next resume. Completed and skipped
-work cannot be restarted from this view.
+work cannot be restarted from this view. Messages in the key-hint row last
+five seconds, then the hints return.
+
+Gateway events without a session, or for a session the run does not own, never
+reach the view. Event types the view does not draw are ignored; a type this
+Talaria cannot decode is recorded once per connection in
+`~/.talaria/logs/client.log` and never shown.
 
 The compact request files are `pause.json` and `stop.json`, containing
 `{"v":1,"kind":"pause","at_ms":123}` (or `"stop"`), and

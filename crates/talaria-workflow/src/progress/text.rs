@@ -30,8 +30,16 @@ pub fn run_line(s: &ProgressState) -> String {
     if let Some(suffix) = &s.run_suffix {
         line.push_str(&format!(" · {suffix}"));
     }
-    if s.no_live_runner {
+    if s.runner_gone() {
+        line.push_str(&format!(
+            " · runner not running — talaria workflow resume {} continues it",
+            r.run_id
+        ));
+    } else if s.no_live_runner {
         line.push_str(" · no live runner detected");
+    }
+    if s.filter != super::Filter::All {
+        line.push_str(&format!(" · filter: {}", s.filter.as_str()));
     }
     line.push_str(&format!(" · agents {}/{}", c.done, c.total));
     for (n, name) in [

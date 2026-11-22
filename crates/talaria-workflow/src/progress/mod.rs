@@ -67,6 +67,7 @@ impl RunProgress {
     }
     pub fn from_records(manifest: &Manifest, lines: &[RecordLine]) -> Self {
         let mut result = Self::empty(manifest.workflow.name.clone());
+        result.run.run_id = manifest.run_id.as_str().to_owned();
         for line in lines {
             result.apply_inner(line);
         }
@@ -413,7 +414,8 @@ impl RunProgress {
         for a in &mut self.agents {
             a.derive();
             self.run.counts.add(a.state);
-            self.run.tokens = self.run.tokens.saturating_add(a.settled_tokens);
+            // Settled plus live usage, as each agent row shows it.
+            self.run.tokens = self.run.tokens.saturating_add(a.tokens);
             self.run.tokens_unknown |= a.tokens_unknown;
             if let Some(n) = a.money {
                 money += n;

@@ -118,6 +118,10 @@ pub fn find_run(runs_dir: &Path, id_or_path: &str) -> Result<PathBuf, FindError>
     }
 }
 
+/// Whether a runner holds the run lock now. A free or missing lock means no runner.
+pub fn runner_alive(dir: &Path) -> io::Result<bool> {
+    Ok(matches!(probe_lock(dir)?, LockProbe::Held))
+}
 pub(crate) enum LockProbe {
     Free(Option<File>),
     Held,

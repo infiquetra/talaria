@@ -11,6 +11,7 @@ use talaria_workflow::journal::{CallOutcome, Record, RecordLine};
 use talaria_workflow::progress::live::{
     GatewayFailure, NodeKey, ProgressInput, ProgressKey, ProgressState, update,
 };
+use talaria_workflow::progress::text::run_line;
 use talaria_workflow::progress::{
     AgentState, ControlOutcome, ControlRequest, Filter, ProgressEffect, RunProgress,
 };
@@ -197,6 +198,214 @@ fn live_events_enrich_without_creating_agents() {
         [ProgressEffect::AttachAndReconcile { session_id }] if session_id == "sess-running"
     ));
     assert_eq!(state.progress().agents().len(), 1);
+}
+
+/// Decode one gateway frame the way the link does, so the test sends real event shapes.
+fn frame(value: serde_json::Value) -> Notification {
+    hermes_contract::events::EventFrame::from_params(&value)
+        .expect("frame decodes")
+        .notification
+}
+
+fn agent_visible(state: &ProgressState, key: &str) -> bool {
+    state
+        .visible_nodes()
+        .iter()
+        .any(|node| matches!(&node.key, NodeKey::Agent(k) if k == key))
+}
+
+#[test]
+fn opening_selects_the_first_agent_row() {
+    let state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    assert_eq!(state.selection, NodeKey::Agent(lines::KEY_RUNNING.into()));
+}
+
+#[test]
+fn left_never_collapses_the_run_row() {
+    // A state that has not been through the reducer still starts on the hidden run row.
+    let mut state = ProgressState::new(RunProgress::from_records(
+        &lines::manifest(),
+        &lines::live_running(lines::KEY_RUNNING, "sess-running", 3),
+    ));
+    update(&mut state, ProgressInput::Key(ProgressKey::Left));
+    assert!(agent_visible(&state, lines::KEY_RUNNING));
+    assert!(!state.collapsed.contains(&NodeKey::Run));
+
+    // Climbing to the top and pressing Left repeatedly folds the phase at most.
+    for _ in 0..5 {
+        update(&mut state, ProgressInput::Key(ProgressKey::Up));
+    }
+    for _ in 0..4 {
+        update(&mut state, ProgressInput::Key(ProgressKey::Left));
+    }
+    assert!(!state.collapsed.contains(&NodeKey::Run));
+    assert!(
+        state.visible_nodes().len() > 1,
+        "{:?}",
+        state.visible_nodes()
+    );
+    update(&mut state, ProgressInput::Key(ProgressKey::Right));
+    assert!(agent_visible(&state, lines::KEY_RUNNING));
+}
+
+#[test]
+fn reopen_clears_the_footer_collapse_and_confirmation_but_keeps_the_selection() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    state.collapsed.insert(NodeKey::Run);
+    state
+        .collapsed
+        .insert(NodeKey::Agent(lines::KEY_RUNNING.into()));
+    update(&mut state, ProgressInput::Key(ProgressKey::StopRun));
+    assert!(state.confirmation_text().is_some());
+    state.footer = Some("run already finished".into());
+    update(&mut state, ProgressInput::Reopen { connected: true });
+    assert_eq!(state.footer, None);
+    assert_eq!(state.confirmation_text(), None);
+    assert!(state.collapsed.is_empty());
+    assert!(agent_visible(&state, lines::KEY_RUNNING));
+    assert_eq!(state.selection, NodeKey::Agent(lines::KEY_RUNNING.into()));
+}
+
+#[test]
+fn footer_expires_after_five_seconds() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(&mut state, ProgressInput::Connected(false));
+    update(&mut state, ProgressInput::Clock { now_ms: 1_000 });
+    update(&mut state, ProgressInput::Key(ProgressKey::OpenAgent));
+    assert_eq!(
+        state.footer.as_deref(),
+        Some("gateway disconnected — showing the journal")
+    );
+    update(&mut state, ProgressInput::Clock { now_ms: 5_900 });
+    assert!(state.footer.is_some(), "a footer lasts five seconds");
+    let before = state.revision;
+    update(&mut state, ProgressInput::Clock { now_ms: 6_100 });
+    assert_eq!(state.footer, None);
+    assert!(state.revision > before, "clearing the footer redraws");
+}
+
+#[test]
+fn session_less_and_foreign_events_never_touch_the_footer() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    for (session, event) in [
+        (
+            "",
+            frame(json!({"type": "platforms.changed", "session_id": "", "payload": {}})),
+        ),
+        (
+            "",
+            frame(json!({"type": "groups.changed", "session_id": "", "payload": {}})),
+        ),
+        (
+            "sess-other",
+            frame(json!({"type": "status.update", "session_id": "sess-other",
+                "payload": {"kind": "status", "text": "working"}})),
+        ),
+        (
+            "sess-running",
+            frame(
+                json!({"type": "thinking.delta", "session_id": "sess-running",
+                "payload": {"text": "hmm"}}),
+            ),
+        ),
+        (
+            "sess-running",
+            frame(
+                json!({"type": "sessions.changed", "session_id": "sess-running",
+                "payload": {}}),
+            ),
+        ),
+    ] {
+        update(
+            &mut state,
+            ProgressInput::Gateway {
+                session_id: session.into(),
+                event,
+            },
+        );
+        assert_eq!(state.footer, None, "{session}");
+    }
+    assert!(state.take_diagnostics().is_empty());
+}
+
+#[test]
+fn unknown_type_is_recorded_once_per_connection_not_shown() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    let unknown = || ProgressInput::Gateway {
+        session_id: "sess-running".into(),
+        event: frame(
+            json!({"type": "groups.changed", "session_id": "sess-running",
+            "payload": {}}),
+        ),
+    };
+    update(&mut state, unknown());
+    update(&mut state, unknown());
+    assert_eq!(state.footer, None);
+    let recorded = state.take_diagnostics();
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert!(recorded[0].contains("groups.changed"), "{recorded:?}");
+    assert!(state.take_diagnostics().is_empty());
+    update(&mut state, ProgressInput::Connected(false));
+    update(&mut state, ProgressInput::Connected(true));
+    update(&mut state, unknown());
+    assert_eq!(state.take_diagnostics().len(), 1);
+}
+
+#[test]
+fn run_total_includes_live_usage() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(
+        &mut state,
+        ProgressInput::Gateway {
+            session_id: "sess-running".into(),
+            event: Notification::SessionUsage(SessionUsagePayload {
+                total_tokens: Some(2_500),
+                ..Default::default()
+            }),
+        },
+    );
+    assert_eq!(state.progress().run().tokens, 2_500);
+    assert!(
+        run_line(&state).contains("2.5k tokens"),
+        "{}",
+        run_line(&state)
+    );
+}
+
+#[test]
+fn free_lock_marks_a_running_journal_as_not_running() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(&mut state, ProgressInput::Clock { now_ms: 2_000 });
+    state.last_journal_seen_ms = 2_000;
+    update(&mut state, ProgressInput::Runner { alive: false });
+    assert!(state.no_live_runner);
+    assert!(
+        run_line(&state).contains(&format!(
+            "runner not running — talaria workflow resume {} continues it",
+            lines::RUN_ID
+        )),
+        "{}",
+        run_line(&state)
+    );
+    // A held lock means a live runner even after a long journal silence.
+    update(&mut state, ProgressInput::Runner { alive: true });
+    update(&mut state, ProgressInput::Clock { now_ms: 122_000 });
+    assert!(!state.no_live_runner, "{}", run_line(&state));
+}
+
+#[test]
+fn active_filter_is_named_in_the_header() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    assert!(!run_line(&state).contains("filter:"));
+    for _ in 0..3 {
+        update(&mut state, ProgressInput::Key(ProgressKey::CycleFilter));
+    }
+    assert_eq!(state.filter, Filter::Failed);
+    assert!(
+        run_line(&state).contains("filter: failed"),
+        "{}",
+        run_line(&state)
+    );
 }
 
 #[test]

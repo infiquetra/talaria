@@ -200,3 +200,41 @@ fn overlay_renders_tree_and_steer_input() {
     assert!(present(&idle, &mut seen, &mut draws, 80, 24).is_none());
     assert_eq!(draws, 1);
 }
+
+#[test]
+fn empty_list_names_the_filter_and_the_key_that_changes_it() {
+    use talaria_workflow::progress::live::{ProgressInput, ProgressKey, update};
+    let mut state = ProgressState::new(RunProgress::from_records(&manifest(), &review_lines()));
+    for _ in 0..3 {
+        update(&mut state, ProgressInput::Key(ProgressKey::CycleFilter));
+    }
+    let screen = paint(&state, 120, 24);
+    assert!(
+        screen.contains("no agents match the failed filter · f changes it"),
+        "{screen}"
+    );
+    assert!(screen.contains("filter: failed"), "{screen}");
+    assert!(!screen.contains("no agents match this filter"), "{screen}");
+}
+
+#[test]
+fn an_expired_message_gives_the_footer_back_to_the_key_hints() {
+    use talaria_workflow::progress::live::{ProgressInput, ProgressKey, update};
+    let hints =
+        "↑↓ select · enter open · s steer · x stop · r restart · p pause · f filter · esc close";
+    let mut state = ProgressState::new(RunProgress::from_records(&manifest(), &review_lines()));
+    update(&mut state, ProgressInput::Clock { now_ms: 1_000 });
+    update(&mut state, ProgressInput::Key(ProgressKey::PauseRun));
+    let shown = paint(&state, 120, 24);
+    assert!(shown.contains("run already finished"), "{shown}");
+    assert!(!shown.contains(hints), "{shown}");
+    update(&mut state, ProgressInput::Clock { now_ms: 6_000 });
+    let back = paint(&state, 120, 24);
+    let rows: Vec<&str> = back.lines().collect();
+    let bottom = rows
+        .iter()
+        .position(|r| r.starts_with('└'))
+        .expect("border");
+    assert!(rows[bottom - 2].contains(hints), "{back}");
+    assert!(!back.contains("run already finished"), "{back}");
+}

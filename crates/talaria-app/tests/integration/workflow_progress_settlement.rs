@@ -37,6 +37,7 @@ fn app_polls_each_tick_and_after_stop_ack_then_redraws_the_settled_row() {
         lines: vec![],
         offset: 42,
         controls: Default::default(),
+        runner_alive: None,
     };
     app::update(
         &mut app,
@@ -85,6 +86,7 @@ fn app_polls_each_tick_and_after_stop_ack_then_redraws_the_settled_row() {
                 }],
                 offset: 99,
                 controls: Default::default(),
+                runner_alive: None,
             }),
         },
     );
