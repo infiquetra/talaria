@@ -339,6 +339,8 @@ pub enum UserAction {
     Palette(PaletteInput),
     /// A key for the open `/theme` or `/skin` selector.
     Choice(talaria_core::commands::ChoiceKey),
+    /// A key for the open `/effort` selector.
+    EffortScale(talaria_core::models::ScaleKey),
     /// A composer edit, including an explicit history recall.
     DraftEdited {
         text: String,
@@ -438,6 +440,8 @@ pub struct View<'a> {
     pub palette: &'a PaletteState,
     /// The `/theme` or `/skin` selector under the composer, while it is open.
     pub choice: Option<&'a talaria_core::commands::ChoiceList>,
+    /// The `/effort` selector under the composer, while it is open.
+    pub effort_scale: Option<&'a talaria_core::models::EffortScale>,
     /// The rewind overlay, while it is open. Issue #233.
     pub rewind: Option<RewindView<'a>>,
     /// Whether the context figure must stay hidden for this session.
@@ -1461,6 +1465,7 @@ impl AppState {
             held: self.held.len(),
             palette: &self.palette,
             choice: choice::list(self),
+            effort_scale: choice::scale(self),
             rewind: self.rewind.is_open().then(|| self.rewind.view(wall_ms())),
             context_hidden: self
                 .opened
@@ -2908,6 +2913,7 @@ pub(crate) fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppE
             effects.push(AppEffect::Models(effect));
         }
     }
+    choice::refresh_effort(state);
     effects
 }
 
@@ -7120,6 +7126,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Queue(intent) => queue_intent(state, intent),
         UserAction::Palette(input) => palette_input(state, input),
         UserAction::Choice(key) => choice::key(state, key),
+        UserAction::EffortScale(key) => choice::scale_key(state, key),
         UserAction::DraftEdited {
             text,
             caret,
@@ -7693,6 +7700,10 @@ fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
         }
         LocalAction::Theme => return theme_command(state, argument.trim()),
         LocalAction::Model => parse_model_command(argument).map(ModelCommandOrEffort::Model),
+        // Bare `/effort` opens the scale; without a session it answers as before.
+        LocalAction::Effort if argument.trim().is_empty() && state.opened.is_some() => {
+            return choice::open_effort(state);
+        }
         LocalAction::Effort => parse_effort_command(argument).map(ModelCommandOrEffort::Effort),
         LocalAction::Rewind
         | LocalAction::Undo

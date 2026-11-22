@@ -135,6 +135,26 @@ impl ModelsState {
                     .any(|badge| badge == super::catalog::EFFORT_NOT_OFFERED)
             })
     }
+    /// Whether `none` turns thinking off on a catalogue route, when the catalogue says.
+    pub fn can_disable_reasoning(
+        &self,
+        session_id: &str,
+        provider: &str,
+        model: &str,
+    ) -> Option<bool> {
+        self.sessions
+            .get(session_id)?
+            .catalog
+            .as_ref()?
+            .result
+            .providers
+            .iter()
+            .find(|p| p.slug == provider)?
+            .capabilities
+            .as_ref()?
+            .get(model)?
+            .can_disable_reasoning
+    }
     pub fn new(launch_id: &str, saved: Result<SavedModels, String>) -> Self {
         Self {
             ledger: MutationLedger::new(launch_id),

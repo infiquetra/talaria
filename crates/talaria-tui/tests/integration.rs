@@ -70,6 +70,8 @@ mod context_render;
 mod cron_render;
 #[path = "integration/doctor_view.rs"]
 mod doctor_view;
+#[path = "integration/effort_scale_render.rs"]
+mod effort_scale_render;
 #[path = "integration/fleet_alert_bytes.rs"]
 mod fleet_alert_bytes;
 #[path = "integration/fleet_external_launch.rs"]

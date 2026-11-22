@@ -88,7 +88,9 @@ use talaria_tui::pager::{
     ConnectionBanner, Details, Pager, PagerAction, PagerCellLines, PagerContext, SearchIndex,
     SearchInput,
 };
-use talaria_tui::palette::{ChoiceSection, PaletteSection, sample_lines};
+use talaria_tui::palette::{
+    ChoiceSection, EffortScaleSection, PaletteSection, sample_lines, scale_key_labels,
+};
 use talaria_tui::profiles::{
     ProfilesRenderer, cursor_position as profiles_cursor, key_action as profiles_key,
 };
@@ -626,6 +628,44 @@ fn choice_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::commands::Choic
 /// closes it, and the composer takes the key. No theme or skin name holds a `/`.
 fn choice_hands_to_composer(keymap: &KeyMap, key: Key) -> bool {
     choice_key(keymap, key) == Some(talaria_core::commands::ChoiceKey::Type('/'))
+}
+
+/// The open `/effort` scale's key: the `/model` picker's effort keys move it and its scope key
+/// stages saving for new sessions, so a rebinding applies to both. Tab stages Ultracode,
+/// Home and End jump to the ends, Enter applies and Esc or Ctrl+C cancels.
+fn scale_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::models::ScaleKey> {
+    use talaria_core::models::ScaleKey;
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    match keymap.resolve_model(KeyContext::ModelPicker, &key) {
+        Some(ModelAction::EffortDown) => return Some(ScaleKey::Lower),
+        Some(ModelAction::EffortUp) => return Some(ScaleKey::Higher),
+        Some(ModelAction::ModelScope) => return Some(ScaleKey::ToggleSave),
+        _ => {}
+    }
+    let mods = key.mods;
+    if mods.ctrl && !mods.alt && !mods.super_key && matches!(key.code, KeyCode::Char('c' | 'C')) {
+        return Some(ScaleKey::Cancel);
+    }
+    if mods.ctrl || mods.alt || mods.super_key || mods.other || mods.shift {
+        return None;
+    }
+    match key.code {
+        KeyCode::Home => Some(ScaleKey::Lowest),
+        KeyCode::End => Some(ScaleKey::Highest),
+        KeyCode::Tab => Some(ScaleKey::ToggleUltracode),
+        KeyCode::Enter => Some(ScaleKey::Apply),
+        KeyCode::Esc => Some(ScaleKey::Cancel),
+        _ => None,
+    }
+}
+
+/// A typed `/` starts a new command while the scale is open, as it does for the list.
+fn scale_hands_to_composer(key: Key) -> bool {
+    key.kind != KeyKind::Release
+        && key.code == KeyCode::Char('/')
+        && !(key.mods.ctrl || key.mods.alt || key.mods.super_key || key.mods.other)
 }
 
 /// Route only keys that the current immutable attachment view can consume.
@@ -1544,10 +1584,12 @@ impl TuiScreen {
             && self.composer.is_empty()
     }
 
-    /// The open `/theme` or `/skin` selector takes every key before the composer, unless
-    /// history search or a prompt card has them.
+    /// The open `/theme`, `/skin` or `/effort` selector takes every key before the composer,
+    /// unless history search or a prompt card has them.
     fn selector_takes_keys(&self, view: &View<'_>) -> bool {
-        view.choice.is_some() && self.search.is_none() && self.prompts.section().is_none()
+        (view.choice.is_some() || view.effort_scale.is_some())
+            && self.search.is_none()
+            && self.prompts.section().is_none()
     }
 
     /// The `@` mention list is open: it takes the completion keys, Esc among them, while the
@@ -2989,6 +3031,19 @@ impl TuiScreen {
                 }
                 // An open `/theme` or `/skin` selector takes every key before the composer,
                 // unless a prompt card is waiting for an answer.
+                if self.selector_takes_keys(view) && view.effort_scale.is_some() {
+                    if scale_hands_to_composer(key) {
+                        let mut actions = vec![UserAction::EffortScale(
+                            talaria_core::models::ScaleKey::Cancel,
+                        )];
+                        actions.extend(self.composer_key(key, view, now));
+                        return actions;
+                    }
+                    return scale_key(&self.keymap, key)
+                        .map(UserAction::EffortScale)
+                        .into_iter()
+                        .collect();
+                }
                 if self.selector_takes_keys(view) {
                     if choice_hands_to_composer(&self.keymap, key) {
                         let mut actions = vec![UserAction::Choice(
@@ -4554,6 +4609,10 @@ impl Screen for TuiScreen {
         let choice = view
             .choice
             .map(|list| ChoiceSection::new(list, self.rows).with_theme(self.theme.views.clone()));
+        let effort_scale = view.effort_scale.map(|scale| {
+            EffortScaleSection::new(scale, scale_key_labels(&self.keymap))
+                .with_theme(self.theme.views.clone())
+        });
         let confirmation = if prompts.is_none() {
             self.confirmation.as_ref().map(|card| {
                 let section =
@@ -4805,6 +4864,8 @@ impl Screen for TuiScreen {
                     sections.push(sample);
                 }
                 sections.push(choice);
+            } else if let Some(scale) = &effort_scale {
+                sections.push(scale);
             } else if !composer_is_empty || prompts.is_none() {
                 sections.push(&palette);
             }
@@ -6251,6 +6312,74 @@ mod tests {
         let mut release = key(KeyCode::Char('/'), KeyModifiers::NONE);
         release.kind = talaria_tui::keys::KeyKind::Release;
         assert!(!choice_hands_to_composer(&defaults, release));
+    }
+
+    #[test]
+    fn open_effort_scale_takes_the_model_picker_effort_keys_tab_enter_and_escape() {
+        use super::{scale_hands_to_composer, scale_key};
+        use talaria_core::models::ScaleKey;
+        let defaults = KeyMap::defaults();
+        let key = |code, mods| Key::from(KeyEvent::new(code, mods));
+        for (code, mods, expected) in [
+            (KeyCode::Left, KeyModifiers::NONE, ScaleKey::Lower),
+            (KeyCode::Right, KeyModifiers::NONE, ScaleKey::Higher),
+            (KeyCode::Home, KeyModifiers::NONE, ScaleKey::Lowest),
+            (KeyCode::End, KeyModifiers::NONE, ScaleKey::Highest),
+            // Tab stages Ultracode here; it does not accept a completion.
+            (KeyCode::Tab, KeyModifiers::NONE, ScaleKey::ToggleUltracode),
+            (
+                KeyCode::Char('g'),
+                KeyModifiers::CONTROL,
+                ScaleKey::ToggleSave,
+            ),
+            (KeyCode::Enter, KeyModifiers::NONE, ScaleKey::Apply),
+            (KeyCode::Esc, KeyModifiers::NONE, ScaleKey::Cancel),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL, ScaleKey::Cancel),
+        ] {
+            assert_eq!(
+                scale_key(&defaults, key(code, mods)),
+                Some(expected),
+                "{code:?} {mods:?}"
+            );
+        }
+        for (code, mods) in [
+            (KeyCode::Enter, KeyModifiers::SHIFT),
+            (KeyCode::Char('x'), KeyModifiers::NONE),
+            (KeyCode::Up, KeyModifiers::NONE),
+            (KeyCode::F(5), KeyModifiers::NONE),
+        ] {
+            assert_eq!(scale_key(&defaults, key(code, mods)), None, "{code:?}");
+        }
+        let mut release = key(KeyCode::Right, KeyModifiers::NONE);
+        release.kind = talaria_tui::keys::KeyKind::Release;
+        assert_eq!(scale_key(&defaults, release), None);
+        // A rebinding of the picker's effort keys moves the scale too.
+        let entries = [("effort_down", "alt+h"), ("effort_up", "alt+l")]
+            .into_iter()
+            .map(|(name, chord)| (name.to_owned(), vec![chord.to_owned()]))
+            .collect();
+        let (rebound, notices) = KeyMap::from_entries(&entries);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert_eq!(
+            scale_key(&rebound, key(KeyCode::Char('l'), KeyModifiers::ALT)),
+            Some(ScaleKey::Higher)
+        );
+        assert_eq!(
+            scale_key(&rebound, key(KeyCode::Right, KeyModifiers::NONE)),
+            None
+        );
+        // A typed `/` closes the scale and starts a command in the composer.
+        assert!(scale_hands_to_composer(key(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE
+        )));
+        assert!(!scale_hands_to_composer(key(
+            KeyCode::Char('/'),
+            KeyModifiers::ALT
+        )));
+        let mut release = key(KeyCode::Char('/'), KeyModifiers::NONE);
+        release.kind = talaria_tui::keys::KeyKind::Release;
+        assert!(!scale_hands_to_composer(release));
     }
 
     #[test]

@@ -151,6 +151,8 @@ pub fn skill_availability(catalog: &CommandCatalog) -> SkillAvailability {
 }
 pub mod notice {
     use super::SkillAvailability;
+    /// The mode's name where a screen shows it on its own, such as the `/effort` selector.
+    pub const NAME: &str = "Ultracode";
     /// What Ultracode does with a prompt, in the words every notice shares.
     pub const SKILL_ROLE: &str = "With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it.";
     pub const ON: &str = "Ultracode on for this session. With Ultracode on, a plain prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Ultracode stays on in a /branch copy and after a reconnect; other sessions keep their own setting. /ultracode off to stop.";
