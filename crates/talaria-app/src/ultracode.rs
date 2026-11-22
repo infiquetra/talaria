@@ -41,17 +41,33 @@ pub struct Foreground<'a> {
 }
 /// How often the runs folder is read while a routed prompt waits for its run.
 const SCAN_EVERY_MS: u64 = 2_000;
-/// How long a routed prompt waits for a run before the watch stops.
+/// How long a watch lives after the routed prompt that last armed it. The agent proposes a
+/// workflow and asks before starting it, so the run can start long after the prompt; every
+/// later routed prompt arms the watch again. A run still active at the end keeps the watch
+/// until that run ends, so its end is announced.
 const WATCH_WINDOW_MS: u64 = 60 * 60 * 1_000;
 
 /// A session's watch for the runs a routed prompt starts. Runs are matched by profile and
-/// start time, so two windows on one profile can both claim a run.
+/// start time, so two windows on one profile can both claim a run, and a run that ends
+/// says nothing about whether this session's run has started.
 #[derive(Debug, Clone)]
 struct RunWatch {
     profile: String,
     since_ms: i64,
     armed_at_ms: u64,
-    seen: HashMap<String, RunStatus>,
+    /// Each run seen so far: its last status and its start time.
+    seen: HashMap<String, (RunStatus, i64)>,
+}
+impl RunWatch {
+    /// The earliest start time a read must reach: the window's start, or an earlier run
+    /// that is still active.
+    fn floor_ms(&self) -> i64 {
+        self.seen
+            .values()
+            .filter(|(status, _)| is_active(*status))
+            .map(|(_, started)| *started)
+            .fold(self.since_ms, i64::min)
+    }
 }
 
 fn is_active(status: RunStatus) -> bool {
@@ -297,7 +313,9 @@ impl UltracodeService {
         self.state.carry(from, to)
     }
     /// Watch the local runs folder for a run of `profile` that starts at or after `since_ms`,
-    /// wall clock. A remote gateway starts runs on its own machine, so nothing is watched.
+    /// wall clock. Arming an existing watch opens a fresh window: runs that already ended are
+    /// forgotten, and runs still active stay so their end is announced. A remote gateway
+    /// starts runs on its own machine, so nothing is watched.
     pub fn arm(&mut self, session: &SessionId, profile: &str, since_ms: i64, now_ms: u64) {
         if self.remote {
             return;
@@ -311,7 +329,9 @@ impl UltracodeService {
                 armed_at_ms: now_ms,
                 seen: HashMap::new(),
             });
+        watch.since_ms = since_ms;
         watch.armed_at_ms = now_ms;
+        watch.seen.retain(|_, (status, _)| is_active(*status));
         if !self.scanning {
             self.next_scan_ms = Some(self.next_scan_ms.map_or(now_ms, |at| at.min(now_ms)));
         }
@@ -330,7 +350,7 @@ impl UltracodeService {
             return None;
         }
         self.scanning = true;
-        self.watches.values().map(|watch| watch.since_ms).min()
+        self.watches.values().map(RunWatch::floor_ms).min()
     }
     /// Fold one read of the runs folder into every watch: a notice when a run starts and one
     /// when it ends, each once.
@@ -345,12 +365,15 @@ impl UltracodeService {
         let mut ended = vec![];
         for (session, watch) in &mut self.watches {
             let mut changed = false;
-            for row in rows.iter().filter(|row| {
-                row.profile == watch.profile
-                    && row.started_at_ms >= watch.since_ms
-                    && row.status != RunStatus::Unreadable
-            }) {
-                let before = watch.seen.get(&row.run_id).copied();
+            for row in rows
+                .iter()
+                .filter(|row| row.profile == watch.profile && row.status != RunStatus::Unreadable)
+            {
+                let before = watch.seen.get(&row.run_id).map(|(status, _)| *status);
+                // A run already seen is followed to its end even if it started before the window.
+                if before.is_none() && row.started_at_ms < watch.since_ms {
+                    continue;
+                }
                 // A folder whose runner has not taken its lock yet reads as interrupted.
                 if before.is_none() && row.status == RunStatus::Interrupted {
                     continue;
@@ -373,7 +396,9 @@ impl UltracodeService {
                         )),
                     ));
                 }
-                watch.seen.insert(row.run_id.clone(), row.status);
+                watch
+                    .seen
+                    .insert(row.run_id.clone(), (row.status, row.started_at_ms));
                 let latest = self.tracked.get(session).is_none_or(|old| {
                     old.run_id == row.run_id || row.started_at_ms >= old.started_at_ms
                 });
@@ -385,10 +410,9 @@ impl UltracodeService {
             if changed {
                 actions.push((session.clone(), Action::Changed));
             }
-            let any_active = watch.seen.values().copied().any(is_active);
-            let waited_out =
-                watch.seen.is_empty() && now_ms.saturating_sub(watch.armed_at_ms) > WATCH_WINDOW_MS;
-            if (!watch.seen.is_empty() && !any_active) || waited_out {
+            // A run that ends may be another window's, so only the window ends a watch.
+            let any_active = watch.seen.values().any(|(status, _)| is_active(*status));
+            if !any_active && now_ms.saturating_sub(watch.armed_at_ms) > WATCH_WINDOW_MS {
                 ended.push(session.clone());
             }
         }

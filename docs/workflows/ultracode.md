@@ -72,7 +72,10 @@ the command and says to send the prompt without it to run the task as a workflow
 subcommands such as `/goal status` print no notice.
 
 After a routed prompt, Talaria checks the local runs folder every two seconds for a run of
-the same profile that started after the prompt. When one starts it prints
+the same profile that started after the prompt. It keeps checking for an hour after the last
+routed prompt, because the agent asks before it starts a run and the answer can come much
+later; a run still going after that hour is followed until it ends. Each routed prompt starts
+a fresh hour and forgets runs that already ended. When one starts it prints
 `Workflow run started: <name> (<run id>). Press Alt+W or type /workflows to see its agents.`,
 shows a dock line above the composer (`⚙ Workflow <name> · running · 3/10 agents · Alt+W to
 open`), and adds the agent count to the status segment (`ultracode · 3/10 agents`), which is

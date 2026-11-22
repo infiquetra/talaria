@@ -630,7 +630,130 @@ fn runs_scan_announces_start_once_and_finish_once() {
         Some("fixture-runs/run-0001"),
         "the finished run stays the one the view key opens"
     );
-    assert_eq!(service.next_scan_ms(), None, "the watch ends with its run");
+    assert_eq!(
+        service.next_scan_ms(),
+        Some(6_300),
+        "the routed prompt may still start another run, so the watch keeps reading"
+    );
+}
+
+/// How long a watch lives after the routed prompt that last armed it, as the service states.
+const WATCH_WINDOW_MS: u64 = 60 * 60 * 1_000;
+
+#[test]
+fn another_run_ending_first_does_not_end_the_watch() {
+    use talaria_workflow::runner::RunStatus;
+    let id = session();
+    let mut service = on();
+    service.arm(&id, "fixture", 1_000, 0);
+    let _ = service.scan_due(0);
+    // A run on the same profile, started by another window, starts and ends first.
+    let other = [run_row(
+        "run-other",
+        "fixture",
+        2_000,
+        RunStatus::Running,
+        0,
+    )];
+    let _ = service.on_runs(&other, 100, Some("Alt+W"));
+    let _ = service.scan_due(2_100);
+    let other = [run_row(
+        "run-other",
+        "fixture",
+        2_000,
+        RunStatus::Completed,
+        1,
+    )];
+    let _ = service.on_runs(&other, 2_200, Some("Alt+W"));
+    assert!(
+        service.next_scan_ms().is_some(),
+        "this session's own run has not started yet"
+    );
+    assert_eq!(service.scan_due(4_200), Some(1_000));
+    let rows = [
+        run_row("run-other", "fixture", 2_000, RunStatus::Completed, 1),
+        run_row("run-0002", "fixture", 3_000, RunStatus::Running, 0),
+    ];
+    assert_eq!(
+        notices(&service.on_runs(&rows, 4_300, Some("Alt+W"))),
+        [
+            "Workflow run started: review-branch (run-0002). Press Alt+W or type /workflows to see its agents."
+        ]
+    );
+    assert_eq!(
+        service.active_run(&id).map(|run| run.run_id.as_str()),
+        Some("run-0002")
+    );
+}
+
+#[test]
+fn arming_again_opens_a_fresh_window_and_keeps_active_runs() {
+    use talaria_workflow::runner::RunStatus;
+    let id = session();
+    let mut service = on();
+    service.arm(&id, "fixture", 1_000, 0);
+    let _ = service.scan_due(0);
+    let rows = [
+        run_row("run-long", "fixture", 2_000, RunStatus::Running, 0),
+        run_row("run-short", "fixture", 2_500, RunStatus::Running, 0),
+    ];
+    let _ = service.on_runs(&rows, 100, Some("Alt+W"));
+    let _ = service.scan_due(2_100);
+    let rows = [
+        run_row("run-long", "fixture", 2_000, RunStatus::Running, 1),
+        run_row("run-short", "fixture", 2_500, RunStatus::Completed, 1),
+    ];
+    let _ = service.on_runs(&rows, 2_200, Some("Alt+W"));
+    // A second routed prompt arms the watch again.
+    service.arm(&id, "fixture", 10_000, 3_000);
+    assert_eq!(
+        service.scan_due(4_200),
+        Some(2_000),
+        "the read still reaches the run that is still active"
+    );
+    let rows = [
+        run_row("run-long", "fixture", 2_000, RunStatus::Completed, 2),
+        run_row("run-short", "fixture", 2_500, RunStatus::Completed, 1),
+        // Started and ended between the two routed prompts, never seen running.
+        run_row("run-between", "fixture", 5_000, RunStatus::Completed, 1),
+        run_row("run-new", "fixture", 11_000, RunStatus::Running, 0),
+    ];
+    assert_eq!(
+        notices(&service.on_runs(&rows, 4_300, Some("Alt+W"))),
+        [
+            "Workflow run completed: review-branch (run-long). Press Alt+W or type /workflows to see the result.",
+            "Workflow run started: review-branch (run-new). Press Alt+W or type /workflows to see its agents."
+        ]
+    );
+}
+
+#[test]
+fn watch_lives_one_window_after_the_last_routed_prompt() {
+    use talaria_workflow::runner::RunStatus;
+    let id = session();
+    let mut service = on();
+    service.arm(&id, "fixture", 1_000, 0);
+    let _ = service.scan_due(0);
+    let done = [run_row(
+        "run-0001",
+        "fixture",
+        2_000,
+        RunStatus::Completed,
+        1,
+    )];
+    let _ = service.on_runs(&done, WATCH_WINDOW_MS, None);
+    assert!(service.next_scan_ms().is_some(), "still inside the window");
+    let _ = service.scan_due(WATCH_WINDOW_MS + 2_000);
+    let running = [run_row("run-0002", "fixture", 3_000, RunStatus::Running, 0)];
+    let _ = service.on_runs(&running, WATCH_WINDOW_MS + 2_000, None);
+    assert!(
+        service.next_scan_ms().is_some(),
+        "an active run keeps the watch past the window so its end is announced"
+    );
+    let _ = service.scan_due(WATCH_WINDOW_MS + 4_000);
+    let done = [run_row("run-0002", "fixture", 3_000, RunStatus::Failed, 0)];
+    let _ = service.on_runs(&done, WATCH_WINDOW_MS + 4_000, None);
+    assert_eq!(service.next_scan_ms(), None, "the window is over");
 }
 
 #[test]
