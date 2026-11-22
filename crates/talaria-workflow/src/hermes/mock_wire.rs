@@ -179,6 +179,12 @@ impl ScriptedWire {
                                 .send(Err(WireError::NotServed("profile is not scripted".into())));
                             continue;
                         };
+                        if method == "session.close" {
+                            // Closing a finished agent's session is bookkeeping: scripts need
+                            // not list it, and it must not use up the step of a later call.
+                            let _ = reply.send(Ok(json!({"closed":true,"messages":[]})));
+                            continue;
+                        }
                         if state.reconnect {
                             state.reconnect = false;
                             let generation =

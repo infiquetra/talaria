@@ -667,6 +667,47 @@ fn progress_detach_keeps_runner_alive() {
 }
 
 #[test]
+fn budget_exhausted_run_reports_its_reason_and_exit_code() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let run = |json: bool| {
+        let mut cmd = command(temp.path(), "foreground-wire.json");
+        cmd.args(["workflow", "run", "--profile", "fixture", "--budget-tokens", "10"]);
+        if json {
+            cmd.arg("--json");
+        }
+        output(cmd.arg("--runs-dir").arg(&runs).arg(fixture("scripts/budget.js")))
+    };
+    let out = run(true);
+    assert_eq!(out.status.code(), Some(4), "{}", text(&out.stderr));
+    let finished: Value = text(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "budget_exhausted");
+    assert_eq!(finished["result"], json!(["READY", "BudgetExhaustedError"]));
+    assert_eq!(finished["reason"], "token budget exhausted (spent 10 of 10)");
+    assert_eq!(finished["summary"]["refused"], 1);
+    assert!(
+        text(&out.stdout)
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .any(|v| v["event"] == "agent_finished" && v["label"] == "again" && v["state"] == "refused")
+    );
+
+    let out = run(false);
+    assert_eq!(out.status.code(), Some(4), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains(
+            "Budget exhausted: token budget exhausted (spent 10 of 10). Agents refused: 1, stopped: 0.\nResult:\n"
+        ),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
 fn completed_replay_records_only_a_header_with_no_gateway() {
     let temp = tempfile::tempdir().unwrap();
     let runs = temp.path().join("runs");

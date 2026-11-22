@@ -34,3 +34,37 @@ async fn exhausted_budget_rejects_agent() {
         assert_eq!(backend.requests().len(), 2);
     }
 }
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn budget_refusal_is_an_engine_event() {
+    use talaria_workflow::engine::EngineEvent;
+    let backend = backend(
+        r#"{"default":{"text":"ok"},"rules":[],"budget":{"tokens_total":1000,"tokens_per_agent":1000}}"#,
+    );
+    let body = "phase('Build'); await agent('one', {label:'builder'}); phase('Verify'); try {await agent('two', {label:'verifier'})} catch(e) {} return null;";
+    let (outcome, events) = run(body, backend).await;
+    result(outcome);
+    let refused: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::AgentRefused {
+                label,
+                phase,
+                reason,
+                ..
+            } => Some((label.as_str(), phase.as_deref(), reason.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [(
+            "verifier",
+            Some("Verify"),
+            "token budget exhausted (spent 1000 of 1000)"
+        )]
+    );
+    assert!(!events.iter().any(
+        |e| matches!(e, EngineEvent::AgentStarted { request, .. } if request.label == "verifier")
+    ));
+}

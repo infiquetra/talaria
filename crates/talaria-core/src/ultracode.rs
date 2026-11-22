@@ -82,6 +82,16 @@ pub enum SubmitRoute {
     },
 }
 pub fn route_submit(text: &str, enabled: bool) -> SubmitRoute {
+    route_submit_with_model(text, enabled, None)
+}
+/// Like [`route_submit`], and names the model and provider the session runs on in a last line
+/// of the routed prompt, so the agent staffs the plan with the model the user picked. The line
+/// is left out when either name is empty or holds a control character.
+pub fn route_submit_with_model(
+    text: &str,
+    enabled: bool,
+    session_model: Option<(&str, &str)>,
+) -> SubmitRoute {
     let trimmed = text.trim_start();
     if trimmed.is_empty()
         || trimmed.starts_with(['/', '!'])
@@ -89,8 +99,16 @@ pub fn route_submit(text: &str, enabled: bool) -> SubmitRoute {
     {
         return SubmitRoute::Plain;
     }
+    let mut command_line = format!("{SKILL_COMMAND} {}", text.trim_end());
+    if let Some((model, provider)) = session_model
+        && [model, provider]
+            .iter()
+            .all(|name| !name.trim().is_empty() && !name.chars().any(char::is_control))
+    {
+        command_line.push_str(&format!("\nSession model: {model} on {provider}"));
+    }
     SubmitRoute::Workflow {
-        command_line: format!("{SKILL_COMMAND} {}", text.trim_end()),
+        command_line,
         one_shot: !enabled,
     }
 }

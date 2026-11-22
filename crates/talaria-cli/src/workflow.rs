@@ -73,6 +73,12 @@ pub struct RunArgs {
     pub args_file: Option<PathBuf>,
     #[arg(long,default_value="default",value_parser=required_text)]
     pub profile: String,
+    /// The model the session runs on; calls that name no model or tier use it.
+    #[arg(long, value_parser = required_text, requires = "session_provider", conflicts_with = "foreground_child")]
+    pub session_model: Option<String>,
+    /// The provider of `--session-model`.
+    #[arg(long, value_parser = required_text, requires = "session_model", conflicts_with = "foreground_child")]
+    pub session_provider: Option<String>,
     #[arg(long,value_parser=required_path)]
     pub staffing: Option<PathBuf>,
     #[arg(long,value_parser=required_path)]
@@ -443,6 +449,40 @@ impl Renderer {
                     ));
                 }
             }
+            "budget_exhausted" => {
+                // The script returned, but the budget refused or stopped some of its agents.
+                #[derive(Serialize)]
+                struct Exhausted<'a> {
+                    event: &'static str,
+                    run_id: &'a str,
+                    outcome: &'a str,
+                    result: &'a Value,
+                    reason: &'a str,
+                    summary: &'a Value,
+                    spend: &'a SpendView,
+                }
+                let result = result.unwrap_or(&Value::Null);
+                let reason = saved["reason"].as_str().unwrap_or("budget exhausted");
+                if self.json {
+                    self.json(&Exhausted {
+                        event: "run_finished",
+                        run_id,
+                        outcome,
+                        result,
+                        reason,
+                        summary: &saved["summary"],
+                        spend,
+                    });
+                } else {
+                    self.text(&format!(
+                        "Budget exhausted: {}. Agents refused: {}, stopped: {}.\nResult:\n{}\n",
+                        safe(reason),
+                        saved["summary"]["refused"].as_u64().unwrap_or(0),
+                        saved["summary"]["stopped"].as_u64().unwrap_or(0),
+                        serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
+                    ));
+                }
+            }
             "failed" => {
                 if self.json {
                     self.json(&Failed {
@@ -664,6 +704,7 @@ async fn run_command(args: RunArgs) -> u8 {
         script,
         args: input,
         profile: args.profile,
+        session_model: args.session_model.zip(args.session_provider),
         staffing: args.staffing,
         cwd,
         budget_tokens: args.budget_tokens,

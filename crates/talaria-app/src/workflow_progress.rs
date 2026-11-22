@@ -485,6 +485,8 @@ pub struct PollBatch {
     pub lines: Vec<talaria_workflow::journal::RecordLine>,
     pub offset: u64,
     pub controls: talaria_workflow::progress::PendingControls,
+    /// Whether a runner held the run lock; `None` when the lock could not be read.
+    pub runner_alive: Option<bool>,
 }
 pub(crate) fn open_run(path: PathBuf) -> Result<OpenedRun, String> {
     let dir = match RunDir::open(&path) {
@@ -535,6 +537,8 @@ pub(crate) fn poll_run(
     last_seq: u64,
 ) -> Result<PollBatch, String> {
     let dir = RunDir::open(path).map_err(|e| e.to_string())?;
+    // Probe before reading: a runner that writes its last record and exits is then read whole.
+    let runner_alive = talaria_workflow::runner::runs::runner_alive(path).ok();
     let (lines, offset) = JournalReader::read_from(&path.join("journal.jsonl"), offset)
         .map_err(|e| talaria_workflow::progress::tail::absolute_error(e, last_seq).to_string())?;
     talaria_workflow::progress::tail::check_sequence(&lines, last_seq)
@@ -543,6 +547,7 @@ pub(crate) fn poll_run(
         lines,
         offset,
         controls: RunControl::pending(&dir),
+        runner_alive,
     })
 }
 pub(crate) fn spawn_effects(
@@ -702,7 +707,8 @@ impl WorkflowConnection {
 fn workflow_inbound(item: hermes_client::Inbound) -> Vec<ProgressInput> {
     match item {
         hermes_client::Inbound::Event(event) => {
-            let Some(session_id) = event.frame.session_id else {
+            // Hermes sends broadcasts with an empty session id; none belongs to a run.
+            let Some(session_id) = event.frame.session_id.filter(|s| !s.is_empty()) else {
                 return vec![];
             };
             let mut inputs = vec![];
@@ -839,6 +845,48 @@ mod connection_tests {
             .await
             .unwrap();
         });
+    }
+
+    #[test]
+    fn scoped_link_drops_session_less_broadcasts() {
+        let event = |params: Value| {
+            hermes_client::Inbound::Event(hermes_client::InboundEvent {
+                generation: hermes_client::Generation(1),
+                frame: hermes_contract::events::EventFrame::from_params(&params).unwrap(),
+                raw: params,
+            })
+        };
+        let broadcast = workflow_inbound(event(
+            json!({"type":"platforms.changed","session_id":"","payload":{}}),
+        ));
+        assert!(broadcast.is_empty(), "a broadcast reached the view");
+        let owned = workflow_inbound(event(json!({
+            "type":"message.delta","session_id":progress_mock_gateway::SESSION_ID,
+            "payload":{"text":"fixture-only"}
+        })));
+        assert!(matches!(
+            owned.as_slice(),
+            [ProgressInput::Gateway { session_id, .. }]
+                if session_id == progress_mock_gateway::SESSION_ID
+        ));
+    }
+
+    #[test]
+    fn a_poll_reports_whether_the_runner_holds_the_lock() {
+        let runs = tempfile::tempdir().unwrap();
+        let dir = run(runs.path());
+        std::fs::write(dir.path().join("journal.jsonl"), b"").unwrap();
+        let free = poll_run(dir.path(), 0, 0).unwrap();
+        assert_eq!(free.runner_alive, Some(false));
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.path().join("run.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        let held = poll_run(dir.path(), 0, 0).unwrap();
+        assert_eq!(held.runner_alive, Some(true));
     }
 
     #[tokio::test]

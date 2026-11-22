@@ -466,6 +466,8 @@ impl<G: Gateway> Consumer<G> {
                         skipped: counts.skipped,
                         parked: 0,
                         unfinished: 0,
+                        refused: 0,
+                        stopped: 0,
                     },
                 })
                 .await?;

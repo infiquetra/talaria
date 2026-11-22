@@ -2200,6 +2200,8 @@ pub enum AppEffect {
         keys: std::collections::HashMap<String, String>,
         at_ms: i64,
     },
+    /// One line for `client.log` from the workflow view; it is never shown on screen.
+    WorkflowLog(String),
     Configure {
         generation: u64,
         profile: String,
@@ -9088,6 +9090,16 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     effects
 }
 
+/// The model and provider the open session runs on, for an Ultracode-routed prompt; the model
+/// the user switched to wins over the one the session started with.
+fn session_model(state: &AppState) -> Option<(String, String)> {
+    state
+        .model
+        .clone()
+        .or_else(|| state.opened.as_ref().and_then(|o| o.info.model.clone()))
+        .zip(state.opened.as_ref().and_then(|o| o.info.provider.clone()))
+}
+
 fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         if let Some(session) = state
@@ -9199,7 +9211,14 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
         if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
             state.ultracode.note_epoch(&session, &epoch);
         }
-        if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
+        let session_model = session_model(state);
+        if let Some(actions) = state.ultracode.intercept_submit_with_model(
+            &session,
+            &text,
+            session_model
+                .as_ref()
+                .map(|(model, provider)| (model.as_str(), provider.as_str())),
+        ) {
             // A prompt sent with the reminder goes straight to Hermes, like a plain one.
             if actions
                 .iter()
@@ -10477,7 +10496,14 @@ fn opened_session(
             if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
                 state.ultracode.note_epoch(&session, &epoch);
             }
-            if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
+            let session_model = session_model(state);
+            if let Some(actions) = state.ultracode.intercept_submit_with_model(
+                &session,
+                &text,
+                session_model
+                    .as_ref()
+                    .map(|(model, provider)| (model.as_str(), provider.as_str())),
+            ) {
                 if state
                     .held_attachments
                     .front()
@@ -11304,6 +11330,63 @@ mod attachment_tests {
         assert_eq!(state.caret, 10);
         assert!(state.held.is_empty());
         assert!(state.held_attachments.is_empty());
+    }
+
+    #[test]
+    fn held_workflow_prompt_names_the_model_the_opened_session_runs_on() {
+        let mut state = AppState::new("cold-start");
+        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        let _ = submit(&mut state, "review the parser".into());
+        assert_eq!(state.held.len(), 1);
+        let mut session = opened().opened.take().unwrap();
+        session.info.model = Some("session-model".into());
+        session.info.provider = Some("provider-a".into());
+        let effects = opened_session(&mut state, session, None);
+        let lines: Vec<_> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::Ultracode {
+                    action: crate::ultracode::Action::RunCommand { command_line, .. },
+                    ..
+                } => Some(command_line.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            ["/talaria-workflows review the parser\nSession model: session-model on provider-a"]
+        );
+    }
+
+    #[test]
+    fn routed_workflow_prompt_names_the_model_the_session_runs_on() {
+        let mut state = opened();
+        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        let line = |effects: &[AppEffect]| {
+            effects.iter().find_map(|effect| match effect {
+                AppEffect::Ultracode {
+                    action: crate::ultracode::Action::RunCommand { command_line, .. },
+                    ..
+                } => Some(command_line.clone()),
+                _ => None,
+            })
+        };
+        let effects = submit(&mut state, "review the parser".into());
+        assert_eq!(
+            line(&effects).as_deref(),
+            Some("/talaria-workflows review the parser")
+        );
+        if let Some(opened) = state.opened.as_mut() {
+            opened.info.model = Some("profile-model".into());
+            opened.info.provider = Some("provider-a".into());
+        }
+        // The model the user switched to wins over the one the session started with.
+        state.model = Some("picked-model".into());
+        let effects = submit(&mut state, "review the parser".into());
+        assert_eq!(
+            line(&effects).as_deref(),
+            Some("/talaria-workflows review the parser\nSession model: picked-model on provider-a")
+        );
     }
 
     fn image(state: &mut AppState, path: &str) -> String {
@@ -13465,10 +13548,10 @@ fn apply<S: Screen>(
             }
             AppEffect::CommitSubagentBatch(batch) => screen.commit_subagent_batch(&batch),
             AppEffect::Background {
-                session_id,
+                session_id: _,
                 effect: BackgroundEffect::Log { text },
-            } => {
-                let _ = session_id;
+            }
+            | AppEffect::WorkflowLog(text) => {
                 if let Some(home) = state.home.clone() {
                     tokio::task::spawn_blocking(move || {
                         let text: String = talaria_core::side::clean_output(&text).chars().filter(|ch| !ch.is_control() && !matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')).collect();
@@ -18421,9 +18504,16 @@ fn workflow_polled(
             );
             effects.extend(workflow_input(
                 state,
-                run,
+                run.clone(),
                 talaria_workflow::progress::live::ProgressInput::Controls(batch.controls),
             ));
+            if let Some(alive) = batch.runner_alive {
+                effects.extend(workflow_input(
+                    state,
+                    run,
+                    talaria_workflow::progress::live::ProgressInput::Runner { alive },
+                ));
+            }
             effects
         }
         Err(reason) => workflow_input(
@@ -18567,6 +18657,15 @@ fn workflow_input(
         view.prompt_identity = None;
         view.prompt_first_line = None;
     }
+    let run_name = run.file_name().map_or_else(
+        || run.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    result.extend(
+        view.take_diagnostics()
+            .into_iter()
+            .map(|line| AppEffect::WorkflowLog(format!("{line} (run {run_name})"))),
+    );
     let opened = view.opened_session.take();
     let closed = view.closed;
     if view.revision != previous {
@@ -18755,6 +18854,110 @@ mod workflow_wake_tests {
             "connection failure must not start another connection loop"
         );
         assert!(workflow_wake(&state, &executor).is_none());
+    }
+
+    #[test]
+    fn closing_and_reopening_a_folded_view_lists_its_agents_and_logs_unknown_events() {
+        use talaria_workflow::progress::live::{NodeKey, ProgressInput, ProgressKey};
+        let mut state = AppState::new("workflow-reopen");
+        let run = PathBuf::from("reopen-run");
+        let manifest = serde_json::from_value(serde_json::json!({
+            "v":1,"run_id":"01JB2X9Q4M8Z7K3T5V6W8Y0A1C", "created_at_ms":1000,
+            "workflow":{"name":"review-branch","script_sha256":"a".repeat(64)},
+            "args":null,"started_at_ms":1,"seed":4242,"profile":"fixture",
+            "on_unknown":"wait","talaria_version":env!("CARGO_PKG_VERSION"), "hermes":{},
+            "roster":{},"approval_policy":{}
+        }))
+        .unwrap();
+        let key = "8".repeat(32);
+        let lines: Vec<talaria_workflow::journal::RecordLine> = [
+            serde_json::json!({"t":"run_started","run_id":"01JB2X9Q4M8Z7K3T5V6W8Y0A1C",
+                "script_sha256":"a".repeat(64)}),
+            serde_json::json!({"t":"call_intent","key":key,"attempt":0,
+                "call_id":{"digest":key,"occurrence":0},"label":"fixture-row","phase":"Verify",
+                "workflow_path":[],"launch":{"profile":"fixture","model":"fixture-model",
+                "provider":null,"effort":null,"toolsets":[],"skills":[],"max_turns":null,
+                "isolation":null,"cwd":null},"request_id":"wf:fixture"}),
+            serde_json::json!({"t":"session_bound","key":key,"attempt":0,
+                "session_id":"fixture-session","stored_session_id":"fixture-session"}),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut record)| {
+            record["v"] = 1.into();
+            record["seq"] = (i as u64 + 1).into();
+            record["at_ms"] = (1000 + i as i64).into();
+            serde_json::from_value(record).unwrap()
+        })
+        .collect();
+        let opened = crate::workflow_progress::OpenedRun {
+            path: run.clone(),
+            profile: "fixture".into(),
+            state: talaria_workflow::progress::live::ProgressState::new(
+                talaria_workflow::progress::RunProgress::from_records(&manifest, &lines),
+            ),
+            offset: 0,
+        };
+        workflow_opened(&mut state, Ok(opened));
+        let listed = |state: &AppState| {
+            state.workflow_views.states[&run]
+                .visible_nodes()
+                .iter()
+                .any(|n| n.key == NodeKey::Agent(key.clone()))
+        };
+        assert!(listed(&state));
+        for _ in 0..4 {
+            workflow_input(&mut state, run.clone(), ProgressInput::Key(ProgressKey::Up));
+            workflow_input(
+                &mut state,
+                run.clone(),
+                ProgressInput::Key(ProgressKey::Left),
+            );
+        }
+        workflow_input(
+            &mut state,
+            run.clone(),
+            ProgressInput::Key(ProgressKey::CloseView),
+        );
+        workflow_command(&mut state, "reopen-run");
+        assert!(listed(&state), "reopening must list the agents again");
+
+        // A broadcast never reaches the footer; an unknown type for an owned session is logged once.
+        let broadcast = hermes_contract::events::EventFrame::from_params(&serde_json::json!({
+            "type":"platforms.changed","session_id":"","payload":{}
+        }))
+        .unwrap();
+        workflow_input(
+            &mut state,
+            run.clone(),
+            ProgressInput::Gateway {
+                session_id: String::new(),
+                event: broadcast.notification,
+            },
+        );
+        assert_eq!(state.workflow_views.states[&run].footer, None);
+        let unknown = || ProgressInput::Gateway {
+            session_id: "fixture-session".into(),
+            event: hermes_contract::events::EventFrame::from_params(&serde_json::json!({
+                "type":"groups.changed","session_id":"fixture-session","payload":{}
+            }))
+            .unwrap()
+            .notification,
+        };
+        let logged: Vec<_> = workflow_input(&mut state, run.clone(), unknown())
+            .into_iter()
+            .chain(workflow_input(&mut state, run.clone(), unknown()))
+            .filter_map(|e| match e {
+                AppEffect::WorkflowLog(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert!(
+            logged[0].contains("groups.changed") && logged[0].contains("reopen-run"),
+            "{logged:?}"
+        );
+        assert_eq!(state.workflow_views.states[&run].footer, None);
     }
 }
 

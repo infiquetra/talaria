@@ -42,7 +42,7 @@ Each run folder holds:
 | `journal.jsonl`, `run.lock` | Durable records and the journal's single-writer lock. |
 | `scripts/`, `blobs/`, `resolutions/` | Journal-owned content and parked-call answers. |
 | `launch.json` | Original script path and folder, absolute working folder, and saved-workflow folder. |
-| `outcome.json` | Latest completed execution's result, failure detail, or abort reason. |
+| `outcome.json` | Latest completed execution's result, failure detail, or abort reason; a `budget_exhausted` run keeps its result and the budget reason. |
 | `runner.json` | Detached child's process id; discovery does not trust it as liveness evidence. |
 | `runner.log` | Detached child's appended human output. |
 | `control/` | Shared pause, stop, and next-resume restart requests. |
@@ -53,16 +53,26 @@ an interrupted run look active.
 
 ## Starting and detaching
 
-`run` accepts `--args <json>` or `--args-file <path>`, `--profile`, `--staffing`, `--cwd`,
-`--budget-tokens`, `--budget-usd`, `--on-unknown wait|fail`, `--record`, the location flags,
-`--json`, and `--detach`. Arguments are validated before the script; the script's literal
-metadata is parsed before staffing or gateway work. Token budgets must be positive integers;
+`run` accepts `--args <json>` or `--args-file <path>`, `--profile`, `--session-model` with
+`--session-provider`, `--staffing`, `--cwd`, `--budget-tokens`, `--budget-usd`,
+`--on-unknown wait|fail`, `--record`, the location flags, `--json`, and `--detach`. The session
+pair replaces the profile's configured model as the roster's current model, which a call
+naming no model or tier runs on; the manifest's roster snapshot records it with
+`"source":"session"`, and resume and a detached child keep it. Arguments are validated
+before the script; the script's literal metadata is parsed before staffing or gateway work. Token budgets must be positive integers;
 money budgets must be finite positive amounts in US dollars.
 
 Preflight loads staffing, applies command-line budget overrides, fetches the roster, reports
 all tier-check problems and warnings, and computes the cost estimate. A missing staffing file
 means an empty table. No run folder exists until preflight succeeds. Unpriced work has unknown
 cost, rather than a zero estimate.
+
+Preflight also reads the literal `model` and `provider` names in the script's options objects
+and checks each against the roster. A name the roster cannot serve fails the run with exit 2
+before any agent starts, one line per unknown pair with its script line and the nearest known
+spelling. Names that are computed, or that sit beside a `profile` key, are checked when their
+agent starts. When an agent's call settles, its Hermes session is closed (`session.close`; the
+stored session stays resumable). A failed close is ignored.
 
 The manifest records the parsed workflow name, actual script hash, version, profile, input,
 roster, and the finite-only approval-policy intent. The deterministic seed hashes the original
@@ -90,8 +100,8 @@ runner. Use `resolve` to answer its parked calls while it remains alive.
 A completed execution replays its stored `outcome.json` result without connecting to the
 gateway or executing the script. If a completed run predates that file, the runner reports
 the missing result and the journal's finish summary; it never reruns paid work to recover a
-display value. Failed, aborted, and interrupted runs open a new execution. Their unchanged
-completed calls remain reusable through journal replay.
+display value. Failed, aborted, interrupted, and budget-exhausted runs open a new execution.
+Their unchanged completed calls remain reusable through journal replay.
 Before admitting new work, resume reattaches the unfinished sessions recorded in the
 journal. Their terminal results still come from receipts through the backend.
 An explicit pending restart of a failed key requests a new execution even when the previous
@@ -170,10 +180,13 @@ unknown. File-only discovery never reprices tokens.
 Foreground output names the run folder, shows phases, logs, agents, and scheduler events,
 then prints the result. `--json` emits compact JSON lines and one final `run_finished`
 object. That object has exactly one of `result`, `error`, or `reason`, together with token
-and money spend. Diagnostic and refusal lines go to standard error. Detached children
+and money spend; a `budget_exhausted` object has both `result` and `reason`, plus the
+journal's finish `summary` with its `refused` and `stopped` counts. Agents the budget
+refused or stopped appear as `agent_finished` lines with state `refused` or `stopped`. Diagnostic and refusal lines go to standard error. Detached children
 always write human output to `runner.log`; the parent prints one detached-run object or line.
 
-Exit codes are 0 completed, 1 failed or unconfirmed, 2 usage or refusal, and 3 aborted.
+Exit codes are 0 completed, 1 failed or unconfirmed, 2 usage or refusal, 3 aborted, and 4
+budget exhausted (the script returned, but the budget refused or stopped at least one agent).
 
 ## Integration and verification
 

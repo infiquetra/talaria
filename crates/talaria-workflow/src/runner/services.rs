@@ -8,7 +8,8 @@ use tokio::sync::mpsc;
 
 use crate::{
     hermes::{
-        Cursor, HermesPort, LinkWireFactory, PortConfig, Wire, WireError, WireEvent, WireFactory,
+        AgentFeedReceiver, Cursor, HermesPort, LinkWireFactory, PortConfig, Wire, WireError,
+        WireEvent, WireFactory,
     },
     staffing::{Clock, LinkRosterSource, RosterCache, RosterSource, SystemClock},
 };
@@ -42,13 +43,14 @@ impl RunnerServices {
         }
         Ok(())
     }
-    pub(crate) async fn port(&self, profile: &str) -> Result<HermesPort, String> {
-        let (port, feed) =
-            HermesPort::with_wires(self.port_config.clone(), self.wires.clone(), profile)
-                .await
-                .map_err(|e| e.to_string())?;
-        drop(feed);
-        Ok(port)
+    /// The gateway port and its agent event feed, which carries live usage for the budget.
+    pub(crate) async fn port(
+        &self,
+        profile: &str,
+    ) -> Result<(HermesPort, AgentFeedReceiver), String> {
+        HermesPort::with_wires(self.port_config.clone(), self.wires.clone(), profile)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 

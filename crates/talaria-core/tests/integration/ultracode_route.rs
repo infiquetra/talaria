@@ -1,7 +1,10 @@
 use proptest::prelude::*;
 use talaria_core::{
     session::ids::SessionId,
-    ultracode::{SubmitRoute, UltracodeCommand, UltracodeState, contains_keyword, route_submit},
+    ultracode::{
+        SubmitRoute, UltracodeCommand, UltracodeState, contains_keyword, route_submit,
+        route_submit_with_model,
+    },
 };
 
 #[test]
@@ -53,6 +56,36 @@ fn route_table() {
         );
     }
     assert!(contains_keyword("éultracode"));
+}
+#[test]
+fn route_submit_includes_session_model() {
+    let route = route_submit_with_model("fix the parser", true, Some(("model-a", "provider-a")));
+    assert_eq!(
+        route,
+        SubmitRoute::Workflow {
+            command_line: "/talaria-workflows fix the parser\nSession model: model-a on provider-a"
+                .into(),
+            one_shot: false,
+        }
+    );
+    // Nothing is added when the session's pair is unknown or not plain text.
+    for pair in [
+        None,
+        Some(("", "provider-a")),
+        Some(("model-a", "")),
+        Some(("a\nb", "p")),
+    ] {
+        assert_eq!(
+            route_submit_with_model("fix the parser", true, pair),
+            route_submit("fix the parser", true),
+            "{pair:?}"
+        );
+    }
+    // A prompt that does not take the workflow route stays plain.
+    assert_eq!(
+        route_submit_with_model("/help", true, Some(("model-a", "provider-a"))),
+        SubmitRoute::Plain
+    );
 }
 proptest! {
     #![proptest_config(ProptestConfig { failure_persistence: None, .. ProptestConfig::default() })]

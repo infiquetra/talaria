@@ -40,6 +40,16 @@ pub enum Filter {
     NeedsYou,
     Failed,
 }
+impl Filter {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Working => "working",
+            Self::NeedsYou => "needs you",
+            Self::Failed => "failed",
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NodeKey {
     Run,
@@ -122,6 +132,7 @@ pub struct ProgressState {
     pub opened_at_ms: i64,
     pub last_journal_seen_ms: i64,
     pub footer: Option<String>,
+    footer_at_ms: i64,
     pub error: Option<String>,
     pub steer_input: Option<String>,
     pub closed: bool,
@@ -129,6 +140,7 @@ pub struct ProgressState {
     pub pending_controls: PendingControls,
     pub run_suffix: Option<String>,
     pub no_live_runner: bool,
+    runner_alive: Option<bool>,
     pub scheduler: Option<SchedulerSnapshot>,
     pub waits: HashMap<String, WaitView>,
     pub opened_session: Option<String>,
@@ -139,6 +151,7 @@ pub struct ProgressState {
     pending_agents: HashMap<String, PendingAgent>,
     confirmation: Option<(Confirmation, i64)>,
     unknown_events: HashSet<String>,
+    diagnostics: Vec<String>,
     requested_attaches: HashSet<String>,
     attaching: HashSet<String>,
     warned_controls: HashSet<String>,
@@ -169,6 +182,7 @@ impl ProgressState {
             opened_at_ms: 0,
             last_journal_seen_ms: 0,
             footer: None,
+            footer_at_ms: 0,
             error: None,
             steer_input: None,
             closed: false,
@@ -176,6 +190,7 @@ impl ProgressState {
             pending_controls: PendingControls::default(),
             run_suffix: None,
             no_live_runner: false,
+            runner_alive: None,
             scheduler: None,
             waits: HashMap::new(),
             opened_session: None,
@@ -186,10 +201,15 @@ impl ProgressState {
             pending_agents: HashMap::new(),
             confirmation: None,
             unknown_events: HashSet::new(),
+            diagnostics: Vec::new(),
             requested_attaches: HashSet::new(),
             attaching: HashSet::new(),
             warned_controls: HashSet::new(),
         }
+    }
+    /// Lines for the client log, never the view: gateway event types this build cannot read.
+    pub fn take_diagnostics(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.diagnostics)
     }
     pub fn select_agent(&mut self, key: &str) {
         self.selection = NodeKey::Agent(key.into());
@@ -326,6 +346,15 @@ impl ProgressState {
         while !keys.contains(&self.selection) {
             self.selection = self.parent(&self.selection);
         }
+        // The run row is drawn as the header, so it is never left selected while rows exist.
+        if self.selection == NodeKey::Run
+            && let Some(first) = visible
+                .iter()
+                .find(|n| matches!(n.key, NodeKey::Agent(_)))
+                .or_else(|| visible.get(1))
+        {
+            self.selection = first.key.clone();
+        }
     }
     fn parent(&self, key: &NodeKey) -> NodeKey {
         match key {
@@ -375,6 +404,7 @@ impl ProgressState {
     }
     fn refuse(&mut self, text: impl Into<String>) {
         self.footer = Some(text.into());
+        self.footer_at_ms = self.now_ms;
         self.revision += 1;
     }
 }
@@ -401,6 +431,9 @@ pub enum ProgressInput {
         now_ms: i64,
     },
     Connected(bool),
+    Runner {
+        alive: bool,
+    },
     Reopen {
         connected: bool,
     },
@@ -761,6 +794,10 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                 }
             }
         }
+        ProgressInput::Runner { alive } => {
+            state.runner_alive = Some(alive);
+            runner_check(state);
+        }
         ProgressInput::Reopen { connected } => {
             if state.connected != connected {
                 state.unknown_events.clear();
@@ -769,6 +806,10 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
             state.requested_attaches.clear();
             state.attaching.clear();
             state.closed = false;
+            // A reopened view starts unfolded and quiet; only the selection is kept.
+            state.collapsed.clear();
+            state.footer = None;
+            state.confirmation = None;
             state.revision += 1;
             if connected {
                 effects.extend(attach_new_sessions(state));
@@ -806,7 +847,7 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
             if let Some((request, at_ms)) = state.pending_files.remove(&id) {
                 match outcome {
                     ControlOutcome::Published => {
-                        state.footer = Some("requested".into());
+                        state.refuse("requested");
                         match request {
                             ControlRequest::Pause => {
                                 state.run_suffix = Some("pausing".into());
@@ -829,16 +870,13 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                             ControlRequest::Restart { key } => {
                                 if let Some(a) = state.progress.agent_mut(&key) {
                                     a.restart_requested = true;
-                                    state.footer =
-                                        Some("restart requested — runs again on resume".into());
+                                    state.refuse("restart requested — runs again on resume");
                                 }
                             }
                             ControlRequest::Resume => {}
                         }
                     }
-                    ControlOutcome::AlreadyRequested => {
-                        state.footer = Some("already requested".into())
-                    }
+                    ControlOutcome::AlreadyRequested => state.refuse("already requested"),
                     ControlOutcome::Removed => {
                         if let Some(pause) = state.pending_controls.pause.take() {
                             state.run_suffix = if state
@@ -852,7 +890,7 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                             };
                         }
                     }
-                    ControlOutcome::Refused { reason } => state.footer = Some(reason),
+                    ControlOutcome::Refused { reason } => state.refuse(reason),
                 }
                 state.revision += 1;
             }
@@ -892,7 +930,7 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                     .is_some_and(|a| a.attempt == attempt && a.turn == turn)
             {
                 if text == "(prompt unavailable — journal blob missing)" {
-                    state.footer = Some(text.clone());
+                    state.refuse(text.clone());
                 }
                 state.prompt_first_line = Some(text);
                 state.revision += 1;
@@ -980,6 +1018,10 @@ fn clock(s: &ProgressState) -> Clock {
 }
 fn tick(s: &mut ProgressState) -> Vec<ProgressEffect> {
     let mut effects = vec![];
+    if s.footer.is_some() && s.now_ms - s.footer_at_ms >= 5000 {
+        s.footer = None;
+        s.revision += 1;
+    }
     if s.connected {
         // A queued submit can resume before the gateway starts its turn. Retry once
         // the previous snapshot has returned, without piling up in-flight resumes.
@@ -1038,12 +1080,7 @@ fn tick(s: &mut ProgressState) -> Vec<ProgressEffect> {
         }
         s.refuse("no answer — the journal has not moved");
     }
-    let missing =
-        s.progress.run.state == RunState::Running && s.now_ms - s.last_journal_seen_ms >= 60000;
-    if s.no_live_runner != missing {
-        s.no_live_runner = missing;
-        s.revision += 1;
-    }
+    runner_check(s);
     for (name, request) in [
         ("pause", s.pending_controls.pause.clone()),
         ("stop", s.pending_controls.stop.clone()),
@@ -1053,10 +1090,17 @@ fn tick(s: &mut ProgressState) -> Vec<ProgressEffect> {
         }
         if let Some(request) = request {
             let age = s.now_ms - request.at_ms;
-            let runner_recent = s.last_journal_seen_ms > s.opened_at_ms
+            let journal_recent = s.last_journal_seen_ms > s.opened_at_ms
                 && s.now_ms - s.last_journal_seen_ms < 10000;
+            let runner_recent = s.runner_alive == Some(true) || journal_recent;
+            // A runner journals its answer once and may then stay quiet, so without a
+            // readable lock only a journal that has not moved since the request is unanswered.
+            let unanswered = match s.runner_alive {
+                Some(alive) => !alive && !journal_recent,
+                None => s.last_journal_seen_ms < request.at_ms,
+            };
             if age >= 10000
-                && !runner_recent
+                && unanswered
                 && s.warned_controls
                     .insert(format!("{name}:{}", request.at_ms))
             {
@@ -1082,7 +1126,29 @@ fn tick(s: &mut ProgressState) -> Vec<ProgressEffect> {
     }
     effects
 }
+/// The run lock says whether a runner holds the run. A new or resuming runner takes the lock
+/// only after it loads its profile, so a free lock counts once the journal has been quiet for
+/// ten seconds, or for a minute before the first record. An unreadable lock proves nothing:
+/// a healthy runner can write nothing for minutes.
+fn runner_check(s: &mut ProgressState) {
+    let grace_ms = if s.progress.last_seq == 0 {
+        60000
+    } else {
+        10000
+    };
+    let missing = s.progress.run.state == RunState::Running
+        && s.runner_alive == Some(false)
+        && s.now_ms - s.last_journal_seen_ms >= grace_ms;
+    if s.no_live_runner != missing {
+        s.no_live_runner = missing;
+        s.revision += 1;
+    }
+}
 fn gateway(s: &mut ProgressState, session: &str, event: Notification) -> Vec<ProgressEffect> {
+    // Broadcasts carry an empty session id; they and other sessions' events are not this run's.
+    if session.is_empty() || s.progress.for_session_mut(session).is_none() {
+        return vec![];
+    }
     if matches!(event, Notification::SessionReplayGap(_)) {
         return update(
             s,
@@ -1106,18 +1172,19 @@ fn gateway(s: &mut ProgressState, session: &str, event: Notification) -> Vec<Pro
             | Notification::ClarifySettled(_)
     );
     if !supported {
-        let frame = hermes_contract::events::EventFrame {
-            session_id: None,
-            seq: None,
-            replay_epoch: None,
-            authority_epoch: None,
-            execution_generation: None,
-            admission_id: None,
-            notification: event,
-        };
-        let name = frame.type_name().unwrap_or("unknown").to_string();
-        if s.unknown_events.insert(name.clone()) {
-            s.refuse(format!("unknown event type {name} ignored"));
+        // Known types the view does not draw are ignored. A type this build cannot decode is
+        // recorded for the client log once per connection, never shown in the view.
+        if let Notification::Unknown(params) = &event {
+            let name = params
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            if s.unknown_events.insert(name.clone()) {
+                s.diagnostics.push(format!(
+                    "workflow view: Hermes sent event type {name} that this Talaria does not read; ignored"
+                ));
+            }
         }
         return vec![];
     }
@@ -1292,8 +1359,9 @@ fn key_input(s: &mut ProgressState, key: ProgressKey) -> Vec<ProgressEffect> {
         ProgressKey::Up | ProgressKey::Down => {
             let rows = s.visible_nodes();
             if let Some(i) = rows.iter().position(|n| n.key == s.selection) {
+                // Row 0 is the run, drawn as the header; Up stops on the first drawn row.
                 let next = if key == ProgressKey::Up {
-                    i.saturating_sub(1)
+                    i.saturating_sub(1).max(1).min(i)
                 } else {
                     (i + 1).min(rows.len() - 1)
                 };
@@ -1305,8 +1373,12 @@ fn key_input(s: &mut ProgressState, key: ProgressKey) -> Vec<ProgressEffect> {
             }
         }
         ProgressKey::Left => {
-            if !s.collapsed.insert(s.selection.clone()) {
-                s.selection = s.parent(&s.selection);
+            // The run row is never folded: folding it hid every row behind the header.
+            if s.selection != NodeKey::Run && !s.collapsed.insert(s.selection.clone()) {
+                let parent = s.parent(&s.selection);
+                if parent != NodeKey::Run {
+                    s.selection = parent;
+                }
             }
             s.revision += 1;
         }
@@ -1561,8 +1633,7 @@ fn send_pending(s: &mut ProgressState, key: &str) -> Vec<ProgressEffect> {
             subagent_id: p.subagent.clone().unwrap_or_default(),
         },
     };
-    s.footer = Some("sent".into());
-    s.revision += 1;
+    s.refuse("sent");
     vec![effect]
 }
 fn gateway_done(

@@ -191,6 +191,7 @@ pub(crate) struct Index {
     pub closed: bool,
     pub failure: Option<String>,
     next_delivery: u64,
+    refused: usize,
 }
 impl Index {
     pub fn apply(&mut self, line: RecordLine, dir: &Path) -> Result<(), JournalError> {
@@ -215,6 +216,7 @@ impl Index {
                 }
                 self.execution = *resume_count;
                 self.next_delivery = 0;
+                self.refused = 0;
                 self.started.clear();
                 self.encountered.clear();
                 self.active = false;
@@ -240,6 +242,7 @@ impl Index {
                     }
                     self.next_delivery += 1;
                 }
+                EngineEvent::AgentRefused { .. } => self.refused += 1,
                 _ => {}
             }
         }
@@ -371,7 +374,10 @@ impl Index {
         result
     }
     pub fn finish_summary(&self) -> FinishSummary {
-        let mut summary = FinishSummary::default();
+        let mut summary = FinishSummary {
+            refused: self.refused,
+            ..FinishSummary::default()
+        };
         for key in &self.encountered {
             if let Some(last) = self.calls.get(key).and_then(CallHistory::last) {
                 match &last.record {
@@ -379,6 +385,7 @@ impl Index {
                         CallOutcome::Completed { .. } => summary.completed += 1,
                         CallOutcome::Failed { .. } => summary.failed += 1,
                         CallOutcome::Skipped => summary.skipped += 1,
+                        CallOutcome::Stopped { .. } => summary.stopped += 1,
                     },
                     Record::CallAttention { .. } => summary.parked += 1,
                     _ => summary.unfinished += 1,
@@ -514,7 +521,7 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
         let due = matches!(
             &last.record,
             Record::CallFinished {
-                outcome: CallOutcome::Failed { .. },
+                outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
                 ..
             } | Record::CallRetryFinished { .. }
                 | Record::CallResolved {
@@ -530,7 +537,7 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
     let failed = matches!(
         next,
         Record::CallFinished {
-            outcome: CallOutcome::Failed { .. },
+            outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
             ..
         }
     );

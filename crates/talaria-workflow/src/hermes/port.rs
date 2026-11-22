@@ -741,6 +741,27 @@ impl GatewayPort for HermesPort {
             port.save_receipt(&profile, receipt, false).await
         })
     }
+    fn close_session(
+        &self,
+        profile: String,
+        session_id: String,
+    ) -> BoxFuture<'static, Result<(), PortError>> {
+        let port = self.clone();
+        Box::pin(async move {
+            let wire = port.wire(&profile).await?;
+            port.call(
+                &wire,
+                "session.close",
+                json!({"session_id":session_id})
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+                port.inner.cfg.timeouts.cancel,
+            )
+            .await?;
+            Ok(())
+        })
+    }
 }
 impl HermesPort {
     async fn interrupt(

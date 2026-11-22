@@ -31,16 +31,25 @@ pub fn run_line(s: &ProgressState) -> String {
         line.push_str(&format!(" · {suffix}"));
     }
     if s.no_live_runner {
-        line.push_str(" · no live runner detected");
+        line.push_str(&format!(
+            " · runner not running — talaria workflow resume {} continues it",
+            r.run_id
+        ));
+    }
+    if s.filter != super::Filter::All {
+        line.push_str(&format!(" · filter: {}", s.filter.as_str()));
     }
     line.push_str(&format!(" · agents {}/{}", c.done, c.total));
     for (n, name) in [
         (c.running, "running"),
         (c.needs_you, "needs you"),
-        (c.failed, "failed"),
+        // An agent the budget stopped is counted once, as stopped.
+        (c.failed.saturating_sub(r.budget_stopped), "failed"),
         (c.queued, "queued"),
         (c.skipped, "skipped"),
         (c.ended, "ended"),
+        (r.refused, "refused"),
+        (r.budget_stopped, "stopped"),
     ] {
         if n > 0 {
             line.push_str(&format!(" · {n} {name}"));

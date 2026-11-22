@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,16 +13,19 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::{
     engine::{self, CallId, EngineEvent, OutcomeKind, ParsedScript, RunOutcome, RunOutcomeKind},
-    hermes::{ExplicitLaunch, HermesPort, LaunchDefaults, SchemaTurnPolicy},
+    hermes::{
+        AgentFeedItem, AgentFeedReceiver, ExplicitLaunch, HermesPort, LaunchDefaults,
+        SchemaTurnPolicy, StopResult,
+    },
     journal::{
-        AdmissionState, GatewayPort, JournalNotice, JournaledBackend, NewManifest, OnUnknown,
-        RetryPolicy, RunDir, RunJournal,
+        AdmissionGate, AdmissionState, GatewayPort, JournalNotice, JournaledBackend, NewManifest,
+        OnUnknown, RetryPolicy, RunDir, RunJournal,
     },
     progress::RunControl,
     schedule::{MoneySource, Scheduler, SchedulerConfig, Spend},
     staffing::{
         PriceBook, Roster, RosterError, RunBudget, StaffedLaunch, StaffingResolver, StaffingTable,
-        check_tiers, estimate_run_cost, staffing_drift,
+        check_script_routes, check_tiers, estimate_run_cost, script_routes, staffing_drift,
     },
     worktree::GitWorktrees,
 };
@@ -40,6 +43,9 @@ pub struct RunRequest {
     pub script: PathBuf,
     pub args: Value,
     pub profile: String,
+    /// The model and provider the calling session runs on, as `(model, provider)`; it stands in
+    /// for the profile's configured model wherever a call names no model or tier.
+    pub session_model: Option<(String, String)>,
     pub staffing: Option<PathBuf>,
     pub cwd: PathBuf,
     pub budget_tokens: Option<u64>,
@@ -194,6 +200,7 @@ async fn preflight(
     tokens: Option<u64>,
     usd: Option<f64>,
     profile: &str,
+    session_model: Option<&(String, String)>,
     services: &RunnerServices,
     output: &mut Output<'_>,
 ) -> Result<Preflight, i32> {
@@ -205,6 +212,7 @@ async fn preflight(
         });
         1
     })?;
+    let roster = session_roster(roster, session_model);
     let check = check_tiers(&table, &roster, &budget, services.clock.now());
     for warning in check.warnings {
         output.diagnostic(warning);
@@ -224,6 +232,15 @@ async fn preflight(
         roster,
         snapshot,
     })
+}
+/// The roster with the session's model as its current pair, when the run has one.
+fn session_roster(roster: Arc<Roster>, session_model: Option<&(String, String)>) -> Arc<Roster> {
+    match session_model {
+        Some((model, provider)) => {
+            Arc::new(Roster::clone(&roster).with_session_model(model, provider))
+        }
+        None => roster,
+    }
 }
 fn read_script(path: &Path, output: &mut Output<'_>) -> Result<(String, ParsedScript), i32> {
     let source = fs::read_to_string(path).map_err(|e| {
@@ -256,10 +273,20 @@ async fn prepare(
         req.budget_tokens,
         req.budget_usd,
         &req.profile,
+        req.session_model.as_ref(),
         &services,
         output,
     )
     .await?;
+    // A misspelt model would otherwise fail only when its agent starts, after earlier agents
+    // have spent.
+    let unknown = check_script_routes(&preflight.roster, &script_routes(&parsed.body));
+    for problem in &unknown {
+        output.diagnostic(problem);
+    }
+    if !unknown.is_empty() {
+        return Err(2);
+    }
     let wire = services.wires.open(&req.profile).await.map_err(|e| {
         output.diagnostic(e.to_string());
         1
@@ -590,6 +617,7 @@ async fn resume(
             req.budget_tokens,
             req.budget_usd,
             &dir.manifest().profile,
+            Roster::session_model_in(&dir.manifest().roster).as_ref(),
             &services,
             &mut output,
         )
@@ -701,6 +729,7 @@ pub async fn run_child_with_options(
                 1
             })?;
         let snapshot = dir.manifest().roster.clone();
+        let roster = session_roster(roster, Roster::session_model_in(&snapshot).as_ref());
         Ok(PreparedRun {
             dir,
             parsed,
@@ -855,7 +884,7 @@ async fn execute_inner(
         output.diagnostic(format!("journal warning: {warning:?}"));
     }
     output.started(&dir);
-    let port = services.port(&dir.manifest().profile).await?;
+    let (port, feed) = services.port(&dir.manifest().profile).await?;
     let records = control::read_records(dir.path()).map_err(|e| e.to_string())?;
     for target in control::stop_targets(&records).map_err(|e| e.to_string())? {
         // The durable backend handles a failed attachment through its recovery policy.
@@ -989,13 +1018,22 @@ async fn execute_inner(
         }
     }));
     tasks.handles.push(signal_task(tx.clone()));
+    tasks
+        .handles
+        .push(tokio::spawn(count_live_usage(feed, scheduler.clone())));
     drop(tx);
     let mut labels = BTreeMap::<CallId, String>::new();
     let mut engine_outcome = None;
     let mut stopping: Option<futures::future::BoxFuture<'static, Vec<String>>> = None;
     let mut stopped = None;
     let mut stop_requested = false;
-    let mut last_heartbeat = tokio::time::Instant::now();
+    // The gate starts open; only a change is journaled, so script logs stay in view.
+    let mut journaled_paused = false;
+    // Calls the budget refused or stopped, the latest reason, and turns whose stop is in
+    // flight or was sent.
+    let (mut refused, mut budget_stopped) = (0_usize, 0_usize);
+    let mut budget_reason: Option<String> = None;
+    let stop_sent = Arc::new(std::sync::Mutex::new(BTreeSet::<String>::new()));
     let outcome = loop {
         tokio::select! {
             unsettled=async {match stopping.as_mut(){Some(f)=>f.await,None=>std::future::pending().await}},if stopping.is_some()=>{stopped=Some(unsettled);stopping=None;},
@@ -1010,15 +1048,30 @@ async fn execute_inner(
                             labels.insert(request.call_id,request.label.clone());
                             (output.out)(&RunnerEvent::AgentStarted{label:request.label,model:request.model.unwrap_or_else(||request.tier.map_or_else(||"profile default".into(),|tier|format!("tier:{tier}"))),provider:request.provider.unwrap_or_else(||"profile default".into())});
                         }
+                        EngineEvent::AgentRefused{label,reason,..}=>{
+                            refused+=1;
+                            output.diagnostic(format!("agent {label} refused: {reason}"));
+                            budget_reason=Some(reason);
+                            (output.out)(&RunnerEvent::AgentFinished{label,state:"refused".into()});
+                        }
                         EngineEvent::AgentFinished{call_id,outcome,..}=>{
-                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::Failed{reason}=>{output.diagnostic(reason);"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
-                            (output.out)(&RunnerEvent::AgentFinished{label:labels.remove(&call_id).unwrap_or_default(),state:state.into()});
+                            let label=labels.remove(&call_id).unwrap_or_default();
+                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::Failed{reason}=>{output.diagnostic(reason);"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
+                            (output.out)(&RunnerEvent::AgentFinished{label,state:state.into()});
                         }
                         _=>{},
                     }
                 }
                 Some(Input::Outcome(outcome))=>{if !stop_requested{break outcome;}engine_outcome=Some(outcome);}
-                Some(Input::Scheduler(event))=>(output.out)(&RunnerEvent::Scheduler(event)),
+                Some(Input::Scheduler(event))=>{
+                    if let Some(message)=budget_note(&event,||gate.budget_stop()) {
+                        journal.record_engine_event(&EngineEvent::Log{message,workflow_path:vec![]}).await.map_err(|e| e.to_string())?;
+                    }
+                    if event["event"]=="budget_reached" && !stop_requested {
+                        stop_for_budget(&port,dir.path(),&stop_sent,&mut tasks.handles);
+                    }
+                    (output.out)(&RunnerEvent::Scheduler(event));
+                }
                 Some(Input::Notice(JournalNotice::NeedsOperator{key,label,attempt,episode,..}))=>(output.out)(&RunnerEvent::Parked{run_id:dir.run_id().as_str().into(),label,key,attempt,episode}),
                 Some(Input::Notice(JournalNotice::Warning(warning)))=>output.diagnostic(format!("journal warning: {warning:?}")),
                 Some(Input::Notice(_))=>{},
@@ -1026,17 +1079,22 @@ async fn execute_inner(
                 Some(Input::Signal|Input::Poll)=>{
                     let signal=matches!(message,Some(Input::Signal));
                     let pending=RunControl::pending(&dir);gate.set_paused(stop_requested || pending.pause.is_some());
-                    if last_heartbeat.elapsed() >= Duration::from_secs(1) {
+                    if gate.is_paused() != journaled_paused {
                         journal.record_engine_event(&EngineEvent::Log {
                             message: if gate.is_paused() { "runner: admission gate paused" } else { "runner: admission gate open" }.into(),
                             workflow_path: vec![],
                         }).await.map_err(|e| e.to_string())?;
-                        last_heartbeat = tokio::time::Instant::now();
+                        journaled_paused = gate.is_paused();
                     }
                     if (signal||pending.stop.is_some()) && !stop_requested {
                         stop_requested = true;
                         gate.set_paused(true);
                         cancel.cancel();
+                    }
+                    // A turn admitted after the budget ran out is stopped on the next tick, and a
+                    // stop the gateway did not confirm is sent again.
+                    if !stop_requested && gate.budget_stop().is_some() {
+                        stop_for_budget(&port,dir.path(),&stop_sent,&mut tasks.handles);
                     }
                 }
                 Some(Input::Failure(error))=>{cancel.cancel();return Err(error);}
@@ -1064,7 +1122,18 @@ async fn execute_inner(
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
+    let exhausted = refused + budget_stopped > 0;
     let mut file = match outcome {
+        // The script returned, but not every agent it asked for ran to the end.
+        RunOutcome::Completed { result } if exhausted => OutcomeFile {
+            v: 1,
+            outcome: "budget_exhausted".into(),
+            result: Some(result),
+            error: None,
+            reason: gate.budget_stop().or(budget_reason),
+            finished_at_ms: 0,
+            summary: Value::Null,
+        },
         RunOutcome::Completed { result } => OutcomeFile {
             v: 1,
             outcome: "completed".into(),
@@ -1117,6 +1186,7 @@ async fn execute_inner(
     };
     let kind = match file.outcome.as_str() {
         "completed" => RunOutcomeKind::Completed,
+        "budget_exhausted" => RunOutcomeKind::BudgetExhausted,
         "failed" => RunOutcomeKind::Failed,
         _ => RunOutcomeKind::Aborted,
     };
@@ -1138,9 +1208,76 @@ async fn execute_inner(
     });
     Ok(match file.outcome.as_str() {
         "completed" => 0,
+        "budget_exhausted" => 4,
         "failed" => 1,
         _ => 3,
     })
+}
+
+/// Count each agent session's streamed usage toward the run's budget as it arrives.
+async fn count_live_usage(mut feed: AgentFeedReceiver, scheduler: Scheduler) {
+    while let Some(item) = feed.recv().await {
+        if let AgentFeedItem::Event {
+            session_id, frame, ..
+        } = item
+            && let hermes_contract::events::Notification::SessionUsage(p) = frame.notification
+            && let Some(tokens) = p
+                .total_tokens
+                .or_else(|| p.prompt_tokens?.checked_add(p.completion_tokens?))
+                .or_else(|| p.input_tokens?.checked_add(p.output_tokens?))
+                .and_then(|n| u64::try_from(n).ok())
+        {
+            scheduler.observe_usage(&session_id, tokens);
+        }
+    }
+}
+/// The journal line for a budget event the scheduler reported, if it needs one.
+fn budget_note(event: &Value, stop: impl FnOnce() -> Option<String>) -> Option<String> {
+    match event["event"].as_str()? {
+        "budget_reached" => Some(format!(
+            "budget: {}; no new agents start and running agents are being stopped",
+            stop().unwrap_or_else(|| "budget reached".into())
+        )),
+        "usage_unmetered" => Some(format!(
+            "budget: agent {} streamed no token usage before its turn settled; its tokens count only when its turns settle",
+            event["label"].as_str().unwrap_or_default()
+        )),
+        _ => None,
+    }
+}
+/// Interrupt every admitted turn through the same stop the operator's stop uses. The
+/// interrupted calls settle and end as stopped for the budget. `sent` holds the admissions
+/// with a stop in flight or confirmed; a stop the gateway did not confirm leaves the set, so
+/// the next tick sends it again while the turn is still admitted.
+fn stop_for_budget(
+    port: &HermesPort,
+    dir: &Path,
+    sent: &Arc<std::sync::Mutex<BTreeSet<String>>>,
+    handles: &mut Vec<tokio::task::JoinHandle<()>>,
+) {
+    let Ok(targets) = control::read_records(dir)
+        .map_err(|e| e.to_string())
+        .and_then(|records| control::stop_targets(&records).map_err(|e| e.to_string()))
+    else {
+        return;
+    };
+    handles.retain(|handle| !handle.is_finished());
+    for target in targets {
+        let fresh = sent
+            .lock()
+            .is_ok_and(|mut set| set.insert(target.admission_id.clone()));
+        if fresh {
+            let (port, sent) = (port.clone(), sent.clone());
+            handles.push(tokio::spawn(async move {
+                // `NotRunning` can also mean the port has no receipt yet for a reattached turn.
+                if port.stop(&target.profile, &target.session_id).await != StopResult::Sent
+                    && let Ok(mut set) = sent.lock()
+                {
+                    set.remove(&target.admission_id);
+                }
+            }));
+        }
+    }
 }
 
 async fn verify_restarts(

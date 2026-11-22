@@ -47,6 +47,8 @@ pub enum RunStatus {
     Running,
     Parked,
     Completed,
+    /// The script returned, but the budget refused or stopped at least one agent.
+    BudgetExhausted,
     Failed,
     Aborted,
     Interrupted,
@@ -58,6 +60,7 @@ impl RunStatus {
             Self::Running => "running",
             Self::Parked => "parked",
             Self::Completed => "completed",
+            Self::BudgetExhausted => "budget_exhausted",
             Self::Failed => "failed",
             Self::Aborted => "aborted",
             Self::Interrupted => "interrupted",
@@ -118,6 +121,24 @@ pub fn find_run(runs_dir: &Path, id_or_path: &str) -> Result<PathBuf, FindError>
     }
 }
 
+/// Whether a runner holds the run lock now. A free or missing lock means no runner.
+/// Read access is enough to test the lock, so a viewer that cannot write the run folder
+/// still gets an answer.
+pub fn runner_alive(dir: &Path) -> io::Result<bool> {
+    let file = match File::open(dir.join("run.lock")) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            let _ = file.unlock();
+            Ok(false)
+        }
+        Err(fs::TryLockError::WouldBlock) => Ok(true),
+        Err(fs::TryLockError::Error(e)) => Err(e),
+    }
+}
 pub(crate) enum LockProbe {
     Free(Option<File>),
     Held,
@@ -324,6 +345,7 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
     };
     let status = match fold.terminal.as_deref() {
         Some("completed") => RunStatus::Completed,
+        Some("budget_exhausted") => RunStatus::BudgetExhausted,
         Some("failed") => RunStatus::Failed,
         Some("aborted") => RunStatus::Aborted,
         _ if fold.parked > 0 => RunStatus::Parked,

@@ -149,7 +149,8 @@ a fresh hour and forgets runs that already ended. When one starts it prints
 shows a dock line above the composer (`⚙ Workflow <name> · running · 3/10 agents · Alt+W to
 open`), and adds the agent count to the status segment (`ultracode · 3/10 agents`), which is
 then kept on a narrow line. When the run ends it prints `Workflow run <outcome>: …` and the
-dock line goes away. The view never opens by itself. `workflow_view` (Alt+W) opens the latest
+dock line goes away; a run whose budget refused or stopped any agent prints
+`Workflow run stopped by its budget: …`. The view never opens by itself. `workflow_view` (Alt+W) opens the latest
 run that this Talaria window saw start after an Ultracode-routed prompt in the foreground
 session, or the run list when it saw none. Runs are matched by profile and start time, not
 by the prompt that asked for them, so for an hour after a routed prompt a run started by hand
@@ -198,6 +199,14 @@ Broken or oversized scripts remain listed with a null description and a warning.
 retains the full report with staffing problems. Exit 1 has a null report, gateway-independent
 local fields, and an error kind: home_unavailable, filesystem, staffing_invalid,
 gateway_unavailable, profile_unserved, or roster_failed. Roster discovery never ensures a gateway.
+
+Each signed in provider in the report lists its usable `model_ids` and its
+`unavailable_models`; a provider that is not signed in keeps only its count. The report's
+`current` names the model and provider the lead should treat as the default and says where it
+came from: `session` when the roster was asked for with `--session-model` and
+`--session-provider`, otherwise `profile`. A routed prompt ends with a line
+`Session model: <model> on <provider>` naming the pair the session runs on, so the lead can
+pass it to those two flags and to the same flags on `workflow run`.
 
 The lead uses a listed built-in path or writes a draft script named `<name>.workflow` in the
 drafts folder. The `.workflow` extension keeps Hermes's file-write lint, which checks `.js`

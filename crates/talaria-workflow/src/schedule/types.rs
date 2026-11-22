@@ -144,6 +144,11 @@ pub enum SchedulerEvent {
         attempt: u32,
         reason: String,
     },
+    /// A turn settled before its session streamed any usage, so only settlement counts it.
+    UsageUnmetered {
+        key: String,
+        label: String,
+    },
     BudgetReached {
         kind: BudgetKind,
         tokens_spent: u64,

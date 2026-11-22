@@ -32,6 +32,10 @@ pub enum CallOutcome {
         reason: String,
     },
     Skipped,
+    /// The run's budget ended the call; a resume runs it again.
+    Stopped {
+        reason: String,
+    },
 }
 fn present_value<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
     Ok(Some(Value::deserialize(d)?))
@@ -47,6 +51,9 @@ impl CallOutcome {
                 reason: super::cut(&reason, 4096),
             },
             AgentOutcome::Skipped => Self::Skipped,
+            AgentOutcome::Stopped { reason } => Self::Stopped {
+                reason: super::cut(&reason, 4096),
+            },
         }
     }
     pub fn kind(&self) -> &'static str {
@@ -54,6 +61,7 @@ impl CallOutcome {
             Self::Completed { .. } => "completed",
             Self::Failed { .. } => "failed",
             Self::Skipped => "skipped",
+            Self::Stopped { .. } => "stopped",
         }
     }
 }
@@ -64,6 +72,15 @@ pub struct FinishSummary {
     pub skipped: usize,
     pub parked: usize,
     pub unfinished: usize,
+    /// Calls the budget refused before they started, in the latest execution.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub refused: usize,
+    /// Calls the budget ended after they started.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub stopped: usize,
+}
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 // Keep public constructors compatible while the wire format grows optional fields.
 macro_rules! records {

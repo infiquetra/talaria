@@ -67,6 +67,7 @@ impl RunProgress {
     }
     pub fn from_records(manifest: &Manifest, lines: &[RecordLine]) -> Self {
         let mut result = Self::empty(manifest.workflow.name.clone());
+        result.run.run_id = manifest.run_id.as_str().to_owned();
         for line in lines {
             result.apply_inner(line);
         }
@@ -149,6 +150,7 @@ impl RunProgress {
                 }
                 self.run.state = RunState::Running;
                 self.run.finished_at_ms = None;
+                self.run.refused = 0;
                 if self.run.started_at_ms.is_none() {
                     self.run.started_at_ms = Some(line.at_ms);
                 }
@@ -162,6 +164,7 @@ impl RunProgress {
             "run_finished" => {
                 self.run.state = match string(&record, "outcome").as_str() {
                     "completed" => RunState::Completed,
+                    "budget_exhausted" => RunState::BudgetExhausted,
                     "aborted" => RunState::Aborted,
                     _ => RunState::Failed,
                 };
@@ -332,6 +335,7 @@ impl RunProgress {
                 a.last_outcome = Some(outcome.into());
                 a.finished_at_ms = Some(line.at_ms);
                 a.stopping = false;
+                a.stopped |= outcome == "stopped";
                 if let Some(reason) = record["outcome"]["reason"].as_str() {
                     a.stopped |= matches!(reason, "interrupted" | "stopped" | "cancelled");
                     a.push_tail(reason);
@@ -364,6 +368,17 @@ impl RunProgress {
             }
             "log" => {
                 self.run.logs.push_back(string(event, "message"));
+                while self.run.logs.len() > 50 {
+                    self.run.logs.pop_front();
+                }
+            }
+            "agent_refused" => {
+                self.run.refused += 1;
+                self.run.logs.push_back(format!(
+                    "agent {} refused: {}",
+                    string(event, "label"),
+                    string(event, "reason")
+                ));
                 while self.run.logs.len() > 50 {
                     self.run.logs.pop_front();
                 }
@@ -409,11 +424,16 @@ impl RunProgress {
         self.run.tokens = 0;
         self.run.tokens_unknown = false;
         self.run.unpriced = 0;
+        self.run.budget_stopped = 0;
         let mut money = 0.0;
         for a in &mut self.agents {
             a.derive();
             self.run.counts.add(a.state);
-            self.run.tokens = self.run.tokens.saturating_add(a.settled_tokens);
+            if a.last_outcome.as_deref() == Some("stopped") {
+                self.run.budget_stopped += 1;
+            }
+            // Settled plus live usage, as each agent row shows it.
+            self.run.tokens = self.run.tokens.saturating_add(a.tokens);
             self.run.tokens_unknown |= a.tokens_unknown;
             if let Some(n) = a.money {
                 money += n;

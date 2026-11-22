@@ -778,6 +778,31 @@ fn runs_scan_announces_start_once_and_finish_once() {
     );
 }
 
+#[test]
+fn a_run_its_budget_stopped_is_announced_as_such() {
+    use talaria_workflow::runner::RunStatus;
+    let id = session();
+    let mut service = on();
+    service.arm(&id, "fixture", 1_000, 50);
+    let _ = service.scan_due(50);
+    let running = [run_row("run-0002", "fixture", 2_000, RunStatus::Running, 1)];
+    let _ = service.on_runs(&running, 100, Some("Alt+W"));
+    let _ = service.scan_due(2_100);
+    let ended = [run_row(
+        "run-0002",
+        "fixture",
+        2_000,
+        RunStatus::BudgetExhausted,
+        3,
+    )];
+    assert_eq!(
+        notices(&service.on_runs(&ended, 2_200, Some("Alt+W"))),
+        [
+            "Workflow run stopped by its budget: review-branch (run-0002). Press Alt+W or type /workflows to see the result."
+        ]
+    );
+}
+
 /// How long a watch lives after the routed prompt that last armed it, as the service states.
 const WATCH_WINDOW_MS: u64 = 60 * 60 * 1_000;
 

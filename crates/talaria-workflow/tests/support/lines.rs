@@ -371,6 +371,8 @@ pub fn finished_lines() -> Vec<RecordLine> {
                 skipped: 0,
                 parked: 0,
                 unfinished: 0,
+                refused: 0,
+                stopped: 0,
             },
         },
     ));
@@ -562,6 +564,8 @@ pub fn execution_lines() -> Vec<RecordLine> {
                     skipped: 0,
                     parked: 0,
                     unfinished: 0,
+                    refused: 0,
+                    stopped: 0,
                 },
             },
         ),

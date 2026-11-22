@@ -10,6 +10,17 @@ fn skill_names_only_real_commands_and_flags() {
                 "--staffing",
                 "--budget-tokens",
                 "--budget-usd",
+                "--session-model",
+                "--session-provider",
+                "--json",
+            ],
+        ),
+        (
+            vec!["workflow", "run"],
+            vec![
+                "--profile",
+                "--session-model",
+                "--session-provider",
                 "--json",
             ],
         ),

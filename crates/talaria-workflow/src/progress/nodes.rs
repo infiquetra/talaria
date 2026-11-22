@@ -56,6 +56,7 @@ pub enum RunState {
     #[default]
     Running,
     Completed,
+    BudgetExhausted,
     Failed,
     Aborted,
 }
@@ -64,6 +65,7 @@ impl RunState {
         match self {
             Self::Running => "running",
             Self::Completed => "completed",
+            Self::BudgetExhausted => "budget exhausted",
             Self::Failed => "failed",
             Self::Aborted => "aborted",
         }
@@ -97,6 +99,7 @@ impl Counts {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RunNode {
     pub name: String,
+    pub run_id: String,
     pub state: RunState,
     pub previous_execution: Option<RunState>,
     pub started_at_ms: Option<i64>,
@@ -107,6 +110,10 @@ pub struct RunNode {
     pub money: Option<f64>,
     pub unpriced: usize,
     pub logs: VecDeque<String>,
+    /// Calls the budget refused before they started, in this execution.
+    pub refused: usize,
+    /// Agents the budget ended after they started; their rows show as failed.
+    pub budget_stopped: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhaseNode {

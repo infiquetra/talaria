@@ -47,6 +47,7 @@ pub struct Roster {
     profile: String,
     current_model: String,
     current_provider: String,
+    current_from_session: bool,
     providers: Vec<ProviderEntry>,
     taken_at: DateTime<Utc>,
 }
@@ -136,9 +137,36 @@ impl Roster {
             profile: profile.into(),
             current_model: result["model"].as_str().unwrap_or_default().into(),
             current_provider: result["provider"].as_str().unwrap_or_default().into(),
+            current_from_session: false,
             providers,
             taken_at: now,
         })
+    }
+    /// Make the model and provider a session runs on the current pair. The profile's own
+    /// configured model knows nothing of what the user picked for the session.
+    pub fn with_session_model(mut self, model: &str, provider: &str) -> Self {
+        if !model.is_empty() && !provider.is_empty() {
+            self.current_model = model.into();
+            self.current_provider = provider.into();
+            self.current_from_session = true;
+        }
+        self
+    }
+    /// Whether [`Self::current`] is the session's pair rather than the profile's.
+    pub fn current_from_session(&self) -> bool {
+        self.current_from_session
+    }
+    /// The session pair a run's stored roster snapshot was staffed with, if any, so a resumed
+    /// or detached execution keeps the model its run started with.
+    pub fn session_model_in(snapshot: &Value) -> Option<(String, String)> {
+        let current = snapshot.get("current")?;
+        if current.get("source")?.as_str()? != "session" {
+            return None;
+        }
+        Some((
+            current.get("model")?.as_str()?.into(),
+            current.get("provider")?.as_str()?.into(),
+        ))
     }
     pub fn profile(&self) -> &str {
         &self.profile
@@ -257,7 +285,7 @@ impl Roster {
         let providers:Vec<_>=self.providers.iter().map(|p|json!({"slug":p.slug,"name":p.name,"authenticated":p.authenticated,"models":p.models.len(),"availability":super::report::availability_text(&self.availability(&p.slug,p.models.first().map(String::as_str).unwrap_or_default(),self.taken_at)),"limit":p.limit})).collect();
         let tiers:BTreeMap<_,_>=table.tiers.iter().map(|(n,t)|{let p=self.price(&t.provider,&t.model).cloned().unwrap_or_else(Price::unknown);(n,json!({"model":t.model,"provider":t.provider,"effort":t.effort,"price":{"input":self.providers.iter().find(|p|p.slug==t.provider).and_then(|p|p.price_strings.get(&t.model)).map_or_else(||p.input.wire(),|s|s.0.clone()),"output":self.providers.iter().find(|p|p.slug==t.provider).and_then(|p|p.price_strings.get(&t.model)).map_or_else(||p.output.wire(),|s|s.1.clone())}}))}).collect();
         let prices:BTreeMap<_,BTreeMap<_,_>>=self.providers.iter().map(|p|(&p.slug,p.prices.iter().filter(|(_,p)|p.input.dollars().is_some()||p.output.dollars().is_some()).map(|(m,price)|(m,json!({"input":p.price_strings.get(m).map_or_else(||price.input.wire(),|s|s.0.clone()),"output":p.price_strings.get(m).map_or_else(||price.output.wire(),|s|s.1.clone())}))).collect())).collect();
-        json!({"v":1,"taken_at":self.taken_at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi,true),"profile":self.profile,"current":{"model":self.current_model,"provider":self.current_provider},"providers":providers,"tiers":tiers,"prices":prices,"limits":{"max_in_flight":table.limits.max_in_flight,"providers":table.providers.iter().map(|(p,l)|(p,l.max_in_flight)).collect::<BTreeMap<_,_>>()},"budget":budget})
+        json!({"v":1,"taken_at":self.taken_at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi,true),"profile":self.profile,"current":{"model":self.current_model,"provider":self.current_provider,"source":if self.current_from_session {"session"} else {"profile"}},"providers":providers,"tiers":tiers,"prices":prices,"limits":{"max_in_flight":table.limits.max_in_flight,"providers":table.providers.iter().map(|(p,l)|(p,l.max_in_flight)).collect::<BTreeMap<_,_>>()},"budget":budget})
     }
 }
 
