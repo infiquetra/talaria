@@ -2243,10 +2243,8 @@ pub enum AppEffect {
     ModelRoles {
         generation: u64,
         profile: String,
-        connection_profile: String,
         home: PathBuf,
         service: Option<Arc<crate::model_roles::ModelRolesService>>,
-        socket: Option<hermes_client::Client>,
         effects: Vec<talaria_core::model_roles::RolesEffect>,
     },
     PrepareMcp,
@@ -4931,7 +4929,8 @@ fn open_model_roles(state: &mut AppState) -> Vec<AppEffect> {
 
 /// Open the model roles page for one served profile, which need not be the connected one.
 fn open_model_roles_for(state: &mut AppState, profile: String) -> Vec<AppEffect> {
-    let (page, effects) = talaria_core::model_roles::ModelRolesState::new(profile.clone());
+    let (mut page, effects) = talaria_core::model_roles::ModelRolesState::new(profile.clone());
+    page.set_connection_profile(&state.profile);
     state.model_roles = Some(page);
     state.model_roles_profile = profile;
     state.model_roles_connection = state.profile.clone();
@@ -4998,14 +4997,8 @@ fn model_roles_effects(
     vec![AppEffect::ModelRoles {
         generation: state.model_roles_generation,
         profile: state.model_roles_profile.clone(),
-        connection_profile: state.profile.clone(),
         home: state.hermes_home.clone(),
         service: state.model_roles_service.clone(),
-        socket: state
-            .service
-            .as_ref()
-            .and_then(SessionService::client)
-            .cloned(),
         effects,
     }]
 }
@@ -13004,10 +12997,8 @@ fn apply<S: Screen>(
             AppEffect::ModelRoles {
                 generation,
                 profile,
-                connection_profile,
                 home,
                 service,
-                socket,
                 effects,
             } => {
                 let sender = executor.sender.clone();
@@ -13015,15 +13006,7 @@ fn apply<S: Screen>(
                     use talaria_core::model_roles::RolesInput;
                     let service = match service {
                         Some(service) => Some(service),
-                        None => {
-                            crate::model_roles::open_service(
-                                home,
-                                profile.clone(),
-                                connection_profile,
-                                socket,
-                            )
-                            .await
-                        }
+                        None => crate::model_roles::open_service(home, profile.clone()).await,
                     };
                     for effect in effects {
                         let sender = sender.clone();
@@ -17749,10 +17732,9 @@ mod profiles_action_tests {
             assert!(
                 effects.iter().any(|effect| matches!(
                     effect,
-                    AppEffect::ModelRoles { profile, connection_profile, .. }
-                        if profile == "default" && connection_profile == "fixture"
+                    AppEffect::ModelRoles { profile, .. } if profile == "default"
                 )),
-                "{opener:?} loads the page for default over the fixture connection"
+                "{opener:?} loads the page for default, not the fixture connection"
             );
             let title = roles_title(&state).expect("the page is drawn");
             assert!(title.ends_with("default"), "{title}");

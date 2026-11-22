@@ -160,9 +160,19 @@ pub(super) fn same_roles(left: &SubagentRoles, right: &SubagentRoles) -> bool {
     left.route == right.route
         && left.effort == right.effort
         && left.direct_endpoint == right.direct_endpoint
-        && left.endpoint_keys == right.endpoint_keys
+        && set_endpoint_keys(left) == set_endpoint_keys(right)
         && match (&left.chain, &right.chain) {
             (ChainMode::Own(a), ChainMode::Own(b)) => same_chain(a, b),
             (a, b) => a == b,
         }
+}
+
+/// The endpoint keys that hold a value. Leaving an endpoint writes its keys as empty text, and
+/// Hermes keeps a key the file already named, so an empty key is the same as an absent one.
+fn set_endpoint_keys(roles: &SubagentRoles) -> std::collections::BTreeMap<&String, &Value> {
+    roles
+        .endpoint_keys
+        .iter()
+        .filter(|(_, value)| !matches!(value, Value::Null) && value.as_str() != Some(""))
+        .collect()
 }

@@ -64,6 +64,14 @@ fn handle_model_options(state: &State, params: &Value) -> Result<Value, String> 
             return Err("invalid_params".to_owned());
         }
     }
+    // Hermes: gateway/session_controls.py, AuthorityConnection.dispatch and _sibling_for. A
+    // profile-bound connection that names another profile is refused before the handler runs.
+    if let Some(profile) = params.get("profile").and_then(Value::as_str)
+        && !profile.is_empty()
+        && profile != state.sess.connection_profile
+    {
+        return Err("rpc:4001:profile_mismatch".to_owned());
+    }
     if let Some(reason) = &state.sess.options_fail {
         if reason == "unknown_method" {
             return Err("rpc:-32601:unknown_method".to_owned());

@@ -240,6 +240,21 @@ impl MockRest {
             .insert(route(method, path), Arc::new(handler));
         self
     }
+    /// Merge `patch` into the stored raw configuration, as a write made before the test.
+    pub fn merge_raw(&self, patch: &Value) {
+        deep_merge(&mut self.state.lock().unwrap().raw, patch);
+    }
+    /// Like `with_route`, for a mock that is already running.
+    pub fn set_route<F>(&self, method: &str, path: &str, handler: F)
+    where
+        F: Fn(&RecordedRequest) -> (u16, Value) + Send + Sync + 'static,
+    {
+        self.state
+            .lock()
+            .unwrap()
+            .routes
+            .insert(route(method, path), Arc::new(handler));
+    }
     pub async fn fail_status(&self, method: &str, path: &str, status: u16, detail: Option<&str>) {
         self.state
             .lock()

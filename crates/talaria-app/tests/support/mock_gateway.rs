@@ -2638,6 +2638,8 @@ struct SessionSide {
     options_profile: Value,
     /// When set, `model.options` is refused with this reason instead of a catalogue.
     options_fail: Option<String>,
+    /// The profile this connection's ticket is bound to. Naming any other profile is refused.
+    connection_profile: String,
     /// `config.get` value for the reasoning key. Null is a value the client can read.
     reasoning_value: Value,
     mutate_revision: i64,
@@ -2758,6 +2760,7 @@ impl SessionSide {
             options_with_session: json!({"model": "", "provider": "", "providers": []}),
             options_profile: json!({"model": "", "provider": "", "providers": []}),
             options_fail: None,
+            connection_profile: "fixture".to_owned(),
             reasoning_value: json!("high"),
             mutate_revision: 0,
             mutate_generation: 0,
@@ -5217,6 +5220,11 @@ impl MockGateway {
         lock(&self.shared).sess.options_fail = reason.map(str::to_owned);
     }
 
+    /// The profile the connection is bound to; `model.options` naming another one is refused.
+    pub fn set_connection_profile(&self, profile: &str) {
+        lock(&self.shared).sess.connection_profile = profile.to_owned();
+    }
+
     /// The value `config.get` returns for `reasoning`.
     pub fn set_reasoning_value(&self, value: Value) {
         lock(&self.shared).sess.reasoning_value = value;
@@ -5747,6 +5755,32 @@ impl StandaloneGateway {
         }
     }
 
+    /// Answer one settings route on the REST mock with a handler of the test's own.
+    pub fn configure_rest_route<F>(&self, method: &str, path: &str, handler: F)
+    where
+        F: Fn(&configure_rest::RecordedRequest) -> (u16, Value) + Send + Sync + 'static,
+    {
+        self.enable_configure_rest();
+        if let Some(mock) = plain(&self.configure_rest).as_ref() {
+            mock.set_route(method, path, handler);
+        }
+    }
+
+    /// Merge `patch` into the settings mock's stored configuration file.
+    pub fn configure_rest_merge_raw(&self, patch: &Value) {
+        self.enable_configure_rest();
+        if let Some(mock) = plain(&self.configure_rest).as_ref() {
+            mock.merge_raw(patch);
+        }
+    }
+
+    /// The settings mock's recorded requests, with their headers.
+    pub fn configure_rest_recorded(&self) -> Vec<configure_rest::RecordedRequest> {
+        let rest = plain(&self.configure_rest);
+        rest.as_ref()
+            .map_or_else(Vec::new, |mock| self.block_on(mock.requests()))
+    }
+
     /// Return the settings mock's recorded method, target, and body in order.
     pub fn configure_rest_requests(&self) -> Vec<(String, String, Vec<u8>)> {
         let rest = plain(&self.configure_rest);
@@ -5821,6 +5855,19 @@ impl StandaloneGateway {
     /// Mark a profile parked. Identify reports the name and the reason.
     pub fn set_parked_profile(&self, name: &str, reason: &str) {
         plain(&self.info.parked_profiles).push((name.to_owned(), reason.to_owned()));
+    }
+
+    /// The ticket the control socket minted with this value, if it minted one.
+    pub fn ticket_for(&self, value: &str) -> Option<TicketSeen> {
+        plain(&self.info.tickets)
+            .iter()
+            .find(|issued| issued.value == value)
+            .map(|issued| TicketSeen {
+                scope: issued.scope.clone(),
+                purpose: issued.purpose.clone(),
+                profile_id: issued.profile_id.clone(),
+                at: issued.at,
+            })
     }
 
     /// Every ticket minted, in order, with the scope and profile it names.
@@ -6103,7 +6150,7 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
                 let Some(count) = request else { return };
                 let line = String::from_utf8_lossy(&first[..count]);
                 let target = line.split_whitespace().nth(1).unwrap_or("");
-                if target.starts_with("/api/config") {
+                if target.starts_with("/api/config") || target.starts_with("/api/model") {
                     if let Some(address) = origin.strip_prefix("http://")
                         && let Ok(mut rest) = TcpStream::connect(address).await
                     {

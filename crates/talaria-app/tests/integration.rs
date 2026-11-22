@@ -252,6 +252,9 @@ mod memory_service;
 #[path = "integration/model_replay.rs"]
 mod model_replay;
 
+#[path = "integration/model_roles_flow.rs"]
+mod model_roles_flow;
+
 #[path = "integration/model_roles_service.rs"]
 mod model_roles_service;
 
