@@ -475,46 +475,54 @@ fn panel_list_snapshot_160x48() {
     );
     let lines = texts(&panel.render(&tree, &header(on_with_caps()), None, 160, 48, now));
     let left = "Subagents · fix the failing test";
-    let right = "2 running · 1 finished · spawning on · depth ≤1 · ≤10 at once";
-    assert_eq!(left.width(), 32);
-    assert_eq!(right.width(), 61);
-    let head = format!(
-        "{left}{:width$}{right}",
-        "",
-        width = 160 - left.width() - right.width()
+    let right = "2 running · 1 finished";
+    let head = |width: usize| {
+        format!(
+            "{left}{:fill$}{right}",
+            "",
+            fill = width - left.width() - right.width()
+        )
+    };
+    let status = "Spawning on · up to 10 at once · max nesting 1 · model minimax-m3.1-flash";
+    let goal1 = format!("{:<39}", "list the files in the current directory");
+    let goal2 = format!("{:<39}", "read notes.txt");
+    let goal3 = format!("{:<39}", "summarise the findings");
+    let selected = format!(
+        "{:<160}",
+        format!(
+            "▸ ◐ {goal1}  {:>4}  {:>5}  Terminal(\"ls -la\")",
+            "12s", "3"
+        )
     );
-    assert_eq!(head.width(), 160);
-    let goal1 = format!("{:<81}", "list the files in the current directory");
-    let goal2 = format!("{:<81}", "read notes.txt");
-    let goal3 = format!("{:<81}", "summarise the findings");
-    let model = format!("{:<24}", "minimax-m3.1-flash");
     assert_eq!(
         lines,
         vec![
-            head,
-            format!("▸ ◐ {goal1}  {model}      12s  3 tools   Terminal(\"ls -la\")"),
-            format!("  ◐ {goal2}  {model}       8s  1 tool    ReadFile(\"notes.txt\")"),
-            format!("  ✓ {goal3}  {model}      20s  4 tools   Closed 4 issues"),
+            head(160),
+            status.to_owned(),
+            format!("    {:<39}  {:>4}  {:>5}  Activity", "Task", "Time", "Tools"),
+            selected,
+            format!("  ◐ {goal2}  {:>4}  {:>5}  ReadFile(\"notes.txt\")", "8s", "1"),
+            format!("  ✓ {goal3}  {:>4}  {:>5}  Closed 4 issues", "20s", "4"),
             "Steer queued for \"list the files in the current directory\". It reaches the subagent at its next step.".to_owned(),
-            // Hints render lowercase with shift+x as X, per the rules' sample.
-            "enter tail · d detail · o new pane · e steer · x stop · X stop all · p pause spawns · tab session · esc close".to_owned(),
+            // Hints are grouped: view, control, then navigation.
+            "enter tail · d detail · o new pane   e steer · x stop · X stop all · p pause spawns   tab session · esc close".to_owned(),
         ]
     );
 
+    // Narrow: no model, tool or activity column; time stays right aligned.
     let lines = texts(&panel.render(&tree, &header(on_with_caps()), None, 99, 48, now));
-    let head = format!(
-        "{left}{:width$}{right}",
-        "",
-        width = 99 - left.width() - right.width()
-    );
+    let selected = format!("{:<99}", format!("▸ ◐ {goal1}  {:>4}", "12s"));
     assert_eq!(
         lines,
         vec![
-            head,
-            format!("▸ ◐ list the files in the current directory  {:>7}", "12s"),
-            format!("  ◐ read notes.txt  {:>7}", "8s"),
-            format!("  ✓ summarise the findings  {:>7}", "20s"),
+            head(99),
+            status.to_owned(),
+            format!("    {:<39}  {:>4}", "Task", "Time"),
+            selected,
+            format!("  ◐ {goal2}  {:>4}", "8s"),
+            format!("  ✓ {goal3}  {:>4}", "20s"),
             "Steer queued for \"list the files in the current directory\". It reaches the subagent at its next st…".to_owned(),
+            // Too wide for one line, so the groups run together before the cut.
             "enter tail · d detail · o new pane · e steer · x stop · X stop all · p pause spawns · tab session …".to_owned(),
         ]
     );
@@ -532,12 +540,15 @@ fn panel_detail_tail_and_steer_snapshots() {
     assert_eq!(
         lines[0],
         format!(
-            "Subagents · fix the failing test{:width$}2 running · 1 finished · spawning on · depth ≤1 · ≤10 at once",
+            "Subagents · fix the failing test{:width$}2 running · 1 finished",
             "",
-            width = 120
-                - "Subagents · fix the failing test".width()
-                - "2 running · 1 finished · spawning on · depth ≤1 · ≤10 at once".width(),
+            width =
+                120 - "Subagents · fix the failing test".width() - "2 running · 1 finished".width(),
         )
+    );
+    assert_eq!(
+        lines[1],
+        "Spawning on · up to 10 at once · max nesting 1 · model minimax-m3.1-flash"
     );
     // Detail labels use the house `Label: value` style.
     for expected in [
@@ -677,19 +688,19 @@ fn panel_keys_drive_modes() {
     let mut panel = AgentsPanel::new(key());
 
     let lines = texts(&panel.render(&tree, &head, None, 160, 48, now));
-    assert!(lines[1].starts_with("▸ "), "the first row starts selected");
+    assert!(lines[3].starts_with("▸ "), "the first row starts selected");
     assert_eq!(panel.handle(Action::AgentsDown, &tree), None);
     let lines = texts(&panel.render(&tree, &head, None, 160, 48, now));
-    assert!(lines[2].starts_with("▸ "), "down moves the selection");
+    assert!(lines[4].starts_with("▸ "), "down moves the selection");
     assert_eq!(panel.handle(Action::AgentsUp, &tree), None);
     let lines = texts(&panel.render(&tree, &head, None, 160, 48, now));
-    assert!(lines[1].starts_with("▸ "), "up moves it back");
+    assert!(lines[3].starts_with("▸ "), "up moves it back");
     assert_eq!(panel.handle(Action::AgentsBottom, &tree), None);
     let lines = texts(&panel.render(&tree, &head, None, 160, 48, now));
-    assert!(lines[3].starts_with("▸ "), "bottom jumps to the last row");
+    assert!(lines[5].starts_with("▸ "), "bottom jumps to the last row");
     assert_eq!(panel.handle(Action::AgentsTop, &tree), None);
     let lines = texts(&panel.render(&tree, &head, None, 160, 48, now));
-    assert!(lines[1].starts_with("▸ "), "top jumps to the first row");
+    assert!(lines[3].starts_with("▸ "), "top jumps to the first row");
 
     assert_eq!(
         panel.handle(Action::AgentsStop, &tree),
@@ -733,7 +744,7 @@ fn panel_keys_drive_modes() {
     assert_eq!(panel.handle(Action::AgentsBack, &tree), None);
     let lines = texts(&panel.render(&tree, &head, None, 160, 48, now));
     assert!(
-        lines[1].starts_with("▸ ◐ "),
+        lines[3].starts_with("▸ ◐ "),
         "esc goes back to List: {lines:?}"
     );
 
@@ -754,7 +765,7 @@ fn panel_keys_drive_modes() {
     panel.type_char('n');
     let lines = texts(&panel.render(&tree, &head, None, 160, 48, now));
     assert!(
-        lines[1].starts_with("▸ ◐ "),
+        lines[3].starts_with("▸ ◐ "),
         "n cancels back to List: {lines:?}"
     );
 
@@ -996,6 +1007,557 @@ fn batch_block_exact_lines() {
     assert!(lines[2].starts_with("    ✓ child goal"), "{}", lines[2]);
 }
 
+const NAMES: [&str; 10] = [
+    "riemann",
+    "p-vs-np",
+    "navier-stokes",
+    "collatz",
+    "goldbach",
+    "abc",
+    "bsd",
+    "erdos-straus",
+    "twin-primes",
+    "perfect",
+];
+
+fn shared_goal(name: &str) -> String {
+    format!("Run and test the `{name}` demonstration of the mt10 CLI, then report the result.")
+}
+
+const SHORT_GOAL: &str = "Run the `riemann` demonstration and report back.";
+
+const SHARED_CAPTION: &str =
+    "Task: Run and test the … demonstration of the mt10 CLI, then report the result.";
+
+/// Ten live children whose goals differ in one word, like a fan-out run.
+fn shared_goal_tree() -> SubagentTree {
+    let mut tree = SubagentTree::new();
+    for (n, name) in NAMES.iter().enumerate() {
+        start(
+            &mut tree,
+            &format!("child-{n}"),
+            &shared_goal(name),
+            1_000 + n as u64 * 10,
+        );
+    }
+    tree
+}
+
+#[test]
+fn panel_list_shows_the_differing_part_of_shared_goals() {
+    let tree = shared_goal_tree();
+    let panel = AgentsPanel::new(key());
+    let lines = texts(&panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        148,
+        48,
+        clock_ms(17_000),
+    ));
+    assert_eq!(
+        lines.iter().filter(|line| line.contains("Task: ")).count(),
+        1,
+        "the shared words appear once: {lines:?}"
+    );
+    assert!(lines.contains(&SHARED_CAPTION.to_owned()), "{lines:?}");
+    for name in NAMES {
+        let rows: Vec<_> = lines
+            .iter()
+            .filter(|line| line.contains(&format!("`{name}`")))
+            .collect();
+        assert_eq!(rows.len(), 1, "one row for {name}: {lines:?}");
+        assert!(!rows[0].contains("Run and test"), "{}", rows[0]);
+        assert!(!rows[0].contains("…"), "no cut hides the name: {}", rows[0]);
+    }
+}
+
+#[test]
+fn panel_goals_that_share_nothing_keep_their_full_text() {
+    // A single row has no shared text to drop.
+    let mut tree = SubagentTree::new();
+    start(&mut tree, "only", SHORT_GOAL, 1_000);
+    let panel = AgentsPanel::new(key());
+    let lines = texts(&panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        148,
+        48,
+        clock_ms(2_000),
+    ));
+    assert!(
+        lines.iter().any(|line| line.contains(SHORT_GOAL)),
+        "{lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.contains("Task: ")),
+        "{lines:?}"
+    );
+
+    // Rows with identical goals stay whole too.
+    let mut tree = SubagentTree::new();
+    for n in 0..3 {
+        start(&mut tree, &format!("c{n}"), SHORT_GOAL, 1_000 + n);
+    }
+    let lines = texts(&panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        148,
+        48,
+        clock_ms(2_000),
+    ));
+    let whole = lines
+        .iter()
+        .filter(|line| line.contains(SHORT_GOAL))
+        .count();
+    assert_eq!(whole, 3, "{lines:?}");
+    assert!(
+        !lines.iter().any(|line| line.contains("Task: ")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn panel_nested_rows_keep_indent_and_columns_aligned() {
+    let mut tree = SubagentTree::new();
+    start(
+        &mut tree,
+        "root",
+        "Plan the demonstration run for all of the demo tools",
+        1_000,
+    );
+    for (n, name) in ["alpha", "beta"].into_iter().enumerate() {
+        let body = with(
+            payload(&format!("kid-{n}"), &format!("Check `{name}` sample")),
+            "parent_id",
+            json!("root"),
+        );
+        apply(
+            &mut tree,
+            "subagent.spawn_requested",
+            body.clone(),
+            2_000 + n as u64,
+        );
+        apply(&mut tree, "subagent.start", body, 2_100 + n as u64);
+    }
+    let panel = AgentsPanel::new(key());
+    let lines = texts(&panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        148,
+        48,
+        clock_ms(9_000),
+    ));
+    let row = |needle: &str| {
+        lines
+            .iter()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("no row with {needle}: {lines:?}"))
+            .clone()
+    };
+    let root = row("Plan the demonstration");
+    let alpha = row("`alpha`");
+    let beta = row("`beta`");
+    assert!(root.starts_with("▸ ◐ Plan"), "{root}");
+    assert!(alpha.starts_with("    ◐ Check `alpha` sample"), "{alpha}");
+    assert!(beta.starts_with("    ◐ Check `beta` sample"), "{beta}");
+    // The activity column starts at the same place on every row.
+    let column = |line: &str| line.find("starting").map(|at| line[..at].width());
+    assert!(column(&root).is_some());
+    assert_eq!(column(&root), column(&alpha), "{root} / {alpha}");
+    assert_eq!(column(&alpha), column(&beta));
+    assert!(
+        lines.iter().all(|line| !line.contains("Task: ")),
+        "the root goal shares no text with its children, so no caption: {lines:?}"
+    );
+}
+
+#[test]
+fn panel_activity_skips_batched_progress() {
+    let mut tree = SubagentTree::new();
+    start(&mut tree, "a", "list the files", 1_000);
+    let tool = with(
+        with(
+            payload("a", "list the files"),
+            "tool_name",
+            json!("terminal"),
+        ),
+        "tool_preview",
+        json!("./mt10 run riemann"),
+    );
+    apply(&mut tree, "subagent.tool", tool, 1_100);
+    let batch = with(
+        payload("a", "list the files"),
+        "text",
+        json!("🔀 [set 1 · 3/10] terminal, read_file"),
+    );
+    apply(&mut tree, "subagent.progress", batch, 1_200);
+    // A second child has only the batched line so far.
+    start(&mut tree, "b", "read the notes", 2_000);
+    let batch = with(
+        payload("b", "read the notes"),
+        "text",
+        json!("🔀 [set 1 · 4/10] terminal, read_file"),
+    );
+    apply(&mut tree, "subagent.progress", batch, 2_100);
+
+    let panel = AgentsPanel::new(key());
+    let lines = texts(&panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        148,
+        48,
+        clock_ms(5_000),
+    ));
+    let first = lines
+        .iter()
+        .find(|l| l.contains("list the files"))
+        .expect("row a");
+    assert!(
+        first
+            .trim_end()
+            .ends_with("terminal(\"./mt10 run riemann\")"),
+        "{first}"
+    );
+    let second = lines
+        .iter()
+        .find(|l| l.contains("read the notes"))
+        .expect("row b");
+    assert!(
+        second.trim_end().ends_with("terminal, read_file"),
+        "{second}"
+    );
+    for line in [first, second] {
+        assert!(!line.contains("[set"), "{line}");
+        assert!(!line.contains('🔀'), "{line}");
+    }
+
+    let mut panel = AgentsPanel::new(key());
+    panel.handle(Action::AgentsDetail, &tree);
+    let lines = texts(&panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        120,
+        40,
+        clock_ms(5_000),
+    ));
+    assert!(
+        lines.iter().any(|l| l == "terminal, read_file"),
+        "{lines:?}"
+    );
+    assert!(lines.iter().all(|l| !l.contains("[set")), "{lines:?}");
+
+    // The dock shows the same readable line.
+    let style = SubagentStyle::default();
+    let dock = SubagentDock::new(
+        &tree,
+        tree.counts(),
+        None,
+        on_with_caps(),
+        None,
+        &style,
+        3,
+        48,
+    );
+    let lines = texts(&dock.lines(100));
+    assert!(
+        lines
+            .iter()
+            .all(|l| !l.contains("[set") && !l.contains('🔀')),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.ends_with("terminal(\"./mt10 run riemann\")")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn panel_selected_row_keeps_glyph_colour() {
+    use ratatui::style::Modifier;
+    let tree = sample_tree();
+    let style = SubagentStyle::default();
+    let panel = AgentsPanel::new(key());
+    let lines = panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        160,
+        48,
+        clock_ms(13_000),
+    );
+    let selected = lines
+        .iter()
+        .find(|line| text(line).starts_with("▸ "))
+        .expect("selected row");
+    let glyph = selected
+        .spans
+        .iter()
+        .position(|span| span.content == "◐")
+        .expect("the glyph has a span of its own");
+    assert_eq!(selected.spans[glyph].style.fg, style.running.fg);
+    assert!(
+        !selected.spans[glyph]
+            .style
+            .add_modifier
+            .contains(Modifier::REVERSED)
+    );
+    for span in &selected.spans[..glyph] {
+        assert!(
+            !span.style.add_modifier.contains(Modifier::REVERSED),
+            "{span:?}"
+        );
+    }
+    assert!(glyph + 1 < selected.spans.len());
+    for span in &selected.spans[glyph + 1..] {
+        assert!(
+            span.style.add_modifier.contains(Modifier::REVERSED),
+            "{span:?}"
+        );
+    }
+    assert_eq!(selected.width(), 160, "the bar runs to the edge");
+    for line in lines.iter().filter(|l| text(l).starts_with("  ◐ ")) {
+        assert!(
+            line.spans
+                .iter()
+                .all(|s| !s.style.add_modifier.contains(Modifier::REVERSED)),
+            "only the selected row is a bar"
+        );
+    }
+}
+
+#[test]
+fn panel_hides_model_column_when_shared() {
+    let mut tree = SubagentTree::new();
+    start(&mut tree, "a", "list the files", 1_000);
+    start(&mut tree, "b", "read the notes", 1_100);
+    let panel = AgentsPanel::new(key());
+    let lines = texts(&panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        148,
+        48,
+        clock_ms(5_000),
+    ));
+    assert!(lines.iter().all(|l| !l.contains("Model")), "{lines:?}");
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.contains("minimax-m3.1-flash"))
+            .count(),
+        1,
+        "the shared model is named once, in the header: {lines:?}"
+    );
+    assert!(
+        lines[1].ends_with("model minimax-m3.1-flash"),
+        "{}",
+        lines[1]
+    );
+
+    // Once the rows differ the column is back and the header stops naming one.
+    let other = with(
+        payload("c", "scan the logs"),
+        "model",
+        json!("other-model-2"),
+    );
+    apply(&mut tree, "subagent.spawn_requested", other.clone(), 2_000);
+    apply(&mut tree, "subagent.start", other, 2_001);
+    let lines = texts(&panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        148,
+        48,
+        clock_ms(5_000),
+    ));
+    assert!(!lines[1].contains("model "), "{}", lines[1]);
+    assert!(lines[2].contains("Model"), "{}", lines[2]);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("scan the logs") && l.contains("other-model-2"))
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("list the files") && l.contains("minimax-m3.1-flash"))
+    );
+}
+
+#[test]
+fn panel_header_counts_only_what_is_nonzero() {
+    let tree = sample_tree();
+    let panel = AgentsPanel::new(key());
+    let lines = texts(&panel.render(
+        &tree,
+        &header(Spawning::Unknown),
+        None,
+        120,
+        48,
+        clock_ms(5_000),
+    ));
+    assert!(lines[0].ends_with("2 running · 1 finished"), "{}", lines[0]);
+    assert_eq!(
+        lines[1],
+        "Spawning state unknown · model minimax-m3.1-flash"
+    );
+    let lines = texts(&panel.render(
+        &tree,
+        &header(Spawning::Paused(None)),
+        None,
+        120,
+        48,
+        clock_ms(5_000),
+    ));
+    assert!(
+        lines[1].starts_with("Spawning paused for all sessions"),
+        "{}",
+        lines[1]
+    );
+}
+
+fn batch_of(rows: &[(&str, &str, &str)]) -> FinishedBatch {
+    let mut tree = SubagentTree::new();
+    for (n, (goal, status, summary)) in rows.iter().enumerate() {
+        let id = format!("child-{n}");
+        let mut body = with(payload(&id, goal), "delegation_id", json!("deleg-x"));
+        apply(
+            &mut tree,
+            "subagent.spawn_requested",
+            body.clone(),
+            1_000 + n as u64 * 10,
+        );
+        apply(
+            &mut tree,
+            "subagent.start",
+            body.clone(),
+            1_001 + n as u64 * 10,
+        );
+        body = with(body, "status", json!(status));
+        body = with(body, "duration_seconds", json!(6.0));
+        body = with(body, "tool_count", json!(3));
+        body = with(body, "summary", json!(summary));
+        apply(&mut tree, "subagent.complete", body, 2_000 + n as u64 * 10);
+    }
+    let mut batches = tree.take_finished_batches();
+    assert_eq!(batches.len(), 1);
+    batches.pop().expect("one batch")
+}
+
+#[test]
+fn batch_block_shows_verdict_not_raw_json() {
+    let style = SubagentStyle::default();
+    let batch = batch_of(&[
+        (
+            "list the files",
+            "completed",
+            "{\n  \"item\": \"alpha\",\n  \"verdict\": \"pass\",\n  \"evidence\": [\"cut mid",
+        ),
+        (
+            "read the notes",
+            "completed",
+            "{\n  \"problem_id\": \"p\",\n  \"notes\": \"cut",
+        ),
+        (
+            "scan the logs",
+            "failed",
+            "{\"verdict\": \"fail\", \"why\": \"cut",
+        ),
+        (
+            "write a poem",
+            "completed",
+            "Wrote the poem. Then checked the rhyme.\nMore",
+        ),
+    ]);
+    let lines = texts(&batch_block_lines(&batch, 100, &style));
+    assert_eq!(
+        lines[1],
+        "  ✓ list the files · 6s · 3 tools · verdict: pass"
+    );
+    assert_eq!(lines[2], "  ✓ read the notes · 6s · 3 tools · JSON result");
+    assert_eq!(
+        lines[3],
+        "  ✗ scan the logs · 6s · 3 tools · failed: verdict: fail"
+    );
+    assert_eq!(
+        lines[4],
+        "  ✓ write a poem · 6s · 3 tools · Wrote the poem."
+    );
+    assert!(lines.iter().all(|l| !l.contains('{')), "{lines:?}");
+}
+
+#[test]
+fn batch_block_drops_shared_goal_words() {
+    let style = SubagentStyle::default();
+    let goals: Vec<String> = ["alpha", "beta", "gamma"]
+        .iter()
+        .map(|n| shared_goal(n))
+        .collect();
+    let batch = batch_of(&[
+        (&goals[0], "completed", "Passed"),
+        (&goals[1], "completed", "Passed"),
+        (&goals[2], "failed", "Broke"),
+    ]);
+    let lines = texts(&batch_block_lines(&batch, 100, &style));
+    assert_eq!(lines.len(), 5, "{lines:?}");
+    assert_eq!(lines[0], "⎇ Subagents · 3 finished · 1 failed · 6s");
+    assert_eq!(lines[1], format!("  {SHARED_CAPTION}"));
+    assert_eq!(lines[2], "  ✓ `alpha` · 6s · 3 tools · Passed");
+    assert_eq!(lines[3], "  ✓ `beta` · 6s · 3 tools · Passed");
+    assert_eq!(lines[4], "  ✗ `gamma` · 6s · 3 tools · failed: Broke");
+}
+
+#[test]
+fn dock_shows_short_labels_and_one_caption() {
+    let style = SubagentStyle::default();
+    let tree = shared_goal_tree();
+    let dock = SubagentDock::new(
+        &tree,
+        tree.counts(),
+        None,
+        on_with_caps(),
+        None,
+        &style,
+        3,
+        48,
+    );
+    let lines = texts(&dock.lines(100));
+    assert_eq!(lines[0], "⎇ Subagents · 10 running");
+    assert_eq!(lines[1], format!("  {SHARED_CAPTION}"));
+    assert_eq!(lines[2], "  ◐ `riemann` · starting");
+    assert_eq!(lines[3], "  ◐ `p-vs-np` · starting");
+    assert_eq!(lines[4], "  ◐ `navier-stokes` · starting");
+    assert_eq!(lines[5], "  … +7 more");
+}
+
+/// Goals with wide characters and a batched progress line.
+fn wide_progress_tree() -> SubagentTree {
+    let mut tree = SubagentTree::new();
+    for (n, name) in ["甲乙", "👨\u{200d}👩\u{200d}👧", "gamma"]
+        .into_iter()
+        .enumerate()
+    {
+        let goal = format!("检查 the `{name}` sample of the demo tool, then 汇报 back");
+        let id = format!("w{n}");
+        start(&mut tree, &id, &goal, 1_000 + n as u64);
+        let batch = with(
+            payload(&id, &goal),
+            "text",
+            json!("🔀 [set 1 · 3/10] terminal, read_file"),
+        );
+        apply(&mut tree, "subagent.progress", batch, 1_500 + n as u64);
+    }
+    tree
+}
+
 mod widths {
     use proptest::prelude::*;
     use unicode_width::UnicodeWidthStr;
@@ -1046,6 +1608,34 @@ mod widths {
             }
             if width >= 20 {
                 assert!(!block.is_empty(), "the block draws at {width}");
+            }
+            let shared = super::shared_goal_tree();
+            let wide = super::wide_progress_tree();
+            for tree in [&shared, &wide] {
+                let dock = SubagentDock::new(
+                    tree,
+                    tree.counts(),
+                    None,
+                    on_with_caps(),
+                    Some("alt+s"),
+                    &style,
+                    3,
+                    height,
+                );
+                for line in dock.lines(width) {
+                    assert!(text_width(&line) <= width, "shared dock overflows at {width}");
+                }
+                let panel = AgentsPanel::new(super::key());
+                for line in panel.render(tree, &header(on_with_caps()), None, width, height, clock_ms(13_000)) {
+                    assert!(text_width(&line) <= width, "shared panel overflows at {width}");
+                }
+            }
+            let batch = super::batch_of(&[
+                ("Check 👨‍👩‍👧 sample 一 of the demo tool, then report back", "completed", "{\"verdict\": \"pass\"}"),
+                ("Check 👨‍👦 sample 二 of the demo tool, then report back", "failed", "{\"x\": 1"),
+            ]);
+            for line in batch_block_lines(&batch, width, &style) {
+                assert!(text_width(&line) <= width, "shared block overflows at {width}");
             }
             let _ = dock.height(width);
             let _ = texts(&block);

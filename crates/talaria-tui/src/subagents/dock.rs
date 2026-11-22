@@ -1,4 +1,5 @@
 //! The live subagent dock and shared row styles.
+use super::labels::goal_labels;
 use crate::{checklist::cut_to_width, history::sanitize, live::LiveSection};
 use ratatui::{
     buffer::Buffer,
@@ -6,7 +7,9 @@ use ratatui::{
     style::Style,
     text::{Line, Span},
 };
-use talaria_core::subagents::{RowState, Spawning, SubagentCounts, SubagentRow, SubagentTree};
+use talaria_core::subagents::{
+    Activity, ActivityKind, RowState, Spawning, SubagentCounts, SubagentRow, SubagentTree,
+};
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Debug)]
@@ -62,13 +65,41 @@ pub(super) fn literal(text: &str) -> String {
     }
     sanitize(&output).into_owned()
 }
+/// Hermes sends one progress line per five tool calls, worded `🔀 [set 1 · 3/10] terminal, read_file`.
+/// It repeats tool events that already arrived, so it is not the line to show first.
+fn is_batch_progress(entry: &Activity) -> bool {
+    entry.kind == ActivityKind::Progress && entry.text.trim_start().starts_with('🔀')
+}
+/// An activity line without Hermes's batch marker: no leading symbol and no `[set 1 · 3/10]` tag.
+pub(super) fn clean_activity(entry: &Activity) -> String {
+    let text = literal(&entry.text);
+    if entry.kind != ActivityKind::Progress {
+        return text;
+    }
+    let mut rest = text.trim_start();
+    if let Some(after) = rest.strip_prefix('🔀') {
+        rest = after.trim_start();
+    }
+    if let Some(tag) = rest.strip_prefix('[')
+        && let Some((_, after)) = tag.split_once(']')
+    {
+        rest = after.trim_start();
+    }
+    rest.to_owned()
+}
+/// What the child is doing now: the newest tool, thinking or summary line.
+/// Batched progress counts only when nothing else has arrived, with its marker removed.
 pub(super) fn activity(row: &SubagentRow) -> String {
     if row.stop_requested {
         return "stopping".into();
     }
     row.activity
-        .back()
-        .map(|a| literal(&a.text))
+        .iter()
+        .rev()
+        .find(|a| !is_batch_progress(a))
+        .or_else(|| row.activity.back())
+        .map(clean_activity)
+        .filter(|text| !text.is_empty())
         .unwrap_or_else(|| {
             if row.state == RowState::Queued {
                 "queued"
@@ -197,13 +228,28 @@ impl<'a> SubagentDock<'a> {
             .into_iter()
             .filter(|r| self.tree.row(r.index).state.is_live())
             .collect();
-        for entry in live.iter().take(usize::from(self.max_rows)) {
+        let goals: Vec<String> = live
+            .iter()
+            .map(|entry| literal(&self.tree.row(entry.index).goal))
+            .collect();
+        let goals: Vec<&str> = goals.iter().map(String::as_str).collect();
+        let found = goal_labels(&goals);
+        if let Some(shared) = &found.shared {
+            lines.push(Line::styled(
+                cut_to_width(&format!("  Task: {shared}"), width),
+                self.style.hint,
+            ));
+        }
+        for (entry, label) in live
+            .iter()
+            .zip(&found.labels)
+            .take(usize::from(self.max_rows))
+        {
             let row = self.tree.row(entry.index);
             let prefix = format!(
-                "{}{} {} · ",
+                "{}{} {label} · ",
                 " ".repeat(2 + 2 * usize::from(entry.depth.min(3))),
                 row.state.glyph(),
-                literal(&row.goal)
             );
             let activity_width = usize::from(width)
                 .saturating_sub(prefix.width())
