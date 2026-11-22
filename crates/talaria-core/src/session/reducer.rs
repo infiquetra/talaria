@@ -699,6 +699,7 @@ fn complete(state: &mut SessionState, payload: &Value) {
     state.seal_reasoning();
     if !state.had_reasoning
         && let Some(text) = nonblank(payload, "reasoning")
+        && !shown_as_commentary(state, text)
     {
         // Reasoning comes before the reply it led to. A reply that streamed is still open
         // here, so the block goes in front of it; otherwise it goes last, before
@@ -744,6 +745,16 @@ fn complete(state: &mut SessionState, payload: &Value) {
     state.seal_all();
     state.turn = TurnState::Finished(outcome);
     state.activity = None;
+}
+
+/// Whether this turn already shows `text` as a reply. Some models report the commentary they
+/// wrote before their last tool call as the turn's reasoning; drawing it again under a thinking
+/// heading would only repeat a line the reader has just seen.
+fn shown_as_commentary(state: &SessionState, text: &str) -> bool {
+    let start = state.turn_start.min(state.cells.len());
+    state.cells[start..]
+        .iter()
+        .any(|cell| matches!(cell, Cell::Assistant(reply) if reply.text.trim() == text.trim()))
 }
 
 /// Whether a gateway print announces an interruption. Hermes prints these lines from its agent

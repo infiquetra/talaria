@@ -727,6 +727,48 @@ fn completion_reasoning_in_a_tool_turn_is_the_latest_step() {
 }
 
 #[test]
+fn completion_reasoning_that_repeats_this_turns_commentary_is_not_drawn_again() {
+    let events = |reasoning: &str| {
+        vec![
+            start(),
+            ev(2, "message.delta", json!({"text": "Found the file."})),
+            ev(
+                3,
+                "tool.start",
+                json!({"tool_id": "call-1", "name": "terminal"}),
+            ),
+            ev(
+                4,
+                "tool.complete",
+                json!({"tool_id": "call-1", "name": "terminal", "result": "ok"}),
+            ),
+            ev(5, "message.delta", json!({"text": "Done"})),
+            ev(
+                6,
+                "message.complete",
+                json!({"status": "complete", "text": "Done", "reasoning": reasoning}),
+            ),
+        ]
+    };
+    let (repeated, _) = run(events(" Found the file.\n"));
+    assert_eq!(
+        order(&repeated),
+        vec!["reply Found the file.", "tool call-1", "reply Done"]
+    );
+    // Reasoning the reader has not seen is still drawn.
+    let (fresh, _) = run(events("Found the file, now reading it."));
+    assert_eq!(
+        order(&fresh),
+        vec![
+            "reply Found the file.",
+            "tool call-1",
+            "thinking (latest step) Found the file, now reading it.",
+            "reply Done"
+        ]
+    );
+}
+
+#[test]
 fn completion_reasoning_after_a_sealed_reply_appends() {
     let (state, _) = run(vec![
         start(),
