@@ -602,6 +602,12 @@ fn session(
         }
         "session.usage" => super::usage::merge_usage(&mut state.usage, payload, true),
         "approval.request" | "clarify.request" | "approval.settled" | "clarify.settled" => {
+            if name.ends_with(".request") {
+                // The turn stops to ask. What it wrote so far is final, so it reaches scrollback
+                // and can be read while the card waits; text after the answer starts a new cell.
+                state.seal_assistant();
+                state.seal_reasoning();
+            }
             super::prompts::session(state, name, payload)
         }
         "approval.cancelled" => super::prompts::cancel_approvals(state, payload),

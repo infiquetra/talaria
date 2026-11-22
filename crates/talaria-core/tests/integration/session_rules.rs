@@ -820,13 +820,16 @@ fn completion_reasoning_insert_keeps_prompt_positions() {
             choice: "once".to_string(),
         },
     ]);
+    // The approval sealed "Asking", so the text after it is a reply of its own and the
+    // end-of-turn reasoning goes in front of that one.
     assert_eq!(
         order(&state),
         vec![
             "tool call-1",
-            "thinking (latest step) careful",
-            "reply Asking first",
+            "reply Asking",
             "prompt p1",
+            "thinking (latest step) careful",
+            "reply  first",
         ]
     );
     assert!(effects.iter().any(
@@ -836,6 +839,128 @@ fn completion_reasoning_insert_keeps_prompt_positions() {
         matches!(prompts(&state)[0].state, PromptState::Answering(ref value) if value == "once")
     );
     assert_eq!(state.open_prompts().count(), 1);
+}
+
+/// The index of the first cell whose short line is `wanted`.
+fn position(state: &SessionState, wanted: &str) -> usize {
+    order(state)
+        .iter()
+        .position(|line| line == wanted)
+        .unwrap_or_else(|| panic!("no {wanted:?} in {:?}", order(state)))
+}
+
+#[test]
+fn a_question_seals_the_open_reply_so_it_commits_while_the_card_waits() {
+    let reply = "| step | what |\n|---|---|\n| 1 | plan |\n\nWhich one?";
+    let (asked, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": reply})),
+        ev(
+            3,
+            "clarify.request",
+            clarify_request("c1", 1, "Which path?"),
+        ),
+    ]);
+    assert_eq!(
+        order(&asked),
+        vec![format!("reply {reply}"), "prompt c1".to_string()]
+    );
+    assert!(
+        assistants(&asked)[0].sealed,
+        "the reply stays open behind the question card"
+    );
+    assert!(
+        asked.final_prefix_len() > position(&asked, &format!("reply {reply}")),
+        "the reply is not final, so it never reaches scrollback while the card waits"
+    );
+
+    // Text after the answer starts a new reply, and the final text is not drawn a third time.
+    let (answered, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": reply})),
+        ev(
+            3,
+            "clarify.request",
+            clarify_request("c1", 1, "Which path?"),
+        ),
+        ev(
+            4,
+            "clarify.settled",
+            clarify_request("c1", 1, "Which path?"),
+        ),
+        ev(
+            5,
+            "message.delta",
+            json!({"text": "\n\nGoing with plan 1."}),
+        ),
+        ev(
+            6,
+            "message.complete",
+            json!({
+                "status": "complete",
+                "text": format!("{reply}\n\nGoing with plan 1."),
+            }),
+        ),
+    ]);
+    assert_eq!(
+        assistant_text(&answered),
+        vec![reply.to_string(), "Going with plan 1.".to_string()]
+    );
+    assert!(position(&answered, "prompt c1") < position(&answered, "reply Going with plan 1."));
+}
+
+#[test]
+fn an_approval_seals_the_open_reasoning_block() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "Checking the folder"})),
+        ev(
+            3,
+            "approval.request",
+            approval_request("p1", 1, &["once", "deny"]),
+        ),
+        ev(4, "reasoning.delta", json!({"text": "Now deleting"})),
+    ]);
+    assert_eq!(
+        order(&state),
+        vec![
+            "thinking Checking the folder",
+            "prompt p1",
+            "thinking Now deleting"
+        ]
+    );
+    assert!(reasoning(&state)[0].sealed);
+    assert!(state.final_prefix_len() >= 1);
+}
+
+#[test]
+fn a_question_after_the_clarify_tool_started_keeps_one_reply() {
+    // The recorded order: the clarify tool's start seals the reply before the request comes.
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Plan first."})),
+        ev(3, "tool.generating", json!({"name": "clarify"})),
+        ev(4, "message.delta", json!({"text": " Then ask."})),
+        ev(
+            5,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "clarify"}),
+        ),
+        ev(
+            6,
+            "clarify.request",
+            clarify_request("c1", 1, "Which path?"),
+        ),
+        ev(
+            7,
+            "message.complete",
+            json!({"status": "complete", "text": "Plan first. Then ask."}),
+        ),
+    ]);
+    assert_eq!(
+        order(&state),
+        vec!["reply Plan first. Then ask.", "tool call-1", "prompt c1"]
+    );
 }
 
 #[test]
