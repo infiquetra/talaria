@@ -634,3 +634,249 @@ fn proposals_for_list_word_and_ranged_number_keys_are_checked_against_their_spec
         RowStatus::Invalid(_)
     ));
 }
+
+/// The context with the given chooser keys typed the way Hermes types them, and their values.
+fn choice_context(fields: &[(&str, FieldKind, Option<Vec<Value>>)], effective: Value) -> Context {
+    let mut ctx = context();
+    for (key, kind, options) in fields {
+        ctx.schema.fields.retain(|field| field.key != *key);
+        let mut added = field();
+        added.key = (*key).into();
+        added.kind = kind.clone();
+        added.options = options.clone();
+        ctx.schema.fields.push(added);
+    }
+    if let (Some(into), Some(from)) = (ctx.effective.as_object_mut(), effective.as_object()) {
+        for (key, value) in from {
+            into.insert(key.clone(), value.clone());
+        }
+    }
+    ctx
+}
+fn proposed(ctx: &Context, key: &str, value: Value) -> Row {
+    validate(&proposal(vec![set(key, value)]), ctx, detect)
+        .unwrap()
+        .remove(0)
+}
+
+#[test]
+fn proposals_for_chooser_keys_are_checked_against_what_the_chooser_offers() {
+    let ctx = choice_context(
+        &[
+            ("agent.coding_context", FieldKind::String, None),
+            (
+                "human_delay.mode",
+                FieldKind::Select,
+                Some(vec![json!("off"), json!("typing"), json!("fixed")]),
+            ),
+            ("computer_use.no_overlay", FieldKind::String, None),
+            (
+                "terminal.modal_mode",
+                FieldKind::Select,
+                Some(vec![json!("sandbox"), json!("function")]),
+            ),
+            (
+                "terminal.backend",
+                FieldKind::Select,
+                Some(vec![json!("local")]),
+            ),
+            (
+                "display.skin",
+                FieldKind::Select,
+                Some(vec![json!("default")]),
+            ),
+            ("agent.service_tier", FieldKind::Select, None),
+            ("desktop.disable_gpu", FieldKind::String, None),
+            ("kanban.default_assignee", FieldKind::String, None),
+        ],
+        json!({
+            "agent": {"coding_context": "auto", "service_tier": ""},
+            "human_delay": {"mode": "off"},
+            "computer_use": {"no_overlay": null},
+            "terminal": {"modal_mode": "auto", "backend": "example-plugin-backend"},
+            "display": {"skin": "default"},
+            "desktop": {"disable_gpu": "auto"},
+            "kanban": {"default_assignee": ""},
+        }),
+    );
+    let ready = [
+        // A built-in value of a key the gateway types as plain text.
+        ("agent.coding_context", json!("focus")),
+        // The corrected lists: the values Hermes reads, not the schema's.
+        ("human_delay.mode", json!("natural")),
+        ("terminal.modal_mode", json!("managed")),
+        ("terminal.modal_mode", json!("direct")),
+        // A key saved as JSON takes its booleans.
+        ("computer_use.no_overlay", json!(true)),
+        // A key that also takes the user's own entries.
+        ("display.skin", json!("example-user-skin")),
+        ("kanban.default_assignee", json!("example-work")),
+        // Spellings Hermes reads as a listed value.
+        ("agent.service_tier", json!("priority")),
+        ("desktop.disable_gpu", json!(true)),
+    ];
+    for (key, value) in ready {
+        let row = proposed(&ctx, key, value.clone());
+        assert_eq!(row.status, RowStatus::Ready, "{key} = {value}");
+    }
+    // The value held now is offered too, even when no list names it.
+    assert_eq!(
+        proposed(&ctx, "terminal.backend", json!("example-plugin-backend")).status,
+        RowStatus::NoChange
+    );
+    let refused = [
+        // Hermes logs these as invalid and reads them as another value.
+        ("human_delay.mode", json!("typing")),
+        ("terminal.modal_mode", json!("sandbox")),
+        ("agent.coding_context", json!("sometimes")),
+        // A fetched list that is not loaded names nothing more than the built-in rows.
+        ("terminal.backend", json!("example-other-backend")),
+        ("agent.coding_context", json!(true)),
+    ];
+    for (key, value) in refused {
+        let row = proposed(&ctx, key, value.clone());
+        assert!(
+            matches!(row.status, RowStatus::Invalid(_)),
+            "{key} = {value}: {:?}",
+            row.status
+        );
+    }
+    // A listed word typed as text is saved the way the chooser saves it.
+    let row = proposed(&ctx, "computer_use.no_overlay", json!("false"));
+    assert_eq!(row.status, RowStatus::Ready);
+    assert!(
+        matches!(&row.change, Change::Set { value, .. } if *value == json!(false)),
+        "{:?}",
+        row.change
+    );
+}
+
+#[test]
+fn every_value_every_chooser_offers_is_a_valid_proposal() {
+    use talaria_core::settings::{Pick, choice_specs};
+    // The memory provider is handed to its own screen whatever the value.
+    for spec in choice_specs()
+        .iter()
+        .filter(|spec| spec.key != "memory.provider")
+    {
+        // Typed the way Hermes types most of them: plain text with no option list.
+        let kind = match spec.pick {
+            Pick::Many { .. } => FieldKind::List,
+            _ => FieldKind::String,
+        };
+        let ctx = choice_context(&[(spec.key, kind, None)], json!({}));
+        let values: Vec<Value> = match spec.pick {
+            Pick::One | Pick::Mixed { .. } => spec
+                .items
+                .iter()
+                .map(|item| spec.saved(item.value))
+                .collect(),
+            Pick::Many { store, .. } => spec
+                .items
+                .iter()
+                .map(|item| match store {
+                    talaria_core::settings::ManyStore::List => json!([item.value]),
+                    talaria_core::settings::ManyStore::CommaString => json!(item.value),
+                })
+                .collect(),
+        };
+        for value in values {
+            let row = proposed(&ctx, spec.key, value.clone());
+            assert!(
+                matches!(row.status, RowStatus::Ready | RowStatus::NoChange),
+                "{} = {value}: {:?}",
+                spec.key,
+                row.status
+            );
+        }
+        // Where the chooser offers an own entry, any text is taken.
+        if spec.custom.is_some() {
+            let own = match spec.pick {
+                Pick::One => json!("example-own-entry"),
+                Pick::Many { .. } => json!(["example-own-entry"]),
+                Pick::Mixed {
+                    own: talaria_core::settings::OwnKind::Number,
+                    ..
+                } => json!(512),
+                Pick::Mixed { .. } => json!(["example-own-entry"]),
+            };
+            let row = proposed(&ctx, spec.key, own.clone());
+            assert_eq!(row.status, RowStatus::Ready, "{} = {own}", spec.key);
+        } else if spec.runtime.is_none() {
+            let unlisted = match spec.pick {
+                Pick::Many { .. } => json!(["example-unlisted"]),
+                _ => json!("example-unlisted"),
+            };
+            let row = proposed(&ctx, spec.key, unlisted.clone());
+            assert!(
+                matches!(row.status, RowStatus::Invalid(_)),
+                "{} = {unlisted}: {:?}",
+                spec.key,
+                row.status
+            );
+        }
+    }
+}
+
+#[test]
+fn toolset_and_skill_lists_take_the_names_the_profile_offers() {
+    let ctx = choice_context(
+        &[
+            ("toolsets", FieldKind::List, None),
+            ("agent.disabled_toolsets", FieldKind::List, None),
+            ("skills.auto_load", FieldKind::List, None),
+        ],
+        json!({"toolsets": ["hermes-cli"], "skills": {"auto_load": []}}),
+    );
+    for (key, value) in [
+        ("toolsets", json!(["hermes-cli", "web"])),
+        ("agent.disabled_toolsets", json!(["web"])),
+        ("skills.auto_load", json!(["notes"])),
+        // Hermes keeps names its lists lack, so an own entry is taken.
+        ("agent.disabled_toolsets", json!(["example-mcp-server"])),
+    ] {
+        assert_eq!(
+            proposed(&ctx, key, value.clone()).status,
+            RowStatus::Ready,
+            "{key} = {value}"
+        );
+    }
+    for (key, value) in [("toolsets", json!("web")), ("skills.auto_load", json!([3]))] {
+        assert!(
+            matches!(
+                proposed(&ctx, key, value.clone()).status,
+                RowStatus::Invalid(_)
+            ),
+            "{key} = {value}"
+        );
+    }
+}
+
+#[test]
+fn proposals_take_a_spelling_hermes_normalises_to_a_listed_value() {
+    let ctx = choice_context(
+        &[
+            ("agent.service_tier", FieldKind::Select, None),
+            ("display.language", FieldKind::String, None),
+            ("browser.engine", FieldKind::String, None),
+        ],
+        json!({"agent": {"service_tier": ""}, "display": {"language": "en"}, "browser": {"engine": "auto"}}),
+    );
+    for (key, value) in [
+        ("agent.service_tier", json!("Fast")),
+        ("display.language", json!("pt_BR")),
+        ("display.language", json!("de-BE")),
+        ("browser.engine", json!("Chrome")),
+    ] {
+        assert_eq!(
+            proposed(&ctx, key, value.clone()).status,
+            RowStatus::Ready,
+            "{key} = {value}"
+        );
+    }
+    // A word Hermes reads as nothing it knows is still refused.
+    assert!(matches!(
+        proposed(&ctx, "agent.service_tier", json!("Fastest")).status,
+        RowStatus::Invalid(_)
+    ));
+}

@@ -79,6 +79,55 @@ fn settings_context_resolves_first_and_rebinds() {
 }
 
 #[test]
+fn the_chooser_names_the_reload_key_the_user_bound() {
+    assert_eq!(
+        KeyMap::defaults().settings_label(SettingsAction::Reload),
+        Some("Ctrl+R".to_owned())
+    );
+    let mut entries = BTreeMap::new();
+    entries.insert("settings_reload".to_owned(), vec!["f5".to_owned()]);
+    let (rebound, notices) = KeyMap::from_entries(&entries);
+    assert!(notices.is_empty(), "{notices:?}");
+    assert_eq!(
+        rebound.settings_label(SettingsAction::Reload),
+        Some("F5".to_owned())
+    );
+    entries.insert("settings_reload".to_owned(), Vec::new());
+    let (unbound, _) = KeyMap::from_entries(&entries);
+    assert_eq!(unbound.settings_label(SettingsAction::Reload), None);
+    // A plain or Shift character types into the chooser's filter, so the hint names the first
+    // chord the chooser takes as a reload, and nothing when no bound chord reaches it.
+    entries.insert(
+        "settings_reload".to_owned(),
+        vec!["g".to_owned(), "shift+g".to_owned(), "f5".to_owned()],
+    );
+    let (typed_first, notices) = KeyMap::from_entries(&entries);
+    assert!(notices.is_empty(), "{notices:?}");
+    assert_eq!(
+        typed_first.settings_label(SettingsAction::Reload),
+        Some("F5".to_owned())
+    );
+    let chooser = view(Screen::Choosing, true);
+    assert_eq!(
+        route_settings(&chooser, &typed_first, &key("g")),
+        Some(SettingsKey::Char('g'))
+    );
+    assert_eq!(
+        route_settings(&chooser, &typed_first, &key("f5")),
+        Some(SettingsKey::Action(SettingsAction::Reload))
+    );
+    entries.insert("settings_reload".to_owned(), vec!["g".to_owned()]);
+    let (typed_only, _) = KeyMap::from_entries(&entries);
+    assert_eq!(typed_only.settings_label(SettingsAction::Reload), None);
+    entries.insert("settings_reload".to_owned(), vec!["alt+g".to_owned()]);
+    let (alt, _) = KeyMap::from_entries(&entries);
+    assert_eq!(
+        alt.settings_label(SettingsAction::Reload),
+        Some("Alt+G".to_owned())
+    );
+}
+
+#[test]
 fn ctrl_r_reaches_the_chooser_and_typing_still_filters() {
     let map = KeyMap::defaults();
     let choosing = view(Screen::Choosing, true);

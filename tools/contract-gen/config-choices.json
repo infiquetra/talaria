@@ -25,6 +25,12 @@
    ]
   },
   {
+   "key": "agent.disabled_toolsets",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": []
+  },
+  {
    "key": "agent.execution_guidance",
    "kind": "comment",
    "file": "hermes_cli/config_defaults.py",
@@ -429,6 +435,31 @@
    ]
   },
   {
+   "key": "display.language",
+   "kind": "constant",
+   "file": "agent/i18n.py",
+   "name": "SUPPORTED_LANGUAGES",
+   "values": [
+    "en",
+    "zh",
+    "zh-hant",
+    "ja",
+    "de",
+    "es",
+    "fr",
+    "tr",
+    "uk",
+    "af",
+    "ko",
+    "it",
+    "ga",
+    "pt",
+    "ru",
+    "hu",
+    "ar"
+   ]
+  },
+  {
    "key": "display.memory_notifications",
    "kind": "comment",
    "file": "hermes_cli/config_defaults.py",
@@ -716,6 +747,12 @@
    ]
   },
   {
+   "key": "skills.auto_load",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": []
+  },
+  {
    "key": "streaming.transport",
    "kind": "comment",
    "file": "hermes_cli/config_defaults.py",
@@ -857,6 +894,14 @@
     "auto",
     "on",
     "off"
+   ]
+  },
+  {
+   "key": "toolsets",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "hermes-cli"
    ]
   },
   {

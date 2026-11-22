@@ -23,6 +23,8 @@ pub struct ChoiceSpec {
     pub ask: &'static str,
     pub schema: SchemaList,
     pub save: SaveAs,
+    /// How Hermes compares a stored word with the listed values before it reads it.
+    pub fold: Fold,
     /// A list that differs per install or profile, fetched when the chooser opens and merged
     /// after the built-in rows.
     pub runtime: Option<RuntimeList>,
@@ -39,6 +41,10 @@ pub enum RuntimeList {
     ContextEngines,
     /// The profiles the gateway serves.
     Profiles,
+    /// The toolsets the profile offers.
+    Toolsets,
+    /// The skills installed for the profile.
+    Skills,
 }
 
 /// One value a fetched list offers.
@@ -105,6 +111,18 @@ pub enum SaveAs {
     List,
 }
 
+/// How Hermes reads a stored word before comparing it with the values it knows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+    /// Exactly as stored.
+    Exact,
+    /// Trimmed and lowercased.
+    Word,
+    /// Trimmed, lowercased, underscores as hyphens, and a regional tag such as `de-be` read as
+    /// its base language when no alias names it.
+    Language,
+}
+
 /// One row of a key's list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChoiceValue {
@@ -159,6 +177,10 @@ impl ChoiceSpec {
         }
     }
 
+    const fn fold(self, fold: Fold) -> Self {
+        Self { fold, ..self }
+    }
+
     const fn runtime(self, list: RuntimeList) -> Self {
         Self {
             runtime: Some(list),
@@ -189,6 +211,7 @@ const fn one(key: &'static str, items: &'static [ChoiceValue]) -> ChoiceSpec {
         ask: "",
         schema: SchemaList::Merge,
         save: SaveAs::Text,
+        fold: Fold::Exact,
         runtime: None,
     }
 }
@@ -534,6 +557,15 @@ static SPECS: &[ChoiceSpec] = &[
             v("off", "No coding brief."),
         ],
     ),
+    many(
+        "agent.disabled_toolsets",
+        false,
+        Some("None disabled"),
+        ManyStore::List,
+        &[],
+    )
+    .custom("Toolset names, separated by commas; Hermes skips a name it does not know.")
+    .runtime(RuntimeList::Toolsets),
     mixed(
         "agent.execution_guidance",
         "Own list…",
@@ -577,8 +609,8 @@ static SPECS: &[ChoiceSpec] = &[
         &[
             v("", "Normal speed (fast mode off).")
                 .label("Normal")
-                .aliases(&["normal"]),
-            v("fast", "Fast mode on every request."),
+                .aliases(&["normal", "default", "standard", "off", "none"]),
+            v("fast", "Fast mode on every request.").aliases(&["priority", "on"]),
             v(
                 "auto",
                 "Fast mode for the first fast_auto_seconds of every turn.",
@@ -587,9 +619,11 @@ static SPECS: &[ChoiceSpec] = &[
             v(
                 "ultrafast",
                 "OpenAI ultrafast tier; only some models accept it.",
-            ),
+            )
+            .aliases(&["ultra"]),
         ],
-    ),
+    )
+    .fold(Fold::Word),
     one(
         "agent.text_verbosity",
         &[
@@ -711,7 +745,8 @@ static SPECS: &[ChoiceSpec] = &[
                 "Lightpanda, one per session: faster, no screenshots.",
             ),
         ],
-    ),
+    )
+    .fold(Fold::Word),
     one(
         "code_execution.mode",
         &[
@@ -826,10 +861,11 @@ static SPECS: &[ChoiceSpec] = &[
         "desktop.disable_gpu",
         &[
             v("auto", "Disable the GPU only on remote displays."),
-            v("true", "Always software rendering."),
-            v("false", "Always keep the GPU on."),
+            v("true", "Always software rendering.").aliases(&["1", "yes", "on"]),
+            v("false", "Always keep the GPU on.").aliases(&["0", "no", "off"]),
         ],
-    ),
+    )
+    .fold(Fold::Word),
     one(
         "desktop.ozone_platform_hint",
         &[
@@ -949,6 +985,68 @@ static SPECS: &[ChoiceSpec] = &[
         ],
     ),
     one(
+        "display.language",
+        &[
+            v("en", "English.").aliases(&["english", "en-us", "en-gb"]),
+            v("af", "Afrikaans.").aliases(&["afrikaans", "af-za"]),
+            v("ar", "Arabic.").aliases(&[
+                "arabic",
+                "العربية",
+                "ar-sa",
+                "ar-eg",
+                "ar-ae",
+                "ar-ma",
+                "ar-dz",
+            ]),
+            v("de", "German.").aliases(&["german", "deutsch", "de-de", "de-at", "de-ch"]),
+            v("es", "Spanish.")
+                .aliases(&["spanish", "español", "espanol", "es-es", "es-mx", "es-ar"]),
+            v("fr", "French.").aliases(&[
+                "french",
+                "français",
+                "france",
+                "fr-fr",
+                "fr-be",
+                "fr-ca",
+                "fr-ch",
+            ]),
+            v("ga", "Irish.").aliases(&["irish", "gaeilge", "ga-ie"]),
+            v("hu", "Hungarian.").aliases(&["hungarian", "magyar", "hu-hu"]),
+            v("it", "Italian.").aliases(&["italian", "italiano", "it-it", "it-ch"]),
+            v("ja", "Japanese.").aliases(&["japanese", "jp", "ja-jp"]),
+            v("ko", "Korean.").aliases(&["korean", "한국어", "ko-kr"]),
+            v("pt", "Portuguese.").aliases(&[
+                "portuguese",
+                "português",
+                "portugues",
+                "pt-pt",
+                "pt-br",
+                "brazilian",
+                "brasileiro",
+            ]),
+            v("ru", "Russian.").aliases(&["russian", "русский", "ru-ru"]),
+            v("tr", "Turkish.").aliases(&["turkish", "türkçe", "tr-tr"]),
+            v("uk", "Ukrainian.").aliases(&[
+                "ukrainian",
+                "ukrainisch",
+                "українська",
+                "uk-ua",
+                "ua",
+            ]),
+            v("zh", "Chinese, simplified.")
+                .aliases(&["chinese", "mandarin", "zh-cn", "zh-hans", "zh-sg"]),
+            v("zh-hant", "Chinese, traditional.").aliases(&[
+                "traditional-chinese",
+                "traditional_chinese",
+                "zh-tw",
+                "zh-hk",
+                "zh-mo",
+            ]),
+        ],
+    )
+    .custom("The code of a language from an installed language pack.")
+    .fold(Fold::Language),
+    one(
         "display.memory_notifications",
         &[
             v("on", "A generic 'Memory updated' notice."),
@@ -982,6 +1080,7 @@ static SPECS: &[ChoiceSpec] = &[
         ],
     )
     .custom("The name of a personality defined in the profile's config.")
+    .fold(Fold::Word)
     .runtime(RuntimeList::Personalities),
     one(
         "display.pet.render_mode",
@@ -1253,6 +1352,15 @@ static SPECS: &[ChoiceSpec] = &[
             v("off", "No notice."),
         ],
     ),
+    many(
+        "skills.auto_load",
+        false,
+        Some("No skills"),
+        ManyStore::List,
+        &[],
+    )
+    .custom("Skill names, separated by commas; Hermes skips a name it cannot find.")
+    .runtime(RuntimeList::Skills),
     one(
         "streaming.transport",
         &[
@@ -1409,6 +1517,15 @@ static SPECS: &[ChoiceSpec] = &[
             v("off", "Always the bare bridge."),
         ],
     ),
+    many(
+        "toolsets",
+        false,
+        None,
+        ManyStore::List,
+        &[v("hermes-cli", "The standard toolset of the Hermes CLI.")],
+    )
+    .custom("Toolset names, separated by commas; Hermes skips a name it does not know.")
+    .runtime(RuntimeList::Toolsets),
     one(
         "tts.edge.voice",
         &[

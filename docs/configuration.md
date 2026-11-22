@@ -537,7 +537,14 @@ Home and End jump to the ends, Enter chooses and Esc cancels. The lists come fro
 gateway's schema plus a table built into Talaria for keys the schema types as plain text;
 that table also corrects schema lists that name values Hermes does not read, such as
 `terminal.modal_mode`. A value set outside the list shows as
-`<value> (current, not in the list)`, and Enter on it keeps it unchanged. Where Hermes also
+`<value> (current, not in the list)`, and Enter on it keeps it unchanged. A stored spelling
+Hermes reads as a listed value, such as `priority` for `fast` in `agent.service_tier`, marks
+that value's row as `fast (current, saved as priority)`, and Enter on it keeps the stored
+spelling. Where Hermes ignores case and spaces, as for `agent.service_tier`,
+`browser.engine`, `desktop.disable_gpu` and `display.personality`, so does the chooser; for
+`display.language` it also reads `_` as `-` and a regional code such as `de-BE` as its
+language, `de`. `display.language` lists the languages Hermes ships, such as `en`, `de` and
+`zh-hant`; a language pack's own code goes in `Type a value…`. Where Hermes also
 takes values outside the list, such as plugin names or voice names, a last row
 `Type a value…` opens a text box that starts with the filter text. The command form below
 accepts the same values, and its refusal names them: `Choose one of: auto, managed, direct.`
@@ -551,7 +558,10 @@ list lacks, such as a field name a newer Hermes added, stays ticked as
 `<value> (not in the list)` until you untick it. Where the order is the order shown, as in
 the runtime footer, a new tick goes last, and `Edit as text…` opens the list as comma
 separated text to reorder it. `discord.server_actions` is a string in Hermes, so its ticks
-are saved as one comma separated string; the other keys save a list.
+are saved as one comma separated string; the other keys save a list. `toolsets`,
+`agent.disabled_toolsets` and `skills.auto_load` tick the profile's own toolsets or skills,
+fetched like the lists below, and an `Own entries…` row opens the list as comma separated
+text for names the list lacks.
 
 A setting that takes one of a few words or something of your own lists the words and ends
 in a row that opens a text box. `agent.tool_use_enforcement`, `agent.execution_guidance` and
@@ -571,17 +581,21 @@ takes a whole number or stays blank; blank is saved as `null`. A number with no 
 keeps the plain text box, and Talaria adds no range of its own.
 
 Some lists differ per machine or profile: skins, personalities, terminal backends, dashboard
-themes, context engines and the profile names the kanban keys take. Their choosers show the
+themes, context engines, toolsets, skills and the profile names the kanban keys take. Their choosers show the
 built-in names at once with a `Loading the list…` row and add the profile's own names when
 the gateway answers. Skins and personalities come from slash completion on the session
 connection; backends (with a setup status), themes and context engines come from the
-dashboard routes with the profile's own ticket; profile names are the ones the gateway
-serves. If the list cannot be read, the row says
+dashboard routes with the profile's own ticket, as do toolsets and skills; profile names are
+the ones the gateway serves. Keys that share a list, such as the two kanban keys, share its
+answer. If the list cannot be read, the row says
 `Could not load the list (<reason>). Showing built-in names. Ctrl+R retries.` and the
-chooser stays usable. Until the list arrives, a current value that no built-in name matches
+chooser stays usable. These hints name the first key bound to `settings_reload` that a chooser takes, and leave
+it out when there is none: a plain or Shift character types into the filter instead. Until the list arrives, a current value that no built-in name matches
 shows as `<value> (current)`, and the cursor stays on the same value when the list merges. In a chooser, the `settings_reload` binding (Ctrl+R) asks for its list
 again instead of reloading every setting. A list is kept while settings stay open.
-Pending edits require confirmation before closing. Ctrl+Z suspends as usual.
+The `/configure` helper checks each proposed setting against the same lists the chooser
+offers, including a list already fetched and the value held now. Pending edits require
+confirmation before closing. Ctrl+Z suspends as usual.
 
 Secrets are fully masked. R reveals a selected secret once for ten seconds or until the
 next key. While editing a secret, Alt+R reveals it once; plain R inserts text.

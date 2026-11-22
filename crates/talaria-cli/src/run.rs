@@ -4072,6 +4072,11 @@ impl Screen for TuiScreen {
         talaria_tui::profiles::key_labels(&self.keymap)
     }
 
+    fn settings_reload_key(&self) -> Option<String> {
+        self.keymap
+            .settings_label(talaria_core::settings::SettingsAction::Reload)
+    }
+
     fn profiles_page_size(&self, view: &ProfilesView) -> usize {
         let (width, height) = self.pane_size();
         talaria_tui::profiles::list_page_size(view, ratatui::layout::Rect::new(0, 0, width, height))

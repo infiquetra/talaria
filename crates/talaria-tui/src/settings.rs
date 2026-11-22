@@ -528,7 +528,7 @@ pub fn route_settings(view: &SettingsView, map: &KeyMap, key: &Key) -> Option<Se
             .map(SettingsKey::Action);
     }
     // A chooser takes the reload binding to ask for its fetched list again; a plain character
-    // still types into the filter.
+    // still types into the filter. `KeyChord::reaches_a_chooser` is the same test for the hint.
     if view.screen == Screen::Choosing
         && (!matches!(key.code, KeyCode::Char(_)) || key.mods.ctrl || key.mods.alt)
         && map.resolve_settings(KeyContext::Settings, key)

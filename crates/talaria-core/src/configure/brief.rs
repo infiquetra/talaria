@@ -1,7 +1,7 @@
 use super::reply::{cut, sanitize_text};
-use super::validate::lookup;
+use super::validate::{fetched_list, lookup};
 use super::{BRIEF_MAX_BYTES, CONTEXT_REPLY_MAX_BYTES, Context, Need, SecretDetector, Section};
-use crate::settings::{contains_secret_key, env_reference_names, is_secret_key};
+use crate::settings::{contains_secret_key, env_reference_names, is_secret_key, offered_options};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -429,11 +429,20 @@ pub fn build_context_reply(ctx: &Context, need: &Need, detect: SecretDetector) -
                     .or_else(|| lookup(&ctx.effective, &field.key));
                 let current = fields.value(&field.key, current);
                 let default = fields.value(&field.key, lookup(&ctx.defaults, &field.key));
-                let options = field
-                    .options
-                    .as_ref()
-                    .map(|v| fields.value(&field.key, Some(&Value::Array(v.clone()))))
-                    .unwrap_or_else(|| "none".into());
+                // The values the key's chooser offers, so a proposal can use them.
+                let fetched = fetched_list(ctx, &field.key);
+                let options = match offered_options(field, fetched.as_deref()) {
+                    Some((values, own)) => format!(
+                        "{}{}",
+                        fields.value(&field.key, Some(&Value::Array(values))),
+                        if own { " or your own entry" } else { "" }
+                    ),
+                    None => field
+                        .options
+                        .as_ref()
+                        .map(|v| fields.value(&field.key, Some(&Value::Array(v.clone()))))
+                        .unwrap_or_else(|| "none".into()),
+                };
                 lines.push(format!(
                     "{} | {} | {} | {} | {}",
                     fields.text(&field.key),
