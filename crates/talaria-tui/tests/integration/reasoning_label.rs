@@ -31,6 +31,7 @@ fn reasoning(id: u64, text: &str) -> Cell {
         id: CellId::new(id),
         text: text.to_string(),
         sealed: true,
+        latest_step: false,
     })
 }
 
@@ -46,7 +47,9 @@ fn answer(id: u64, text: &str) -> Cell {
 
 fn is_label(text: &str) -> bool {
     let trimmed = text.trim();
-    trimmed == "thinking" || trimmed == "\u{2234} thinking"
+    trimmed == "thinking"
+        || trimmed == "\u{2234} thinking"
+        || trimmed == "\u{2234} thinking (latest step)"
 }
 
 fn painted(line: &Line<'_>) -> Vec<Style> {
@@ -111,6 +114,32 @@ fn reply_labels_reasoning_once_and_not_the_answer() {
     );
     assert_eq!(answer_lines.len(), 1, "an answer gains no line");
     assert_eq!(answer_lines[0].to_string(), answer_text);
+}
+
+#[test]
+fn latest_step_reasoning_label_names_the_step() {
+    let theme = theme();
+    let themed = ThemedCells { theme: &theme };
+    let text = "Checked the last result before answering.";
+    let late = Cell::Reasoning(ReasoningCell {
+        id: CellId::new(1),
+        text: text.to_string(),
+        sealed: true,
+        latest_step: true,
+    });
+    let lines = themed.lines(&late, WIDTH);
+
+    assert_eq!(lines[0].to_string(), "\u{2234} thinking (latest step)");
+    assert_label(&lines[0], theme.reasoning);
+    assert_eq!(
+        lines.len(),
+        2,
+        "the label adds one line before the reasoning"
+    );
+    assert_eq!(lines[1].to_string(), text);
+
+    let plain = themed.lines(&reasoning(2, text), WIDTH);
+    assert_eq!(plain[0].to_string(), "\u{2234} thinking");
 }
 
 #[test]

@@ -71,6 +71,7 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
                         id: state.next_id(),
                         text,
                         sealed: true,
+                        latest_step: false,
                     }));
                 }
                 if let Some(text) = text.filter(|text| !text.trim().is_empty()) {

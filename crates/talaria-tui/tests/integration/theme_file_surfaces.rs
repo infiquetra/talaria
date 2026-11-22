@@ -211,6 +211,7 @@ fn draw(file: &ThemeFile) -> vt100::Parser {
             id: CellId::new(1),
             text: "Reasoning prose".into(),
             sealed: true,
+            latest_step: false,
         }),
         100,
     ));

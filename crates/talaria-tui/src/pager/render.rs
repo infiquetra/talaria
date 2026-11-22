@@ -136,7 +136,7 @@ impl<'a> PagerCellLines<'a> {
         let rendered = render_markdown_with_theme(&cell.text, &options, views);
         let body: Vec<Line<'static>> = rendered.into_iter().map(|line| indent(line, 2)).collect();
         let mut out = vec![Line::styled(
-            "\u{2234} thinking".to_string(),
+            crate::theme::cells::reasoning_heading(cell).to_string(),
             self.theme.dim,
         )];
         if self.details == Details::Compact {

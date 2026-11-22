@@ -657,6 +657,134 @@ fn reasoning_runs_are_separate_cells_complete_reasoning_once() {
     assert!(reasoning(&empty).is_empty());
 }
 
+/// The transcript order as one short line per cell, as a reader would scan it.
+fn order(state: &SessionState) -> Vec<String> {
+    state
+        .cells()
+        .iter()
+        .map(|cell| match cell {
+            Cell::Assistant(cell) => format!("reply {}", cell.text),
+            Cell::Reasoning(cell) if cell.latest_step => {
+                format!("thinking (latest step) {}", cell.text)
+            }
+            Cell::Reasoning(cell) => format!("thinking {}", cell.text),
+            Cell::Tool(cell) => format!("tool {}", cell.tool_id),
+            Cell::Prompt(cell) => format!("prompt {}", cell.key.prompt_id),
+            Cell::Notice(cell) => format!("notice {}", cell.text),
+            _ => "other".to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn completion_reasoning_goes_before_the_streamed_reply() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Hi"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "complete", "text": "Hi", "reasoning": "because"}),
+        ),
+    ]);
+    assert_eq!(order(&state), vec!["thinking because", "reply Hi"]);
+    assert!(reasoning(&state)[0].sealed);
+    assert!(assistants(&state)[0].sealed);
+}
+
+#[test]
+fn completion_reasoning_in_a_tool_turn_is_the_latest_step() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Plan"})),
+        ev(
+            3,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "terminal"}),
+        ),
+        ev(
+            4,
+            "tool.complete",
+            json!({"tool_id": "call-1", "name": "terminal", "result": "ok"}),
+        ),
+        ev(5, "message.delta", json!({"text": "Done"})),
+        ev(
+            6,
+            "message.complete",
+            json!({"status": "complete", "text": "Done", "reasoning": "why"}),
+        ),
+    ]);
+    assert_eq!(
+        order(&state),
+        vec![
+            "reply Plan",
+            "tool call-1",
+            "thinking (latest step) why",
+            "reply Done"
+        ]
+    );
+    assert_eq!(tools(&state)[0].status, ToolStatus::Succeeded);
+}
+
+#[test]
+fn completion_reasoning_after_a_sealed_reply_appends() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Hi"})),
+        ev(3, "message.delta", json!({"text": null})),
+        ev(
+            4,
+            "message.complete",
+            json!({"status": "complete", "text": "Hi", "reasoning": "because"}),
+        ),
+    ]);
+    assert_eq!(order(&state), vec!["reply Hi", "thinking because"]);
+}
+
+#[test]
+fn completion_reasoning_insert_keeps_prompt_positions() {
+    let (state, effects) = run(vec![
+        start(),
+        ev(
+            2,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "terminal"}),
+        ),
+        ev(3, "message.delta", json!({"text": "Asking"})),
+        ev(
+            4,
+            "approval.request",
+            approval_request("p1", 1, &["once", "deny"]),
+        ),
+        ev(5, "message.delta", json!({"text": " first"})),
+        ev(
+            6,
+            "message.complete",
+            json!({"status": "complete", "text": "Asking first", "reasoning": "careful"}),
+        ),
+        Event::AnswerApproval {
+            key: key("p1", 1),
+            choice: "once".to_string(),
+        },
+    ]);
+    assert_eq!(
+        order(&state),
+        vec![
+            "tool call-1",
+            "thinking (latest step) careful",
+            "reply Asking first",
+            "prompt p1",
+        ]
+    );
+    assert!(effects.iter().any(
+        |effect| matches!(effect, Effect::RespondApproval { choice, .. } if choice == "once")
+    ));
+    assert!(
+        matches!(prompts(&state)[0].state, PromptState::Answering(ref value) if value == "once")
+    );
+    assert_eq!(state.open_prompts().count(), 1);
+}
+
 #[test]
 fn tool_complete_without_start_still_makes_a_cell() {
     let (state, _) = run(vec![

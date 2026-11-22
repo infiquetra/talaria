@@ -5,7 +5,7 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use talaria_core::session::{Cell, CellId, NoticeKind};
+use talaria_core::session::{Cell, CellId, NoticeKind, ReasoningCell};
 
 use super::Theme;
 use crate::automation::hermes_command_lines_with_options_and_theme;
@@ -116,7 +116,7 @@ impl CellLines for ThemedCells<'_> {
             },
             &self.theme.views,
         );
-        if matches!(cell, Cell::Reasoning(_)) {
+        if let Cell::Reasoning(reasoning) = cell {
             let heading = base_style.add_modifier(Modifier::DIM);
             let heading = if self.theme.views.active() {
                 self.theme
@@ -125,9 +125,19 @@ impl CellLines for ThemedCells<'_> {
             } else {
                 heading
             };
-            lines.insert(0, Line::styled("∴ thinking", heading));
+            lines.insert(0, Line::styled(reasoning_heading(reasoning), heading));
         }
         lines
+    }
+}
+
+/// The heading line of a reasoning block. Hermes's end-of-turn reasoning in a turn that ran
+/// tools is only the latest step's thinking, drawn after that step, so its heading says so.
+pub fn reasoning_heading(cell: &ReasoningCell) -> &'static str {
+    if cell.latest_step {
+        "∴ thinking (latest step)"
+    } else {
+        "∴ thinking"
     }
 }
 

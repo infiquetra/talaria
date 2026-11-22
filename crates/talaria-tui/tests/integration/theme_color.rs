@@ -316,6 +316,7 @@ fn inline_user_and_notice_use_theme_colours() {
         id: CellId::new(8),
         text: "the route".to_owned(),
         sealed: true,
+        latest_step: false,
     });
     let reasoning_lines = painted_styles(&reasoning);
     assert!(reasoning_lines.len() >= 2);

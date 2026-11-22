@@ -480,6 +480,7 @@ fn session(
                         id: state.next_id(),
                         text: text.to_owned(),
                         sealed: false,
+                        latest_step: false,
                     }));
                 }
             }
@@ -685,11 +686,21 @@ fn complete(state: &mut SessionState, payload: &Value) {
     if !state.had_reasoning
         && let Some(text) = nonblank(payload, "reasoning")
     {
-        state.cells.push(Cell::Reasoning(ReasoningCell {
+        // Reasoning comes before the reply it led to. A reply that streamed is still open
+        // here, so the block goes in front of it; otherwise it goes last, before
+        // `complete_text` adds the reply. Hermes sends only the latest step's reasoning, so in
+        // a turn that ran tools the block is marked as that late recap.
+        let at = state
+            .assistant
+            .filter(|index| *index >= state.final_prefix)
+            .unwrap_or(state.cells.len());
+        let cell = Cell::Reasoning(ReasoningCell {
             id: state.next_id(),
             text: text.to_owned(),
             sealed: true,
-        }));
+            latest_step: !state.tools.is_empty(),
+        });
+        state.insert_cell_at(at, cell);
         state.had_reasoning = true;
     }
     match outcome {

@@ -33,6 +33,7 @@ fn cell_lines_markdown_and_delegate() {
         id: CellId::new(3),
         text: text.to_string(),
         sealed: true,
+        latest_step: false,
     });
 
     assert_eq!(

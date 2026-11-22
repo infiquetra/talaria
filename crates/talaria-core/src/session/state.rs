@@ -293,6 +293,13 @@ impl SessionState {
     /// reply streams after it. The stored positions of later cells move with them.
     pub fn insert_final(&mut self, cell: Cell) {
         let at = self.final_prefix.min(self.cells.len());
+        self.insert_cell_at(at, cell);
+    }
+
+    /// Insert one cell at `at`, never inside the final prefix. The stored positions of later
+    /// cells move with them.
+    pub(crate) fn insert_cell_at(&mut self, at: usize, cell: Cell) {
+        let at = at.clamp(self.final_prefix.min(self.cells.len()), self.cells.len());
         self.cells.insert(at, cell);
         let shift = |index: &mut usize| {
             if *index >= at {

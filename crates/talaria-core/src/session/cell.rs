@@ -103,6 +103,9 @@ pub struct ReasoningCell {
     pub text: String,
     /// Set when a later event seals the run.
     pub sealed: bool,
+    /// Hermes's end-of-turn reasoning for a turn that ran tools. It is the latest step's
+    /// thinking, shown once after that step was already drawn.
+    pub latest_step: bool,
 }
 
 /// Outcome of a tool cell.

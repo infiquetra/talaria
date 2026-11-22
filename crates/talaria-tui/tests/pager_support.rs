@@ -60,6 +60,7 @@ pub fn reasoning(id: u64, text: &str) -> Cell {
         id: CellId::new(id),
         text: text.to_string(),
         sealed: true,
+        latest_step: false,
     })
 }
 
