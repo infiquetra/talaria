@@ -4483,7 +4483,7 @@ impl Screen for TuiScreen {
         if let Some(state) = view.state {
             self.commit_closed_blocks(state, view, width);
         }
-        let mut tail: Vec<Line<'static>> = view
+        let tail: Vec<Line<'static>> = view
             .state
             .map(|state| {
                 let limit = usize::from(self.terminal.viewport().height)
@@ -4496,11 +4496,21 @@ impl Screen for TuiScreen {
                 let captured = &mut self.captured;
                 let tools = &self.cells;
                 let replies = &self.replies;
+                let cards = &self.prompts;
                 let transcript_key = self.keymap.label(Action::TranscriptOpen);
-                state
+                // A long open reply drawn from its last lines only: the cut marker's count is
+                // then a floor.
+                let mut shortened = false;
+                let lines: Vec<Line<'static>> = state
                     .live_tail()
                     .iter()
                     .flat_map(|cell| {
+                        // The card on top already shows its question, so the tail skips it.
+                        if let Cell::Prompt(prompt) = cell
+                            && cards.shows_prompt(&prompt.key)
+                        {
+                            return Vec::new();
+                        }
                         // A reply partly in scrollback draws only its rest, after a blank row.
                         let rest = replies.live_rest(cell);
                         let (cell, separated) = match &rest {
@@ -4524,7 +4534,10 @@ impl Screen for TuiScreen {
                             transcript_key: transcript_key.as_deref(),
                         };
                         let lines = match preview(cell, limit) {
-                            Some(trimmed) => cells.lines(&trimmed, width),
+                            Some(trimmed) => {
+                                shortened = true;
+                                cells.lines(&trimmed, width)
+                            }
                             None => cells.lines(cell, width),
                         };
                         if separated {
@@ -4533,12 +4546,28 @@ impl Screen for TuiScreen {
                             lines
                         }
                     })
-                    .collect()
+                    .collect();
+                // Rows cut from the top are not in scrollback yet; the first row kept says so.
+                talaria_tui::live::clip_tail(lines, MAX_TAIL_ROWS, |hidden| {
+                    let dim = Style::default().add_modifier(Modifier::DIM);
+                    let style = if current.views.active() {
+                        current
+                            .views
+                            .inline(talaria_tui::theme::surfaces::tokens::TRANSCRIPT_NOTICE, dim)
+                    } else {
+                        dim
+                    };
+                    Line::styled(
+                        talaria_tui::live::tail_cut_text(
+                            hidden,
+                            shortened,
+                            transcript_key.as_deref(),
+                        ),
+                        style,
+                    )
+                })
             })
             .unwrap_or_default();
-        if tail.len() > MAX_TAIL_ROWS {
-            tail.drain(..tail.len() - MAX_TAIL_ROWS);
-        }
         let tail = MarkdownTailSection::new(tail);
         let drafting = DraftingLine {
             drafted: view.state.and_then(|state| state.drafting_tool()),

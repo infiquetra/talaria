@@ -96,21 +96,44 @@ pub fn max_live_height(rows: u16) -> u16 {
     rows.saturating_sub(2)
 }
 
-/// Cuts the live tail to its last `max` rows.
+/// Cuts the live tail to its last `max` rows. When rows are cut, the first row kept gives way
+/// to `marker(hidden)`, where `hidden` counts every row not drawn, so the cut is never silent.
 pub fn clip_tail(
     mut lines: Vec<Line<'static>>,
     max: usize,
-    _marker: impl FnOnce(usize) -> Line<'static>,
+    marker: impl FnOnce(usize) -> Line<'static>,
 ) -> Vec<Line<'static>> {
-    if lines.len() > max {
-        lines.drain(..lines.len() - max);
+    if lines.len() <= max {
+        return lines;
     }
+    if max == 0 {
+        return Vec::new();
+    }
+    let hidden = lines.len() - max + 1;
+    lines.drain(..hidden);
+    lines.insert(0, marker(hidden));
     lines
 }
 
-/// The text of a cut tail's first row.
-pub fn tail_cut_text(_hidden: usize, _more: bool, _transcript_key: Option<&str>) -> String {
-    String::new()
+/// The text of a cut tail's first row: how many earlier rows are not in scrollback yet and the
+/// key that shows them now, or the transcript view when no key opens it. `more` says the count
+/// is a floor, because a long reply was already shortened before the cut.
+pub fn tail_cut_text(hidden: usize, more: bool, transcript_key: Option<&str>) -> String {
+    let (noun, verb, them) = if hidden == 1 && !more {
+        ("row", "is", "it")
+    } else {
+        ("rows", "are", "them")
+    };
+    let count = if more {
+        format!("more than {hidden}")
+    } else {
+        hidden.to_string()
+    };
+    let shows = match transcript_key {
+        Some(key) => format!("{key} shows {them} now"),
+        None => format!("the transcript view shows {them}"),
+    };
+    format!("\u{2191} {count} earlier {noun} {verb} not in scrollback yet \u{b7} {shows}")
 }
 
 /// Plain text split on newlines and wrapped to the width.

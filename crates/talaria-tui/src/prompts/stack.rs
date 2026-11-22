@@ -683,8 +683,10 @@ impl PromptStack {
     }
 
     /// Whether the card on top, the one drawn, shows this prompt.
-    pub fn shows_prompt(&self, _key: &PromptKey) -> bool {
-        false
+    pub fn shows_prompt(&self, key: &PromptKey) -> bool {
+        self.cards
+            .first()
+            .is_some_and(|card| matches!(&card.id, Identity::Prompt(shown) if shown == key))
     }
 }
 
