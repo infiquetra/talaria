@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use talaria_core::session::{SessionId, SessionState, update};
 use talaria_core::ultracode::authoring::{
     AuthoringEnd, AuthoringProgress, AuthoringStage, RunFacts, STEPS, elapsed_text, progress,
+    resume,
 };
 use talaria_core::ultracode::notice;
 
@@ -178,6 +179,40 @@ fn a_question_before_any_script_waits_for_an_answer_not_an_approval() {
 }
 
 #[test]
+fn the_answer_to_an_approval_question_starts_from_the_written_script() {
+    let mut state = turn();
+    let answered = resume(Some("fix-parser.workflow"), state.cells());
+    assert_eq!(answered.stage, AuthoringStage::Answered);
+    assert_eq!(answered.label(), "reading your answer");
+    assert_eq!(answered.step(), 4);
+    assert_eq!(answered.script.as_deref(), Some("fix-parser.workflow"));
+    // Reading the carried script back is checking it; the run command is running.
+    update(
+        &mut state,
+        tool(2, "t1", "read_file", json!({"path": DRAFT})),
+    );
+    assert_eq!(
+        resume(Some("fix-parser.workflow"), state.cells()).stage,
+        AuthoringStage::Checking
+    );
+    update(
+        &mut state,
+        tool(
+            3,
+            "t2",
+            "terminal",
+            json!({"command": format!("talaria workflow run --profile fixture --json {DRAFT}")}),
+        ),
+    );
+    assert_eq!(
+        resume(Some("fix-parser.workflow"), state.cells()).stage,
+        AuthoringStage::Running
+    );
+    // With nothing carried, a turn starts at planning.
+    assert_eq!(resume(None, &[]).stage, AuthoringStage::Planning);
+}
+
+#[test]
 fn elapsed_time_reads_in_seconds_then_minutes() {
     assert_eq!(elapsed_text(0), "0s");
     assert_eq!(elapsed_text(59_999), "59s");
@@ -240,7 +275,7 @@ fn the_line_left_behind_says_how_the_build_ended() {
         ),
         (
             notice::authoring_ended(&running, AuthoringEnd::Completed, 200_000, Some(run)),
-            "Ultracode built the workflow in 3m 20s: fix-parser is running with 7 agents.",
+            "Ultracode built the workflow in 3m 20s: fix-parser is running (7 agents so far).",
         ),
         (
             notice::authoring_ended(
@@ -252,7 +287,65 @@ fn the_line_left_behind_says_how_the_build_ended() {
                     ..run
                 }),
             ),
-            "Ultracode built the workflow in 3m 20s: fix-parser completed with 7 agents.",
+            "Ultracode built the workflow in 3m 20s: fix-parser completed (7 agents).",
+        ),
+        // The count is the agents seen so far: none yet says nothing, and one is singular.
+        (
+            notice::authoring_ended(
+                &running,
+                AuthoringEnd::Completed,
+                200_000,
+                Some(RunFacts { agents: 0, ..run }),
+            ),
+            "Ultracode built the workflow in 3m 20s: fix-parser is running.",
+        ),
+        (
+            notice::authoring_ended(
+                &running,
+                AuthoringEnd::Completed,
+                200_000,
+                Some(RunFacts {
+                    status: "parked",
+                    agents: 1,
+                    ..run
+                }),
+            ),
+            "Ultracode built the workflow in 3m 20s: fix-parser is waiting for an answer (1 agent so far).",
+        ),
+        (
+            notice::authoring_ended(
+                &running,
+                AuthoringEnd::Completed,
+                200_000,
+                Some(RunFacts {
+                    status: "failed",
+                    agents: 1,
+                    ..run
+                }),
+            ),
+            "Ultracode built the workflow in 3m 20s: fix-parser failed (1 agent).",
+        ),
+        // A turn stopped after it sent the run command, before Talaria found the run (always
+        // so on a remote gateway), does not say that no workflow started.
+        (
+            notice::authoring_ended(&running, AuthoringEnd::Interrupted, 130_000, None),
+            "Ultracode stopped: interrupted after starting fix-parser.workflow, 2m 10s in. The workflow may still be running.",
+        ),
+        (
+            notice::authoring_ended(&running, AuthoringEnd::Failed, 130_000, None),
+            "Ultracode stopped: the turn failed after starting fix-parser.workflow, 2m 10s in. The workflow may still be running.",
+        ),
+        (
+            notice::authoring_ended(
+                &AuthoringProgress {
+                    stage: AuthoringStage::Running,
+                    script: None,
+                },
+                AuthoringEnd::Interrupted,
+                5_000,
+                None,
+            ),
+            "Ultracode stopped: interrupted after starting the workflow, 5s in. The workflow may still be running.",
         ),
         (
             notice::authoring_ended(&running, AuthoringEnd::Completed, 200_000, None),
@@ -260,7 +353,7 @@ fn the_line_left_behind_says_how_the_build_ended() {
         ),
         (
             notice::authoring_ended(&checking, AuthoringEnd::Completed, 90_000, None),
-            "Ultracode wrote the workflow script fix-parser.workflow in 1m 30s. No workflow started yet.",
+            "Ultracode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your approval to start it.",
         ),
         (
             notice::authoring_ended(&planning, AuthoringEnd::Completed, 12_000, None),

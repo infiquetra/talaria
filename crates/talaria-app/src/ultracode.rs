@@ -1,13 +1,13 @@
 //! Workflow routing decisions; the application executes every read through its event channel.
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use talaria_core::{
     commands::{CommandCatalog, CommandOutcome, ErrorView, SlashLine, describe_error},
     session::{Cell, SessionId, TurnOutcome, TurnState},
     ultracode::{
         SKILL_COMMAND, SavedChanges, SavedModes, SkillAvailability, SkillEpoch, SubmitRoute,
         UltracodeCommand, UltracodeState,
-        authoring::{AuthoringEnd, AuthoringView, RunFacts, progress},
+        authoring::{AuthoringEnd, AuthoringStage, AuthoringView, RunFacts, resume},
         follow_up_text, notice, route_submit, skill_availability,
     },
 };
@@ -118,6 +118,8 @@ fn is_active(status: RunStatus) -> bool {
 /// A routed prompt's turn while the agent builds a workflow.
 #[derive(Debug, Clone)]
 struct Authoring {
+    /// The prompt's submission: a refused one never starts a turn.
+    submission_id: String,
     /// What the person typed: the text of the prompt's cell.
     typed: String,
     /// How many cells the session held when the prompt was sent; its cell comes after them.
@@ -126,6 +128,15 @@ struct Authoring {
     since_wall_ms: i64,
     /// When the turn started, in the application's clock.
     started_ms: Option<u64>,
+    /// What an earlier turn left waiting for approval, once this turn started after it.
+    carried: Option<Carried>,
+}
+
+/// A script an earlier routed turn wrote and asked to start, and how long building it took.
+#[derive(Debug, Clone)]
+struct Carried {
+    script: String,
+    elapsed_ms: u64,
 }
 
 impl Authoring {
@@ -138,6 +149,23 @@ impl Authoring {
             .rev()
             .find(|(_, cell)| matches!(cell, Cell::User(user) if user.text == self.typed))
             .map(|(at, _)| at)
+    }
+    /// The turn's step, counting from the script an earlier turn left waiting.
+    fn progress(
+        &self,
+        cells: &[Cell],
+        at: usize,
+    ) -> talaria_core::ultracode::authoring::AuthoringProgress {
+        let script = self.carried.as_ref().map(|carried| carried.script.as_str());
+        resume(script, &cells[at + 1..])
+    }
+    /// How long the workflow has been building: this turn, and any earlier turn it follows.
+    fn elapsed_ms(&self, started_ms: u64, now_ms: u64) -> u64 {
+        let carried = self
+            .carried
+            .as_ref()
+            .map_or(0, |carried| carried.elapsed_ms);
+        carried.saturating_add(now_ms.saturating_sub(started_ms))
     }
 }
 
@@ -163,8 +191,10 @@ pub struct UltracodeService {
     remote: bool,
     watches: HashMap<SessionId, RunWatch>,
     tracked: HashMap<SessionId, RunSummary>,
-    /// The routed turn each session is building a workflow in.
-    authoring: HashMap<SessionId, Authoring>,
+    /// Each session's routed prompts, oldest first: the front one's turn runs or comes next.
+    authoring: HashMap<SessionId, VecDeque<Authoring>>,
+    /// The script each session's last routed turn wrote and left waiting for approval.
+    carried: HashMap<SessionId, Carried>,
     next_scan_ms: Option<u64>,
     scanning: bool,
 }
@@ -191,6 +221,7 @@ impl UltracodeService {
             watches: HashMap::new(),
             tracked: HashMap::new(),
             authoring: HashMap::new(),
+            carried: HashMap::new(),
             next_scan_ms: None,
             scanning: false,
         }
@@ -339,23 +370,34 @@ impl UltracodeService {
         self.routed.insert(session.clone());
     }
     /// A routed prompt was sent while the session held `cells` cells, at wall-clock `wall_ms`:
-    /// its turn shows the building block.
+    /// its turn shows the building block. A prompt sent while an earlier routed turn runs waits
+    /// behind it.
     pub fn begin_authoring(
         &mut self,
         session: &SessionId,
+        submission_id: &str,
         typed: &str,
         cells: usize,
         wall_ms: i64,
     ) {
-        self.authoring.insert(
-            session.clone(),
-            Authoring {
+        self.authoring
+            .entry(session.clone())
+            .or_default()
+            .push_back(Authoring {
+                submission_id: submission_id.to_owned(),
                 typed: typed.to_owned(),
                 from: cells,
                 since_wall_ms: wall_ms,
                 started_ms: None,
-            },
-        );
+                carried: None,
+            });
+    }
+    /// The submission was refused, so its prompt starts no turn.
+    pub fn submission_failed(&mut self, submission_id: &str) {
+        for queue in self.authoring.values_mut() {
+            queue.retain(|authoring| authoring.submission_id != submission_id);
+        }
+        self.authoring.retain(|_, queue| !queue.is_empty());
     }
     /// The run the routed turn started, once the runs watch found it.
     fn authoring_run(&self, session: &SessionId, authoring: &Authoring) -> Option<&RunSummary> {
@@ -371,35 +413,61 @@ impl UltracodeService {
         turn: &TurnState,
         now_ms: u64,
     ) -> Option<String> {
-        let authoring = self.authoring.get_mut(session)?;
         let running = *turn == TurnState::Running;
-        let Some(started_ms) = authoring.started_ms else {
-            if running && authoring.cell(cells).is_some() {
-                authoring.started_ms = Some(now_ms);
+        let queue = self.authoring.get_mut(session)?;
+        let Some(started_ms) = queue.front()?.started_ms else {
+            if !running {
+                return None;
+            }
+            // The turn that runs belongs to the newest prompt cell. Routed prompts queued in
+            // front of its own never got a turn, so they are dropped.
+            let newest = cells.iter().rposition(|cell| matches!(cell, Cell::User(_)));
+            let own = queue
+                .iter()
+                .position(|authoring| newest.is_some() && authoring.cell(cells) == newest)?;
+            queue.drain(..own);
+            if let Some(front) = queue.front_mut() {
+                front.started_ms = Some(now_ms);
+                front.carried = self.carried.remove(session);
             }
             return None;
         };
         if running {
             return None;
         }
-        let authoring = self.authoring.remove(session)?;
+        let authoring = queue.pop_front()?;
+        if queue.is_empty() {
+            self.authoring.remove(session);
+        }
         let at = authoring.cell(cells)?;
         let end = match turn {
             TurnState::Finished(TurnOutcome::Completed) => AuthoringEnd::Completed,
             TurnState::Finished(TurnOutcome::Interrupted) => AuthoringEnd::Interrupted,
             _ => AuthoringEnd::Failed,
         };
+        let progress = authoring.progress(cells, at);
+        let elapsed_ms = authoring.elapsed_ms(started_ms, now_ms);
+        // A script written and not started waits for the person's answer: the next routed turn
+        // goes on from it.
+        if end == AuthoringEnd::Completed
+            && self.authoring_run(session, &authoring).is_none()
+            && progress.stage != AuthoringStage::Running
+            && let Some(script) = &progress.script
+        {
+            self.carried.insert(
+                session.clone(),
+                Carried {
+                    script: script.clone(),
+                    elapsed_ms,
+                },
+            );
+        }
         let run = self.authoring_run(session, &authoring).map(|run| RunFacts {
             name: &run.name,
             status: run.status.as_str(),
             agents: run.agents_total_known,
         });
-        Some(notice::authoring_ended(
-            &progress(&cells[at + 1..]),
-            end,
-            now_ms.saturating_sub(started_ms),
-            run,
-        ))
+        Some(notice::authoring_ended(&progress, end, elapsed_ms, run))
     }
     /// The building block, while the routed turn runs and no run it started is tracked: from
     /// then on the run dock shows in its place.
@@ -409,15 +477,15 @@ impl UltracodeService {
         cells: &[Cell],
         now_ms: u64,
     ) -> Option<AuthoringView> {
-        let authoring = self.authoring.get(session)?;
+        let authoring = self.authoring.get(session)?.front()?;
         let started_ms = authoring.started_ms?;
         if self.authoring_run(session, authoring).is_some() {
             return None;
         }
         let at = authoring.cell(cells)?;
         Some(AuthoringView {
-            progress: progress(&cells[at + 1..]),
-            elapsed_ms: now_ms.saturating_sub(started_ms),
+            progress: authoring.progress(cells, at),
+            elapsed_ms: authoring.elapsed_ms(started_ms, now_ms),
         })
     }
     pub fn after_interrupt(&self, session: &SessionId) -> Option<Action> {
@@ -441,6 +509,9 @@ impl UltracodeService {
             || (command == UltracodeCommand::Toggle && self.state.is_on(session))
         {
             self.state.set(session, false);
+            // A script left waiting is not carried into a routed turn after Ultracode is on
+            // again. Prompts already sent as workflows keep their blocks.
+            self.carried.remove(session);
             vec![Action::Notice(notice::OFF.into()), Action::Changed]
         } else {
             vec![Action::FetchCatalog {

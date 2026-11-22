@@ -473,26 +473,46 @@ pub mod notice {
                 progress.label()
             )
         };
+        // The turn sent the command that starts the run, but Talaria has not found the run: on
+        // a remote gateway it never can, and locally the runs folder is read every 2 seconds.
+        let started = progress.stage == AuthoringStage::Running;
+        let started_then_stopped = |why: &str| {
+            let target = progress.script.as_deref().unwrap_or("the workflow");
+            format!(
+                "Ultracode stopped: {why} after starting {target}, {elapsed} in. The workflow may still be running."
+            )
+        };
         match (end, run, &progress.script) {
-            (AuthoringEnd::Interrupted, None, _) => stopped("interrupted"),
-            (AuthoringEnd::Failed, None, _) => stopped("the turn failed"),
             (_, Some(run), _) => {
+                let active = matches!(run.status, "running" | "parked");
                 let state = match run.status {
                     "running" => "is running".to_owned(),
                     "parked" => "is waiting for an answer".to_owned(),
                     other => other.to_owned(),
                 };
+                // The count is the agents the run's events name so far; none yet says nothing.
+                let agents = match (run.agents, active) {
+                    (0, _) => String::new(),
+                    (1, true) => " (1 agent so far)".to_owned(),
+                    (1, false) => " (1 agent)".to_owned(),
+                    (count, true) => format!(" ({count} agents so far)"),
+                    (count, false) => format!(" ({count} agents)"),
+                };
                 format!(
-                    "Ultracode built the workflow in {elapsed}: {} {state} with {} agents.",
-                    run.name, run.agents
+                    "Ultracode built the workflow in {elapsed}: {} {state}{agents}.",
+                    run.name
                 )
             }
-            (_, None, script) if progress.stage == AuthoringStage::Running => format!(
+            (AuthoringEnd::Interrupted, None, _) if started => started_then_stopped("interrupted"),
+            (AuthoringEnd::Failed, None, _) if started => started_then_stopped("the turn failed"),
+            (AuthoringEnd::Interrupted, None, _) => stopped("interrupted"),
+            (AuthoringEnd::Failed, None, _) => stopped("the turn failed"),
+            (_, None, script) if started => format!(
                 "Ultracode built the workflow in {elapsed} and started {}.",
                 script.as_deref().unwrap_or("the run")
             ),
             (_, None, Some(script)) => format!(
-                "Ultracode wrote the workflow script {script} in {elapsed}. No workflow started yet."
+                "Ultracode wrote the workflow script {script} in {elapsed} and is waiting for your approval to start it."
             ),
             (_, None, None) => {
                 format!("Ultracode finished in {elapsed} without writing a workflow script.")

@@ -17,6 +17,9 @@ pub enum AuthoringStage {
     Checking,
     /// A question is open: the approval to start, or an answer the plan needs.
     Waiting,
+    /// The person answered the approval question an earlier turn ended with; the agent reads
+    /// the answer.
+    Answered,
     /// The run was started.
     Running,
 }
@@ -38,6 +41,7 @@ impl AuthoringProgress {
             AuthoringStage::Checking => "checking the script",
             AuthoringStage::Waiting if self.script.is_some() => "waiting for your approval",
             AuthoringStage::Waiting => "waiting for your answer",
+            AuthoringStage::Answered => "reading your answer",
             AuthoringStage::Running => "running the workflow",
         }
     }
@@ -48,7 +52,7 @@ impl AuthoringProgress {
             AuthoringStage::Planning => 1,
             AuthoringStage::Writing => 2,
             AuthoringStage::Checking => 3,
-            AuthoringStage::Waiting => 4,
+            AuthoringStage::Waiting | AuthoringStage::Answered => 4,
             AuthoringStage::Running => 5,
         }
     }
@@ -91,9 +95,19 @@ pub fn elapsed_text(elapsed_ms: u64) -> String {
 /// The step the turn is on, from the cells after the routed prompt. Each tool call moves the
 /// block to the step it belongs to; an open question shows while it waits.
 pub fn progress(cells: &[Cell]) -> AuthoringProgress {
+    resume(None, cells)
+}
+
+/// [`progress`] for a turn that answers an earlier turn's approval question: that turn wrote
+/// `script` and ended without starting it, so this one starts at the answer, not at planning.
+pub fn resume(script: Option<&str>, cells: &[Cell]) -> AuthoringProgress {
     let mut progress = AuthoringProgress {
-        stage: AuthoringStage::Planning,
-        script: None,
+        stage: if script.is_some() {
+            AuthoringStage::Answered
+        } else {
+            AuthoringStage::Planning
+        },
+        script: script.map(str::to_owned),
     };
     let mut waiting = false;
     for cell in cells {

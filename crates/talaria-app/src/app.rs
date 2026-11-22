@@ -7522,6 +7522,7 @@ fn apply_ultracode(
         match action {
             Action::Notice(text) => effects.push(notice_lines(&text)),
             Action::SubmitCommand { text, display, .. } => {
+                let submission_id = state.next_submission_id();
                 // Every routed prompt, whole skill or reminder, watches for the run it may start.
                 if let Some(opened) = state.opened.as_ref() {
                     let session = SessionId::new(opened.session_id.clone());
@@ -7536,11 +7537,14 @@ fn apply_ultracode(
                     }
                     state.ultracode.note_routed(&session);
                     let cells = opened.state.cells().len();
-                    state
-                        .ultracode
-                        .begin_authoring(&session, &display, cells, since_ms);
+                    state.ultracode.begin_authoring(
+                        &session,
+                        &submission_id,
+                        &display,
+                        cells,
+                        since_ms,
+                    );
                 }
-                let submission_id = state.next_submission_id();
                 effects.extend(reduce(
                     state,
                     Event::SubmitCommand {
@@ -10627,6 +10631,8 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
             .filter(|entry| entry.retried)
             .map(|entry| talaria_core::ultracode::shown_text(&entry.text).to_owned())
     });
+    // A routed prompt that was not sent builds no workflow.
+    state.ultracode.submission_failed(&id);
     let mut effects = reduce(
         state,
         Event::SubmitFailed {
@@ -18984,7 +18990,7 @@ mod ultracode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Ultracode wrote the workflow script fix-parser.workflow in 1m 05s. No workflow started yet."
+                "\u{b7} Ultracode wrote the workflow script fix-parser.workflow in 1m 05s and is waiting for your approval to start it."
             ]
         );
         assert_eq!(stage(&state), None, "the block leaves with the turn");
@@ -19047,9 +19053,242 @@ mod ultracode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Ultracode built the workflow in 3m 20s: review-branch is running with 10 agents."
+                "\u{b7} Ultracode built the workflow in 3m 20s: review-branch is running (10 agents so far)."
             ]
         );
+    }
+
+    #[test]
+    fn a_build_stopped_after_starting_the_run_says_the_run_may_go_on() {
+        // On a remote gateway, or before the runs folder is read again, Talaria has not found
+        // the run the turn started: the line must not say no workflow started.
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "write_file",
+            json!({"path": DRAFT, "content": "export const meta = {name:'fix-parser'};"}),
+        );
+        let _ = tool_start(
+            &mut state,
+            "t2",
+            "terminal",
+            json!({"command": format!("talaria workflow run --profile fixture --json {DRAFT}"), "background": true}),
+        );
+        state.now_ms = 131_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "", "status": "interrupted"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Ultracode stopped: interrupted after starting fix-parser.workflow, 2m 10s in. The workflow may still be running."
+            ]
+        );
+    }
+
+    #[test]
+    fn a_routed_prompt_queued_behind_a_building_turn_waits_for_its_own_turn() {
+        use talaria_core::ultracode::authoring::AuthoringStage;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "terminal",
+            json!({"command": "talaria workflow roster --profile fixture --json"}),
+        );
+        state.now_ms = 5_000;
+        // The skill is loaded, so the second prompt goes with the reminder and waits in the
+        // queue behind the running turn.
+        let effects = enter(&mut state, "also cover the lexer");
+        assert!(!loads_skill(&effects), "{effects:?}");
+        let block = state
+            .view()
+            .authoring
+            .expect("the first turn keeps its block");
+        assert_eq!(block.progress.stage, AuthoringStage::Planning);
+        assert_eq!(block.elapsed_ms, 4_000);
+        state.now_ms = 11_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Which tests matter?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Ultracode finished in 10s without writing a workflow script."]
+        );
+        // The queued prompt's turn starts and gets its own block and its own line.
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("also cover the lexer")
+        );
+        assert_eq!(stage(&state), Some(AuthoringStage::Planning));
+        state.now_ms = 14_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "", "status": "interrupted"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Ultracode stopped: interrupted while planning the workflow after 3s. No workflow started."
+            ]
+        );
+        assert_eq!(stage(&state), None);
+    }
+
+    #[test]
+    fn a_refused_routed_prompt_leaves_no_block_for_a_later_turn() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        let _ = update(
+            &mut state,
+            AppMessage::SubmitDone {
+                submission_id: sent_id(&effects),
+                outcome: ExecuteOutcome::Refused {
+                    reason: "invalid_params".into(),
+                },
+            },
+        );
+        // A turn Hermes starts on its own draws no prompt cell, so the refused prompt's cell is
+        // still the newest one; it must not take that turn.
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(stage(&state), None);
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Done.", "status": "complete"}),
+        );
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    /// The submission id of the prompt a routed prompt's dispatch sent.
+    fn sent_id(effects: &[AppEffect]) -> String {
+        effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Send(Effect::SendPrompt { submission_id, .. }) => {
+                    Some(submission_id.clone())
+                }
+                _ => None,
+            })
+            .expect("the prompt is sent")
+    }
+
+    #[test]
+    fn a_refused_routed_prompt_does_not_take_a_plain_turn_after_ultracode_is_off() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        let _ = update(
+            &mut state,
+            AppMessage::SubmitDone {
+                submission_id: sent_id(&effects),
+                outcome: ExecuteOutcome::Refused {
+                    reason: "invalid_params".into(),
+                },
+            },
+        );
+        // The refused prompt's cell stays; Ultracode is turned off and a plain prompt sent.
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("fix the parser")
+        );
+        let _ = submit(&mut state, "/ultracode off".into());
+        let _ = enter(&mut state, "hello");
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(user_cells(&state).last().map(String::as_str), Some("hello"));
+        assert_eq!(stage(&state), None);
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Hi.", "status": "complete"}),
+        );
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn the_answer_to_an_approval_question_goes_on_from_the_written_script() {
+        use talaria_core::ultracode::authoring::AuthoringStage;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "write_file",
+            json!({"path": DRAFT, "content": "export const meta = {name:'fix-parser'};"}),
+        );
+        state.now_ms = 91_000;
+        // The agent asks in its reply, which ends the turn.
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Here is the proposed workflow. Start it?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Ultracode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your approval to start it."
+            ]
+        );
+        // The answer's turn starts at the answer, with the script named and the time going on.
+        state.now_ms = 300_000;
+        let _ = enter(&mut state, "yes");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let block = state
+            .view()
+            .authoring
+            .expect("the answer's turn shows the block");
+        assert_eq!(block.progress.stage, AuthoringStage::Answered);
+        assert_eq!(block.progress.label(), "reading your answer");
+        assert_eq!(
+            block.progress.script.as_deref(),
+            Some("fix-parser.workflow")
+        );
+        assert_eq!(block.elapsed_ms, 90_000);
+        let _ = tool_start(
+            &mut state,
+            "t2",
+            "terminal",
+            json!({"command": format!("talaria workflow run --profile fixture --json {DRAFT}"), "background": true}),
+        );
+        assert_eq!(stage(&state), Some(AuthoringStage::Running));
+        state.now_ms = 308_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Started.", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Ultracode built the workflow in 1m 38s and started fix-parser.workflow."]
+        );
+        // Nothing is carried past a turn that started the run.
+        let _ = enter(&mut state, "and the lexer");
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(stage(&state), Some(AuthoringStage::Planning));
     }
 
     #[test]

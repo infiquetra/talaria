@@ -119,17 +119,21 @@ waiting for your approval (or waiting for your answer, when the agent asks befor
 is written), and running the workflow. Talaria reads them from the turn's tool calls: a write
 to a `.workflow` file or a script in the drafts folder names the script, reading it back or a
 command that names it is checking, an open question is waiting, and `talaria workflow run` is
-running. Once Talaria finds the run the turn started, the workflow dock takes the block's
+running. When the agent writes a script and ends its turn to ask whether to start it, your
+reply's turn goes on from that script at step 4 (reading your answer), and the time counts
+both turns. Once Talaria finds the run the turn started, the workflow dock takes the block's
 place. On a screen shorter than 16 rows the block is one row
 (`⚙ Ultracode · writing the workflow script · 1m 05s`). It does not move; only its seconds
 change, and the screen wakes once a second only while the block is on screen.
 
 When the turn ends, the block leaves one line in the transcript that says how it ended, for
-example `Ultracode built the workflow in 3m 20s: fix-parser is running with 7 agents.`,
-`Ultracode wrote the workflow script fix-parser.workflow in 1m 30s. No workflow started yet.`,
-or, for an interrupted turn,
+example `Ultracode built the workflow in 3m 20s: fix-parser is running (7 agents so far).`,
+`Ultracode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your
+approval to start it.`, or, for an interrupted turn,
 `Ultracode stopped: interrupted while writing the workflow script (fix-parser.workflow) after
-1m 05s. No workflow started.` The agent proposes a workflow and asks before it starts one.
+1m 05s. No workflow started.` A turn interrupted after it sent `talaria workflow run`, before
+Talaria found the run, says the workflow may still be running. The agent proposes a workflow
+and asks before it starts one.
 While Ultracode
 is on, a slash command that carries a prompt (`/goal`, `/bg`, `/queue`, `/steer`, `/btw` and
 `/plan`, with their aliases) still goes to Hermes as typed, after a one-line notice that names
