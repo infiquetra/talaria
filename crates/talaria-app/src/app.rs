@@ -2829,8 +2829,12 @@ pub(crate) fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppE
             }
         }
         ModelsInput::EffortRead { session_id, value } if Some(session_id.as_str()) == current => {
-            state.effort = Some(value.clone().unwrap_or_else(|| "medium".into()));
-            state.effort_wire = None;
+            let level = value.clone().unwrap_or_else(|| "medium".into());
+            // What Hermes sends on the route still holds while the level is the one it answered.
+            if state.effort.as_deref() != Some(level.as_str()) {
+                state.effort_wire = None;
+            }
+            state.effort = Some(level);
         }
         ModelsInput::SessionEvent {
             session_id,

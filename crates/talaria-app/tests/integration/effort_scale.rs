@@ -157,6 +157,35 @@ fn bare_effort_opens_the_scale_on_the_current_level_and_reads_it_quietly() {
 }
 
 #[test]
+fn the_quiet_read_keeps_the_route_note_while_the_level_is_unchanged() {
+    let mut state = opened();
+    let info = |effort: &str| {
+        AppMessage::Models(ModelsInput::SessionEvent {
+            session_id: "s".into(),
+            type_name: "session.info".into(),
+            payload: json!({"reasoning_effort": effort, "reasoning_effort_wire": "high"}),
+        })
+    };
+    let read = |effort: &str| {
+        AppMessage::Models(ModelsInput::EffortRead {
+            session_id: "s".into(),
+            value: Some(effort.into()),
+        })
+    };
+    let note = |state: &AppState| state.view().effort_scale.and_then(|scale| scale.note());
+    let sends_high = Some("Hermes sends high on this route.".to_owned());
+    update(&mut state, info("max"));
+    submit(&mut state, "/effort");
+    assert_eq!(note(&state), sends_high);
+    update(&mut state, read("max"));
+    assert_eq!(note(&state), sends_high, "the same level keeps the note");
+    assert_eq!(state.view().effort_wire, Some("high"));
+    update(&mut state, read("low"));
+    assert_eq!(note(&state), None, "a new level drops the old route's note");
+    assert_eq!(state.view().effort_wire, None);
+}
+
+#[test]
 fn right_then_enter_sends_what_typed_effort_sends() {
     let mut scale = opened();
     submit(&mut scale, "/effort");
