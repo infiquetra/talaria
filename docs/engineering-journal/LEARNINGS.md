@@ -2,6 +2,647 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-22 — A streaming reply must commit its finished blocks, not wait to be final
+
+**Evidence.** A reply holding a nine-row table and three paragraphs, followed by a clarify card,
+showed only its last rows under the finished tool rows. The rest could not be scrolled to. There
+were two causes. First, newer Hermes gateways send clarify.request without a tool.start first,
+so the reply stayed unsealed behind the card (fixed in the reducer arm for approval.request and
+clarify.request in crates/talaria-core/src/session/reducer.rs). Second,
+crates/talaria-cli/src/run.rs drew an open reply as at most MAX_TAIL_ROWS (15) live rows, and a
+cell reached scrollback only once it was final. The fix is
+crates/talaria-tui/src/reply_commit.rs together with markdown::closed_blocks_len. The tests are
+crates/talaria-tui/tests/integration/reply_commit.rs and
+crates/talaria-cli/tests/integration/reply_scrollback.rs.
+
+**Mechanism.** Inline history is append-only scrollback. Holding a growing cell in the live
+region while capping that region (for resize safety) makes the cell "scroll under" the history
+above it. A top-level Markdown block is safe to commit once the next block has started on a
+complete line, or once a code fence has closed: later text cannot change it, apart from link
+reference definitions. Rendering the committed part, one blank row and the rest gives exactly
+the rows of one whole rendering, because top-level blocks are separated by a single blank row. A
+partial line is not evidence that a block has closed, since an indented line can still continue
+a list item. Once part of a reply is in scrollback, nothing can be inserted in front of it, so
+late cells such as end-of-turn reasoning follow its rest. Cell ids are positions and repeat
+across sessions, so a partly committed reply must be closed with a notice when the session state
+is replaced.
+
+**Generalizable rule.** In an inline terminal client, commit streamed content at stable
+structural boundaries as soon as they close, and never hold an unbounded open cell behind a
+capped live region. Prove the split by comparing split rows with whole rows for every content
+shape.
+
+## 2026-11-22 — A turn the gateway can no longer finish must be ended by the client
+
+**Evidence.** The change is `fix(session): end the turn when the gateway loses the session or
+the link gives up`. Before it, crates/talaria-app/src/app.rs handled LinkEvent::SessionGone by
+setting `session_gone` and nothing else. The binary test
+working_row_leaves_when_the_gateway_loses_the_session
+(crates/talaria-cli/tests/integration/working_row.rs) showed '· This session no longer exists on
+the gateway.' directly above '✻ Working · 5s · Esc to interrupt' and ' 1 working'. In the live
+check the client kept writing about 700 bytes a second.
+
+**Mechanism.** Every surface that waits on a turn is gated on `TurnState::Running`: the working
+row and its 80 ms frames, the status bar's working count, the interrupt key, and running-tool
+clocks. Only a `message.complete` from the gateway ends a turn. When the gateway forgets the
+session, or the link gives up (LinkState::Failed), that event can never arrive, so the turn
+stays Running forever. SessionState::abandon_turn now seals what streamed, marks running tools
+unfinished and leaves the turn Idle. It uses Idle rather than Finished, so no "turn ended"
+notification fires. The app calls it on SessionGone and on Failed, but not on Reconnecting,
+because the gateway may still be running the turn then.
+
+**Generalizable rule.** If only the server can end a state, the client must also end it on every
+final link outcome (gone, failed). Do this in the app state, not the view, so every gated
+surface clears together.
+
+## 2026-11-22 — Derive a key hint from the routing predicate, not from a list of surfaces
+
+**Evidence.** The changes are `fix(tui): offer Esc on the working row only when it interrupts,
+and keep the composer on a short screen` and `fix(tui): drop the working row's Esc hint while
+the menu bar is focused`. working_row_offers_esc_only_when_esc_interrupts failed with 'the row
+offered Esc with history search open'. The first version of the fix kept its own list of
+surfaces and missed the focused menu bar. A review then found 'the row offered Esc with the menu
+bar focused' while Esc closed the menu and sent no interrupt.
+
+**Mechanism.** The working row printed 'Esc to interrupt' whenever a turn ran. Meanwhile
+handle_key in crates/talaria-cli/src/run.rs gave Esc first to the menu bar, the selector,
+history search, the palette, the mention list, the queue and other surfaces.
+TuiScreen::interrupt_reaches_turn is now built from named predicates: menu_takes_keys,
+selector_takes_keys, queue_takes_keys, mention_list_open and confirmation_takes_keys. The
+routing calls the same predicates. The menu was missed because its routing branch tested the raw
+field `menu_focused` inline instead of calling a named predicate, so nothing tied it to the
+hint.
+
+**Generalizable rule.** A hint that names a key must be computed from the same predicate the key
+router uses. Give every routing branch a named predicate, because an inline condition in the
+router is easy to leave out of the hint.
+
+## 2026-11-22 — Live-region extras must fit with every section that takes rows first
+
+**Evidence.** The changes are `fix(tui): offer Esc on the working row only when it interrupts,
+and keep the composer on a short screen` and `fix(tui): count the automation rows before showing
+the theme sample`. theme_sample_never_pushes_the_composer_off_a_short_screen at 16x60 showed
+only the composer's top border under the theme sample. After the first fix, the same test at
+20x80 with fast mode on showed the composer directly above 'Sample of the selected look', with
+no working row.
+
+**Mechanism.** LiveView::layout gives rows to the later sections first and squeezes the earlier
+ones. The sample, the selector, the voice partial line, the automation rows and the status bar
+all sit after the working row. The first fit check summed only some of them, so a one-row
+automation line such as '⚡ fast mode' was enough to push the working row off. The check now sums
+every section after the working row.
+
+**Generalizable rule.** Before adding a decorative section, check its fit against every section
+the layout serves before the protected one, not against a hand-picked subset.
+
+## 2026-11-22 — A selector that writes to the profile must close before the connection changes
+
+**Evidence.** The change is `fix(appearance): close the /skin selector and finish its writes
+before a switch`. `choice::before_switch` in crates/talaria-app/src/app/choice.rs is called from
+the public `update` in crates/talaria-app/src/app.rs. The tests are
+`a_switch_closes_the_skin_selector_and_waits_for_the_restore` and
+`connect_puts_the_previewed_skin_back_before_it_starts_on_another_profile`.
+
+**Mechanism.** A /skin preview can only be shown by writing the Hermes profile's skin, and Esc
+or quitting writes the original back. The selector state did not record which connection it
+belonged to, and six separate paths start a switch: /resume, the session picker, the fleet view,
+a cron run, a workflow run and the /profiles connect. Guarding each path would miss the next
+one. Checking the effects that leave `update` catches every path: if a switch is among them, the
+selector closes first. If a skin write is in flight, the switch is held on the preview and
+released when no write is in flight, so writes to one profile cannot interleave with the move to
+another.
+
+**Generalizable rule.** When transient UI state writes to a remote resource, bind it to the
+connection it opened on, and close it at the single point where a switch leaves the reducer, not
+at each caller that can start one.
+
+## 2026-11-22 — Scrollback needs its own theme while a preview shows
+
+**Evidence.** The change is `fix(theme): commit scrollback rows in the theme in force during a
+/theme preview`. `InForce` in crates/talaria-cli/src/run.rs; the test
+`rows_committed_during_a_theme_preview_keep_the_theme_in_force`.
+
+**Mechanism.** In the inline layout, rows committed to the terminal's scrollback are never
+redrawn. With one theme field, anything committed during a /theme preview, including a cell
+whose theme was captured when it started, kept the previewed colours, and Esc could not restore
+them. The terminal client now keeps the theme in force beside the theme it shows. The theme in
+force changes only when no preview is showing, and every commit path uses it.
+
+**Generalizable rule.** Any temporary look in an inline terminal client must stay out of
+whatever is written to scrollback; keep the committed style separate from the displayed style.
+
+## 2026-11-22 — A watch that matches by profile cannot end itself when a run ends
+
+**Evidence.** The change is `fix(ultracode): keep the run watch alive until its own run can be
+announced`, crates/talaria-app/src/ultracode.rs (`RunWatch`, `UltracodeService::arm`,
+`UltracodeService::on_runs`). The regression test
+another_run_ending_first_does_not_end_the_watch in
+crates/talaria-app/tests/integration/ultracode_app.rs starts and ends a run named run-other on
+profile fixture, then starts run-0002. Before the fix the watch was already gone, so run-0002
+was never announced.
+
+**Mechanism.** The Ultracode watch has no identifier that ties a run folder to the prompt that
+asked for it. It matches runs by profile and start time. So "every run I have seen has ended"
+says nothing about whether *this* session's run has started: the run it saw may belong to
+another window or to a hand-started `talaria workflow run`. Deleting the watch on that signal
+silently dropped the real run's start notice, its dock line and its Alt+W target. Re-arming also
+kept the first prompt's start time and its finished runs, so earlier runs leaked into a later
+prompt's window.
+
+**Generalizable rule.** When a watcher cannot tell its own events from look-alikes, end it on a
+bound it owns (time since the last arm, extended while something it saw is still active), never
+on the state of something it merely matched; and make re-arming reset the window while keeping
+anything still in flight.
+
+## 2026-11-22 — Document a matcher's false positives where you document what it matches
+
+**Evidence.** The change is `docs(workflows): say a run started elsewhere can become Alt+W's
+target`, docs/workflows/ultracode.md. The test
+run_started_by_hand_inside_the_hour_is_announced_and_tracked in
+crates/talaria-app/tests/integration/ultracode_app.rs shows that a run started by hand thirty
+minutes after this session's run ended is announced and becomes Alt+W's target. The change is
+`docs(workflows): say which run Alt+W opens` had told readers that such a run is reached only
+through the run list.
+
+**Mechanism.** The guide described the watch by what it is meant to match (the run a routed
+prompt started) instead of by how it really matches (profile and start time). Lengthening the
+watch's life to an hour made that gap wider, and the guide still described the intended
+behaviour, not the real one.
+
+**Generalizable rule.** When a feature matches by heuristic, describe it in the docs by its
+matching rule and the look-alikes that rule admits, and recheck that text whenever the matching
+window changes.
+
+## 2026-11-22 — Hermes lists a model only for the default profile; describe the rest in the background
+
+**Evidence.** On the /profiles screen the model column showed "-" for every row except
+`default`. The `profiles.list` reply carries `model: ""` and `provider: ""` for every
+non-default profile. `profiles.describe` for one profile returns `model_default` and
+`model_provider`. Fix: `fix(profiles): read each served profile's model in the background`,
+`ProfilesState::queue_models` and `read_next_model` in crates/talaria-core/src/profiles/mod.rs.
+Test: `served_rows_without_a_listed_model_are_described_in_the_background` in
+crates/talaria-core/tests/integration/profiles_state.rs.
+
+**Mechanism.** The screen copied a description's model into its row only for the selected
+profile, so a column meant for comparing profiles depended on the user visiting every row. A
+background queue now describes each served row that has no listed model, one request at a time.
+It waits until nothing else is in flight, so the selection's own describe goes first. Results
+land in the same descriptions cache the selection reads, so a later selection sends nothing. The
+background path must not drive anything the user's own reads drive. `described()` used to open
+the detail panel whenever nothing was being read; it now does so only for the selected profile.
+A per-opening failure set stops a refresh from retrying rows that already failed.
+
+**Generalizable rule.** When a list reply omits a field that a per-item call returns, fill it
+with a bounded background queue that writes into the per-item cache. Gate every side effect of
+that per-item answer (panels, notices, selection) on whether the user asked for it.
+
+## 2026-11-22 — A background sender must not reuse the foreground sender's housekeeping
+
+**Evidence.** After `fix(profiles): read each served profile's model in the background`,
+selecting a parked profile while a background model read finished inside the 150 ms selection
+settle window left the detail panel on "Model: reading..." for good. `read_next_model` called
+`describe()`, and `describe()` begins by deleting every pending `Timer::Describe`, so the
+selection's tick found no timer and sent nothing. A parked row is never queued in the
+background, so nothing else read it. Fix: `fix(profiles): keep the selection's pending describe
+when a background model read starts` adds `send_describe` in
+crates/talaria-core/src/profiles/mod.rs; test
+`a_background_read_keeps_the_selections_pending_describe` in
+crates/talaria-core/tests/integration/profiles_state.rs.
+
+**Mechanism.** `describe()` was written for the selection. Clearing older selection timers there
+is correct, because a new selection describe supersedes them. When the background queue reused
+it, that cleanup cancelled the user's own pending request. The send step (record the request,
+emit the effect) is shared; the timer cleanup belongs to the foreground caller only.
+
+**Generalizable rule.** When a background task reuses a function written for a user action,
+split out the bare send step and call only that. Any cancel-the-previous cleanup in the
+user-action path will otherwise cancel the user's own pending work.
+
+## 2026-11-22 — Key hints are built from the keymap, passed into the core as plain labels
+
+**Evidence.** The /profiles header hints and the detail panel's "Keys:" line were string
+literals. A rebound `profiles_models` or `profiles_connect` left them naming the old key, and
+the same action was "describe" in one place and "description" in the other. Fix: `fix(profiles):
+build the key hints from the keys the user bound`. Pieces: `KeyLabels` and
+`ProfilesState::set_key_labels` in talaria-core, `talaria_tui::profiles::key_labels`, and
+`Screen::profiles_key_labels` called from `sync_models`. Tests: `key_hints_name_the_bound_keys`,
+`hint_labels_follow_the_keymap` and `profiles_hints_use_the_terminal_key_labels`.
+
+**Mechanism.** talaria-core cannot import talaria-tui's `KeyMap`, so the core held its own copy
+of the hint text, and that copy drifted. The terminal side now turns its keymap into a struct of
+optional label strings, and core builds every hint from that one source. An action with no
+binding drops out of the hint.
+
+**Generalizable rule.** Any hint that names a key must come from the live keymap. When the code
+that writes the hint cannot see the keymap, pass in plain labels (a `None` label means unbound)
+rather than copying the defaults into the hint text.
+
+## 2026-11-22 — Text the app commits as plain lines needs the same word wrap as cells
+
+**Evidence.** The change is `fix(history): word-wrap the notice lines the app commits as plain
+text`. Before it, crates/talaria-tui/tests/integration/history_text.rs
+a_committed_notice_line_breaks_between_words_under_a_hanging_indent printed a row ending "this
+profile nex" followed by a row starting "t time: talaria --profile example". The fix is
+history::committed_text_rows, called from TuiScreen::commit_lines in
+crates/talaria-cli/src/run.rs.
+
+**Mechanism.** Scrollback has two ways in. Cells go through CellLines renderers, which now
+word-wrap prompts and notices with history::prefixed_wrapped. Plain strings from
+AppEffect::CommitLines, such as the connect, switch and branch notices, went straight to
+Terminal::commit_lines, whose wrap_lines breaks by grapheme. A fix applied only to the cell
+renderers left the second way untouched. The same notice text then wrapped well as a cell and
+badly as a committed line. The plain-line path cannot word-wrap every line, because it also
+carries preformatted output. The safe rule wraps only lines that overflow. It leaves alone any
+line with leading whitespace, an indented line under the marker, box-drawing characters or
+control characters.
+
+**Generalizable rule.** When a rendering fix targets one path into scrollback, list every path
+that writes there (cells, plain committed lines, context blocks, workspace replays) and either
+cover each one or state why it is exempt.
+
+## 2026-11-22 — A snapshot resets the reducer's live maps but not the turn it lands in
+
+**Evidence.** The change is `fix(session): mark end-of-turn reasoning as the latest step after a
+mid-turn resume`. Before it, crates/talaria-core/tests/integration/session_snapshot.rs
+end_of_turn_reasoning_after_a_resume_mid_tool_turn_is_the_latest_step printed left: [("why it is
+done", false)].
+
+**Mechanism.** SessionState::from_snapshot rebuilds cells but leaves live bookkeeping empty: the
+tools map is empty, and turn_start points after the snapshot's cells. A turn that was running
+when the snapshot was taken therefore has its earlier cells before turn_start, and none of its
+tools in the map. Any end-of-turn decision that reads only the live maps, or only cells after
+turn_start, sees nothing for that turn. The fix records that the snapshot showed a running turn
+(resumed_running, cleared by begin_turn). It also looks back to the cell that started the turn
+(Cell::starts_turn, the shared rule from `fix(fleet): start the peek at a turn Hermes started,
+not the prompt before it`).
+
+**Generalizable rule.** Every reducer rule that asks "did this turn already do X" needs a test
+that starts from a running snapshot, not only one that starts from message.start.
+
+## 2026-11-21 — A replaced link still reports its own closing, and the loop cannot tell links apart
+
+**Evidence.** Live check on Hermes 0.23.3: after the new profile connect from `/profiles`, and
+equally after the older switch to another profile's session from `/resume`, the notice said the
+new session was open but the status line read `disconnected │ … │ approvals: unknown` for good,
+and "Talaria could not read the approval setting: Talaria is not connected to Hermes" printed
+twice. `install_session` in `crates/talaria-app/src/app.rs` replaces the link and emits
+`AppEffect::CloseLink(old)`. The fix is `forward_link_events` and `AppState::link_epoch` in the
+same file, used by `forward_events` in `crates/talaria-app/src/switch.rs`; the test is
+`a_replaced_link_stops_forwarding_and_the_new_link_keeps_forwarding`.
+
+**Mechanism.** Every link has a task that forwards its events to the loop as
+`AppMessage::Link(event)`, and the event carries nothing that says which link it came from.
+Closing the old link makes it report `LinkState::Closed`, which the loop applied to the new
+connection: `link_state` became closed and every service was told the connection was gone. Each
+forwarder now holds the link count it was started for and stops passing events on once a later
+link is installed. A server request still queued on the replaced link is released, not dropped,
+because dropping its responder refuses the prompt for every other viewer of that session.
+
+A second gap showed once that was fixed: the approval setting still read as unknown. Start-up
+(`install`) bound the Hermes command channel, the approval settings, workspace changes, the
+provider list and the model picker to the first link's client, once. `install_session`, which a
+switch runs, replaced only the session service, so every other service kept calling the closed
+link. `bind_link_services` is now the one place that binds them, run by start-up and, through
+`AppEffect::BindLinkServices`, by a switch that opened a new link.
+`other_profile_switch_opens_a_new_link_first` in
+`crates/talaria-app/tests/integration/switch_flow.rs` fails without it with the exact notice
+seen live. The status bar also names a profile other than `default` (`Segment::Profile`), since
+nothing on screen said which profile prompts went to.
+
+**Generalizable rule.** When a second instance of a resource can exist during a hand-over, tag
+its events with the instance they came from, or stop the old instance's forwarder before closing
+it; an untagged "closed" event will be taken for the survivor's. And bind everything that holds
+the resource in one function that both the first set-up and the hand-over call; a hand-over
+written as "replace the main handle" leaves the other holders on the old one.
+
+## 2026-11-21 — Reasoning reported at the end of a turn can be commentary the reader already saw
+
+**Evidence.** Live check with a model that writes a line of commentary before each tool call:
+the turn printed "Found the file — I'll grab that first word.", ran the tool, then printed the
+same sentence again under `∴ thinking (latest step)` before the answer. The fix is
+`shown_as_commentary` in `crates/talaria-core/src/session/reducer.rs`; the test is
+`completion_reasoning_that_repeats_this_turns_commentary_is_not_drawn_again` in
+`crates/talaria-core/tests/integration/session_rules.rs`.
+
+**Mechanism.** When reasoning does not stream, `message.complete` carries the last step's
+reasoning, and `complete()` draws it as a block before the reply. For this model that field held
+the commentary text, which had already streamed as a reply segment and been sealed when the tool
+started. The block is now skipped when a reply cell of the same turn (from `turn_start`) has the
+same text after trimming.
+
+**Generalizable rule.** Before drawing a late summary of a turn, compare it with what the turn
+has already shown; a provider's "reasoning" field is not guaranteed to be new text.
+
+## 2026-11-21 — A timed animation in an event-driven loop must anchor its wake to the last frame
+
+**Evidence.** The change is `feat(tui): show a sweeping working row above the composer while a
+turn runs`. The wake schedule is `ActivityClock::next_wake` in
+crates/talaria-tui/src/activity.rs. The regression tests are
+`clock_animates_only_while_the_row_shows` and `idle_clock_schedules_nothing` in
+crates/talaria-tui/tests/integration/activity_line.rs, and
+`activity_sweep_frame_writes_only_changed_cells` in
+crates/talaria-tui/tests/integration/live_region.rs. That test measured one 80 ms sweep frame at
+304 bytes for an 80-column row, with 0 bytes for an idle or same-moment redraw.
+
+**Mechanism.** The app loop recomputes `Screen::next_wake(now)` on every pass, including passes
+woken by gateway messages. A deadline written as `now + frame` therefore moves forward each time
+a message arrives, and during a fast stream it never falls due. A deadline written as `last
+frame drawn + frame` stays fixed, so the animation advances at its own rate whatever wakes the
+loop. Two more rules keep the idle budget at zero. First, the clock forgets "shown" at the start
+of every draw, so any early overlay return counts as not shown without extra code. Second, the
+status-command refresh policy rate-limits itself (a 1 s minimum gap and its configured
+interval), so extra wakes cost one cheap check, not a process start.
+
+**Generalizable rule.** Anchor a repeating frame deadline to the last frame drawn, not to the
+moment the deadline is computed, and clear the "on screen" flag at the start of each draw so
+that only a frame that really drew the animation schedules the next one.
+
+## 2026-11-21 — A mode that silently skips input needs a notice at the skip, not only at the toggle
+
+**Evidence.** The change is `feat(ultracode): show when Ultracode routes, skips and runs, and
+open a run with Alt+W`. The core of it is talaria_core::ultracode::bypass and notice::bypassed,
+called in the submit wrapper in crates/talaria-app/src/app.rs. The run watch is
+UltracodeService::arm / scan_due / on_runs in crates/talaria-app/src/ultracode.rs. The flag
+carry is in branched() and opened_session() in crates/talaria-app/src/app.rs.
+
+**Mechanism.** Ultracode routes plain prompts only. Slash commands are dispatched before the
+routing check, so a task typed as "/goal <text>" bypassed the mode with nothing on screen. The
+only sign the mode existed was a status word, and that word had the lowest keep-priority, so a
+narrow bar dropped it first. The on/off flag was also keyed by runtime session id, and /branch
+(and a reconnect that reopens the same stored session) returns a new runtime id, so the flag
+silently went off. The fix has four parts:
+- Notices at each decision point: routed, skipped, run started, run ended.
+- A cheap local poll of the runs folder that matches runs by profile and start time.
+- A higher keep-priority for the status segment while a run is active.
+- Copying the flag across the id change, with stored-session identity as the key for reconnects.
+
+**Generalizable rule.** when a per-session mode can be bypassed or reset by another path, print
+a one-line notice at the bypass or reset itself, and key the state by the identity that survives
+the path, not by the transport id.
+
+## 2026-11-21 — A placeholder provider's warning is a setup hint, not a partial catalogue
+
+**Evidence.** The change is `fix(models): show real route facts in the model picker and tidy its
+layout`. The old banner was built in `crates/talaria-core/src/models/pick.rs` `rebuild()`, which
+took the first `warning` from any provider in the `model.options` reply and printed "Partial
+catalogue: …; remaining availability unknown". Talaria asks for unconfigured providers too
+(`include_unconfigured=true`). Hermes then adds a placeholder row for each one whose `warning`
+reads like "run `hermes model` to configure (oauth_device_code)". The test
+`setup_hints_from_unconfigured_providers_are_not_a_partial_catalogue` in
+`crates/talaria-core/tests/integration/model_browse.rs` pins the fix. Separately, the
+`session.info` event already carried `reasoning_effort_wire`, but `adopt_model` kept only model,
+provider and effort. That is why Details printed "Applied: unknown" and "Context: unknown" as
+fixed text. A live check against Hermes 0.23.3 then showed the first version of the fix still
+printed no Context line: it read `usage.context_max` from `session.info`, a shape no recorded
+frame has. The recordings under `fixtures/frames/` carry the context size as a top-level
+`context_length` on `session.info`, and as `usage.context_max` on `session.usage` and
+`message.complete`; `context_size_is_read_from_every_event_shape_hermes_sends` pins all three.
+
+**Mechanism.** A field's meaning depends on the row that carries it. On an authenticated
+provider, `warning` is a real note about the catalogue. On a placeholder row it is setup advice
+for a provider the user has not configured. Treating the first `warning` anywhere as
+catalogue-wide made a false banner appear on any machine with one unconfigured sign-in provider.
+The fix shows no banner for either kind: a configured provider's warning is a Warning line in
+the details of that provider's own rows, and a setup hint is a Setup line on the Needs setup
+row. (A banner that named the provider was tried first; on a real catalogue it sat above every
+row and read as a note about the selected model.) Facts about the route in use are stored with
+the requested effort they answered so they never go stale after Left/Right or a model switch. A copy
+of the picker view in `crates/talaria-cli/src/run.rs` (`ModelOverlay`) also has to carry any new
+view field, or the terminal silently drops it.
+
+**Generalizable rule.** Before you summarise a gateway field across a list, check which rows set
+it and what it means on each kind of row. Take an event's field shape from a recorded frame, not
+from the field's name on another event. Also trace every copy of a view struct between the
+reducer and the screen.
+
+## 2026-11-21 — A skin preview has to write the profile's skin, so it needs a rest delay, one write at a time and a restore on exit
+
+**Evidence.** The change is `feat(appearance): open a previewing selector after /theme and
+/skin`.
+- `crates/talaria-app/src/app/choice.rs`: the functions `rested`, `skin_set` and
+  `restore_on_exit`.
+- `crates/talaria-app/src/appearance.rs`: `preview_skin` and `skin_choices`.
+- Tests in `crates/talaria-app/tests/integration/appearance_choice.rs`:
+  `skin_preview_sets_only_after_selection_rests_and_escape_restores` and
+  `quit_during_skin_preview_restores_original`.
+
+**Mechanism.** Hermes's only skin method is `config.set` with key `skin`. It writes the
+profile's `display.skin` and broadcasts `skin.changed` to every client. `runtime.describe` takes
+no parameters and returns only the active skin. So a live preview of a skin can only work by
+making that skin the profile's skin.
+
+The selector makes this safe with four rules:
+- Every move bumps a timer generation, and only the newest timer may write, after 300 ms of
+  rest.
+- Only one write is in flight. Enter or Esc pressed during a write is deferred until that write
+  answers, so a late preview can never land after the restore or the kept skin.
+- Esc writes the original configured value back. The quit path awaits the same write, with a
+  2-second limit, after the event loop stops.
+- Theme previews need none of this: they are an in-memory override that
+  `AppearanceService::view()` prefers.
+
+A second detail: two `send_later` tasks started by one command finish in no fixed order. The
+`/skin` report and the list fetch now run in one task, so the report always prints before the
+selector opens.
+
+**Generalizable rule.** When a preview can only be shown by writing shared state, allow one
+write at a time, write only the newest resting selection, and put the original back on every
+exit path, quitting included.
+
+## 2026-11-21 — A session-switch notice committed before the replay is buried by it
+
+**Evidence.** crates/talaria-app/src/app.rs (branched, switched, install_session,
+opened_session) and crates/talaria-app/src/switch.rs (branch_notice); tests
+branch_switches_into_the_child_and_adopts_its_fences, branch_name_is_not_sent_as_a_prompt,
+same_profile_switch_opens_first_then_lets_go. A user typed "/branch some synthetic text" and
+reported that nothing seemed to happen.
+
+**Mechanism.** branched() and switched() committed their confirmation line first and only then
+installed the new session, whose opened_session commits a "Resumed" header and up to 50 replayed
+cells (RESUME_HISTORY_CELLS). A branch copies the history the user was already looking at, so
+the screen looked unchanged and the one confirmation line sat far above the fold. The notice
+also never said that Hermes takes the text after /branch as the new session's name, so the text
+appeared to vanish. opened_session already has a notice slot that commits after the replay (the
+/new path used it); install_session passed None. The fix routes the notice through
+install_session into that slot. Screen-order bugs are invisible to tests that read committed
+lines and cells as two separate lists, so the test drive now also records one ordered log of
+both.
+
+**Generalizable rule.** A notice about entering a session goes through opened_session's notice
+slot so it lands after the replay; and a test about what is on screen must read one ordered log,
+not separate line and cell lists.
+
+## 2026-11-21 — Record history when a line runs, not when Enter is pressed
+
+**Evidence.** The change is `fix(composer): save the slash command that ran and keep Up walking
+history`.
+- crates/talaria-cli/src/run.rs: `palette_submit` and `record_ran_line`.
+- crates/talaria-app/src/app.rs: `follow()` emits `AppEffect::RecordSubmit`.
+- crates/talaria-core/src/commands/palette.rs: `PaletteInput::Recalled`.
+- Tests: palette_routing.rs `picked_command_is_recorded_as_the_line_that_ran` and run.rs
+  `up_arrow_walks_through_recalled_slash_commands`.
+- Before the fix, a synthetic history held "/" one second before "/compact", and nothing at all
+  for "/profiles" picked from the list.
+
+**Mechanism.**
+- The terminal saved the composer's draft on every Enter, before the app gave that Enter to the
+  open slash list. The list then ran a different line (picking "/profiles" from "/"), completed
+  to "/name ", or ran nothing. So history got the keystroke's text, never the command that ran.
+- Separately, a recalled "/..." entry reached the list as an ordinary edit. The list opened and
+  took Up and Down, so history browsing stopped at the first slash entry.
+- Now the app reports the line that ran (RecordSubmit, before the submit so UnrecordSubmit can
+  still take it back). A recalled entry closes the list the way Esc does until the text is
+  edited.
+
+**Generalizable rule.** Record user history at the point where the program knows what actually
+ran, and treat recalled text as distinct from typed text in every consumer that reacts to
+drafts.
+
+## 2026-11-21 — Subagent list labels hid the only word that differed
+
+**Evidence.** A synthetic fan-out of ten subagents whose goals all read "Run and test the
+`<name>` demonstration of the sample tool, then report the result." showed ten rows ending
+"…demonstration of the sample tool, t…". The goal column took whatever width was left after
+fixed columns, then tail-cut. Hermes also relays one subagent.progress event per five tool calls
+with text "🔀 [set 1 · 3/10] terminal, read_file" (tools/delegate_tool_progress.py, `_flush`),
+which as the newest activity line replaced the readable tool line, and it cuts subagent.complete
+summaries to 500 characters (`summary[:500]`), so a JSON reply arrives as broken JSON whose
+first line is "{". Fixed in crates/talaria-tui/src/subagents/{labels,panel,dock}.rs; tests in
+crates/talaria-tui/tests/integration/subagent_view.rs.
+
+**Mechanism.** A tail cut keeps the start of the text, but in a fan-out the start is the part
+every goal shares. Finding the common prefix and suffix on grapheme clusters, trimming both back
+to whitespace so no word is split, and showing the shared text once as a caption keeps the
+differing word on each row; if the shared text is short, or any label would be empty, the full
+goals stay. Progress text built from tool names repeats events already received, so the activity
+cell prefers the newest non-batch entry. A truncated JSON reply cannot be parsed whole, so the
+finished strip scans for top-level keys by tracking string and bracket depth, then reads one
+value with serde_json's streaming deserializer.
+
+**Generalizable rule.** When a list cuts text from the right, check whether the rows share their
+opening; show shared text once and cut only the part that differs, and never parse or preview a
+length-capped payload as if it were whole.
+
+## 2026-11-21 — A queue row's text is not proof the person typed it
+
+**Evidence.** The change is `fix(session): draw Hermes-written turns as one notice, not a
+prompt`. The live path runs through crates/talaria-core/src/session/reducer.rs (message.start)
+into crates/talaria-core/src/queue/flow.rs (start_cell). The resume path is
+crates/talaria-core/src/session/snapshot.rs. The shared rule is
+crates/talaria-core/src/session/injected.rs (classify_user_row). The test
+crates/talaria-core/tests/integration/injected_messages.rs::automation_message_start_keeps_body_and_draws_no_user_cell
+first failed with a notice followed by a "> [ASYNC DELEGATION BATCH COMPLETE …]" prompt.
+
+**Mechanism.** Hermes's pending-admission row carries text but no kind. Talaria treated any
+queued admission it had seen as a prompt someone typed, so a turn Hermes injected (returned
+subagent results) drew its whole model-facing text as a user prompt. That prompt appeared right
+after the notice that message.start had already drawn from display_text. The marker that says
+"Hermes wrote this" lives on message.start (display_kind, display_text, text) and on snapshot
+rows (display_kind, display_metadata.display_text), never on the queue row. Hermes publishes
+message.start before the pending fan-out, so marking the admission as drawn at start also
+silences the later "started" fan-out. Two of Hermes's injected texts carry no kind at all, the
+goal continuation (live) and the tool-call limit nudge, so they can only be recognised by their
+exact text.
+
+**Generalizable rule.** Decide who authored a transcript row from the producer's own authorship
+marker, and run live and replayed rows through one classifier, never two.
+
+## 2026-11-21 — A page opened for one profile should close when the connection moves, not when its profile differs from the connected one
+
+**Evidence.** The change is `feat(profiles): configure a profile's models and connect to it from
+/profiles`. See `crates/talaria-app/src/app.rs`: `open_model_roles_for`, the
+`model_roles_connection` field, the view filter in `AppState::view`, and the guard in
+`model_roles_input`. The test
+`profiles_action_tests::models_page_opened_for_another_profile_stays_open_and_returns_to_profiles`
+covers it.
+
+**Mechanism.** The /models page closed itself, and was hidden from the view, whenever
+`model_roles_profile != state.profile`. That one comparison did two jobs. It noticed that the
+connection had moved, and it assumed the page always belonged to the connected profile. The
+service under the page was already safe for any served profile: REST went through a ticket
+scoped to that profile, and `model.options` was sent with `profile=<name>`. Once /profiles
+opened the page for a profile Talaria was not connected to, that guard closed the page on its
+first reply. The fix records the profile that was connected when the page opened, and compares
+that with `state.profile`.
+
+**Generalizable rule.** When a screen guards against "the connection moved", compare against the
+connection recorded when the screen opened, never against the screen's own subject.
+
+## 2026-11-21 — A gateway reply with a bare Infinity is repaired, and an unreadable reply fails its call at once
+
+**Evidence.** `crates/hermes-client/src/rpc.rs` (`parse_frame`, `repair_non_finite`,
+`recover_reply_id`), `crates/hermes-client/src/channel.rs` (`decode_frame`,
+`ChannelState::on_frame` malformed branch), `crates/hermes-client/src/connect.rs`
+(`read_frame`); tests `reply_with_non_finite_number_completes_with_null` and
+`unreadable_reply_with_known_id_fails_fast` in
+`crates/hermes-client/tests/integration/channel.rs`. Before the change both tests hung to the 5
+second guard.
+
+**Mechanism.** The gateway encodes frames with Python `json.dumps` and its default
+`allow_nan=True`, so a float infinity (for example an unquoted `digits_digits_hex` session id
+that a YAML 1.1 reader reads as a float with an overflowing exponent) is written as a bare
+`Infinity`, which is not JSON. Talaria parsed strictly, classified the frame as not JSON,
+counted it and never looked at the pending call table, so the call waited for its deadline and
+the user only saw a timeout. The fix has two layers: one repair pass on the failure path only
+(bare tokens outside strings, in value position, followed by a delimiter, become `null`), and a
+safety net that recovers a top-level integer id from any still unreadable frame and completes
+that pending call with a bad-result error immediately.
+
+**Generalizable rule.** Never let an undecodable reply leave its call pending: parse tolerantly
+at the edge, and when a frame still cannot be read, fail the call it names right away instead of
+waiting for the timeout.
+
+## 2026-11-21 — Late completion reasoning goes before the open reply, labelled as the latest step
+
+**Evidence.** The change is `fix(session): draw end-of-turn reasoning before the reply it led
+to`. The fix is in `complete()` in crates/talaria-core/src/session/reducer.rs and
+`SessionState::insert_cell_at` in crates/talaria-core/src/session/state.rs. The recorded goldens
+crates/talaria-core/tests/golden/tool-diff.cells.txt and subagent-batch.cells.txt had pinned the
+reply-then-reasoning order. The new tests are `completion_reasoning_*` in
+crates/talaria-core/tests/integration/session_rules.rs.
+
+**Mechanism.** When the gateway's reasoning display setting is off, Hermes sends no
+reasoning.delta. It still attaches the turn's last non-empty step reasoning to message.complete.
+The reducer appended that block after the reply that had already streamed, which is still open
+at that point, so the thinking was drawn below the answer. A reply that did not stream got the
+right order only because complete_text adds it after the push.
+
+Earlier steps of a tool turn are already committed to scrollback, and Hermes does not say which
+step the reasoning came from. So the block cannot go back to its true place. It can only go in
+front of the uncommitted reply, with a heading ("∴ thinking (latest step)") that says it is a
+recap.
+
+**Generalizable rule.** A late-arriving block can only move back as far as the uncommitted
+cells. Insert it before the open cell it explains, through one index-shifting helper, and label
+it when it cannot reach its true position.
+
+## 2026-11-21 — Wrap user prompts and notices before commit; let the gateway's interrupt line stand alone
+
+**Evidence.** The change is `fix(history): one notice per interruption, word-wrap prompts and
+notices`. Files: `crates/talaria-tui/src/history.rs` (`prefixed_wrapped`),
+`crates/talaria-tui/src/theme/cells.rs` (the User and Notice arms), and
+`crates/talaria-core/src/session/reducer.rs` (the `agent.print` arm, `is_interrupt_line`). The
+recorded fixture `fixtures/frames/queue-move-send-now.jsonl` sends `agent.print` "⚡ Interrupted
+during API call." and then `message.complete` with status "interrupted". Before the fix it gave
+two interrupt notices; now it gives one (`recorded_agent_print_is_visible`). The new test
+`wrapped_cell_rows_pass_through_commit_wrap_unchanged` shows that the commit-time `wrap_lines`
+no longer adds rows to wrapped prompts.
+
+**Mechanism.** User and notice cells used to give one `Line` per source line. Only the
+commit-time `wrap_lines` broke them, and it is a grapheme hard break meant as an overflow guard,
+so long prompts were cut mid-word. Assistant text never had this problem because the Markdown
+renderer word-wraps it. These cells now use `composer::wrap` at the width minus the 2-column
+marker. The Markdown wrapper would not do here: it collapses runs of spaces and would corrupt
+pasted code. For interruptions, the per-turn `interrupt_notice` latch only stopped Talaria
+repeating its own notice. A Hermes `agent.print` that holds "⚡" and "interrupt" now sets that
+latch, so the generic "Interrupted" is skipped. This acts on the revisit trigger in the
+2026-11-15 entry "Keep local printed lines alongside existing notices". One caveat:
+`composer::wrap` breaks before a word that ends exactly at the edge when a space follows it, so
+some rows end one word early.
+
+**Generalizable rule.** Word-wrap every piece of user-facing prose before it reaches the commit
+path; keep `wrap_lines` only as the overflow guard.
+
 ## 2026-11-21 — The install target comes from the control socket, not a roster request
 
 **Evidence.** In the app, `/ultracode` followed by `y` to the install prompt, and
