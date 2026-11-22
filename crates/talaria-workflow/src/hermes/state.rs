@@ -24,6 +24,8 @@ pub(super) struct Warnings {
 pub(super) struct Session {
     pub info: SessionInfo,
     pub stored_id: String,
+    /// This connection's subscription to the session, which `session.detach` names.
+    pub subscription_id: String,
     pub execution_generation: i64,
     pub resumed_on: u64,
     pub cursor: Option<Cursor>,
@@ -231,6 +233,7 @@ impl State {
             Session {
                 info,
                 stored_id: snapshot.stored_session_id,
+                subscription_id: snapshot.subscription_id,
                 execution_generation: snapshot.execution_generation,
                 resumed_on: generation,
                 cursor: Some(Cursor {
@@ -330,6 +333,7 @@ pub(super) fn start(
                                 reasoning_effort: None,
                             },
                             stored_id: String::new(),
+                            subscription_id: String::new(),
                             execution_generation: receipt.execution_generation.unwrap_or(0),
                             resumed_on: 0,
                             cursor: None,

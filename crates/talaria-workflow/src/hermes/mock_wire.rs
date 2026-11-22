@@ -179,10 +179,20 @@ impl ScriptedWire {
                                 .send(Err(WireError::NotServed("profile is not scripted".into())));
                             continue;
                         };
+                        if method == "session.detach" {
+                            // Ending a finished agent's session is bookkeeping: scripts need not
+                            // list it, and it must not use up the step of a later call.
+                            let _ = reply.send(Ok(json!({"session_id":params["session_id"],
+                                "subscription_id":params["subscription_id"],"detached":true})));
+                            continue;
+                        }
                         if method == "session.close" {
-                            // Closing a finished agent's session is bookkeeping: scripts need
-                            // not list it, and it must not use up the step of a later call.
-                            let _ = reply.send(Ok(json!({"closed":true,"messages":[]})));
+                            // The pinned gateway serves no `session.close` on the session socket.
+                            let _ = reply.send(Err(WireError::Refused {
+                                code: -32601,
+                                message: "unknown_method".into(),
+                                data: Value::Null,
+                            }));
                             continue;
                         }
                         if state.reconnect {

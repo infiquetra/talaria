@@ -71,8 +71,12 @@ Preflight also reads the literal `model` and `provider` names in the script's op
 and checks each against the roster. A name the roster cannot serve fails the run with exit 2
 before any agent starts, one line per unknown pair with its script line and the nearest known
 spelling. Names that are computed, or that sit beside a `profile` key, are checked when their
-agent starts. When an agent's call settles, its Hermes session is closed (`session.close`; the
-stored session stays resumable). A failed close is ignored.
+agent starts. When an agent's call settles, the runner leaves its Hermes session with
+`session.detach`, naming the subscription the create answer gave and the end reason
+`workflow_agent_done`, so Hermes ends the session once no other viewer holds it. The session
+socket serves no `session.close`. A detach the gateway refuses or does not answer within 15
+seconds is noted as one journal log line and changes nothing else; Hermes then ends the
+session itself, after its orphan grace period, once the runner's connection closes.
 
 The manifest records the parsed workflow name, actual script hash, version, profile, input,
 roster, and the finite-only approval-policy intent. The deterministic seed hashes the original

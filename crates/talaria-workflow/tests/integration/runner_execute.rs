@@ -49,6 +49,7 @@ struct WireState {
     released: BTreeSet<String>,
     unconfirmed: bool,
     failing_interrupts: u32,
+    stale_subscriptions: bool,
 }
 #[derive(Clone)]
 struct Session {
@@ -81,6 +82,10 @@ impl CountingWireFactory {
     fn fail_interrupts(&self, count: u32) {
         self.inner.lock().unwrap().failing_interrupts = count;
     }
+    /// Every detach names a subscription the gateway no longer holds.
+    fn stale_subscriptions(&self) {
+        self.inner.lock().unwrap().stale_subscriptions = true;
+    }
     fn hold_stops(&self) {
         self.hold_stop.store(true, Ordering::SeqCst);
     }
@@ -106,7 +111,7 @@ impl WireFactory for CountingWireFactory {
 fn snapshot(session_id: &str, session: &Session) -> Value {
     json!({"session_id":session_id,"stored_session_id":session_id,"messages":[],"message_count":0,
         "running":false,"authority_epoch":1,"replay_epoch":"epoch","last_sequence":0,
-        "subscription_id":"subscription","revision":1,"execution_generation":1,"pending":[],"prompts":[],
+        "subscription_id":format!("subscription-{session_id}"),"revision":1,"execution_generation":1,"pending":[],"prompts":[],
         "info":{"desktop_protocol":"hermes-gateway-v1","source":"tool","model":session.model,"provider":session.provider}})
 }
 fn receipt(session_id: &str, session: &Session, status: &str, include_result: bool) -> Value {
@@ -262,7 +267,20 @@ impl Wire for CountingWire {
                     }
                 }
                 "session.list" => json!({"sessions":[],"scope":"live"}),
-                "session.close" => json!({"closed":true,"messages":[]}),
+                // The pinned gateway serves no `session.close` on the session socket.
+                "session.close" => {
+                    return Err(WireError::Refused {
+                        code: -32601,
+                        message: "unknown_method".into(),
+                        data: Value::Null,
+                    });
+                }
+                "session.detach" => {
+                    let id = params["session_id"].as_str().unwrap();
+                    json!({"session_id":id,"subscription_id":params["subscription_id"],
+                        "detached":!state.stale_subscriptions
+                            && params["subscription_id"] == format!("subscription-{id}").as_str()})
+                }
                 _ => return Err(WireError::Other(format!("unexpected method: {method}"))),
             };
             Ok(result)
@@ -697,25 +715,56 @@ fn resume_keeps_the_session_model_the_run_started_with() {
 }
 
 #[test]
-fn a_finished_agent_session_is_closed_in_hermes() {
+fn a_finished_agent_session_is_ended_in_hermes() {
     let h = Harness::new("return await agent('review', {label:'review', tier:'first'});");
-    let (exit, _) = Worker::start(Start::New(h.request()), services(&h.wire, true)).finish();
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
     assert_eq!(exit.code, 0);
     let frames = h.wire.frames();
-    let closes: Vec<_> = frames
+    let methods: Vec<_> = frames.iter().map(|f| f.method.as_str()).collect();
+    assert!(!methods.contains(&"session.close"), "{methods:?}");
+    let detaches: Vec<_> = frames
         .iter()
-        .filter(|f| f.method == "session.close")
+        .filter(|f| f.method == "session.detach")
         .collect();
-    assert_eq!(
-        closes.len(),
-        1,
-        "{:?}",
-        frames.iter().map(|f| &f.method).collect::<Vec<_>>()
+    assert_eq!(detaches.len(), 1, "{methods:?}");
+    // The subscription the create answer named, with an end reason so Hermes ends the session.
+    let params = &detaches[0].params;
+    assert_eq!(params.len(), 3, "{params:?}");
+    assert_eq!(params["session_id"], "session-1");
+    assert_eq!(params["subscription_id"], "subscription-session-1");
+    let reason = params["end_reason"].as_str().unwrap();
+    assert!(
+        reason.len() <= 32
+            && reason.starts_with(|c: char| c.is_ascii_lowercase())
+            && reason.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+        "{reason}"
     );
-    assert_eq!(closes[0].params["session_id"], "session-1");
-    // The close comes after the answer was read, never before.
+    // The detach comes after the answer was read, never before.
     let position = |method: &str| frames.iter().rposition(|f| f.method == method).unwrap();
-    assert!(position("session.close") > position("prompt.receipt"));
+    assert!(position("session.detach") > position("prompt.receipt"));
+    assert!(
+        !records(&folder).iter().any(|r| r["event"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("not ended"))),
+        "a detach the gateway accepted is not reported"
+    );
+
+    // A detach the gateway turns down is noted in the journal and changes nothing else.
+    let h = Harness::new("return await agent('review', {label:'review', tier:'first'});");
+    h.wire.stale_subscriptions();
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let notes: Vec<String> = records(&folder)
+        .iter()
+        .filter_map(|r| r["event"]["message"].as_str().map(str::to_owned))
+        .filter(|m| m.contains("not ended"))
+        .collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("session session-1"), "{notes:?}");
 }
 
 #[test]

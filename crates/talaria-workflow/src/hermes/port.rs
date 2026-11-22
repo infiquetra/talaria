@@ -8,9 +8,10 @@ use crate::journal::{
     AdmissionState, CreateSession, GatewayPort, PortError, Receipt, SessionBound, SubmitTurn,
 };
 use futures::future::BoxFuture;
+use hermes_contract::methods::canonical::session_detach;
 use hermes_contract::schemas::{
     AdmissionStatus, CanonicalSessionHandle, CanonicalSnapshot, PromptReceiptResult,
-    RuntimeDescribeResult,
+    RuntimeDescribeResult, SessionDetachResult,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -24,6 +25,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 #[path = "state.rs"]
 mod state;
 use state::{Binding, Command, Key, View};
+/// The end reason a finished agent's session is left with; Hermes stores it on the session row.
+const END_REASON: &str = "workflow_agent_done";
 
 #[derive(Clone, Debug)]
 pub struct PollConfig {
@@ -741,6 +744,8 @@ impl GatewayPort for HermesPort {
             port.save_receipt(&profile, receipt, false).await
         })
     }
+    /// Leave the session with an end reason: Hermes ends it once no other viewer holds it. The
+    /// session socket serves no `session.close`.
     fn close_session(
         &self,
         profile: String,
@@ -748,17 +753,41 @@ impl GatewayPort for HermesPort {
     ) -> BoxFuture<'static, Result<(), PortError>> {
         let port = self.clone();
         Box::pin(async move {
+            let subscription = port
+                .inner
+                .view
+                .borrow()
+                .sessions
+                .get(&(profile.clone(), session_id.clone()))
+                .map(|s| s.subscription_id.clone())
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| {
+                    refusal(
+                        "not_attached",
+                        None,
+                        Some("session.detach: this connection holds no subscription".into()),
+                    )
+                })?;
             let wire = port.wire(&profile).await?;
-            port.call(
-                &wire,
-                "session.close",
-                json!({"session_id":session_id})
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default(),
-                port.inner.cfg.timeouts.cancel,
-            )
-            .await?;
+            let value = port
+                .call(
+                    &wire,
+                    session_detach::NAME,
+                    json!({"session_id":session_id,"subscription_id":subscription,"end_reason":END_REASON})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                    port.inner.cfg.timeouts.cancel,
+                )
+                .await?;
+            let result: SessionDetachResult = decode(session_detach::NAME, value)?;
+            if !result.detached {
+                return Err(refusal(
+                    "not_detached",
+                    None,
+                    Some("session.detach: the gateway holds another subscription".into()),
+                ));
+            }
             Ok(())
         })
     }
