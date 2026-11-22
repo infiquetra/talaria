@@ -77,3 +77,22 @@ fn settings_context_resolves_first_and_rebinds() {
         Some(SettingsKey::Char('j'))
     );
 }
+
+#[test]
+fn ctrl_r_reaches_the_chooser_and_typing_still_filters() {
+    let map = KeyMap::defaults();
+    let choosing = view(Screen::Choosing, true);
+    assert_eq!(
+        route_settings(&choosing, &map, &key("ctrl+r")),
+        Some(SettingsKey::Action(SettingsAction::Reload))
+    );
+    assert_eq!(
+        route_settings(&choosing, &map, &key("r")),
+        Some(SettingsKey::Char('r'))
+    );
+    // A text editor keeps Ctrl+R to itself.
+    assert_eq!(
+        route_settings(&view(Screen::Editing, true), &map, &key("ctrl+r")),
+        None
+    );
+}

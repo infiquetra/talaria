@@ -2,9 +2,9 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use talaria_core::commands::local::LocalAction;
 use talaria_core::settings::{
-    ConfigSchemaView, EditKey, FailReason, FieldKind, FieldView, Screen, SettingsAction,
-    SettingsEffect, SettingsInput, SettingsKey, SettingsLink, SettingsSnapshot, SettingsState,
-    WriteResult,
+    ConfigSchemaView, EditKey, FailReason, FieldKind, FieldView, RuntimeChoice, RuntimeList,
+    Screen, SettingsAction, SettingsEffect, SettingsInput, SettingsKey, SettingsLink,
+    SettingsSnapshot, SettingsState, WriteResult,
 };
 
 static LINKS: &[SettingsLink] = &[SettingsLink {
@@ -555,7 +555,14 @@ fn chooser(field: FieldView, effective: Value, defaults: Value) -> SettingsState
         raw: json!({}),
         defaults,
     }));
-    assert!(action(&mut state, SettingsAction::Edit).is_empty());
+    // A key whose list differs per profile also asks for that list; nothing else is sent.
+    let effects = action(&mut state, SettingsAction::Edit);
+    assert!(
+        effects
+            .iter()
+            .all(|effect| matches!(effect, SettingsEffect::LoadChoices { .. })),
+        "{effects:?}"
+    );
     assert_eq!(state.view().screen, Screen::Choosing);
     state
 }
@@ -715,12 +722,16 @@ fn type_a_value_opens_the_text_editor() {
     );
     assert_eq!(
         choice_names(&state),
-        ["compressor (current) (default)", "Type a value…"]
+        [
+            "compressor (current) (default)",
+            "Type a value…",
+            "Loading the list…"
+        ]
     );
     for ch in "example-engine".chars() {
         ch_key(&mut state, ch);
     }
-    assert_eq!(choice_names(&state), ["Type a value…"]);
+    assert_eq!(choice_names(&state), ["Type a value…", "Loading the list…"]);
     enter(&mut state);
     let view = state.view();
     assert_eq!(view.screen, Screen::Editing);
@@ -816,4 +827,311 @@ fn config_command_sets_modal_mode_direct() {
         banner(&refused),
         "terminal.modal_mode: Choose one of: auto, managed, direct."
     );
+}
+
+fn listed(value: &str, description: &str) -> RuntimeChoice {
+    RuntimeChoice {
+        value: value.into(),
+        description: description.into(),
+    }
+}
+/// Settings for one profile with the given string fields, in order.
+fn browsing(keys: &[&str], effective: Value) -> SettingsState {
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: keys
+                .iter()
+                .map(|key| field(key, FieldKind::String, "general"))
+                .collect(),
+            category_order: vec!["general".into()],
+        },
+        effective: effective.clone(),
+        raw: json!({}),
+        defaults: effective,
+    }));
+    state
+}
+fn load_list(key: &str, list: RuntimeList) -> Vec<SettingsEffect> {
+    vec![SettingsEffect::LoadChoices {
+        key: key.into(),
+        list,
+        profile: "fixture".into(),
+    }]
+}
+fn loaded(state: &mut SettingsState, key: &str, items: Vec<RuntimeChoice>) {
+    state.update(SettingsInput::ChoicesLoaded {
+        key: key.into(),
+        profile: "fixture".into(),
+        items,
+    });
+}
+
+#[test]
+fn runtime_list_shows_builtins_then_merges_the_answer() {
+    let mut state = browsing(&["display.skin"], json!({"display": {"skin": "slate"}}));
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("display.skin", RuntimeList::Skins)
+    );
+    let names = choice_names(&state);
+    assert_eq!(names.len(), 10, "{names:?}");
+    assert_eq!(names[0], "default");
+    assert_eq!(names[9], "Loading the list…");
+    assert_eq!(selected_choice(&state), "slate (current) (default)");
+    let footer = state.view().footer;
+    assert!(footer.ends_with("· Ctrl+R reload list"), "{footer}");
+
+    loaded(
+        &mut state,
+        "display.skin",
+        vec![
+            listed("default", "Fixture description of the default skin."),
+            listed(
+                "example-user-skin",
+                "A skin from the profile's skins folder.",
+            ),
+        ],
+    );
+    let view = state.view();
+    let rows: Vec<(String, String)> = view
+        .choices
+        .iter()
+        .map(|c| (c.name.clone(), c.description.clone()))
+        .collect();
+    assert_eq!(rows.len(), 11, "{rows:?}");
+    assert_eq!(
+        rows[0],
+        (
+            "default".to_owned(),
+            "Fixture description of the default skin.".to_owned()
+        )
+    );
+    assert_eq!(
+        rows[9],
+        (
+            "example-user-skin".to_owned(),
+            "A skin from the profile's skins folder.".to_owned()
+        )
+    );
+    assert_eq!(rows[10].0, "Type a value…");
+    assert_eq!(selected_choice(&state), "slate (current) (default)");
+    edit_key(&mut state, EditKey::End);
+    edit_key(&mut state, EditKey::Up);
+    assert_eq!(selected_choice(&state), "example-user-skin");
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(state.view().rows[0].value, "example-user-skin");
+}
+
+#[test]
+fn runtime_list_failure_keeps_the_chooser_usable_and_ctrl_r_retries() {
+    let mut state = browsing(
+        &["terminal.backend"],
+        json!({"terminal": {"backend": "local"}}),
+    );
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("terminal.backend", RuntimeList::TerminalBackends)
+    );
+    state.update(SettingsInput::ChoicesFailed {
+        key: "terminal.backend".into(),
+        profile: "fixture".into(),
+        reason: "no reply within 15 s".into(),
+    });
+    let names = choice_names(&state);
+    assert_eq!(
+        names.last().unwrap(),
+        "Could not load the list (no reply within 15 s). Showing built-in names. Ctrl+R retries."
+    );
+    assert_eq!(names[0], "local (current) (default)");
+    assert_eq!(names[1], "docker");
+
+    // Ctrl+R asks again and shows the loading row; it does not reload every setting.
+    assert_eq!(
+        action(&mut state, SettingsAction::Reload),
+        load_list("terminal.backend", RuntimeList::TerminalBackends)
+    );
+    assert_eq!(choice_names(&state).last().unwrap(), "Loading the list…");
+    assert_eq!(state.view().screen, Screen::Choosing);
+    // A second Ctrl+R while the list loads sends nothing more.
+    assert!(action(&mut state, SettingsAction::Reload).is_empty());
+
+    edit_key(&mut state, EditKey::Down);
+    enter(&mut state);
+    assert_eq!(state.view().screen, Screen::Browsing);
+    assert_eq!(state.view().rows[0].value, "docker");
+}
+
+#[test]
+fn late_answer_for_another_key_or_profile_is_dropped() {
+    let mut state = browsing(
+        &["display.personality", "display.skin"],
+        json!({"display": {"personality": "", "skin": "default"}}),
+    );
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("display.personality", RuntimeList::Personalities)
+    );
+    escape(&mut state);
+    action(&mut state, SettingsAction::Down);
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("display.skin", RuntimeList::Skins)
+    );
+    // The personality answer arrives while the skin chooser is open.
+    loaded(
+        &mut state,
+        "display.personality",
+        vec![listed("example-persona", "A fixture personality.")],
+    );
+    // An answer for another profile is dropped too.
+    state.update(SettingsInput::ChoicesLoaded {
+        key: "display.skin".into(),
+        profile: "other-profile".into(),
+        items: vec![listed("example-foreign-skin", "Not this profile's.")],
+    });
+    let names = choice_names(&state);
+    assert!(
+        !names.iter().any(|n| n.starts_with("example-")),
+        "{names:?}"
+    );
+    assert_eq!(names.last().unwrap(), "Loading the list…");
+
+    // The dropped personality list is asked for again when its chooser reopens.
+    escape(&mut state);
+    action(&mut state, SettingsAction::Up);
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("display.personality", RuntimeList::Personalities)
+    );
+}
+
+#[test]
+fn a_loaded_list_is_kept_while_the_overlay_is_open() {
+    let mut state = browsing(
+        &["context.engine"],
+        json!({"context": {"engine": "compressor"}}),
+    );
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("context.engine", RuntimeList::ContextEngines)
+    );
+    loaded(
+        &mut state,
+        "context.engine",
+        vec![listed("example-engine", "A fixture context engine.")],
+    );
+    assert_eq!(
+        choice_names(&state),
+        [
+            "compressor (current) (default)",
+            "example-engine",
+            "Type a value…"
+        ]
+    );
+    escape(&mut state);
+    assert!(action(&mut state, SettingsAction::Edit).is_empty());
+    assert_eq!(choice_names(&state)[1], "example-engine");
+    escape(&mut state);
+    // Reloading every setting forgets the lists too.
+    action(&mut state, SettingsAction::Reload);
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![field("context.engine", FieldKind::String, "general")],
+            category_order: vec!["general".into()],
+        },
+        effective: json!({"context": {"engine": "compressor"}}),
+        raw: json!({}),
+        defaults: json!({"context": {"engine": "compressor"}}),
+    }));
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("context.engine", RuntimeList::ContextEngines)
+    );
+}
+
+#[test]
+fn personality_chooser_offers_no_overlay_and_the_builtins() {
+    let mut state = browsing(
+        &["display.personality"],
+        json!({"display": {"personality": "none"}}),
+    );
+    action(&mut state, SettingsAction::Edit);
+    let names = choice_names(&state);
+    // Hermes reads "none" as no overlay, so a stored "none" selects that row.
+    assert_eq!(names[0], "No personality (current) (default)");
+    assert_eq!(names[1], "helpful");
+    assert_eq!(names[14], "hype");
+    loaded(
+        &mut state,
+        "display.personality",
+        vec![listed(
+            "example-persona",
+            "A personality from the profile's config.",
+        )],
+    );
+    let names = choice_names(&state);
+    assert_eq!(names[15], "example-persona");
+    assert_eq!(names[16], "Type a value…");
+}
+
+#[test]
+fn kanban_profile_keys_list_the_served_profiles() {
+    let mut state = browsing(
+        &["kanban.default_assignee", "kanban.orchestrator_profile"],
+        json!({"kanban": {"default_assignee": "", "orchestrator_profile": ""}}),
+    );
+    assert_eq!(
+        action(&mut state, SettingsAction::Edit),
+        load_list("kanban.default_assignee", RuntimeList::Profiles)
+    );
+    loaded(
+        &mut state,
+        "kanban.default_assignee",
+        vec![listed("fixture", ""), listed("example-work", "")],
+    );
+    assert_eq!(
+        choice_names(&state),
+        [
+            "Default profile (current) (default)",
+            "fixture",
+            "example-work",
+            "Type a value…"
+        ]
+    );
+    // Both kanban keys share one list of profiles.
+    escape(&mut state);
+    action(&mut state, SettingsAction::Down);
+    assert!(action(&mut state, SettingsAction::Edit).is_empty());
+    assert_eq!(choice_names(&state)[2], "example-work");
+}
+
+#[test]
+fn a_value_from_a_runtime_list_is_not_called_unlisted() {
+    let mut state = browsing(
+        &["display.skin"],
+        json!({"display": {"skin": "example-user-skin"}}),
+    );
+    let row = state.view().rows[0].value.clone();
+    assert!(!row.contains("not in the list"), "{row}");
+    action(&mut state, SettingsAction::Edit);
+    loaded(
+        &mut state,
+        "display.skin",
+        vec![listed("example-user-skin", "A user skin.")],
+    );
+    assert_eq!(
+        selected_choice(&state),
+        "example-user-skin (current) (default)"
+    );
+    escape(&mut state);
+    let row = state.view().rows[0].value.clone();
+    assert!(!row.contains("not in the list"), "{row}");
 }

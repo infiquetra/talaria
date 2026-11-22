@@ -17,10 +17,11 @@ impl TicketMinter for FailingMinter {
 
 use talaria_app::{
     comforts::prompt_history::PromptHistory,
-    settings::{MinterFactory, SettingsService, append_history},
+    settings::{MinterFactory, SettingsService, append_history, slash_choices},
 };
 use talaria_core::settings::{
-    ConfigSchemaView, FailReason, SettingsEffect, SettingsInput, WriteResult,
+    ConfigSchemaView, FailReason, RuntimeChoice, RuntimeList, SettingsEffect, SettingsInput,
+    WriteResult,
 };
 
 fn factory(minter: Arc<CountingMinter>) -> MinterFactory {
@@ -228,6 +229,240 @@ async fn apply_sequence_and_unknown_outcome() {
         ])
     );
     assert_eq!(minter.count(), 8);
+}
+
+fn list(key: &str, list: RuntimeList) -> SettingsEffect {
+    SettingsEffect::LoadChoices {
+        key: key.into(),
+        list,
+        profile: "fixture".into(),
+    }
+}
+
+fn choice(value: &str, description: &str) -> RuntimeChoice {
+    RuntimeChoice {
+        value: value.into(),
+        description: description.into(),
+    }
+}
+
+fn listed(events: &[SettingsInput], key: &str) -> Vec<RuntimeChoice> {
+    match events {
+        [
+            SettingsInput::ChoicesLoaded {
+                key: answered,
+                profile,
+                items,
+            },
+        ] if answered == key && profile == "fixture" => items.clone(),
+        _ => panic!("expected the {key} list"),
+    }
+}
+
+fn refused(events: &[SettingsInput]) -> String {
+    match events {
+        [SettingsInput::ChoicesFailed { reason, .. }] => reason.clone(),
+        _ => panic!("expected a failed list"),
+    }
+}
+
+#[tokio::test]
+async fn choice_lists_read_the_edited_profiles_routes() {
+    let mock = MockRest::start()
+        .await
+        .with_route("GET", "/api/tools/terminal/backends", |_| {
+            (
+                200,
+                json!({"active": "local", "backends": [
+                    {"name": "local", "label": "Local", "description": "Run on this machine.",
+                     "active": true, "status": "ready", "detail": ""},
+                    {"name": "docker", "label": "Docker", "description": "Isolated container.",
+                     "active": false, "status": "needs_setup", "detail": "docker is not installed"},
+                    {"name": "example-plugin", "label": "Example", "description": "A plugin backend.",
+                     "active": false, "status": "unavailable", "detail": ""}
+                ]}),
+            )
+        })
+        .with_route("GET", "/api/dashboard/themes", |_| {
+            (
+                200,
+                json!({"active": "default", "themes": [
+                    {"name": "default", "label": "Hermes Teal", "description": "Classic dark teal"},
+                    {"name": "example-theme", "label": "Example", "description": "A user theme",
+                     "definition": {"palette": {}}}
+                ]}),
+            )
+        })
+        .with_route("GET", "/api/dashboard/plugins/hub", |_| {
+            (
+                200,
+                json!({"plugins": [], "orphan_dashboard_plugins": [], "providers": {
+                    "memory_provider": "", "memory_options": [], "context_engine": "compressor",
+                    "context_options": [{"name": "example-engine", "description": "A fixture engine"}]
+                }}),
+            )
+        });
+    let minter = Arc::new(CountingMinter::default());
+    let service = SettingsService::new(
+        Some(mock.origin()),
+        vec!["fixture".into(), "example-work".into()],
+        factory(minter.clone()),
+    );
+    // Nothing can be read before the settings of a profile are open.
+    assert_eq!(
+        refused(
+            &service
+                .execute(list("terminal.backend", RuntimeList::TerminalBackends))
+                .await
+        ),
+        "the gateway is not reachable"
+    );
+    assert!(matches!(
+        service.execute(load("fixture")).await.as_slice(),
+        [SettingsInput::Loaded(_)]
+    ));
+    let start = mock.requests().await.len();
+
+    assert_eq!(
+        listed(
+            &service
+                .execute(list("terminal.backend", RuntimeList::TerminalBackends))
+                .await,
+            "terminal.backend"
+        ),
+        [
+            choice("local", "Run on this machine."),
+            choice(
+                "docker",
+                "Isolated container. Needs setup: docker is not installed."
+            ),
+            choice("example-plugin", "A plugin backend. Unavailable."),
+        ]
+    );
+    assert_eq!(
+        listed(
+            &service
+                .execute(list("dashboard.theme", RuntimeList::DashboardThemes))
+                .await,
+            "dashboard.theme"
+        ),
+        [
+            choice("default", "Hermes Teal: Classic dark teal"),
+            choice("example-theme", "Example: A user theme"),
+        ]
+    );
+    assert_eq!(
+        listed(
+            &service
+                .execute(list("context.engine", RuntimeList::ContextEngines))
+                .await,
+            "context.engine"
+        ),
+        [choice("example-engine", "A fixture engine")]
+    );
+    // The profile names are the ones this gateway serves; no request is needed.
+    assert_eq!(
+        listed(
+            &service
+                .execute(list("kanban.default_assignee", RuntimeList::Profiles))
+                .await,
+            "kanban.default_assignee"
+        ),
+        [choice("fixture", ""), choice("example-work", "")]
+    );
+
+    // Each read rides the edited profile's own ticket and names no other profile.
+    let requests = mock.requests().await;
+    let sent: Vec<_> = requests[start..]
+        .iter()
+        .map(|r| (r.method.as_str(), r.path.as_str()))
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            ("GET", "/api/tools/terminal/backends"),
+            ("GET", "/api/dashboard/themes"),
+            ("GET", "/api/dashboard/plugins/hub"),
+        ]
+    );
+    assert_eq!(minter.count(), 7);
+
+    mock.fail_status("GET", "/api/dashboard/plugins/hub", 500, Some("broken"))
+        .await;
+    assert_eq!(
+        refused(
+            &service
+                .execute(list("context.engine", RuntimeList::ContextEngines))
+                .await
+        ),
+        "HTTP 500"
+    );
+    mock.response_body("GET", "/api/dashboard/themes", b"[]".to_vec())
+        .await;
+    assert_eq!(
+        refused(
+            &service
+                .execute(list("dashboard.theme", RuntimeList::DashboardThemes))
+                .await
+        ),
+        "the reply was not valid settings data"
+    );
+}
+
+#[tokio::test]
+async fn skin_and_personality_lists_come_from_slash_completion() {
+    let (mock, client, _inbound) = crate::mock_gateway::MockGateway::start().await;
+    mock.set_skin_names(&["default", "example-user-skin"]);
+    mock.set_skin_descriptions(&[
+        ("default", "Classic Hermes"),
+        ("example-user-skin", "A user skin"),
+    ]);
+    mock.set_personality_rows(&[
+        ("none", "clear personality overlay"),
+        ("helpful", "You are a helpful, friendly AI assistant."),
+        ("example-persona", "A fixture personality"),
+    ]);
+    assert_eq!(
+        slash_choices(&client, None, RuntimeList::Skins).await,
+        Ok(vec![
+            choice("default", "Classic Hermes"),
+            choice("example-user-skin", "A user skin"),
+        ])
+    );
+    // "none" is the "No personality" row Talaria already shows.
+    assert_eq!(
+        slash_choices(
+            &client,
+            Some(crate::mock_gateway::SESSION_ID),
+            RuntimeList::Personalities
+        )
+        .await,
+        Ok(vec![
+            choice("helpful", "You are a helpful, friendly AI assistant."),
+            choice("example-persona", "A fixture personality"),
+        ])
+    );
+    let asked = mock.requests("complete.slash");
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[0].params["text"], "/skin ");
+    assert_eq!(asked[1].params["text"], "/personality ");
+    assert_eq!(
+        asked[1].params["session_id"],
+        crate::mock_gateway::SESSION_ID
+    );
+    // The connection's own profile is used: no call names a profile.
+    assert!(
+        asked
+            .iter()
+            .all(|seen| seen.params.get("profile").is_none())
+    );
+
+    mock.set_skin_list_unavailable(true);
+    assert_eq!(
+        slash_choices(&client, None, RuntimeList::Skins).await,
+        Err("Hermes refused the request".to_owned())
+    );
+    assert!(mock.violations().is_empty());
 }
 
 #[test]

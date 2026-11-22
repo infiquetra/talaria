@@ -5939,6 +5939,83 @@ mod settings_wiring_tests {
             talaria_core::settings::Screen::Loading
         );
     }
+
+    #[test]
+    fn a_runtime_list_is_asked_for_on_the_right_channel() {
+        use talaria_core::settings::{
+            ConfigSchemaView, FieldKind, FieldView, RuntimeList, SettingsAction, SettingsEffect,
+            SettingsInput, SettingsKey, SettingsSnapshot,
+        };
+        let mut state = AppState::new("settings-lists");
+        let profile = state.profile.clone();
+        settings_input(
+            &mut state,
+            SettingsInput::Open {
+                profile: profile.clone(),
+                filter: None,
+            },
+            None,
+        );
+        let field = |key: &str| FieldView {
+            key: key.into(),
+            kind: FieldKind::String,
+            description: key.into(),
+            category: "general".into(),
+            options: None,
+            searchable: false,
+            clearable: false,
+        };
+        let values =
+            serde_json::json!({"display": {"skin": "default"}, "terminal": {"backend": "local"}});
+        update(
+            &mut state,
+            AppMessage::Settings {
+                generation: state.settings_generation,
+                profile: profile.clone(),
+                service: None,
+                input: SettingsInput::Loaded(SettingsSnapshot {
+                    profile: profile.clone(),
+                    schema: ConfigSchemaView {
+                        fields: vec![field("display.skin"), field("terminal.backend")],
+                        category_order: vec!["general".into()],
+                    },
+                    effective: values.clone(),
+                    raw: serde_json::json!({}),
+                    defaults: values,
+                }),
+            },
+        );
+        let key = |action| SettingsInput::Key(SettingsKey::Action(action));
+        // Skins come from the session socket's slash completion.
+        let effects = settings_input(&mut state, key(SettingsAction::Edit), None);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::SettingsChoices { key, list: RuntimeList::Skins, .. } if key == "display.skin"
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Settings { .. }))
+        );
+        settings_input(
+            &mut state,
+            SettingsInput::Key(SettingsKey::Edit(talaria_core::settings::EditKey::Esc)),
+            None,
+        );
+        settings_input(&mut state, key(SettingsAction::Down), None);
+        // Terminal backends come from the profile's REST route.
+        let effects = settings_input(&mut state, key(SettingsAction::Edit), None);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::Settings {
+                effect: SettingsEffect::LoadChoices {
+                    list: RuntimeList::TerminalBackends,
+                    ..
+                },
+                ..
+            }
+        )));
+    }
 }
 
 fn local_effect(

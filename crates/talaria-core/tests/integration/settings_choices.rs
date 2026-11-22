@@ -2,7 +2,7 @@
 //! pinned Hermes source by `tools/contract-gen/contract_gen.py config-choices`.
 use serde_json::Value;
 use std::collections::BTreeSet;
-use talaria_core::settings::{SaveAs, SchemaList, choice_spec, choice_specs};
+use talaria_core::settings::{RuntimeList, SaveAs, SchemaList, choice_spec, choice_specs};
 
 const PROOF: &str = include_str!("../../../../tools/contract-gen/config-choices.json");
 const PINNED: &str = include_str!("../../../hermes-contract/PINNED");
@@ -132,12 +132,31 @@ fn null_default_keys_save_json() {
 }
 
 #[test]
+fn keys_whose_values_differ_per_profile_fetch_their_list() {
+    for (key, list) in [
+        ("display.skin", RuntimeList::Skins),
+        ("display.personality", RuntimeList::Personalities),
+        ("terminal.backend", RuntimeList::TerminalBackends),
+        ("dashboard.theme", RuntimeList::DashboardThemes),
+        ("context.engine", RuntimeList::ContextEngines),
+        ("kanban.default_assignee", RuntimeList::Profiles),
+        ("kanban.orchestrator_profile", RuntimeList::Profiles),
+    ] {
+        assert_eq!(choice_spec(key).unwrap().runtime, Some(list), "{key}");
+    }
+    assert_eq!(choice_spec("logging.level").unwrap().runtime, None);
+    let personality = choice_spec("display.personality").unwrap();
+    assert_eq!(personality.items[0].value, "");
+    assert_eq!(personality.items[0].label, Some("No personality"));
+    assert!(personality.items[0].aliases.contains(&"none"));
+    assert!(personality.custom.is_some());
+}
+
+#[test]
 fn keys_left_for_later_have_no_spec_yet() {
-    // Run-time lists, the language flag and keys present only after the pin come later.
+    // The language flag and keys present only after the pin come later.
     for key in [
-        "display.personality",
         "display.language",
-        "kanban.default_assignee",
         "gateway.sessiondb_loop_guard",
         "voice.auto_tts_mode",
         "bedrock.region",
