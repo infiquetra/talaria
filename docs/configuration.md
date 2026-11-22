@@ -526,15 +526,73 @@ Mixture of Agents presets); see [Model roles](model-roles.md).
 
 The `settings_*` bindings above apply while browsing. `/` focuses the filter; Enter leaves
 it focused on the first matching setting. In an editor, arrows, Home, End, Backspace,
-Delete and Ctrl+U edit text; Enter accepts and Esc cancels. Option lists accept typing to
-filter. Ctrl+R reloads settings, `?` shows help, and Esc clears the filter before closing.
+Delete and Ctrl+U edit text; Enter accepts and Esc cancels. Ctrl+R reloads settings, `?`
+shows help, and Esc clears the filter before closing.
+
+A setting with a known set of values opens a chooser instead of a text box. Each row names
+a value and says in one line what it does; `(current)` marks the value in force and
+`(default)` the profile's default, and the chooser opens on the current value. Typing
+filters by name or description, Up and Down move and wrap, PgUp and PgDn move ten rows,
+Home and End jump to the ends, Enter chooses and Esc cancels. The lists come from the
+gateway's schema plus a table built into Talaria for keys the schema types as plain text;
+that table also corrects schema lists that name values Hermes does not read, such as
+`terminal.modal_mode`. A value set outside the list shows as
+`<value> (current, not in the list)`, and Enter on it keeps it unchanged. Where Hermes also
+takes values outside the list, such as plugin names or voice names, a last row
+`Type a value…` opens a text box that starts with the filter text. The command form below
+accepts the same values, and its refusal names them: `Choose one of: auto, managed, direct.`
+
+A setting that takes several values, such as `display.status_bar.fields`,
+`display.runtime_footer.fields` or `discord.server_actions`, opens the same list with a tick
+box on each row: `[x]` is ticked and `[ ]` is not. Space ticks or unticks the row, Enter keeps
+the ticks as they stand, wherever the cursor is, and Esc drops them. Typing still filters.
+A first row such as `Default set (empty list)` clears every tick. A listed value that the
+list lacks, such as a field name a newer Hermes added, stays ticked as
+`<value> (not in the list)` until you untick it. Where the order is the order shown, as in
+the runtime footer, a new tick goes last, and `Edit as text…` opens the list as comma
+separated text to reorder it. `discord.server_actions` is a string in Hermes, so its ticks
+are saved as one comma separated string; the other keys save a list.
+
+A setting that takes one of a few words or something of your own lists the words and ends
+in a row that opens a text box. `agent.tool_use_enforcement`, `agent.execution_guidance` and
+`agent.intent_ack_continuation` take `auto`, `true`, `false` or an `Own list…` of model name
+parts, saved as a list; `true` and `false` are saved as booleans, not text.
+`agent.agent_cache.memory_high_mb` takes `auto`, `off` or a `Number of MB…`, and
+`approvals.approvers` takes `*`, `Requester and admins only` (an empty list) or an
+`Own list…` of user ids. A list or number already stored shows as `custom: … (current)`, and
+`Own list…` opens a text box that starts with it.
+
+A number whose range Hermes states, such as `compression.threshold` (0.0 to 1.0) or
+`compression.max_attempts` (1 to 10), shows `range … · step … · unit` above its text box.
+Up and Down change it by one step and stop at the ends. Enter refuses a value outside the
+range with a line such as `Enter a number from 0.0 to 1.0.`. A setting that Hermes leaves
+unset by default and whose blank value means "not set", such as `agent.run_budget_seconds`,
+takes a whole number or stays blank; blank is saved as `null`. A number with no stated range
+keeps the plain text box, and Talaria adds no range of its own.
+
+Some lists differ per machine or profile: skins, personalities, terminal backends, dashboard
+themes, context engines and the profile names the kanban keys take. Their choosers show the
+built-in names at once with a `Loading the list…` row and add the profile's own names when
+the gateway answers. Skins and personalities come from slash completion on the session
+connection; backends (with a setup status), themes and context engines come from the
+dashboard routes with the profile's own ticket; profile names are the ones the gateway
+serves. If the list cannot be read, the row says
+`Could not load the list (<reason>). Showing built-in names. Ctrl+R retries.` and the
+chooser stays usable. Until the list arrives, a current value that no built-in name matches
+shows as `<value> (current)`, and the cursor stays on the same value when the list merges. In a chooser, the `settings_reload` binding (Ctrl+R) asks for its list
+again instead of reloading every setting. A list is kept while settings stay open.
 Pending edits require confirmation before closing. Ctrl+Z suspends as usual.
 
 Secrets are fully masked. R reveals a selected secret once for ten seconds or until the
 next key. While editing a secret, Alt+R reveals it once; plain R inserts text.
 Reviews and saved notices never reveal a secret. Environment references,
-values containing secrets, unsupported types, model roles and provider settings are read-only
-on this screen. Settings need a terminal at least 60 columns by 12 rows.
+values containing secrets, unsupported types, and the keys that the model roles and provider
+screens write (the main model and its fallbacks, the provider, model, endpoint, protocol and
+reasoning effort of the subagents and helper tasks, the Mixture of Agents presets) are
+read-only on this screen. The behaviour keys beside them, such as the subagent limits in
+`delegation.*` and the timeouts in `auxiliary.*`, are edited here. A save that holds
+`display.language` also asks Hermes to keep the language key, so choosing English is not
+dropped as a default. Settings need a terminal at least 60 columns by 12 rows.
 
 `/config display.compact=true display.skin="mono"` prepares multiple changes for review.
 Quoted values support escaped quotes and backslashes. Unknown keys or invalid values reject

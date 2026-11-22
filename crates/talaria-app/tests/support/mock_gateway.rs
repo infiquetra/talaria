@@ -1130,6 +1130,16 @@ impl MockGateway {
         lock(&self.shared).sess.skin_list_unavailable = unavailable;
     }
 
+    /// The rows `complete.slash` returns for `/personality `, each a name and its description.
+    /// Hermes lists `none` first, then the built-in and configured personalities.
+    pub fn set_personality_rows(&self, rows: &[(&str, &str)]) {
+        lock(&self.shared).sess.personality_rows = Some(
+            rows.iter()
+                .map(|(name, text)| ((*name).to_owned(), (*text).to_owned()))
+                .collect(),
+        );
+    }
+
     /// The `execution_generation` written on the envelope of built events. The default is 1.
     pub fn set_envelope_generation(&self, generation: i64) {
         lock(&self.shared).envelope_generation = generation;
@@ -2665,6 +2675,8 @@ struct SessionSide {
     skin_descriptions: HashMap<String, String>,
     /// A `/skin` completion is refused, so the caller cannot see the list.
     skin_list_unavailable: bool,
+    /// Rows `complete.slash` returns for a `/personality ` query. `None` keeps the generic fixture.
+    personality_rows: Option<Vec<(String, String)>>,
     // Permissions and moves (#237).
     approvals_mode: String,
     mode_read_denied: bool,
@@ -2776,6 +2788,7 @@ impl SessionSide {
             skin_names: None,
             skin_descriptions: HashMap::new(),
             skin_list_unavailable: false,
+            personality_rows: None,
             approvals_mode: "manual".to_owned(),
             mode_read_denied: false,
             session_bypass: HashMap::new(),
@@ -3353,6 +3366,23 @@ fn plan_slash(
                 outgoing.push((None, body, reply_meta(id, method)));
                 return;
             }
+        }
+        // Hermes: hermes_cli/commands_completion.py `_personality_completions`.
+        if let (Some(prefix), Some(rows)) = (
+            text.strip_prefix("/personality "),
+            &state.sess.personality_rows,
+        ) {
+            let items: Vec<Value> = rows
+                .iter()
+                .filter(|(name, _)| name.starts_with(prefix) && name.as_str() != prefix)
+                .map(|(name, meta)| {
+                    json!({"text": name, "display": name, "meta": meta, "kind": "command"})
+                })
+                .collect();
+            let result = json!({"items": items, "replace_from": 13});
+            let body = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+            outgoing.push((None, body, reply_meta(id, method)));
+            return;
         }
     }
     let result = slash_result(method, params, state.turn_running);

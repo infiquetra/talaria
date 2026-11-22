@@ -24,6 +24,15 @@ checkout must match PINNED. The sorted committed list is the offline input.
 Fallback eligibility assumes the full interactive grant and follows the pinned
 `tui_gateway/ws_legacy_fallback.py`; drift does not refresh that fallback rule.
 
+`config-choices --hermes-checkout <clone> [--check]` writes or checks
+`config-choices.json`, the proof behind the value lists `/config` offers for keys the
+gateway schema types as plain text. Each recipe in `CONFIG_CHOICE_SOURCES` names where the
+pinned source states a set: a module constant, the literals in one function, the comment at
+a `DEFAULT_CONFIG` key or anchor, or the desktop app's suggestion list. A missing name or
+value fails. The file also records every schema `_select`. The checkout must match PINNED;
+the Rust parity test in `crates/talaria-core/tests/integration/settings_choices.rs` reads
+only the committed file. With `--hermes-checkout`, `drift` also lists changed choice values.
+
 `drift --tag latest --summary <file> [--hermes-checkout <clone>]` builds in an
 isolated temporary workspace. Binding tests decide success; recording tests
 are reported separately. The source workspace is never modified.

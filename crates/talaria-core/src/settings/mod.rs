@@ -1,4 +1,5 @@
 //! Pure configuration editing, review and verified save state.
+mod choices;
 mod command;
 mod diff;
 mod effects;
@@ -9,6 +10,7 @@ mod state;
 mod text;
 mod values;
 
+pub use choices::*;
 pub use command::*;
 pub use diff::*;
 pub use effects::*;

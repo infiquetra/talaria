@@ -2268,6 +2268,15 @@ pub enum AppEffect {
         service: Option<Arc<crate::settings::SettingsService>>,
         effect: talaria_core::settings::SettingsEffect,
     },
+    /// Read a `/config` list that only slash completion on the session socket offers.
+    SettingsChoices {
+        generation: u64,
+        profile: String,
+        key: String,
+        list: talaria_core::settings::RuntimeList,
+        client: Option<hermes_client::Client>,
+        session: Option<String>,
+    },
     DoctorGather,
     DoctorActiveWork,
     DoctorPost {
@@ -5679,6 +5688,27 @@ fn settings_input(
                 result.extend(local_effect(state, action, String::new(), String::new()))
             }
             SettingsEffect::CloseOverlay => {}
+            SettingsEffect::LoadChoices {
+                key,
+                list:
+                    list @ (talaria_core::settings::RuntimeList::Skins
+                    | talaria_core::settings::RuntimeList::Personalities),
+                ..
+            } => result.push(AppEffect::SettingsChoices {
+                generation: state.settings_generation,
+                profile: state.profile.clone(),
+                key,
+                list,
+                client: state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .cloned(),
+                session: state
+                    .opened
+                    .as_ref()
+                    .map(|opened| opened.session_id.clone()),
+            }),
             effect => {
                 if matches!(effect, SettingsEffect::Load { .. }) {
                     state.settings_generation = state.settings_generation.wrapping_add(1);
@@ -6016,6 +6046,84 @@ mod settings_wiring_tests {
             state.settings.view().screen,
             talaria_core::settings::Screen::Loading
         );
+    }
+
+    #[test]
+    fn a_runtime_list_is_asked_for_on_the_right_channel() {
+        use talaria_core::settings::{
+            ConfigSchemaView, FieldKind, FieldView, RuntimeList, SettingsAction, SettingsEffect,
+            SettingsInput, SettingsKey, SettingsSnapshot,
+        };
+        let mut state = AppState::new("settings-lists");
+        let profile = state.profile.clone();
+        settings_input(
+            &mut state,
+            SettingsInput::Open {
+                profile: profile.clone(),
+                filter: None,
+            },
+            None,
+        );
+        let field = |key: &str| FieldView {
+            key: key.into(),
+            kind: FieldKind::String,
+            description: key.into(),
+            category: "general".into(),
+            options: None,
+            searchable: false,
+            clearable: false,
+        };
+        let values =
+            serde_json::json!({"display": {"skin": "default"}, "terminal": {"backend": "local"}});
+        let generation = state.settings_generation;
+        update(
+            &mut state,
+            AppMessage::Settings {
+                generation,
+                profile: profile.clone(),
+                service: None,
+                input: SettingsInput::Loaded(SettingsSnapshot {
+                    profile: profile.clone(),
+                    schema: ConfigSchemaView {
+                        fields: vec![field("display.skin"), field("terminal.backend")],
+                        category_order: vec!["general".into()],
+                    },
+                    effective: values.clone(),
+                    raw: serde_json::json!({}),
+                    defaults: values,
+                }),
+            },
+        );
+        let key = |action| SettingsInput::Key(SettingsKey::Action(action));
+        // Skins come from the session socket's slash completion.
+        let effects = settings_input(&mut state, key(SettingsAction::Edit), None);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::SettingsChoices { key, list: RuntimeList::Skins, .. } if key == "display.skin"
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Settings { .. }))
+        );
+        settings_input(
+            &mut state,
+            SettingsInput::Key(SettingsKey::Edit(talaria_core::settings::EditKey::Esc)),
+            None,
+        );
+        settings_input(&mut state, key(SettingsAction::Down), None);
+        // Terminal backends come from the profile's REST route.
+        let effects = settings_input(&mut state, key(SettingsAction::Edit), None);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::Settings {
+                effect: SettingsEffect::LoadChoices {
+                    list: RuntimeList::TerminalBackends,
+                    ..
+                },
+                ..
+            }
+        )));
     }
 }
 
@@ -13263,6 +13371,40 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            AppEffect::SettingsChoices {
+                generation,
+                profile,
+                key,
+                list,
+                client,
+                session,
+            } => executor.send_later(async move {
+                use talaria_core::settings::{FailReason, SettingsInput};
+                let answer = match &client {
+                    Some(client) => {
+                        crate::settings::slash_choices(client, session.as_deref(), list).await
+                    }
+                    None => Err(FailReason::NotConnected.text()),
+                };
+                let input = match answer {
+                    Ok(items) => SettingsInput::ChoicesLoaded {
+                        key,
+                        profile: profile.clone(),
+                        items,
+                    },
+                    Err(reason) => SettingsInput::ChoicesFailed {
+                        key,
+                        profile: profile.clone(),
+                        reason,
+                    },
+                };
+                AppMessage::Settings {
+                    generation,
+                    profile,
+                    service: None,
+                    input,
+                }
+            }),
             AppEffect::DoctorGather => {
                 let service = crate::doctor::DoctorService::new(state.hermes_home.clone());
                 let profile = state.profile.clone();

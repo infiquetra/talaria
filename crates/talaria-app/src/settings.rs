@@ -3,11 +3,14 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use hermes_client::config_api::{self, ConfigSchema};
+use hermes_client::Client;
+use hermes_client::config_api::{self, ConfigSchema, ListedValue};
 use hermes_client::rest::{RestClient, RestError, RestOptions, TicketMinter};
+use hermes_client::rpc::{CallError, CallOptions};
+use serde_json::{Map, Value, json};
 use talaria_core::settings::{
-    ConfigSchemaView, FailReason, FieldKind, FieldView, SettingsEffect, SettingsInput,
-    SettingsSnapshot, WriteResult,
+    ConfigSchemaView, FailReason, FieldKind, FieldView, RuntimeChoice, RuntimeList, SettingsEffect,
+    SettingsInput, SettingsSnapshot, WriteResult,
 };
 
 pub type MinterFactory = Arc<dyn Fn(&str) -> Arc<dyn TicketMinter> + Send + Sync>;
@@ -48,6 +51,18 @@ impl SettingsService {
                 Ok(snapshot) => SettingsInput::Loaded(snapshot),
                 Err(reason) => SettingsInput::LoadFailed(reason),
             },
+            SettingsEffect::LoadChoices { key, list, profile } => match self.choices(list).await {
+                Ok(items) => SettingsInput::ChoicesLoaded {
+                    key,
+                    profile,
+                    items,
+                },
+                Err(reason) => SettingsInput::ChoicesFailed {
+                    key,
+                    profile,
+                    reason: reason.text(),
+                },
+            },
             SettingsEffect::FetchFresh => match self.active() {
                 Ok(rest) => match config_api::config_read(&rest, true).await {
                     Ok(value) => SettingsInput::Fresh(value),
@@ -77,6 +92,37 @@ impl SettingsService {
             _ => return Vec::new(),
         };
         vec![input]
+    }
+
+    /// A list read over REST with the open profile's own ticket, so it names no profile. Skins
+    /// and personalities have no REST route; `slash_choices` reads them.
+    async fn choices(&self, list: RuntimeList) -> Result<Vec<RuntimeChoice>, FailReason> {
+        if list == RuntimeList::Profiles {
+            return Ok(self
+                .served_profiles
+                .iter()
+                .map(|name| RuntimeChoice {
+                    value: name.clone(),
+                    description: String::new(),
+                })
+                .collect());
+        }
+        let rest = self.active()?;
+        let rows = match list {
+            RuntimeList::TerminalBackends => config_api::terminal_backends(&rest).await,
+            RuntimeList::DashboardThemes => config_api::dashboard_themes(&rest).await,
+            RuntimeList::ContextEngines => config_api::context_engines(&rest).await,
+            RuntimeList::Skins | RuntimeList::Personalities | RuntimeList::Profiles => {
+                return Err(FailReason::NotConnected);
+            }
+        }
+        .map_err(read_failure)?;
+        // A theme's label is its display name; a backend's label only repeats its name.
+        let labelled = list == RuntimeList::DashboardThemes;
+        Ok(rows
+            .into_iter()
+            .map(|row| listed_choice(row, labelled))
+            .collect())
     }
 
     fn active(&self) -> Result<Arc<RestClient>, FailReason> {
@@ -116,6 +162,104 @@ impl SettingsService {
             defaults,
         })
     }
+}
+
+/// One fetched value with the words the gateway gives it: `label: description` when `labelled`,
+/// and a terminal backend's setup status.
+fn listed_choice(row: ListedValue, labelled: bool) -> RuntimeChoice {
+    let text = |value: Option<String>| value.map(|v| v.trim().to_owned()).unwrap_or_default();
+    let (label, description, detail) = (text(row.label), text(row.description), text(row.detail));
+    let label = if labelled { label } else { String::new() };
+    let mut words = match (
+        label.is_empty() || label == row.name,
+        description.is_empty(),
+    ) {
+        (false, false) => format!("{label}: {description}"),
+        (false, true) => label,
+        (true, _) => description,
+    };
+    let status = match row.status.as_deref() {
+        Some("needs_setup") => Some("Needs setup"),
+        Some("unavailable") => Some("Unavailable"),
+        _ => None,
+    };
+    if let Some(status) = status {
+        if !words.is_empty() {
+            words.push(' ');
+        }
+        words.push_str(status);
+        // Hermes ends most probe details with a full stop already.
+        let detail = detail.trim_end_matches('.');
+        words.push_str(&if detail.is_empty() {
+            ".".to_owned()
+        } else {
+            format!(": {detail}.")
+        });
+    }
+    RuntimeChoice {
+        value: row.name,
+        description: words,
+    }
+}
+
+/// Skins or personalities, read through slash completion on the session socket. The call names
+/// the open session when there is one and never a profile: the socket's own profile is the one
+/// `/config` edits, and naming another is refused. Hermes lists `none` first for personalities;
+/// Talaria already shows that as its "No personality" row.
+pub async fn slash_choices(
+    client: &Client,
+    session: Option<&str>,
+    list: RuntimeList,
+) -> Result<Vec<RuntimeChoice>, String> {
+    let text = match list {
+        RuntimeList::Skins => "/skin ",
+        RuntimeList::Personalities => "/personality ",
+        _ => return Err("this list is not read through slash completion".into()),
+    };
+    let mut params = Map::new();
+    params.insert("text".to_owned(), json!(text));
+    if let Some(session) = session {
+        params.insert("session_id".to_owned(), json!(session));
+    }
+    let reply = client
+        .call_raw(
+            "complete.slash",
+            Value::Object(params),
+            CallOptions { timeout: None },
+        )
+        .await
+        .map_err(|error| match error {
+            CallError::NotConnected | CallError::Encode | CallError::InvalidTimeout => {
+                FailReason::NotConnected.text()
+            }
+            CallError::Rpc(_) => "Hermes refused the request".to_owned(),
+            CallError::BadResult { .. } => FailReason::BadData.text(),
+            CallError::TimedOut { after, .. } => FailReason::Timeout {
+                secs: after.as_secs(),
+            }
+            .text(),
+            CallError::Unknown { .. } => FailReason::Dropped.text(),
+        })?;
+    Ok(reply
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let value = item.get("text").and_then(Value::as_str)?.trim();
+            (!value.is_empty() && !(list == RuntimeList::Personalities && value == "none")).then(
+                || RuntimeChoice {
+                    value: value.to_owned(),
+                    description: item
+                        .get("meta")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_owned(),
+                },
+            )
+        })
+        .collect())
 }
 
 /// Resolve the current control endpoint without starting or changing the gateway.

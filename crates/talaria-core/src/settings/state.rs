@@ -3,7 +3,7 @@ use super::{
     diff::format_value,
     secrets::has_env_reference,
     text,
-    values::{lookup, option_text, put},
+    values::{is_choice, listed_choices, lookup, many_value, option_text, picked_names, put},
 };
 use crate::commands::local::LocalAction;
 use serde_json::Value;
@@ -65,6 +65,18 @@ pub enum SettingsInput {
     },
     Loaded(SettingsSnapshot),
     LoadFailed(FailReason),
+    /// A list asked for by `SettingsEffect::LoadChoices`.
+    ChoicesLoaded {
+        key: String,
+        profile: String,
+        items: Vec<RuntimeChoice>,
+    },
+    /// The list could not be read; `reason` is plain words for the failure row.
+    ChoicesFailed {
+        key: String,
+        profile: String,
+        reason: String,
+    },
     Key(SettingsKey),
     /// A viewport-relative position computed by the presentation layer.
     ReviewScroll(usize),
@@ -82,12 +94,25 @@ pub enum SettingsInput {
 }
 #[derive(PartialEq)]
 pub enum SettingsEffect {
-    Load { profile: String },
+    Load {
+        profile: String,
+    },
+    /// Read a list that differs per profile, for the chooser open on `key`.
+    LoadChoices {
+        key: String,
+        list: RuntimeList,
+        profile: String,
+    },
     FetchFresh,
-    Write { patch: Value },
+    Write {
+        patch: Value,
+    },
     ReadBack,
     Notice(String),
-    ScheduleReveal { id: u64, after: Duration },
+    ScheduleReveal {
+        id: u64,
+        after: Duration,
+    },
     ForgetHistoryLine,
     OpenLocal(LocalAction),
     CloseOverlay,
@@ -115,6 +140,13 @@ pub enum FailReason {
     BadData,
     Ticket(String),
     NotLoopback,
+}
+impl FailReason {
+    /// The failure in plain words, as the settings screen shows it.
+    #[must_use]
+    pub fn text(&self) -> String {
+        text::reason(self)
+    }
 }
 #[derive(Clone, PartialEq)]
 pub enum SettingsKey {
@@ -192,8 +224,9 @@ pub struct SettingsView {
     pub conflict_rows: Vec<Conflict>,
     pub filter: String,
     pub editor: Option<SettingsEditorView>,
-    pub choices: Vec<String>,
+    pub choices: Vec<SettingsChoice>,
     pub choice_cursor: usize,
+    pub choice_filter: String,
     pub links: Vec<String>,
     pub help: Vec<(String, String)>,
 }
@@ -204,6 +237,43 @@ pub struct SettingsRow {
     pub origin: String,
     pub marker: String,
     pub effect_label: String,
+}
+/// One row of the open chooser: the name with its `(current)` and `(default)` marks, and a line
+/// saying what the value does.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SettingsChoice {
+    pub name: String,
+    pub description: String,
+    /// A line about the fetched list, not a value: drawn across the row, never chosen.
+    pub status: bool,
+}
+#[derive(Clone)]
+enum ChoicePick {
+    Value(Value),
+    /// The current value is in no list; Enter keeps it.
+    Keep,
+    /// Opens the text editor for a value outside the list.
+    Type,
+    /// Says whether a fetched list is loading or failed; Enter does nothing.
+    Status,
+    /// The row of a multiple choice that clears every tick.
+    Clear,
+}
+/// A fetched list while the overlay is open.
+#[derive(Clone)]
+enum ListState {
+    /// Asked for by the chooser open on this key.
+    Loading(String),
+    Loaded(Vec<RuntimeChoice>),
+    Failed(String),
+}
+#[derive(Clone)]
+struct ChoiceRow {
+    pick: ChoicePick,
+    name: String,
+    description: String,
+    current: bool,
+    default: bool,
 }
 #[derive(Clone)]
 pub struct SettingsEditorView {
@@ -239,6 +309,9 @@ pub struct SettingsState {
     editor: Option<Editor>,
     choice_filter: String,
     choice_cursor: usize,
+    /// The ticks of the open multiple choice, in the order they were made.
+    picks: Vec<String>,
+    lists: BTreeMap<RuntimeList, ListState>,
     conflicts: Vec<Conflict>,
     fresh: Option<Value>,
     command: Option<Vec<(String, String)>>,
@@ -276,6 +349,8 @@ impl fmt::Debug for SettingsInput {
                 Self::Open { .. } => "Open",
                 Self::Command { .. } => "Command",
                 Self::LoadFailed(_) => "LoadFailed",
+                Self::ChoicesLoaded { .. } => "ChoicesLoaded",
+                Self::ChoicesFailed { .. } => "ChoicesFailed",
                 Self::Key(_) => "Key",
                 Self::FreshFailed(_) => "FreshFailed",
                 Self::Written(_) => "Written",
@@ -295,6 +370,7 @@ impl fmt::Debug for SettingsEffect {
                 .finish(),
             other => f.write_str(match other {
                 Self::Load { .. } => "Load",
+                Self::LoadChoices { .. } => "LoadChoices",
                 Self::FetchFresh => "FetchFresh",
                 Self::ReadBack => "ReadBack",
                 Self::Notice(_) => "Notice",
@@ -384,6 +460,8 @@ impl SettingsState {
             editor: None,
             choice_filter: String::new(),
             choice_cursor: 0,
+            picks: Vec::new(),
+            lists: BTreeMap::new(),
             conflicts: Vec::new(),
             fresh: None,
             command: None,
@@ -484,6 +562,16 @@ impl SettingsState {
                 self.reloading = false;
                 Vec::new()
             }
+            SettingsInput::ChoicesLoaded {
+                key,
+                profile,
+                items,
+            } => self.list_answer(&key, &profile, ListState::Loaded(items)),
+            SettingsInput::ChoicesFailed {
+                key,
+                profile,
+                reason,
+            } => self.list_answer(&key, &profile, ListState::Failed(reason)),
             SettingsInput::Key(key) => {
                 self.reveal = None;
                 self.key(key)
@@ -881,7 +969,20 @@ impl SettingsState {
         if self.busy() {
             return Vec::new();
         }
+        if matches!(key, SettingsKey::Action(SettingsAction::Reload))
+            && self.screen == Screen::Choosing
+        {
+            // Ctrl+R in a chooser asks for its list again, never for every setting.
+            if let Some(list) = self.open_list()
+                && !matches!(self.lists.get(&list), Some(ListState::Loading(_)))
+            {
+                self.lists.remove(&list);
+                return self.request_list();
+            }
+            return Vec::new();
+        }
         if matches!(key, SettingsKey::Action(SettingsAction::Reload)) && self.snapshot.is_some() {
+            self.lists.clear();
             self.reloading = true;
             return vec![SettingsEffect::Load {
                 profile: self.profile.clone(),
@@ -1094,7 +1195,8 @@ impl SettingsState {
                         return self.request_close();
                     }
                 } else if !self.unverified {
-                    self.start_edit(action == SettingsAction::Toggle)
+                    self.start_edit(action == SettingsAction::Toggle);
+                    return self.request_list();
                 }
             }
             SettingsAction::Default => {
@@ -1146,6 +1248,92 @@ impl SettingsState {
             Vec::new()
         }
     }
+    /// The fetched list of the chooser that is open, when its key has one.
+    fn open_list(&self) -> Option<RuntimeList> {
+        if self.screen != Screen::Choosing {
+            return None;
+        }
+        self.selected()
+            .and_then(|field| choice_spec(&field.key))
+            .and_then(|spec| spec.runtime)
+    }
+    /// Ask for the open chooser's list unless it is loaded or already asked for.
+    fn request_list(&mut self) -> Vec<SettingsEffect> {
+        let (Some(list), Some(field)) = (self.open_list(), self.selected()) else {
+            return Vec::new();
+        };
+        if matches!(
+            self.lists.get(&list),
+            Some(ListState::Loading(_) | ListState::Loaded(_))
+        ) {
+            return Vec::new();
+        }
+        self.lists
+            .insert(list, ListState::Loading(field.key.clone()));
+        vec![SettingsEffect::LoadChoices {
+            key: field.key,
+            list,
+            profile: self.profile.clone(),
+        }]
+    }
+    /// Keep an answer only for this profile and for the chooser that asked and is still open.
+    fn list_answer(&mut self, key: &str, profile: &str, answer: ListState) -> Vec<SettingsEffect> {
+        let Some(list) = choice_spec(key).and_then(|spec| spec.runtime) else {
+            return Vec::new();
+        };
+        if profile != self.profile
+            || !matches!(self.lists.get(&list), Some(ListState::Loading(asked)) if asked == key)
+        {
+            return Vec::new();
+        }
+        if self.open_list() != Some(list) || self.selected().is_none_or(|field| field.key != key) {
+            // The chooser moved on: forget the request so the list is asked for again.
+            self.lists.remove(&list);
+            return Vec::new();
+        }
+        let held = self
+            .choice_rows()
+            .get(self.choice_cursor)
+            .map(|row| row.pick.clone());
+        self.lists.insert(list, answer);
+        // Stay on the same value. The kept-value and loading rows can vanish in the merge, so
+        // those move to the value in force.
+        let rows = self.choice_rows();
+        let at = rows
+            .iter()
+            .position(|row| match (&held, &row.pick) {
+                (Some(ChoicePick::Value(held)), ChoicePick::Value(value)) => held == value,
+                (Some(ChoicePick::Type), ChoicePick::Type)
+                | (Some(ChoicePick::Status), ChoicePick::Status) => true,
+                _ => false,
+            })
+            .or_else(|| rows.iter().position(|row| row.current))
+            .or_else(|| {
+                rows.iter()
+                    .position(|row| matches!(row.pick, ChoicePick::Keep))
+            })
+            .unwrap_or(0);
+        let visible = self.visible_choices(&rows);
+        self.choice_cursor = if visible.contains(&at) {
+            at
+        } else {
+            visible.first().copied().unwrap_or(0)
+        };
+        Vec::new()
+    }
+    /// Whether a value is missing from the key's fetched list. Before that list loads nobody
+    /// knows, so a key with one is not called unlisted.
+    fn unlisted_in_fetched(&self, key: &str, value: &Value) -> bool {
+        match choice_spec(key).and_then(|spec| spec.runtime) {
+            None => true,
+            Some(list) => match self.lists.get(&list) {
+                Some(ListState::Loaded(items)) => !items
+                    .iter()
+                    .any(|item| value.as_str() == Some(item.value.as_str())),
+                _ => false,
+            },
+        }
+    }
     fn start_edit(&mut self, toggle_only: bool) {
         let Some(field) = self.selected() else { return };
         let kind = self.kind(&field);
@@ -1170,13 +1358,21 @@ impl SettingsState {
         if toggle_only {
             return;
         }
-        if kind == ValueKind::Choice {
+        if matches!(kind, ValueKind::Choice | ValueKind::Many | ValueKind::Mixed) {
             self.choice_filter.clear();
-            self.choice_cursor = self
-                .choices()
-                .iter()
-                .position(|value| value == &current)
-                .unwrap_or(0);
+            self.picks = picked_names(&current);
+            let rows = self.choice_rows();
+            self.choice_cursor = if kind == ValueKind::Many {
+                0
+            } else {
+                rows.iter()
+                    .position(|row| row.current)
+                    .or_else(|| {
+                        rows.iter()
+                            .position(|row| matches!(row.pick, ChoicePick::Keep))
+                    })
+                    .unwrap_or(0)
+            };
             self.screen = Screen::Choosing;
             return;
         }
@@ -1216,6 +1412,19 @@ impl SettingsState {
         if matches!(key, SettingsKey::Action(SettingsAction::Reveal)) {
             return self.reveal_selected();
         }
+        if let SettingsKey::Edit(step @ (EditKey::Up | EditKey::Down)) = key {
+            // Up and Down move a number with a stated range one step.
+            if let Some(editor) = self.editor.as_mut()
+                && matches!(editor.kind, ValueKind::Integer | ValueKind::Float)
+                && let Some(next) = number_spec(&editor.key)
+                    .and_then(|spec| spec.nudge(editor.text.expose(), step == EditKey::Up))
+            {
+                editor.caret = next.chars().count();
+                *editor.text.text_mut() = next;
+                self.banner.clear();
+            }
+            return Vec::new();
+        }
         if matches!(key, SettingsKey::Edit(EditKey::Enter)) {
             let Some(editor) = &self.editor else {
                 return Vec::new();
@@ -1253,43 +1462,379 @@ impl SettingsState {
         }
         Vec::new()
     }
-    fn choices(&self) -> Vec<Value> {
+    /// The value a key holds now: the staged one, else the saved one.
+    fn held(&self, key: &str) -> Value {
+        self.pending
+            .get(key)
+            .or_else(|| {
+                self.snapshot
+                    .as_ref()
+                    .and_then(|snapshot| lookup(&snapshot.effective, key))
+            })
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
+    /// Every row of the open chooser, before the filter: the listed values, then the current value
+    /// when no row holds it, then "Type a value…" when Hermes takes values outside the list.
+    fn choice_rows(&self) -> Vec<ChoiceRow> {
         let Some(field) = self.selected() else {
             return Vec::new();
         };
-        let mut choices = field.options.unwrap_or_default();
-        if field.clearable {
-            choices.insert(0, Value::String(String::new()));
+        if self.kind(&field) == ValueKind::Many {
+            return self.many_rows(&field);
         }
-        let filter = self.choice_filter.to_lowercase();
-        choices
+        let snapshot = self.snapshot.as_ref();
+        let current = self
+            .pending
+            .get(&field.key)
+            .or_else(|| snapshot.and_then(|s| lookup(&s.effective, &field.key)));
+        let default = snapshot.and_then(|s| lookup(&s.defaults, &field.key));
+        let mut rows: Vec<ChoiceRow> = listed_choices(&field)
             .into_iter()
-            .filter(|value| option_text(value).to_lowercase().contains(&filter))
+            .map(|(value, item)| ChoiceRow {
+                name: match item {
+                    Some(item) => item.label.unwrap_or(item.value).to_owned(),
+                    None if value.as_str() == Some("") && field.clearable => "(clear)".into(),
+                    None if value.as_str() == Some("") => "(blank)".into(),
+                    None => option_text(&value),
+                },
+                description: item
+                    .map(|item| item.description.to_owned())
+                    .unwrap_or_default(),
+                current: current.is_some_and(|current| is_choice(current, &value, item)),
+                default: default.is_some_and(|default| is_choice(default, &value, item)),
+                pick: ChoicePick::Value(value),
+            })
+            .collect();
+        let spec = choice_spec(&field.key);
+        let list = spec
+            .and_then(|spec| spec.runtime)
+            .and_then(|list| self.lists.get(&list));
+        if let (Some(spec), Some(ListState::Loaded(items))) = (spec, list) {
+            for item in items {
+                let value = spec.saved(&item.value);
+                let listed = rows.iter_mut().find(|row| match &row.pick {
+                    ChoicePick::Value(listed) => {
+                        listed == &value
+                            || spec
+                                .items
+                                .iter()
+                                .find(|known| known.value == option_text(listed))
+                                .is_some_and(|known| known.aliases.contains(&item.value.as_str()))
+                    }
+                    _ => false,
+                });
+                match listed {
+                    // The gateway's words for a value Talaria also knows are the live ones.
+                    Some(row) => {
+                        if !item.description.is_empty() {
+                            row.description = item.description.clone();
+                        }
+                    }
+                    None => rows.push(ChoiceRow {
+                        name: item.value.clone(),
+                        description: item.description.clone(),
+                        current: current.is_some_and(|current| current == &value),
+                        default: default.is_some_and(|default| default == &value),
+                        pick: ChoicePick::Value(value),
+                    }),
+                }
+            }
+        }
+        if let Some(current) = current.filter(|current| !current.is_null())
+            && !rows.iter().any(|row| row.current)
+        {
+            let text = match current.as_str() {
+                Some("") => "\"\"".into(),
+                _ => option_text(current),
+            };
+            // While a fetched list loads or after it failed, nobody knows the value is unlisted.
+            let (name, description) = if let Some(Pick::Mixed { .. }) = spec.map(|spec| spec.pick) {
+                (
+                    format!("custom: {} (current)", own_text(current)),
+                    "Your own entry; Enter keeps it.",
+                )
+            } else if self.unlisted_in_fetched(&field.key, current) {
+                (
+                    format!("{text} (current, not in the list)"),
+                    "Set outside this list; Enter keeps it.",
+                )
+            } else {
+                (format!("{text} (current)"), "Enter keeps it.")
+            };
+            rows.push(ChoiceRow {
+                pick: ChoicePick::Keep,
+                name,
+                description: description.into(),
+                current: false,
+                default: false,
+            });
+        }
+        if let Some(hint) = spec.and_then(|spec| spec.custom) {
+            rows.push(ChoiceRow {
+                pick: ChoicePick::Type,
+                name: match spec.map(|spec| spec.pick) {
+                    Some(Pick::Mixed { own_label, .. }) => own_label.into(),
+                    _ => "Type a value…".into(),
+                },
+                description: hint.into(),
+                current: false,
+                default: false,
+            });
+        }
+        let status = match list {
+            Some(ListState::Loading(_)) => Some("Loading the list…".to_owned()),
+            Some(ListState::Failed(reason)) => Some(format!(
+                "Could not load the list ({reason}). Showing built-in names. Ctrl+R retries."
+            )),
+            _ => None,
+        };
+        if let Some(name) = status {
+            rows.push(ChoiceRow {
+                pick: ChoicePick::Status,
+                name,
+                description: String::new(),
+                current: false,
+                default: false,
+            });
+        }
+        rows
+    }
+    /// The rows of a multiple choice: the row that clears every tick, each listed value, any
+    /// ticked value the list lacks (so it is never dropped without being asked), and, where the
+    /// order of the picks matters, a row that edits the list as text.
+    fn many_rows(&self, field: &FieldView) -> Vec<ChoiceRow> {
+        let Some(spec) = choice_spec(&field.key) else {
+            return Vec::new();
+        };
+        let Pick::Many {
+            ordered,
+            empty_label,
+            ..
+        } = spec.pick
+        else {
+            return Vec::new();
+        };
+        let row = |pick, name: &str, description: &str, ticked| ChoiceRow {
+            pick,
+            name: name.into(),
+            description: description.into(),
+            current: ticked,
+            default: false,
+        };
+        let mut rows = Vec::new();
+        if let Some(label) = empty_label {
+            rows.push(row(ChoicePick::Clear, label, "", self.picks.is_empty()));
+        }
+        for item in spec.items {
+            rows.push(row(
+                ChoicePick::Value(Value::String(item.value.into())),
+                item.label.unwrap_or(item.value),
+                item.description,
+                self.picks.iter().any(|pick| pick == item.value),
+            ));
+        }
+        for pick in &self.picks {
+            if !spec.items.iter().any(|item| item.value == pick) {
+                rows.push(row(
+                    ChoicePick::Value(Value::String(pick.clone())),
+                    &format!("{pick} (not in the list)"),
+                    "Set outside this list; untick it to drop it.",
+                    true,
+                ));
+            }
+        }
+        if ordered {
+            rows.push(row(
+                ChoicePick::Type,
+                "Edit as text…",
+                "Type the list, to change the order.",
+                false,
+            ));
+        }
+        rows
+    }
+    /// Stage the ticks of the open multiple choice. A set that only differs in order from the
+    /// value held, for a key whose order does not matter, is no change.
+    fn stage_picks(&mut self, field: &FieldView) {
+        let Some(spec) = choice_spec(&field.key) else {
+            return;
+        };
+        let Pick::Many { ordered, store, .. } = spec.pick else {
+            return;
+        };
+        let baseline = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| lookup(&s.effective, &field.key))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let held = picked_names(&baseline);
+        let mut picks = self.picks.clone();
+        if !ordered {
+            // Listed order first, then names the list lacks as they were held.
+            let mut sorted: Vec<String> = spec
+                .items
+                .iter()
+                .filter(|item| picks.iter().any(|pick| pick == item.value))
+                .map(|item| item.value.to_owned())
+                .collect();
+            sorted.extend(
+                picks
+                    .iter()
+                    .filter(|pick| !spec.items.iter().any(|item| item.value == *pick))
+                    .cloned(),
+            );
+            picks = sorted;
+        }
+        let same = if ordered {
+            picks == held
+        } else {
+            picks.len() == held.len() && picks.iter().all(|pick| held.contains(pick))
+        };
+        let value = if same {
+            baseline
+        } else {
+            many_value(store, &picks)
+        };
+        self.pend(field.key.clone(), value);
+    }
+    /// Tick or untick the row, or clear every tick from the clearing row.
+    fn tick(&mut self, pick: &ChoicePick) {
+        match pick {
+            ChoicePick::Clear => self.picks.clear(),
+            ChoicePick::Value(Value::String(name)) => {
+                if let Some(at) = self.picks.iter().position(|held| held == name) {
+                    self.picks.remove(at);
+                } else {
+                    self.picks.push(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    /// Indexes of the rows the filter keeps; "Type a value…" and the list status always stay.
+    fn visible_choices(&self, rows: &[ChoiceRow]) -> Vec<usize> {
+        let filter = self.choice_filter.to_lowercase();
+        rows.iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                matches!(row.pick, ChoicePick::Type | ChoicePick::Status)
+                    || row.name.to_lowercase().contains(&filter)
+                    || row.description.to_lowercase().contains(&filter)
+            })
+            .map(|(index, _)| index)
             .collect()
     }
     fn choice_key(&mut self, key: SettingsKey) -> Vec<SettingsEffect> {
+        let rows = self.choice_rows();
+        let visible = self.visible_choices(&rows);
+        let at = visible
+            .iter()
+            .position(|&index| index == self.choice_cursor);
+        let last = visible.len().saturating_sub(1);
+        let step = |at: Option<usize>, key: EditKey| match (at, key) {
+            (_, EditKey::Home) | (None, _) => 0,
+            (_, EditKey::End) => last,
+            (Some(at), EditKey::Down) => {
+                if at == last {
+                    0
+                } else {
+                    at + 1
+                }
+            }
+            (Some(at), EditKey::Up) => {
+                if at == 0 {
+                    last
+                } else {
+                    at - 1
+                }
+            }
+            (Some(at), EditKey::PageDown) => (at + 10).min(last),
+            (Some(at), _) => at.saturating_sub(10),
+        };
+        let many = self
+            .selected()
+            .is_some_and(|field| self.kind(&field) == ValueKind::Many);
         match key {
             SettingsKey::Edit(EditKey::Esc) => self.screen = Screen::Browsing,
-            SettingsKey::Edit(EditKey::Up) => {
-                self.choice_cursor = self.choice_cursor.saturating_sub(1)
+            SettingsKey::Char(' ') if many => {
+                if let Some(at) = at
+                    && let Some(row) = rows.get(visible[at])
+                {
+                    self.tick(&row.pick.clone());
+                    // Unticking a name the list lacks drops its row: stay at the same place in
+                    // the shorter list rather than past its end.
+                    let rows = self.choice_rows();
+                    let visible = self.visible_choices(&rows);
+                    if !visible.contains(&self.choice_cursor)
+                        && let Some(&near) = visible.get(at.min(visible.len().saturating_sub(1)))
+                    {
+                        self.choice_cursor = near;
+                    }
+                }
             }
-            SettingsKey::Edit(EditKey::Down) => {
-                self.choice_cursor =
-                    (self.choice_cursor + 1).min(self.choices().len().saturating_sub(1))
+            SettingsKey::Edit(
+                key @ (EditKey::Up
+                | EditKey::Down
+                | EditKey::PageUp
+                | EditKey::PageDown
+                | EditKey::Home
+                | EditKey::End),
+            ) => {
+                if !visible.is_empty() {
+                    self.choice_cursor = visible[step(at, key)];
+                }
             }
             SettingsKey::Edit(EditKey::Enter) => {
-                if let (Some(field), Some(value)) = (
-                    self.selected(),
-                    self.choices().get(self.choice_cursor).cloned(),
-                ) {
-                    self.pend(field.key, value);
-                    self.screen = Screen::Browsing;
+                let (Some(field), Some(row)) =
+                    (self.selected(), at.and_then(|at| rows.get(visible[at])))
+                else {
+                    return Vec::new();
+                };
+                match &row.pick {
+                    // Enter keeps the ticks as they are, wherever the cursor is.
+                    ChoicePick::Value(_) | ChoicePick::Clear if many => self.stage_picks(&field),
+                    ChoicePick::Value(value) => self.pend(field.key, value.clone()),
+                    ChoicePick::Keep => {}
+                    ChoicePick::Status | ChoicePick::Clear => return Vec::new(),
+                    ChoicePick::Type => {
+                        let kind = self.kind(&field);
+                        let typed = std::mem::take(&mut self.choice_filter);
+                        let text = match kind {
+                            ValueKind::Many => self.picks.join(", "),
+                            ValueKind::Mixed if typed.is_empty() => {
+                                // An own entry already held starts the editor.
+                                if rows.iter().any(|row| matches!(row.pick, ChoicePick::Keep)) {
+                                    own_text(&self.held(&field.key))
+                                } else {
+                                    String::new()
+                                }
+                            }
+                            _ => typed,
+                        };
+                        self.editor = Some(Editor {
+                            key: field.key,
+                            kind,
+                            caret: text.chars().count(),
+                            text: SecretField::new(text),
+                            secret: false,
+                        });
+                        self.screen = Screen::Editing;
+                        return Vec::new();
+                    }
                 }
+                self.screen = Screen::Browsing;
             }
             key => {
                 let mut caret = self.choice_filter.chars().count();
                 edit_text(&mut self.choice_filter, &mut caret, &key);
-                self.choice_cursor = 0;
+                let visible = self.visible_choices(&rows);
+                if !visible.contains(&self.choice_cursor)
+                    && let Some(&first) = visible.first()
+                {
+                    self.choice_cursor = first;
+                }
             }
         }
         Vec::new()
@@ -1343,9 +1888,14 @@ impl SettingsState {
             review_scroll: self.review_scroll,
             banner: self.banner.clone(),
             filter: self.filter.clone(),
-            choice_cursor: self.choice_cursor,
             ..SettingsView::default()
         };
+        // What the number editor allows, shown first so a narrow screen still has it.
+        let ranged = self
+            .editor
+            .as_ref()
+            .filter(|editor| matches!(editor.kind, ValueKind::Integer | ValueKind::Float))
+            .and_then(|editor| number_spec(&editor.key));
         if let Some(snapshot) = &self.snapshot {
             for field in self.fields() {
                 let current = self
@@ -1360,15 +1910,16 @@ impl SettingsState {
                 } else {
                     format_value(&field.key, current)
                 };
-                if field.kind == FieldKind::Select
+                if (field.kind == FieldKind::Select || choice_spec(&field.key).is_some())
+                    && !matches!(self.kind(field), ValueKind::Many | ValueKind::Mixed)
                     && !is_secret_key(&field.key)
                     && !raw.is_some_and(has_env_reference)
                     && current.is_some_and(|current| {
-                        !field
-                            .options
-                            .as_ref()
-                            .is_some_and(|options| options.contains(current))
+                        !listed_choices(field)
+                            .iter()
+                            .any(|(value, item)| is_choice(current, value, *item))
                             && !(field.clearable && current.as_str() == Some(""))
+                            && self.unlisted_in_fetched(&field.key, current)
                     })
                 {
                     value.push_str(" (not in the list)");
@@ -1395,15 +1946,22 @@ impl SettingsState {
                 };
                 let default = format_value(&field.key, lookup(&snapshot.defaults, &field.key));
                 view.detail = format!(
-                    "{} · {} · {} · default {} · {} · {}",
+                    "{} · {}{} · {} · default {} · {} · {}",
                     field.key,
+                    ranged.map_or(String::new(), |spec| format!("{} · ", spec.describe())),
                     field.kind.name(),
                     field.description,
                     default,
                     apply_effect(&field.key).0.label(),
                     reason
                 );
-                if let Some(options) = &field.options
+                let options: Vec<Value> = listed_choices(&field)
+                    .into_iter()
+                    .map(|(value, _)| value)
+                    .filter(|value| value.as_str() != Some(""))
+                    .collect();
+                if (field.options.is_some() || choice_spec(&field.key).is_some())
+                    && !matches!(self.kind(&field), ValueKind::Many | ValueKind::Mixed)
                     && !is_secret_key(&field.key)
                 {
                     view.detail.push_str(&format!(
@@ -1460,16 +2018,43 @@ impl SettingsState {
             let secret = self
                 .selected()
                 .is_some_and(|field| is_secret_key(&field.key));
-            view.choices = self
-                .choices()
+            let many = self
+                .selected()
+                .is_some_and(|field| self.kind(&field) == ValueKind::Many);
+            let rows = self.choice_rows();
+            let visible = self.visible_choices(&rows);
+            view.choice_cursor = visible
                 .iter()
-                .map(|v| {
-                    if secret || contains_secret_key(v) {
-                        "••••••••".into()
-                    } else if v.as_str() == Some("") {
-                        "(clear)".into()
-                    } else {
-                        option_text(v)
+                .position(|&index| index == self.choice_cursor)
+                .unwrap_or(0);
+            view.choice_filter = self.choice_filter.clone();
+            view.choices = visible
+                .into_iter()
+                .map(|index| {
+                    let row = &rows[index];
+                    if secret
+                        || matches!(&row.pick, ChoicePick::Value(value) if contains_secret_key(value))
+                    {
+                        return SettingsChoice {
+                            name: "••••••••".into(),
+                            description: String::new(),
+                            status: false,
+                        };
+                    }
+                    let mut name = row.name.clone();
+                    if many && matches!(row.pick, ChoicePick::Value(_) | ChoicePick::Clear) {
+                        name = format!("[{}] {name}", if row.current { 'x' } else { ' ' });
+                    }
+                    if row.current && !many {
+                        name.push_str(" (current)");
+                    }
+                    if row.default {
+                        name.push_str(" (default)");
+                    }
+                    SettingsChoice {
+                        name,
+                        description: row.description.clone(),
+                        status: matches!(row.pick, ChoicePick::Status),
                     }
                 })
                 .collect();
@@ -1518,7 +2103,29 @@ impl SettingsState {
                     "Discard {} unapplied change(s)? y discard · n keep editing",
                     self.pending.len()
                 ),
-                Screen::Editing | Screen::Choosing => "Enter save edit · Esc cancel".into(),
+                Screen::Editing => match ranged.filter(|spec| spec.ranged()) {
+                    Some(spec) => format!(
+                        "Enter save edit · ↑↓ change by {} · Esc cancel",
+                        spec.text(spec.step)
+                    ),
+                    None => "Enter save edit · Esc cancel".into(),
+                },
+                Screen::Choosing => {
+                    let mut footer = String::from(
+                        if self
+                            .selected()
+                            .is_some_and(|field| self.kind(&field) == ValueKind::Many)
+                        {
+                            "Space tick · Enter keep ticks · ↑↓ move · type to filter · Esc cancel"
+                        } else {
+                            "type to filter · ↑↓ move · PgUp PgDn page · Enter choose · Esc cancel"
+                        },
+                    );
+                    if self.open_list().is_some() {
+                        footer.push_str(" · Ctrl+R reload list");
+                    }
+                    footer
+                }
                 _ => "Enter edit · / filter · a review · ? help · Esc close".into(),
             }
         };
@@ -1543,6 +2150,14 @@ impl SettingsState {
                 .push(format!("No setting matches \"{}\".", self.filter));
         }
         view
+    }
+}
+
+/// An own entry as the user types it: a list as names separated by commas.
+fn own_text(value: &Value) -> String {
+    match value {
+        Value::Array(items) => items.iter().map(option_text).collect::<Vec<_>>().join(", "),
+        other => option_text(other),
     }
 }
 

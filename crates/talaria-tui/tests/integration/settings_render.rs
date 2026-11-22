@@ -401,3 +401,205 @@ fn no_frames_when_idle() {
     );
     assert!(sink.take().is_empty());
 }
+
+#[test]
+fn chooser_draws_descriptions_and_marks() {
+    use talaria_core::settings::{
+        ConfigSchemaView, EditKey, FieldKind, FieldView, SettingsAction, SettingsInput,
+        SettingsKey, SettingsSnapshot, SettingsState,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![FieldView {
+                key: "approvals.mode".into(),
+                kind: FieldKind::Select,
+                description: "Dangerous command approval mode".into(),
+                category: "security".into(),
+                options: Some(vec![json!("manual"), json!("smart"), json!("off")]),
+                searchable: false,
+                clearable: false,
+            }],
+            category_order: vec!["security".into()],
+        },
+        effective: json!({"approvals": {"mode": "smart"}}),
+        raw: json!({"approvals": {"mode": "smart"}}),
+        defaults: json!({"approvals": {"mode": "manual"}}),
+    }));
+    state.update(SettingsInput::Key(SettingsKey::Action(
+        SettingsAction::Edit,
+    )));
+    let (mut term, sink, mut vt) = rig(100, 20);
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    for expected in [
+        "> smart (current)",
+        "An auxiliary model approves low-risk commands",
+        "manual (default)",
+        "Always ask before a dangerous command runs.",
+        "Never ask (the same as --yolo).",
+        "type to filter",
+        "Enter choose · Esc cancel",
+        "approvals.mode",
+    ] {
+        assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
+    }
+    for ch in "yolo".chars() {
+        state.update(SettingsInput::Key(SettingsKey::Char(ch)));
+    }
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    assert!(screen.contains("filter: yolo"), "{screen}");
+    assert!(screen.contains("> off"), "{screen}");
+    assert!(!screen.contains("manual (default)"), "{screen}");
+    state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Esc)));
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    assert!(!screen.contains("type to filter"), "{screen}");
+}
+
+#[test]
+fn chooser_draws_the_list_failure_across_the_row() {
+    use talaria_core::settings::{
+        ConfigSchemaView, FieldKind, FieldView, SettingsAction, SettingsInput, SettingsKey,
+        SettingsSnapshot, SettingsState,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![FieldView {
+                key: "terminal.backend".into(),
+                kind: FieldKind::Select,
+                description: "Where commands run".into(),
+                category: "terminal".into(),
+                options: Some(vec![json!("local"), json!("docker")]),
+                searchable: false,
+                clearable: false,
+            }],
+            category_order: vec!["terminal".into()],
+        },
+        effective: json!({"terminal": {"backend": "local"}}),
+        raw: json!({}),
+        defaults: json!({"terminal": {"backend": "local"}}),
+    }));
+    state.update(SettingsInput::Key(SettingsKey::Action(
+        SettingsAction::Edit,
+    )));
+    let (mut term, sink, mut vt) = rig(100, 20);
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    assert!(screen.contains("Loading the list…"), "{screen}");
+    assert!(screen.contains("Ctrl+R reload list"), "{screen}");
+    state.update(SettingsInput::ChoicesFailed {
+        key: "terminal.backend".into(),
+        profile: "fixture".into(),
+        reason: "HTTP 500".into(),
+    });
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    for expected in [
+        "> local (current) (default)  Run directly on this machine.",
+        "Could not load the list (HTTP 500). Showing built-in names. Ctrl+R retries.",
+    ] {
+        assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
+    }
+}
+
+#[test]
+fn a_multiple_choice_list_draws_its_ticks_and_its_footer() {
+    use talaria_core::settings::{
+        ConfigSchemaView, EditKey, FieldKind, FieldView, SettingsAction, SettingsInput,
+        SettingsKey, SettingsSnapshot, SettingsState,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![FieldView {
+                key: "display.runtime_footer.fields".into(),
+                kind: FieldKind::List,
+                description: "Fields in the footer".into(),
+                category: "display".into(),
+                options: None,
+                searchable: false,
+                clearable: false,
+            }],
+            category_order: vec!["display".into()],
+        },
+        effective: json!({"display": {"runtime_footer": {"fields": ["model", "cwd"]}}}),
+        raw: json!({}),
+        defaults: json!({"display": {"runtime_footer": {"fields": ["model", "context_pct", "cwd"]}}}),
+    }));
+    state.update(SettingsInput::Key(SettingsKey::Action(
+        SettingsAction::Edit,
+    )));
+    let (mut term, sink, mut vt) = rig(100, 20);
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    for expected in [
+        "> [x] model",
+        "[ ] context_pct",
+        "[x] cwd",
+        "[ ] latency",
+        "Edit as text…",
+        "Space tick",
+    ] {
+        assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
+    }
+    state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Down)));
+    state.update(SettingsInput::Key(SettingsKey::Char(' ')));
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    assert!(screen.contains("> [x] context_pct"), "{screen}");
+}
+
+#[test]
+fn a_ranged_number_editor_draws_its_range_and_the_arrow_hint() {
+    use talaria_core::settings::{
+        ConfigSchemaView, EditKey, FieldKind, FieldView, SettingsAction, SettingsInput,
+        SettingsKey, SettingsSnapshot, SettingsState,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![FieldView {
+                key: "wake_word.sensitivity".into(),
+                kind: FieldKind::Number,
+                description: "Wake word threshold".into(),
+                category: "voice".into(),
+                options: None,
+                searchable: false,
+                clearable: false,
+            }],
+            category_order: vec!["voice".into()],
+        },
+        effective: json!({"wake_word": {"sensitivity": 0.6}}),
+        raw: json!({}),
+        defaults: json!({"wake_word": {"sensitivity": 0.6}}),
+    }));
+    state.update(SettingsInput::Key(SettingsKey::Action(
+        SettingsAction::Edit,
+    )));
+    state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Up)));
+    let (mut term, sink, mut vt) = rig(100, 20);
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    for expected in [
+        "range 0.0 to 1.0 · step 0.05 · threshold",
+        "> 0.65",
+        "↑↓ change by 0.05",
+    ] {
+        assert!(screen.contains(expected), "missing {expected:?}:\n{screen}");
+    }
+}
