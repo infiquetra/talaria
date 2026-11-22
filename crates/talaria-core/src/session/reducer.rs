@@ -714,7 +714,7 @@ fn complete(state: &mut SessionState, payload: &Value) {
             id: state.next_id(),
             text,
             sealed: true,
-            latest_step: !state.tools.is_empty(),
+            latest_step: !state.tools.is_empty() || resumed_turn_ran_tools(state),
         });
         state.insert_cell_at(at, cell);
         state.had_reasoning = true;
@@ -746,6 +746,18 @@ fn complete(state: &mut SessionState, payload: &Value) {
     state.seal_all();
     state.turn = TurnState::Finished(outcome);
     state.activity = None;
+}
+
+/// Whether a turn that a snapshot showed already running had run tools before the snapshot: a
+/// tool cell after the cell that started the turn. The live tool map starts empty after a
+/// snapshot, so it cannot say.
+fn resumed_turn_ran_tools(state: &SessionState) -> bool {
+    state.resumed_running
+        && state.cells[..state.turn_start.min(state.cells.len())]
+            .iter()
+            .rev()
+            .take_while(|cell| !cell.starts_turn())
+            .any(|cell| matches!(cell, Cell::Tool(_)))
 }
 
 /// The end-of-turn reasoning without the paragraphs this turn has already shown as reply text.

@@ -140,6 +140,9 @@ pub struct SessionState {
     pub(crate) final_prefix: usize,
     pub(crate) turn: TurnState,
     pub(crate) turn_start: usize,
+    /// The snapshot this state came from showed a turn already running, so that turn's earlier
+    /// cells sit before `turn_start` and its tools are not in `tools`. A new turn clears it.
+    pub(crate) resumed_running: bool,
     pub(crate) assistant: Option<usize>,
     pub(crate) reasoning: Option<usize>,
     pub(crate) had_reasoning: bool,
@@ -197,6 +200,7 @@ impl SessionState {
             final_prefix: 0,
             turn: TurnState::Idle,
             turn_start: 0,
+            resumed_running: false,
             assistant: None,
             reasoning: None,
             had_reasoning: false,
@@ -521,6 +525,7 @@ impl SessionState {
     pub(crate) fn begin_turn(&mut self) {
         self.seal_all();
         self.turn_start = self.cells.len();
+        self.resumed_running = false;
         self.turn = TurnState::Running;
         self.tools.clear();
         self.had_reasoning = false;

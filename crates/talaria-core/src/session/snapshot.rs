@@ -32,6 +32,7 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
         .first()
         .and_then(|row| row.archived_truncated)
         .unwrap_or(false);
+    state.resumed_running = snapshot.running;
     state.turn = if snapshot.running {
         TurnState::Running
     } else {
