@@ -1513,13 +1513,19 @@ impl TuiScreen {
         self.attachments.mention.is_some() && !self.composer.text().starts_with('/')
     }
 
+    /// The focused menu bar (Alt+I) takes every key before the composer; Esc closes it.
+    fn menu_takes_keys(view: &View<'_>) -> bool {
+        view.layout.menu_focused
+    }
+
     /// Whether the interrupt key reaches the running turn. Each surface checked here takes the
-    /// key first in [`Screen::handle_key`] through the same predicate: the work panel overlay,
-    /// the selector, history search, a prompt card, the model confirmation, a queue selection
-    /// or edit, the slash palette, the mention list, and a vim mode other than normal. The
-    /// working row offers the key only when this holds.
+    /// key first in [`Screen::handle_key`] through the same predicate: the focused menu bar,
+    /// the work panel overlay, the selector, history search, a prompt card, the model
+    /// confirmation, a queue selection or edit, the slash palette, the mention list, and a vim
+    /// mode other than normal. The working row offers the key only when this holds.
     fn interrupt_reaches_turn(&self, view: &View<'_>) -> bool {
-        view.layout.panel != talaria_core::layout::PanelVisibility::OverlayOpen
+        !Self::menu_takes_keys(view)
+            && view.layout.panel != talaria_core::layout::PanelVisibility::OverlayOpen
             && !self.selector_takes_keys(view)
             && self.search.is_none()
             && self.prompts.section().is_none()
@@ -2798,7 +2804,7 @@ impl TuiScreen {
                     self.menu = talaria_tui::workspace::menu::MenuState::shown();
                     return vec![UserAction::ToggleMenuBar];
                 }
-                if view.layout.menu_focused {
+                if Self::menu_takes_keys(view) {
                     use talaria_tui::workspace::menu::{MenuBinding, MenuKey};
                     if key.kind == KeyKind::Release {
                         return Vec::new();

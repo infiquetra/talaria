@@ -192,6 +192,25 @@ fn working_row_offers_esc_only_when_esc_interrupts() {
         "the hint did not come back after the palette closed",
     );
 
+    // The menu bar, focused with Alt+I: Esc closes the menu and returns to the composer.
+    terminal.type_keys("\x1bi");
+    assert!(
+        terminal.wait_for_text("Settings", Duration::from_secs(10)),
+        "the menu bar never opened:\n{}",
+        terminal.screen_text()
+    );
+    wait_row(
+        &terminal,
+        false,
+        "the row offered Esc with the menu bar focused",
+    );
+    terminal.type_keys("\x1b");
+    wait_row(
+        &terminal,
+        true,
+        "the hint did not come back after the menu closed",
+    );
+
     // The /theme selector: Esc cancels the selector.
     terminal.type_keys("/theme");
     assert!(terminal.wait_for_text("/theme", Duration::from_secs(10)));
