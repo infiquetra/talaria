@@ -13,7 +13,10 @@ While a turn runs, a working row sits directly above the composer, for example
 when Hermes sends one, counts the turn's time, and names the bound interrupt key. A prompt card
 or the compacting row takes its place while one is shown. Under full motion a soft glow sweeps
 across the row and back; under reduced motion the row is static and only its seconds change.
-A narrow terminal drops the interrupt hint first, then shortens the activity text.
+A narrow terminal drops the interrupt hint first, then shortens the activity text. The hint is
+also left out while the key would do something else (an open selector, slash palette, mention
+list or history search takes it first) and while the link to the gateway is redialling. When the
+gateway reports the session gone, or the link gives up, the turn ends and the row leaves.
 
 The status bar's model segment shows the session's requested effort. If Hermes reports a lower
 provider level, an arrow shows both, such as `max→high`. When the model's catalogue row offers no

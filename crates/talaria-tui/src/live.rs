@@ -56,6 +56,28 @@ impl LiveView<'_> {
             })
             .collect()
     }
+
+    /// How many rows [`Self::layout`] gives the section at `index`. Past the first section it
+    /// measures only that section and the ones after it, which take their rows first.
+    pub fn rows_of(&self, index: usize, width: u16, max_height: u16) -> u16 {
+        if index == 0 {
+            return self
+                .layout(width, max_height)
+                .first()
+                .map_or(0, |rect| rect.height);
+        }
+        let Some(section) = self.sections.get(index) else {
+            return 0;
+        };
+        let after: u32 = self.sections[index + 1..]
+            .iter()
+            .map(|later| u32::from(later.height(width)))
+            .sum();
+        let room = u32::from(max_height).saturating_sub(after);
+        section
+            .height(width)
+            .min(u16::try_from(room).unwrap_or(u16::MAX))
+    }
 }
 
 /// The mention list above the composer. A short screen keeps the composer first.

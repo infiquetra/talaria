@@ -145,7 +145,9 @@ surfaces do not paint backgrounds.
   previews it at once, in memory; Enter selects it for this session, as `/theme use <id>` or
   `/theme light|dark|auto` does, and prints the `config.toml` line that keeps it; Esc puts back
   what was in force. Lines already in scrollback keep their colours, so both selectors draw a
-  short sample of transcript rows in the selected look above the list. In either selector,
+  short sample of transcript rows in the selected look above the list, when the screen has
+  room for it beside the composer and the status bar; on a short screen the list alone
+  previews. In either selector,
   typing `/` closes the list as Esc does and starts a new command in the composer; a selector
   whose list arrives after you have started typing stays closed.
 - `/theme use <id>` selects a file for this session. `/theme use` returns to the configured

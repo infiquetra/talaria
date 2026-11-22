@@ -78,7 +78,7 @@ use talaria_tui::keys::{
     Action, CompletionAction, Key, KeyCode, KeyContext, KeyKind, KeyMap, ModelAction,
 };
 use talaria_tui::launch_dialog::{DialogAction, DialogDefaults, DialogMode, LaunchDialog};
-use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
+use talaria_tui::live::{LiveSection, LiveView, PlainTextSection, max_live_height};
 use talaria_tui::markdown::cells::MarkdownCellLines;
 use talaria_tui::markdown::section::MarkdownTailSection;
 use talaria_tui::markdown::{MarkdownOptions, MarkdownTheme};
@@ -1283,6 +1283,12 @@ fn queue_view(view: &View<'_>) -> Option<QueueView> {
         .map(|state| state.queue.view(view.turn_running()))
 }
 
+/// A queued message is selected or being edited, so the queue takes its keys, Esc among them,
+/// before the composer.
+fn queue_takes_keys(view: &View<'_>) -> bool {
+    queue_view(view).is_some_and(|queue| queue.selected.is_some() || queue.editing.is_some())
+}
+
 fn queue_draft_intent(composer: &Composer, bound: Option<Action>) -> Option<QueueIntent> {
     let draft = composer.text().to_owned();
     let intent = match bound {
@@ -1493,6 +1499,38 @@ impl TuiScreen {
             && self.confirmation.is_some()
             && self.prompts.section().is_none()
             && self.composer.is_empty()
+    }
+
+    /// The open `/theme` or `/skin` selector takes every key before the composer, unless
+    /// history search or a prompt card has them.
+    fn selector_takes_keys(&self, view: &View<'_>) -> bool {
+        view.choice.is_some() && self.search.is_none() && self.prompts.section().is_none()
+    }
+
+    /// The `@` mention list is open: it takes the completion keys, Esc among them, while the
+    /// draft is not a slash command.
+    fn mention_list_open(&self) -> bool {
+        self.attachments.mention.is_some() && !self.composer.text().starts_with('/')
+    }
+
+    /// Whether the interrupt key reaches the running turn. Each surface checked here takes the
+    /// key first in [`Screen::handle_key`] through the same predicate: the work panel overlay,
+    /// the selector, history search, a prompt card, the model confirmation, a queue selection
+    /// or edit, the slash palette, the mention list, and a vim mode other than normal. The
+    /// working row offers the key only when this holds.
+    fn interrupt_reaches_turn(&self, view: &View<'_>) -> bool {
+        view.layout.panel != talaria_core::layout::PanelVisibility::OverlayOpen
+            && !self.selector_takes_keys(view)
+            && self.search.is_none()
+            && self.prompts.section().is_none()
+            && !self.confirmation_takes_keys()
+            && !queue_takes_keys(view)
+            && !view.palette.open
+            && !self.mention_list_open()
+            && self
+                .composer
+                .vim_mode()
+                .is_none_or(|mode| mode == VimMode::Normal)
     }
 
     fn sync_confirmation_focus(&mut self, now: Instant) {
@@ -2868,9 +2906,7 @@ impl TuiScreen {
                         && view.rewind.is_none()
                         && !self.confirmation_takes_keys()
                         && !view.palette.open
-                        && queue_view(view).is_none_or(|queue| {
-                            queue.selected.is_none() && queue.editing.is_none()
-                        }),
+                        && !queue_takes_keys(view),
                     matches!(
                         self.composer.vim_mode(),
                         Some(VimMode::Normal | VimMode::Visual | VimMode::VisualLine)
@@ -2903,10 +2939,7 @@ impl TuiScreen {
                 }
                 // An open `/theme` or `/skin` selector takes every key before the composer,
                 // unless a prompt card is waiting for an answer.
-                if view.choice.is_some()
-                    && self.search.is_none()
-                    && self.prompts.section().is_none()
-                {
+                if self.selector_takes_keys(view) {
                     if choice_hands_to_composer(&self.keymap, key) {
                         let mut actions = vec![UserAction::Choice(
                             talaria_core::commands::ChoiceKey::Cancel,
@@ -4463,19 +4496,6 @@ impl Screen for TuiScreen {
         let choice = view
             .choice
             .map(|list| ChoiceSection::new(list, self.rows).with_theme(self.theme.views.clone()));
-        let no_captures = HashMap::new();
-        let sample = view
-            .choice
-            .filter(|_| self.rows >= SHORT_TERMINAL_ROWS)
-            .map(|_| {
-                let cells = CapturedCells {
-                    current: &self.theme,
-                    captured: &no_captures,
-                    tools: &self.cells,
-                    transcript_key: None,
-                };
-                MarkdownTailSection::new(sample_lines(&cells, width))
-            });
         let confirmation = if prompts.is_none() {
             self.confirmation.as_ref().map(|card| {
                 let section =
@@ -4509,13 +4529,16 @@ impl Screen for TuiScreen {
             .attachments
             .mention
             .as_ref()
-            .filter(|_| !self.composer.text().starts_with('/'))
+            .filter(|_| self.mention_list_open())
             .map(MentionSection::new);
         let queue = MarkdownTailSection::new(
             queue_view(view)
                 .map(|queue| render_preview(&queue, width, self.composer.is_empty()))
                 .unwrap_or_default(),
         );
+        // Measured before the composer section borrows the composer.
+        let interrupt_reaches_turn =
+            view.link == LinkView::Connected && self.interrupt_reaches_turn(view);
         let composer = ThemedComposer {
             section: self
                 .composer
@@ -4539,9 +4562,14 @@ impl Screen for TuiScreen {
             now_ms: view.now_ms,
         };
         // The working row sits directly above the composer for the whole running turn, except
-        // while a prompt card or the compacting row says what the turn is doing.
+        // while a prompt card or the compacting row says what the turn is doing. It offers the
+        // interrupt key only when the key would reach the turn: not while the link redials,
+        // and not while a list, a selector or a search takes the key first.
         let activity_style = ActivityStyle::from_theme(&self.theme, self.look.terminal);
-        let interrupt_key = self.keymap.label(Action::Interrupt);
+        let interrupt_key = self
+            .keymap
+            .label(Action::Interrupt)
+            .filter(|_| interrupt_reaches_turn);
         let activity = turn_elapsed
             .filter(|_| prompts.is_none() && view.compacting_line.is_none())
             .map(|elapsed_ms| ActivityLine {
@@ -4550,9 +4578,41 @@ impl Screen for TuiScreen {
                 interrupt: interrupt_key.as_deref(),
                 style: &activity_style,
             });
-        if activity.is_some() {
-            self.activity.shown(Instant::now());
-        }
+        // The sample of the selected look shows only when it fits with the status bar, the
+        // selector, the composer and the working row; on a short screen the selector's own list
+        // still previews, and the composer is never pushed off.
+        let no_captures = HashMap::new();
+        let sample = choice
+            .as_ref()
+            .filter(|_| self.rows >= SHORT_TERMINAL_ROWS)
+            .map(|choice| {
+                let cells = CapturedCells {
+                    current: &self.theme,
+                    captured: &no_captures,
+                    tools: &self.cells,
+                    transcript_key: None,
+                };
+                (
+                    choice,
+                    MarkdownTailSection::new(sample_lines(&cells, width)),
+                )
+            })
+            .filter(|(choice, sample)| {
+                let needed = [
+                    Some(&status as &dyn LiveSection),
+                    Some(*choice as &dyn LiveSection),
+                    Some(&composer as &dyn LiveSection),
+                    activity.as_ref().map(|row| row as &dyn LiveSection),
+                    Some(sample as &dyn LiveSection),
+                ]
+                .into_iter()
+                .flatten()
+                .fold(0u32, |rows, section| {
+                    rows + u32::from(section.height(width))
+                });
+                needed <= u32::from(max_live_height(self.rows))
+            })
+            .map(|(_, sample)| sample);
         // The task checklist sits above the composer, and is one row on a short screen.
         let max_rows = if self.rows < SHORT_TERMINAL_ROWS {
             1
@@ -4689,6 +4749,25 @@ impl Screen for TuiScreen {
         }
         sections.push(&automation);
         sections.push(&status);
+        // The row's clock wakes the screen only while the row is really on screen: not while
+        // the transcript pager covers the live region, not while the terminal is handed to
+        // another program, and not when a short screen gives the row no rows.
+        if let Some(activity) = &activity
+            && self.transcript.is_none()
+            && !self.terminal.is_released()
+            && sections
+                .iter()
+                .position(|section| std::ptr::addr_eq(*section, activity))
+                .is_some_and(|index| {
+                    LiveView {
+                        sections: sections.clone(),
+                    }
+                    .rows_of(index, width, max_live_height(self.rows))
+                        > 0
+                })
+        {
+            self.activity.shown(Instant::now());
+        }
         if workspace_enabled {
             let empty_agents = talaria_core::subagents::SubagentTree::new();
             let agents = view
