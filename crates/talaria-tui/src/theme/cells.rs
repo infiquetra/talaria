@@ -201,8 +201,12 @@ pub fn reasoning_summary_lines(
 /// How long each reasoning block streamed, from the frame that first showed it open to the
 /// frame that first showed it sealed. A block that arrived whole, as Hermes's end-of-turn
 /// reasoning and a resumed session's do, has no duration.
+///
+/// Cell ids are positions within one session, so another session reuses them. The clock
+/// belongs to one cell source and forgets everything when the source changes.
 #[derive(Debug, Default)]
 pub struct ReasoningClock {
+    source: u64,
     started: HashMap<CellId, Instant>,
     took: HashMap<CellId, Duration>,
 }
@@ -212,6 +216,17 @@ impl ReasoningClock {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Follow the cells of `source`. A different source than before (a switch, a resume, a
+    /// reload) forgets every timing, so a block in the new source never takes the time of the
+    /// block that had its id in the old one.
+    pub fn follow_source(&mut self, source: u64) {
+        if self.source != source {
+            self.source = source;
+            self.started.clear();
+            self.took.clear();
+        }
     }
 
     /// Start the open blocks not yet seen, stop the ones sealed since, and forget blocks that

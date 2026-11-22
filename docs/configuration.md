@@ -942,13 +942,15 @@ for the docking thresholds and scrollback tradeoff. Set `layout_panel = []` unde
 `[keys]` to unbind the shortcut, or replace its chord. Conflicts with another
 effective binding produce a notice; `/layout panel` remains available.
 
-`reasoning` sets how the main screen draws the model's thinking. `collapsed` draws each
+`reasoning` sets how the main screen and the optional full-screen workspace draw the model's
+thinking. `collapsed` draws each
 reasoning block as one dim line that names its length and the key that opens the transcript
 view, such as `∴ thinking (+34 lines, Ctrl+O to view)`, or
 `∴ thought for 12s (+34 lines, Ctrl+O to view)` when Talaria saw the block stream. `full` draws
 every line, as earlier versions did. A turn whose only output is its reasoning is drawn in full
 either way. `/thinking`, `/thinking collapsed` and `/thinking full` change the current view
-without saving this file; scrollback already written keeps its form. Talaria never asks Hermes
+without saving this file; scrollback already written keeps its form, while the workspace redraws
+every block in the new form. Talaria never asks Hermes
 to stop sending reasoning, so the transcript view (Ctrl+O) always holds the full text. An
 invalid value produces one notice and uses `collapsed`.
 

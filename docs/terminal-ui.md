@@ -26,7 +26,8 @@ history). Hermes's end-of-turn reasoning in a turn that ran tools reads
 `∴ thinking, latest step (+34 lines, Ctrl+O to view)`. The transcript view shows every block in
 full. A turn whose only output is its reasoning shows it in full on the main screen too.
 `/thinking full` draws blocks in full from then on, and `/thinking collapsed` returns to one
-line; scrollback already written keeps its form. `[ui] reasoning` in the
+line; scrollback already written keeps its form. The optional workspace draws reasoning the same
+way and redraws every block when `/thinking` changes the form. `[ui] reasoning` in the
 [configuration](configuration.md#ui) sets the form at startup.
 
 The status bar's model segment shows the session's requested effort. If Hermes reports a lower

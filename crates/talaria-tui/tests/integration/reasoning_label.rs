@@ -355,3 +355,51 @@ fn the_reasoning_clock_times_only_blocks_it_saw_stream() {
         "a block sealed since the last frame runs until now"
     );
 }
+
+#[test]
+fn the_reasoning_clock_forgets_timings_when_the_session_changes() {
+    let start = Instant::now();
+    let open = block(2, false, false, false);
+    let sealed = ReasoningCell {
+        sealed: true,
+        ..open.clone()
+    };
+    // A block timed in the first session, then the second session's block with the same id.
+    let mut timed = ReasoningClock::new();
+    timed.follow_source(1);
+    timed.observe(&[Cell::Reasoning(open.clone())], start);
+    timed.observe(
+        &[Cell::Reasoning(sealed.clone())],
+        start + Duration::from_secs(8),
+    );
+    timed.follow_source(1);
+    assert_eq!(
+        timed.took(sealed.id, start + Duration::from_secs(9)),
+        Some(Duration::from_secs(8)),
+        "the same source keeps its timings"
+    );
+    timed.follow_source(2);
+    timed.observe(
+        &[Cell::Reasoning(sealed.clone())],
+        start + Duration::from_secs(60),
+    );
+    assert_eq!(
+        timed.took(sealed.id, start + Duration::from_secs(61)),
+        None,
+        "a block that arrived whole in the new session has no duration"
+    );
+
+    // A block left open in the first session does not start the new session's block.
+    let mut left_open = ReasoningClock::new();
+    left_open.follow_source(1);
+    left_open.observe(&[Cell::Reasoning(open)], start);
+    left_open.follow_source(2);
+    left_open.observe(
+        &[Cell::Reasoning(sealed.clone())],
+        start + Duration::from_secs(300),
+    );
+    assert_eq!(
+        left_open.took(sealed.id, start + Duration::from_secs(301)),
+        None
+    );
+}

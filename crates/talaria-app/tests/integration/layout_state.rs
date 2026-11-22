@@ -125,6 +125,107 @@ fn thinking_changes_the_current_view_and_says_so() {
     );
 }
 
+/// A screen whose configuration says `[ui] reasoning = "full"`. It reports the form of every
+/// view it draws, and whether the view has a session yet.
+struct FullReasoningScreen {
+    drawn: tokio::sync::mpsc::UnboundedSender<(talaria_core::layout::ReasoningDisplay, bool)>,
+}
+impl talaria_app::app::ComposerDeadline for FullReasoningScreen {
+    fn tick(&mut self, _: std::time::Instant) {}
+    fn next_tick(&self) -> Option<std::time::Instant> {
+        None
+    }
+}
+impl talaria_app::app::StatusHost for FullReasoningScreen {
+    fn on_tick(&mut self, _: std::time::Instant) {}
+    fn next_wake(&self, _: std::time::Instant) -> Option<std::time::Instant> {
+        None
+    }
+    async fn shutdown(&mut self) {}
+}
+impl talaria_app::app::Screen for FullReasoningScreen {
+    type Input = UserAction;
+    fn input(
+        &mut self,
+        input: UserAction,
+        _: &talaria_app::app::View<'_>,
+        _: std::time::Instant,
+    ) -> Vec<UserAction> {
+        vec![input]
+    }
+    fn draw(&mut self, view: &talaria_app::app::View<'_>) {
+        let _ = self
+            .drawn
+            .send((view.layout.reasoning, view.session_id.is_some()));
+    }
+    fn commit_context(&mut self, _: &talaria_app::context::ContextBlock) {}
+    fn commit_lines(&mut self, _: Vec<String>) {}
+    fn commit_cells(&mut self, _: &[talaria_core::session::Cell]) {}
+    fn load_draft(&mut self, _: &str) {}
+    fn restore(&mut self) {}
+    fn reasoning_display(&self) -> talaria_core::layout::ReasoningDisplay {
+        talaria_core::layout::ReasoningDisplay::Full
+    }
+}
+
+#[test]
+fn reasoning_full_in_the_config_reaches_every_view_from_startup() {
+    use talaria_app::app;
+    use talaria_app::launch::{Launch, StartMode};
+    use talaria_core::layout::ReasoningDisplay;
+    let home = tempfile::tempdir().unwrap();
+    let gateway = mock_gateway::StandaloneGateway::start(home.path());
+    gateway.block_on(async {
+        let (drawn, mut views) = tokio::sync::mpsc::unbounded_channel();
+        let mut screen = FullReasoningScreen { drawn };
+        let (tx, inputs) = tokio::sync::mpsc::unbounded_channel();
+        let launch = Launch {
+            mode: StartMode::New,
+            model: None,
+            provider: None,
+            effort: None,
+            profile: "default".into(),
+            folder: home.path().to_path_buf(),
+            record: None,
+            bench_replay: None,
+            no_ensure: true,
+        };
+        let setup = app::RunSetup {
+            remote_gateway: false,
+            remote_host: None,
+            herdr: None,
+            home: home.path().to_path_buf(),
+            launch_id: "reasoning-full-test".into(),
+            preopened: None,
+            list_title: None,
+            notices: vec![],
+            keys: Default::default(),
+            fleet: None,
+        };
+        let script = async {
+            let mut forms = Vec::new();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let (form, opened) = views.recv().await.unwrap();
+                    forms.push(form);
+                    if opened {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("a session opens");
+            tx.send(UserAction::Quit).unwrap();
+            assert!(
+                forms.iter().all(|form| *form == ReasoningDisplay::Full),
+                "the screen's startup form reaches the first view and stays: {forms:?}"
+            );
+        };
+        let (outcome, ()) = tokio::join!(app::run(launch, setup, &mut screen, inputs), script);
+        assert_eq!(outcome.code, 0, "{}", outcome.stderr);
+    });
+}
+
 #[test]
 fn runtime_toggles_leave_the_config_file_unchanged() {
     let directory = tempfile::tempdir().unwrap();

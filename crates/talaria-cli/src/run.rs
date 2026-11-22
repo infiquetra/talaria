@@ -1220,8 +1220,65 @@ struct Transcript {
 /// Presentation-only commit order. Local output does not have a session cell, so
 /// the callback sequence, rather than a cell index, determines its position.
 enum WorkspaceCommit {
-    Cell(Box<Cell>),
+    /// A finished cell, with how long it streamed when it is a reasoning block the screen
+    /// timed. The time is kept here because a later session reuses the cell's id.
+    Cell(Box<Cell>, Option<Duration>),
     Lines(Vec<Line<'static>>),
+}
+
+/// The workspace's one row for each reasoning block that `display` collapses, by entry
+/// position: the committed entries, then the live cells after them. `None` leaves the entry to
+/// the transcript renderer. The workspace is redrawn every frame, so `/thinking` changes every
+/// block in it, not only the ones drawn afterwards.
+fn workspace_reasoning_rows(
+    history: &[WorkspaceCommit],
+    live: &[Cell],
+    display: ReasoningDisplay,
+    (clock, now): (&ReasoningClock, Instant),
+    theme: &Theme,
+    transcript_key: Option<&str>,
+    width: u16,
+) -> Vec<Option<Vec<Line<'static>>>> {
+    let row = |cell: &Cell, took: Option<Duration>| match cell {
+        Cell::Reasoning(block) if reasoning_collapses(block, display) => Some(
+            reasoning_summary_lines(block, theme, took, transcript_key, width),
+        ),
+        _ => None,
+    };
+    history
+        .iter()
+        .map(|entry| match entry {
+            WorkspaceCommit::Cell(cell, took) => row(cell, *took),
+            WorkspaceCommit::Lines(_) => None,
+        })
+        .chain(live.iter().map(|cell| {
+            let took = match cell {
+                Cell::Reasoning(block) => clock.took(block.id, now),
+                _ => None,
+            };
+            row(cell, took)
+        }))
+        .collect()
+}
+
+/// The workspace transcript's entries, with each collapsed reasoning block as its one row from
+/// [`workspace_reasoning_rows`].
+fn workspace_entries<'a>(
+    history: &'a [WorkspaceCommit],
+    live: &'a [Cell],
+    rows: &'a [Option<Vec<Line<'static>>>],
+) -> Vec<talaria_tui::pager::TranscriptEntry<'a>> {
+    use talaria_tui::pager::TranscriptEntry;
+    history
+        .iter()
+        .map(|entry| match entry {
+            WorkspaceCommit::Cell(cell, _) => TranscriptEntry::Cell(cell),
+            WorkspaceCommit::Lines(lines) => TranscriptEntry::Lines(lines),
+        })
+        .chain(live.iter().map(TranscriptEntry::Cell))
+        .zip(rows)
+        .map(|(entry, row)| row.as_deref().map_or(entry, TranscriptEntry::Lines))
+        .collect()
 }
 
 /// The key of one terminal event, in the form the application routes.
@@ -3760,6 +3817,8 @@ impl Screen for TuiScreen {
                 .replies
                 .replaced(&render, self.terminal.viewport().width);
             let _ = self.terminal.commit_lines(lines);
+            // The new source numbers its cells from the start again.
+            self.reasoning_clock.follow_source(source_epoch);
         }
         self.workspace_committed_cells = committed_cells;
     }
@@ -4969,23 +5028,21 @@ impl Screen for TuiScreen {
                 read_aloud: None,
                 voice_target: None,
             };
-            let mut entries = self
-                .workspace_history
-                .iter()
-                .map(|entry| match entry {
-                    WorkspaceCommit::Cell(cell) => talaria_tui::pager::TranscriptEntry::Cell(cell),
-                    WorkspaceCommit::Lines(lines) => {
-                        talaria_tui::pager::TranscriptEntry::Lines(lines)
-                    }
-                })
-                .collect::<Vec<_>>();
             let cells = view.state.map_or(&[][..], |state| state.cells());
-            entries.extend(
-                cells
-                    .iter()
-                    .skip(self.workspace_committed_cells)
-                    .map(talaria_tui::pager::TranscriptEntry::Cell),
+            let live = cells
+                .get(self.workspace_committed_cells..)
+                .unwrap_or_default();
+            let body_width = view.layout.plan(width, self.rows).transcript_columns;
+            let reasoning_rows = workspace_reasoning_rows(
+                &self.workspace_history,
+                live,
+                self.reasoning,
+                (&self.reasoning_clock, now),
+                &self.theme,
+                self.keymap.label(Action::TranscriptOpen).as_deref(),
+                body_width,
             );
+            let entries = workspace_entries(&self.workspace_history, live, &reasoning_rows);
             let footer = LiveView { sections };
             let workspace = talaria_tui::workspace::WorkspaceView {
                 entries: &entries,
@@ -5009,7 +5066,6 @@ impl Screen for TuiScreen {
                 footer: &footer,
                 work: Some(&work),
             };
-            let body_width = view.layout.plan(width, self.rows).transcript_columns;
             let renderer = transcript_tool_renderer(
                 talaria_tui::pager::Details::Expanded,
                 body_width,
@@ -5112,18 +5168,19 @@ impl Screen for TuiScreen {
     }
 
     fn commit_cells(&mut self, cells: &[Cell]) {
-        self.workspace_history.extend(
-            cells
-                .iter()
-                .cloned()
-                .map(Box::new)
-                .map(WorkspaceCommit::Cell),
-        );
+        let now = Instant::now();
+        self.workspace_history.extend(cells.iter().map(|cell| {
+            let took = match cell {
+                Cell::Reasoning(block) => self.reasoning_clock.took(block.id, now),
+                _ => None,
+            };
+            WorkspaceCommit::Cell(Box::new(cell.clone()), took)
+        }));
         let transcript_key = self.keymap.label(Action::TranscriptOpen);
         let render = self
             .in_force
             .cells(&self.captured, transcript_key.as_deref())
-            .reasoning(self.reasoning, &self.reasoning_clock, Instant::now());
+            .reasoning(self.reasoning, &self.reasoning_clock, now);
         let lines = self
             .replies
             .final_lines(cells, &render, self.terminal.viewport().width);
@@ -6813,6 +6870,78 @@ mod tests {
             .map(ToString::to_string)
             .collect();
         assert_eq!(rows, vec!["∴ thought for 12s (+34 lines, Ctrl+O to view)"]);
+    }
+
+    #[test]
+    fn workspace_reasoning_follows_the_view_setting() {
+        use talaria_core::layout::ReasoningDisplay;
+        use talaria_tui::pager::TranscriptEntry;
+        use talaria_tui::theme::cells::ReasoningClock;
+        let theme = talaria_tui::theme::resolve(&ThemeInputs {
+            skin: None,
+            skipped: &[],
+            follow_hermes_skin: false,
+            polarity: (Polarity::Dark, PolaritySource::Config),
+            depth: (ColorDepth::None, DepthSource::Config),
+            motion: (Motion::Full, MotionSource::Default),
+            terminal: TerminalColors::default(),
+        });
+        // Committed: a block timed in an earlier session, a local line and a turn's only
+        // output. Live: a block of the current session still streaming, with the same id.
+        let history = vec![
+            super::WorkspaceCommit::Cell(
+                Box::new(Cell::Reasoning(reasoning_block(34, true, false))),
+                Some(Duration::from_secs(8)),
+            ),
+            super::WorkspaceCommit::Lines(vec![super::Line::from("local output")]),
+            super::WorkspaceCommit::Cell(
+                Box::new(Cell::Reasoning(reasoning_block(5, true, true))),
+                None,
+            ),
+        ];
+        let live = vec![Cell::Reasoning(reasoning_block(3, false, false))];
+        let start = Instant::now();
+        let mut clock = ReasoningClock::new();
+        clock.follow_source(1);
+        clock.observe(&live, start);
+        let shown = |display: ReasoningDisplay| -> Vec<String> {
+            let rows = super::workspace_reasoning_rows(
+                &history,
+                &live,
+                display,
+                (&clock, start + Duration::from_secs(2)),
+                &theme,
+                Some("Ctrl+O"),
+                100,
+            );
+            super::workspace_entries(&history, &live, &rows)
+                .iter()
+                .map(|entry| match entry {
+                    TranscriptEntry::Cell(_) => "cell".to_owned(),
+                    TranscriptEntry::Lines(lines) => lines
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                })
+                .collect()
+        };
+        assert_eq!(
+            shown(ReasoningDisplay::Collapsed),
+            vec![
+                "∴ thought for 8s (+34 lines, Ctrl+O to view)",
+                "local output",
+                "cell",
+                "∴ thinking… (+3 lines, Ctrl+O to view)",
+            ],
+            "each block is one row, a committed one keeps its own session's time, and a turn's \
+             only output is drawn in full"
+        );
+        assert_eq!(
+            shown(ReasoningDisplay::Full),
+            vec!["cell", "local output", "cell", "cell"],
+            "full leaves every block to the transcript renderer, as before"
+        );
     }
 
     #[test]
