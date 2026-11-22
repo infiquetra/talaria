@@ -13,10 +13,17 @@ fn model(text: &str) -> PickerRow {
             model: text.into(),
         }),
         text: text.into(),
-        badges: vec!["effort ?".into()],
+        badges: vec![],
         price: None,
         dim: false,
         header: false,
+    }
+}
+
+fn current(text: &str) -> PickerRow {
+    PickerRow {
+        badges: vec!["current".into()],
+        ..model(text)
     }
 }
 
@@ -29,18 +36,16 @@ fn fixture_rows() -> Vec<PickerRow> {
         dim: false,
         header: true,
     }];
-    rows.push(model("★ ● reasoner-large"));
+    rows.push(current("★ ● reasoner-large"));
     rows.push(model("reasoner-small"));
     rows
 }
 
 fn fixture_details() -> Vec<String> {
     [
-        "Selected: Example provider / reasoner-large",
-        "Requested: high",
-        "Support: unverified for this route",
-        "Applied: unknown",
-        "Context: unknown",
+        "Effort: high requested, sent as high",
+        "Context: 200K tokens",
+        "Account: configured in Hermes (not checked)",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -69,6 +74,7 @@ fn view<'a>(rows: &'a [PickerRow], details: &'a [String]) -> PickerView<'a> {
             details,
             details_open: false,
             details_scroll: 0,
+            current: Some("Example provider / reasoner-large · high"),
         }),
     }
 }
@@ -146,6 +152,76 @@ fn snapshots_at_both_sizes() {
 }
 
 #[test]
+fn summary_details_wrap_instead_of_truncating() {
+    let rows = fixture_rows();
+    let long = "Warning: this synthetic provider note is long enough to need a second row here";
+    assert!(long.len() > 47 && long.len() < 94);
+    let details = vec![long.to_owned(), "Fast tier available".to_owned()];
+    let view = view(&rows, &details);
+    let buffer = rendered(&view, 120, 40);
+    let layout = PickerLayout::new(buffer.area);
+    let column: Vec<String> = (layout.details.y..layout.details.bottom())
+        .map(|y| {
+            (layout.details.x + 1..layout.details.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect();
+    let joined = column.join(" ");
+    assert!(!joined.contains('…'), "{column:?}");
+    assert!(joined.contains("need a second row here"), "{column:?}");
+    let first = column
+        .iter()
+        .position(|line| line.starts_with("Warning:"))
+        .expect("the note starts on its own row");
+    assert!(!column[first + 1].is_empty(), "{column:?}");
+    assert_eq!(column[first + 2], "Fast tier available", "{column:?}");
+    // The break falls between words, so the two rows joined by one space give the note back.
+    assert_eq!(column[first..first + 2].join(" "), long, "{column:?}");
+}
+
+#[test]
+fn full_details_break_between_words() {
+    let rows = fixture_rows();
+    let long = "Note: every synthetic word in this provider note should stay whole when it wraps";
+    let details = vec![long.to_owned()];
+    let mut view = view(&rows, &details);
+    view.browse.as_mut().unwrap().details_open = true;
+    let buffer = rendered(&view, 60, 24);
+    let text: Vec<String> = lines(&buffer)
+        .iter()
+        .map(|line| line.trim_matches(|c: char| c == '│' || c == ' ').to_owned())
+        .collect();
+    let first = text
+        .iter()
+        .position(|line| line.starts_with("Note:"))
+        .expect("the note is drawn");
+    assert_ne!(text[first], long, "the note has to wrap: {text:?}");
+    assert_eq!(text[first..first + 2].join(" "), long, "{text:?}");
+}
+
+#[test]
+fn count_line_names_the_current_route() {
+    let rows = fixture_rows();
+    let details = fixture_details();
+    let view = view(&rows, &details);
+    for (width, height) in [(80, 24), (120, 40)] {
+        let buffer = rendered(&view, width, height);
+        let layout = PickerLayout::new(buffer.area);
+        let count: String = (layout.count.x..layout.count.right())
+            .map(|x| buffer[(x, layout.count.y)].symbol())
+            .collect();
+        assert_eq!(
+            count.trim_end(),
+            "2 models · 1 providers · Current: Example provider / reasoner-large · high",
+            "{width}x{height}"
+        );
+    }
+}
+
+#[test]
 fn viewport_height_matches_the_rows_drawn() {
     let rows: Vec<_> = (0..100).map(|i| model(&format!("model-{i:03}"))).collect();
     for (width, height) in [(40, 10), (60, 12), (60, 16), (80, 24), (112, 28), (120, 40)] {
@@ -218,7 +294,7 @@ fn truncation_keeps_the_badge() {
         "会話".repeat(40),
         "e\u{301}".repeat(200),
     ] {
-        let rows = vec![model(&label)];
+        let rows = vec![current(&label)];
         let mut view = view(&rows, &[]);
         view.selected = Some(0);
         for width in [40, 60, 80, 120] {
@@ -229,15 +305,15 @@ fn truncation_keeps_the_badge() {
                 .collect();
             assert!(text.contains('…'), "{width}: {text}");
             assert!(
-                text.contains("effort ?"),
+                text.contains("current"),
                 "badge must not be clipped: {text}"
             );
             assert!(
                 !text.contains("e…"),
                 "must not separate a combining mark: {text}"
             );
-            let badge_x = layout.list.right() - 8;
-            for (offset, character) in "effort ?".chars().enumerate() {
+            let badge_x = layout.list.right() - 7;
+            for (offset, character) in "current".chars().enumerate() {
                 assert_eq!(
                     buffer[(badge_x + offset as u16, layout.list.y)].symbol(),
                     character.to_string(),
@@ -558,12 +634,12 @@ mod independent {
             (
                 80,
                 24,
-                "All\nStarred\nConfigured\nSet up\nreasoner-large\neffort ?\nRequested: high\nSupport: unverified for this route\nApplied: unknown\nContext: unknown\nF2/Ctrl+E details\n",
+                "All\nStarred\nConfigured\nNeeds setup\nreasoner-large\ncurrent\nCurrent: Example provider 00 / reasoner-large · high\nEffort: high requested;\nAccount: configured in Hermes\n←→ effort\nF2 details\n",
             ),
             (
                 120,
                 40,
-                "All\nStarred\nConfigured\nSet up\nreasoner-large\neffort ?\nRequested: high\nSupport: unverified for this route\nApplied: unknown\nContext: unknown\nF2/Ctrl+E details\n",
+                "All\nStarred\nConfigured\nNeeds setup\nreasoner-large\ncurrent\nCurrent: Example provider 00 / reasoner-large · high\nEffort: high requested;\nAccount: configured in Hermes\n←→ effort\nF2 details\n",
             ),
         ] {
             let actual = text(&paint(&state.view().unwrap(), w, h));
@@ -572,14 +648,14 @@ mod independent {
                 "All",
                 "Starred",
                 "Configured",
-                "Set up",
+                "Needs setup",
                 "reasoner-large",
-                "effort ?",
-                "Requested: high",
-                "Support: unverified for this route",
-                "Applied: unknown",
-                "Context: unknown",
-                "F2/Ctrl+E details",
+                "current",
+                "Current: Example provider 00 / reasoner-large · high",
+                "Effort: high requested;",
+                "Account: configured in Hermes",
+                "←→ effort",
+                "F2 details",
             ];
             let snapshot = tokens
                 .into_iter()
@@ -648,11 +724,11 @@ mod independent {
             "模型e\u{301}👩‍💻".repeat(20),
         ] {
             for width in [40, 60, 70] {
-                let row = truncate_label(&label, "effort ?", width);
+                let row = truncate_label(&label, "no effort", width);
                 assert!(row.width() <= usize::from(width));
-                assert!(row.ends_with("effort ?"), "{row}");
-                let prefix = row.strip_suffix("effort ?").unwrap().trim_end();
-                if label.width() + 1 + "effort ?".width() > usize::from(width) {
+                assert!(row.ends_with("no effort"), "{row}");
+                let prefix = row.strip_suffix("no effort").unwrap().trim_end();
+                if label.width() + 1 + "no effort".width() > usize::from(width) {
                     assert!(prefix.ends_with('…'), "{row}");
                 }
                 let kept = prefix.trim_end_matches('…');

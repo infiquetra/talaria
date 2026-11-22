@@ -406,6 +406,7 @@ struct ModelOverlay {
     details: Vec<String>,
     details_open: bool,
     details_scroll: usize,
+    current: Option<String>,
 }
 
 impl ModelOverlay {
@@ -424,6 +425,7 @@ impl ModelOverlay {
             details: view.browse.map(|b| b.details.to_vec()).unwrap_or_default(),
             details_open: view.browse.is_some_and(|b| b.details_open),
             details_scroll: view.browse.map_or(0, |b| b.details_scroll),
+            current: view.browse.and_then(|b| b.current).map(String::from),
         }
     }
 
@@ -437,6 +439,7 @@ impl ModelOverlay {
                     details: &self.details,
                     details_open: self.details_open,
                     details_scroll: self.details_scroll,
+                    current: self.current.as_deref(),
                 }),
             title: &self.title,
             filter: &self.filter,
@@ -5809,6 +5812,39 @@ mod tests {
         assert_eq!(preview_text(&fenced, 80), None);
         let table = format!("| a | b |\n|---|---|\n{}", "| 1 | 2 |\n".repeat(200));
         assert_eq!(preview_text(&table, 80), None);
+    }
+
+    #[test]
+    fn model_overlay_keeps_the_current_route_for_the_count_line() {
+        let details = vec!["Context: 200K tokens".to_owned()];
+        let view = talaria_core::models::PickerView {
+            title: "Switch model · this session",
+            filter: "",
+            effort: "effort: high",
+            hints: "",
+            refreshing: false,
+            rows: &[],
+            selected: None,
+            banner: None,
+            browse: Some(talaria_core::models::BrowseView {
+                scope: talaria_core::models::ListScope::All,
+                counts: talaria_core::models::BrowseCounts::default(),
+                details: &details,
+                details_open: false,
+                details_scroll: 0,
+                current: Some("Example provider / example-model · high"),
+            }),
+        };
+        let overlay = super::ModelOverlay::from_view(view);
+        let browse = overlay
+            .view()
+            .browse
+            .expect("browse facts survive the copy");
+        assert_eq!(
+            browse.current,
+            Some("Example provider / example-model · high")
+        );
+        assert_eq!(browse.details, details.as_slice());
     }
 
     #[test]

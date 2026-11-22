@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use super::text::token_count;
 use super::{Catalog, CatalogKind, CatalogRow, DisplayZone, Effort, PickerRow, RowKey};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -24,7 +25,7 @@ impl ListScope {
             Self::All => "All",
             Self::Starred => "Starred",
             Self::Configured => "Configured",
-            Self::SetUp => "Set up",
+            Self::SetUp => "Needs setup",
         }
     }
 }
@@ -45,6 +46,8 @@ pub struct BrowseView<'a> {
     pub details: &'a [String],
     pub details_open: bool,
     pub details_scroll: usize,
+    /// The session's current route and effort, for the count line.
+    pub current: Option<&'a str>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -53,6 +56,14 @@ pub(super) struct RowFacts {
     pub offers_effort: bool,
     pub not_listed: bool,
     pub unavailable: bool,
+}
+
+/// What Hermes last reported about the route the session is using.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct RouteFacts<'a> {
+    /// The effort Hermes sends to the route, with the requested effort it answered.
+    pub sent: Option<(Option<Effort>, &'a str)>,
+    pub context_max: Option<i64>,
 }
 
 pub(super) struct BrowseRows {
@@ -219,9 +230,11 @@ pub(super) fn rows(
         } else if row.kind == CatalogKind::NotSetUp {
             "needs setup".into()
         } else if !facts.offers_effort {
-            "not offered".into()
+            "no effort".into()
+        } else if facts.current {
+            "current".into()
         } else {
-            "effort ?".into()
+            String::new()
         };
         let key = match row.kind {
             CatalogKind::Favourite => RowKey::Favourite {
@@ -251,7 +264,11 @@ pub(super) fn rows(
         result.rows.push(PickerRow {
             key: Some(key),
             text,
-            badges: vec![badge],
+            badges: if badge.is_empty() {
+                Vec::new()
+            } else {
+                vec![badge]
+            },
             price: row.price,
             dim: row.dim,
             header: false,
@@ -281,6 +298,7 @@ pub(super) fn details(
     requested: Option<Effort>,
     pending: bool,
     unknown: bool,
+    route: RouteFacts<'_>,
 ) -> Vec<String> {
     let Some(key) = row.and_then(|r| r.key.as_ref()) else {
         return vec!["No action until a valid row is selected.".into()];
@@ -293,15 +311,14 @@ pub(super) fn details(
                 .iter()
                 .find(|p| &p.slug == provider);
             let mut lines = vec![
-                format!(
-                    "Selected: {}",
-                    catalog.display_name(provider).unwrap_or(provider)
-                ),
                 "Status: needs setup".into(),
                 "Enter: set up in /providers".into(),
             ];
             if let Some(env) = p.and_then(|p| p.key_env.as_deref()) {
                 lines.push(format!("Credential: needs {env}"));
+            }
+            if let Some(hint) = p.and_then(|p| p.warning.as_deref()) {
+                lines.push(format!("Setup: {hint}"));
             }
             return lines;
         }
@@ -310,29 +327,32 @@ pub(super) fn details(
         }
     };
     let provider = catalog.result.providers.iter().find(|p| &p.slug == slug);
-    let mut lines = vec![
-        format!(
-            "Selected: {} / {model}",
-            catalog.display_name(slug).unwrap_or(slug)
-        ),
-        format!(
-            "Requested: {}{}",
-            requested.map_or("unknown", Effort::as_wire),
-            if pending { "; pending turn end" } else { "" }
-        ),
-        if requested.is_none() {
-            "Support: could not be read".into()
-        } else {
-            "Support: unverified for this route".into()
-        },
-        "Applied: unknown".into(),
-        "Context: unknown".into(),
-    ];
+    let mut lines = Vec::new();
     if unknown {
-        lines.insert(1, "Outcome unknown; reloading".into());
+        lines.push("Outcome unknown; reloading".into());
     }
-    if !facts.offers_effort {
-        lines.insert(3, "Catalogue: reasoning not advertised".into());
+    lines.push(if !facts.offers_effort {
+        "Reasoning effort: not offered".into()
+    } else if let Some(level) = requested {
+        // Hermes reports what it sent only for the route in use and the effort it was asked for.
+        match route
+            .sent
+            .filter(|(asked, _)| facts.current && *asked == Some(level))
+        {
+            Some((_, wire)) => format!("Effort: {} requested, sent as {wire}", level.as_wire()),
+            None => format!(
+                "Effort: {} requested; Hermes limits it to what this route accepts",
+                level.as_wire()
+            ),
+        }
+    } else {
+        "Effort: could not be read".into()
+    });
+    if pending {
+        lines.push("Switch: pending turn end".into());
+    }
+    if let Some(context) = route.context_max.filter(|max| facts.current && *max > 0) {
+        lines.push(format!("Context: {} tokens", token_count(context)));
     }
     if facts.not_listed {
         lines.push("Availability: not listed; Ctrl+F removes this star".into());
@@ -350,15 +370,20 @@ pub(super) fn details(
         lines.push(format!("Price: {price}"));
     }
     if let Some(p) = provider {
+        let signed_in = p.authenticated == Some(true);
         if p.capabilities
             .as_ref()
             .and_then(|caps| caps.get(model))
             .is_some_and(|caps| caps.fast)
         {
-            lines.push("Catalogue: fast".into());
+            lines.push("Fast tier available".into());
         }
         if let Some(warning) = &p.warning {
-            lines.push(format!("Warning: {warning}"));
+            lines.push(if signed_in {
+                format!("Warning: {warning}")
+            } else {
+                format!("Setup: {warning}")
+            });
         }
         if let Some(total) = p
             .total_models
@@ -369,10 +394,9 @@ pub(super) fn details(
                 p.models.len()
             ));
         }
-        if p.authenticated == Some(true) {
-            lines.push("Provider: catalogue-authenticated; credential not verified".into());
+        if signed_in {
+            lines.push("Account: configured in Hermes (not checked)".into());
         }
     }
-    lines.push("F2/Ctrl+E details; Esc back".into());
     lines
 }

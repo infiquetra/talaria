@@ -935,6 +935,7 @@ fn picker(fixtures: &mut Vec<Fixture>, resolved: &ThemeFileResolution) {
             details: &details,
             details_open: false,
             details_scroll: 0,
+            current: None,
         }),
     };
     fixtures.push(draw("picker", "picker", true, |area, buffer| {

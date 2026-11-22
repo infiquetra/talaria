@@ -139,6 +139,36 @@ pub(crate) fn prefixed_wrapped(
     lines
 }
 
+/// The text word-wrapped to `width` with no prefix or indent, one entry per row. Rows break
+/// after a space; a token longer than a row still breaks mid-token. An empty source line keeps
+/// one empty row.
+pub(crate) fn word_wrapped(text: &str, width: u16) -> Vec<String> {
+    let width = usize::from(width).max(1);
+    let mut lines = Vec::new();
+    for piece in split_lines(text) {
+        let piece = sanitize(piece);
+        let rows = crate::composer::wrap::wrap(&piece, width);
+        let last = rows.len().saturating_sub(1);
+        let before = lines.len();
+        for (index, row) in rows.iter().enumerate() {
+            let mut body = &piece[row.start..row.end];
+            if index > 0 {
+                body = body.trim_start_matches(' ');
+            }
+            if index < last {
+                body = body.trim_end_matches(' ');
+            }
+            if !body.is_empty() {
+                lines.push(body.to_owned());
+            }
+        }
+        if lines.len() == before {
+            lines.push(String::new());
+        }
+    }
+    lines
+}
+
 /// Split on `\n`, with `\r\n` counting as one break. A lone `\r` stays in the text.
 pub(crate) fn split_lines(text: &str) -> impl Iterator<Item = &str> {
     text.split('\n')

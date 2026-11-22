@@ -53,7 +53,7 @@ Mouse capture remains off. If a terminal or multiplexer consumes Alt+D, use the 
 and composer draft, with the optional workspace and menu either off or on. Mouse capture stays off.
 Typing always searches: every whitespace-separated term must match the provider name, slug or
 model identifier, without regard to case. Ctrl+U clears the filter. Tab (`model_chips_next`) and
-Shift+Tab (`model_chips_prev`) cycle All, Starred, Configured and Set up without clearing it.
+Shift+Tab (`model_chips_prev`) cycle All, Starred, Configured and Needs setup without clearing it.
 Configured means Hermes lists the provider as authenticated; it does not verify the saved credential.
 
 All shows stars once in starring order, configured providers in Hermes order, then Needs setup
@@ -63,11 +63,16 @@ providers. Group headers cannot be selected. Arrow and page keys move; Home and 
 Search and reload preserve the selected route when it remains visible. The `>` selection pointer,
 `★` star and `●` current-route marker have separate meanings, including in monochrome.
 
-Each row keeps one badge, in this priority: not listed, unavailable, rate limited, not offered,
-effort unknown. Long identifiers end in an ellipsis without splitting a visible character or losing
-the badge. Details show requested effort, unverified support and unknown applied effort separately.
-`not offered` means the catalogue does not advertise reasoning. It does not prove how a provider
-handled a previous request. Context is unknown; prices appear only when Hermes supplies them.
+An ordinary row has no badge. A row shows at most one, in this priority: not listed, unavailable,
+rate limited, needs setup, no effort, current. Long identifiers end in an ellipsis without splitting
+a visible character or losing the badge. The count line names the current route and its effort.
+`no effort` means the catalogue does not advertise reasoning. It does not prove how a provider
+handled a previous request. Details wrap and show only what Hermes reported. For the current route
+they show the effort Hermes actually sends and the context window from `session.info`; for any
+other route they say Hermes limits the requested effort to what that route accepts, and leave out
+context, because `model.options` carries neither. Prices appear only when Hermes supplies them.
+A banner appears only for a warning from a configured provider, and names that provider; an
+unconfigured provider's setup hint appears as a Setup line on its Needs setup row.
 Deferred changes say pending turn end; lost write replies say outcome unknown and are not resent.
 
 At 80×24, details sit below the list; at least 112×28 places them beside it. Below 60×16 the list is
@@ -303,7 +308,7 @@ whose reply was lost is reported as uncertain and the list is reloaded; the chan
 Entering from a model picker setup stub remembers that picker's filter, list scope, selected route
 and requested effort. Closing a setup card stays in Providers so read-back remains visible.
 Closing Providers resumes and reloads the model picker without changing the model. A newly listed
-provider selects its first model; if the saved Set up scope would hide it, the picker changes to
+provider selects its first model; if the saved Needs setup scope would hide it, the picker changes to
 All while keeping the filter and requested effort. Without new models the saved selection remains.
 Opening Providers directly does not create this return path. If the original session has ended,
 the return reports that no session is open. Account-only targets absent from the model catalogue

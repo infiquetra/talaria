@@ -9,7 +9,7 @@ fn screen(message: &str, details: &[String], refreshing: bool, scope: ListScope)
             model: "reasoner-large".into(),
         }),
         text: "● reasoner-large".into(),
-        badges: vec!["effort ?".into()],
+        badges: vec!["current".into()],
         price: None,
         dim: false,
         header: false,
@@ -29,6 +29,7 @@ fn screen(message: &str, details: &[String], refreshing: bool, scope: ListScope)
             details,
             details_open: false,
             details_scroll: 0,
+            current: None,
         }),
     };
     let area = Rect::new(0, 0, 80, 24);
@@ -111,25 +112,22 @@ fn state_messages_keep_their_recovery_hint() {
 #[test]
 fn effort_evidence_and_unknown_values_are_literal_details() {
     for extra in [
-        "Support: unverified for this route",
-        "Support: could not be read",
-        "Catalogue: reasoning not advertised",
-        "Requested: high; pending turn end",
+        "Effort: high requested, sent as medium",
+        "Effort: could not be read",
+        "Reasoning effort: not offered",
+        "Switch: pending turn end",
         "Outcome unknown; reloading",
     ] {
         let details = [
-            "Selected: Example provider / reasoner-large".into(),
-            "Requested: high".into(),
+            "Effort: high requested; Hermes limits it to what this route accepts".into(),
             extra.into(),
-            "Applied: unknown".into(),
-            "Context: unknown".into(),
+            "Account: configured in Hermes (not checked)".into(),
         ];
         let painted = screen("", &details, false, ListScope::All);
         for phrase in [
             extra,
-            "Requested: high",
-            "Applied: unknown",
-            "Context: unknown",
+            "Effort: high requested; Hermes limits it to what this route accepts",
+            "Account: configured in Hermes (not checked)",
         ] {
             assert!(painted.contains(phrase), "{painted}");
         }
@@ -144,11 +142,11 @@ fn active_view_chip_is_visible_without_colour() {
         (ListScope::All, "All"),
         (ListScope::Starred, "Starred"),
         (ListScope::Configured, "Configured"),
-        (ListScope::SetUp, "Set up"),
+        (ListScope::SetUp, "Needs setup"),
     ] {
         let painted = screen("", &[], false, scope);
         assert!(painted.contains(&format!("[{label}]")), "{painted}");
-        for other in ["All", "Starred", "Configured", "Set up"] {
+        for other in ["All", "Starred", "Configured", "Needs setup"] {
             assert!(painted.contains(other));
         }
     }
@@ -183,6 +181,7 @@ fn unavailable_badge_and_reason_remain_visible() {
             details: &details,
             details_open: false,
             details_scroll: 0,
+            current: None,
         }),
     };
     let area = Rect::new(0, 0, 80, 24);
@@ -230,7 +229,7 @@ mod independent {
                         model: "reasoner-large".into(),
                     }),
                     text: "reasoner-large".into(),
-                    badges: vec!["effort ?".into()],
+                    badges: vec!["current".into()],
                     price: None,
                     dim: false,
                     header: false,

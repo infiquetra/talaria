@@ -1,6 +1,6 @@
 //! Pure per-session model choices and picker transitions.
 
-use super::browse::{self, RowFacts};
+use super::browse::{self, RouteFacts, RowFacts};
 use super::picker::*;
 use super::saved::SavedModels;
 use super::text::*;
@@ -42,6 +42,9 @@ struct Session {
     model: Option<String>,
     provider: Option<String>,
     effort: Option<Effort>,
+    /// The effort Hermes sends for the route in use, with the effort it answered.
+    effort_wire: Option<(Option<Effort>, String)>,
+    context_max: Option<i64>,
     show_effort: bool,
     active: Option<Active>,
     unknown: Option<Active>,
@@ -68,6 +71,7 @@ struct Picker {
     selected: Option<usize>,
     title: String,
     effort_text: String,
+    current: Option<String>,
     banner: Option<String>,
     feedback: Option<String>,
     list_scope: ListScope,
@@ -521,6 +525,7 @@ impl ModelsState {
             selected: None,
             title: String::new(),
             effort_text: String::new(),
+            current: None,
             banner: None,
             feedback: None,
             list_scope: ListScope::All,
@@ -596,14 +601,15 @@ impl ModelsState {
                 });
             } else if picker.failed.is_none()
                 && picker.feedback.is_none()
-                && let Some(warning) = catalog
-                    .result
-                    .providers
-                    .iter()
-                    .find_map(|p| p.warning.as_ref())
+                // An unconfigured provider's warning is its setup hint, shown on its own row.
+                && let Some(p) = catalog.result.providers.iter().find(|p| {
+                    p.authenticated == Some(true) && p.warning.as_ref().is_some_and(|w| !w.is_empty())
+                })
             {
                 picker.banner = Some(format!(
-                    "Partial catalogue: {warning}; remaining availability unknown. Ctrl+R retries."
+                    "Note from {}: {}",
+                    catalog.display_name(&p.slug).unwrap_or(&p.slug),
+                    p.warning.as_deref().unwrap_or_default()
                 ));
             }
         } else if picker.loading {
@@ -632,6 +638,37 @@ impl ModelsState {
                     .flatten()
             })
             .or_else(|| picker.rows.iter().position(|r| r.key.is_some()));
+        picker.current = catalog.and_then(|catalog| {
+            let model = &catalog.result.model;
+            let slug = if catalog.result.provider.is_empty() {
+                catalog
+                    .result
+                    .providers
+                    .iter()
+                    .find(|p| p.is_current == Some(true))
+                    .map_or("", |p| p.slug.as_str())
+            } else {
+                catalog.result.provider.as_str()
+            };
+            (!model.is_empty()).then(|| {
+                let route = match catalog.display_name(slug) {
+                    Some(name) => format!("{name} / {model}"),
+                    None if slug.is_empty() => model.clone(),
+                    None => format!("{slug} / {model}"),
+                };
+                match session.and_then(|s| s.effort) {
+                    Some(level) => format!("{route} · {}", level.as_wire()),
+                    None => route,
+                }
+            })
+        });
+        let route = session.map_or_else(RouteFacts::default, |s| RouteFacts {
+            sent: s
+                .effort_wire
+                .as_ref()
+                .map(|(asked, wire)| (*asked, wire.as_str())),
+            context_max: s.context_max,
+        });
         picker.details = catalog.map_or_else(
             || vec!["No action until a valid row is selected.".into()],
             |catalog| {
@@ -646,6 +683,7 @@ impl ModelsState {
                     picker.chosen_effort,
                     session.is_some_and(|s| s.deferred.is_some()),
                     unknown,
+                    route,
                 )
             },
         );
@@ -670,7 +708,7 @@ impl ModelsState {
             }
         };
         picker.hints = format!(
-            "↑↓ move · Enter choose · Tab view · F2/Ctrl+E details · Esc clear/close\n{} · Ctrl+F star · Ctrl+G save · Ctrl+R reload · Ctrl+U clear",
+            "↑↓ move · Enter switch · ←→ effort · Tab view · F2 details · Esc clear/close\n{} · Ctrl+F star · Ctrl+G save for new sessions · Ctrl+R reload",
             picker.effort_text
         );
     }
@@ -1310,13 +1348,22 @@ impl ModelsState {
         {
             session.effort = effort.as_str().and_then(Effort::parse);
         }
-        if let Some(model) = receipt.get("model").and_then(Value::as_str) {
+        let model = receipt.get("model").and_then(Value::as_str);
+        let provider = receipt.get("provider").and_then(Value::as_str);
+        if model.is_some_and(|m| session.model.as_deref() != Some(m))
+            || provider.is_some_and(|p| session.provider.as_deref() != Some(p))
+        {
+            // What Hermes reported belongs to the previous route until the next session.info.
+            session.effort_wire = None;
+            session.context_max = None;
+        }
+        if let Some(model) = model {
             session.model = Some(model.into());
             if let Some(catalog) = &mut session.catalog {
                 catalog.result.model = model.into();
             }
         }
-        if let Some(provider) = receipt.get("provider").and_then(Value::as_str) {
+        if let Some(provider) = provider {
             session.provider = Some(provider.into());
             if let Some(catalog) = &mut session.catalog {
                 catalog.result.provider = provider.into();
@@ -1369,6 +1416,21 @@ impl ModelsState {
             }
             self.adopt_model(sid, body);
             let session = self.sessions.entry(sid.into()).or_default();
+            if let Some(wire) = body
+                .get("reasoning_effort_wire")
+                .and_then(Value::as_str)
+                .filter(|wire| !wire.is_empty())
+            {
+                session.effort_wire = Some((session.effort, wire.into()));
+            }
+            if let Some(max) = body
+                .get("usage")
+                .and_then(|usage| usage.get("context_max"))
+                .and_then(Value::as_i64)
+                .filter(|max| *max > 0)
+            {
+                session.context_max = Some(max);
+            }
             if self.foreground.as_deref() == Some(sid)
                 && body
                     .get("reasoning_effort")
@@ -1540,6 +1602,7 @@ impl ModelsState {
                 details: &p.details,
                 details_open: p.details_open,
                 details_scroll: p.details_scroll,
+                current: p.current.as_deref(),
             }),
             title: &p.title,
             filter: &p.filter,

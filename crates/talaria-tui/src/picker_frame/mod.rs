@@ -153,7 +153,7 @@ fn draw_frame(
             "All",
             "Starred",
             "Configured",
-            "Set up",
+            "Needs setup",
         ]);
         let chips = scopes
             .iter()
@@ -170,9 +170,13 @@ fn draw_frame(
         if let Some(labels) = &labels {
             paint(labels.count, layout.count, Style::default().dim(), buffer);
         } else if let Some(browse) = view.browse {
+            let current = browse
+                .current
+                .map(|route| format!(" · Current: {route}"))
+                .unwrap_or_default();
             paint(
                 &format!(
-                    "{} models · {} providers",
+                    "{} models · {} providers{current}",
                     browse.counts.models, browse.counts.providers
                 ),
                 layout.count,

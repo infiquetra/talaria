@@ -161,7 +161,7 @@ fn layout_at_100_columns() {
     let _ = sink.take();
     paint(&mut term, &sink, &mut vt, &view);
     let screen = vt.rows();
-    for expected in ["Starred", "Configured", "Set up", "F2/Ctrl+E details"] {
+    for expected in ["Starred", "Configured", "Needs setup", "F2/Ctrl+E details"] {
         assert!(
             joined(&screen).contains(expected),
             "missing {expected}: {screen:?}"

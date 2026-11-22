@@ -545,7 +545,7 @@ run, or the run list when it has none. The model picker keys are not in the bloc
 `effort_down` and `effort_up` Left and Right, `model_scope` Ctrl+G (also new sessions),
 `model_favourite` Ctrl+F, `model_refresh` Ctrl+R, `model_chips_next` Tab,
 `model_chips_prev` Shift+Tab, and `model_details` F2 or Ctrl+E. The chips change the list view
-(All, Starred, Configured, Set up); Ctrl+G still changes whether a choice is saved for new sessions.
+(All, Starred, Configured, Needs setup); Ctrl+G still changes whether a choice is saved for new sessions.
 These actions resolve before composer keys while the picker is open. Typing always filters,
 including letters and digits; Ctrl+U clears. Esc closes full details first, then clears the filter,
 then closes the picker. Full details only scroll and never confirm, star or save anything.
