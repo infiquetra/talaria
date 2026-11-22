@@ -699,7 +699,8 @@ fn complete(state: &mut SessionState, payload: &Value) {
     state.seal_reasoning();
     if !state.had_reasoning
         && let Some(text) = nonblank(payload, "reasoning")
-        && !shown_as_commentary(state, text)
+            .map(|text| unseen_reasoning(state, text))
+            .filter(|text| !text.is_empty())
     {
         // Reasoning comes before the reply it led to. A reply that streamed is still open
         // here, so the block goes in front of it; otherwise it goes last, before
@@ -711,7 +712,7 @@ fn complete(state: &mut SessionState, payload: &Value) {
             .unwrap_or(state.cells.len());
         let cell = Cell::Reasoning(ReasoningCell {
             id: state.next_id(),
-            text: text.to_owned(),
+            text,
             sealed: true,
             latest_step: !state.tools.is_empty(),
         });
@@ -747,14 +748,27 @@ fn complete(state: &mut SessionState, payload: &Value) {
     state.activity = None;
 }
 
-/// Whether this turn already shows `text` as a reply. Some models report the commentary they
-/// wrote before their last tool call as the turn's reasoning; drawing it again under a thinking
-/// heading would only repeat a line the reader has just seen.
-fn shown_as_commentary(state: &SessionState, text: &str) -> bool {
+/// The end-of-turn reasoning without the paragraphs this turn has already shown as reply text.
+/// Some models report the commentary they wrote before their last tool call as part of the
+/// turn's reasoning; drawing it again under a thinking heading would only repeat a line the
+/// reader has just seen. Empty when nothing new is left.
+fn unseen_reasoning(state: &SessionState, text: &str) -> String {
     let start = state.turn_start.min(state.cells.len());
-    state.cells[start..]
+    let shown: Vec<&str> = state.cells[start..]
         .iter()
-        .any(|cell| matches!(cell, Cell::Assistant(reply) if reply.text.trim() == text.trim()))
+        .filter_map(|cell| match cell {
+            Cell::Assistant(reply) => Some(reply.text.trim()),
+            _ => None,
+        })
+        .filter(|reply| !reply.is_empty())
+        .collect();
+    text.replace("\r\n", "\n")
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|paragraph| !paragraph.is_empty())
+        .filter(|paragraph| !shown.iter().any(|reply| reply.contains(paragraph)))
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Whether a gateway print announces an interruption. Hermes prints these lines from its agent

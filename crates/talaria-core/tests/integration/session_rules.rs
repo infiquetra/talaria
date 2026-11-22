@@ -766,6 +766,17 @@ fn completion_reasoning_that_repeats_this_turns_commentary_is_not_drawn_again() 
             "reply Done"
         ]
     );
+    // Only the paragraph already shown is left out.
+    let (partly, _) = run(events("Checking the folder first.\n\nFound the file."));
+    assert_eq!(
+        order(&partly),
+        vec![
+            "reply Found the file.",
+            "tool call-1",
+            "thinking (latest step) Checking the folder first.",
+            "reply Done"
+        ]
+    );
 }
 
 #[test]
