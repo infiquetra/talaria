@@ -2,6 +2,296 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-22 — A skill installed into Hermes can be rewritten by Hermes itself
+
+**Evidence.** A session with the workflow mode on kept building the project by hand instead of
+proposing a workflow. The installed `talaria-workflows` skill no longer matched the copy Talaria
+ships: its `SKILL.md` had been edited many times and a reference file had been added, each time
+by Hermes's background self-improvement review after a session that used the skill. The added
+text told the agent to build first. Talaria's roster already computed that the skill was
+modified, and nothing showed it. The fix compares the installed files with the install record
+(or with the built-in copy when no record exists) when the mode turns on, when a session reopens
+with it on and before a routed prompt, and names `/hivecode reinstall`
+(`crates/talaria-app/src/hivecode_files.rs`, `crates/talaria-core/src/hivecode.rs`).
+
+**Mechanism.** Hermes treats every skill in a profile as its own to improve. A client that
+installs instructions there and depends on their wording has handed them to another writer. The
+drift is silent, cumulative, and looks like the model ignoring the feature. A weaker model was
+suspected first; the transcripts showed the cheaper model following the rewritten text exactly.
+
+**Generalizable rule.** When behaviour depends on a file another program may edit, record what
+was installed, compare before relying on it, and tell the user in one line when it differs.
+
+## 2026-11-22 — A rename changes sort order, and recorded screens hold single characters
+
+**Evidence.** Renaming the multi-agent mode across 88 files compiled and linted cleanly, and
+three tests failed: two compared a name list with a hand-sorted expectation in which the old
+name sorted last, and one compared a view with a recorded file that stores each cell's character
+separately, where a text search for the old word finds nothing
+(`crates/talaria-workflow/tests/integration/builtins_scripts.rs`,
+`crates/talaria-app/tests/integration/hivecode_app.rs`,
+`crates/talaria-tui/tests/support/view_colours.rs`).
+
+**Mechanism.** A search and replace keeps every string consistent with itself and breaks every
+fact that depended on the old string's position in an order or on its spelling being stored one
+character per record. The compiler cannot see either.
+
+**Generalizable rule.** After a rename, run the whole test suite before anything else, and
+expect order-sensitive expectations and per-character recordings to need regenerating by their
+own tools.
+
+## 2026-11-22 — A list that remembers "just created" must forget it on delete and rename
+
+**Evidence:** crates/talaria-core/src/profiles/mod.rs `forget()` and `registry_answered()`; roster.rs `join_roster` adds every name in `created` younger than 40 s; test profiles_state::a_deleted_or_renamed_new_profile_does_not_come_back (commit 520e2a53).
+
+**Mechanism:** The create flow keeps a (name, time) memo so a new profile shows as "starting" before any Hermes source lists it. The join adds memo names even when no source lists them. Delete and rename arrived later and never touched the memo. A profile deleted within 40 s of its create was rebuilt by every refresh. After the 40 s expiry tick, which only re-labels rows, it stayed as "not discovered" until the user pressed r. The same applied to a renamed profile's old name.
+
+**Generalizable rule:** Any local memo that can add a row the server does not list must be cleared, or moved, by every operation that removes or renames that row, including when the outcome is unknown.
+
+## 2026-11-22 — A view with elapsed time needs the clock in its state
+
+**Evidence:** ProfilesState::update stores `clock_ms` after taking the `before` view, and a one-second Timer::Progress drives the redraw (commit 520e2a53).
+
+**Mechanism:** view() takes no clock. Storing the clock after the `before` snapshot makes a tick change the view, so the existing tick-redraw comparison emits Redraw without a new effect type.
+
+**Generalizable rule:** Store the input clock after snapshotting the previous view, or tick-driven redraws compare equal and never fire.
+
+## 2026-11-22 — Gap recovery must compare what the screen drew with what the gateway stores, not with what it streamed
+
+**Evidence:** crates/talaria-app/src/rebuild.rs (same_cell_content, shown_prefix, earlier_step_reasoning, recap_follows). Tests in crates/talaria-app/tests/integration/session_flow.rs: gap_after_a_routed_prompt_hermes_folded_keeps_what_was_shown and gap_after_a_tool_turn_with_end_of_turn_reasoning_keeps_what_was_shown.
+
+**Mechanism:** Gap recovery decides whether to reprint by matching the rows already shown against the fresh snapshot, in order. The gateway's stored form differs from the live form in ways that carry no meaning. (1) A routed skill request is stored with every run of whitespace folded to one space, while the live cell keeps the line breaks as typed. (2) The end-of-turn message carries only the last step's reasoning, so the live view draws one recap block marked latest_step. The stored history keeps a reasoning block for every step, including the tool-calling steps the live view never drew, and the stored blocks never carry the recap flag. An exact cell-by-cell comparison read both as real differences and reprinted the transcript. The fix compares user rows by their words and reasoning rows by their text. When the live turn shows a recap, the match passes over stored reasoning that a tool row follows within the same turn.
+
+**Generalizable rule:** When reconciling a live view with a stored snapshot, list every field and every row the gateway changes or adds on the way to storage. Normalise or skip exactly those, and keep a control test showing that a real difference still triggers the reprint.
+
+## 2026-11-22 — A live-region section that ignores the terminal's rows will squeeze the rows the user is answering
+
+**Evidence:** crates/talaria-tui/src/palette/effort.rs (lines and lines_cut, the cap and the bottom-row scroll); crates/talaria-app/src/app/choice.rs (cards, yield_to_card); crates/talaria-tui/tests/integration/effort_scale_render.rs.
+
+**Mechanism:** LiveView::layout gives the later sections their rows first. A selector pushed after the composer, with no height cap, therefore takes rows from the composer, the working row and any question card above them. It also draws from the top, so the key hint row at the bottom is the part that gets cut.
+
+**Generalizable rule:** Every live section that sits below the composer takes the terminal's row count and caps itself, the way palette_height does. It drops optional rows before essential ones, and keeps its bottom (hint) row when cut. A section that holds no keys while a prompt card is up should close for the card, not share rows with it.
+
+## 2026-11-22 — A proposal check and a chooser must read one list
+
+**Evidence:** commit c5995e57, `crates/talaria-core/src/settings/values.rs` (`offered_value`, `choice_offers`, `many_offers`) and `crates/talaria-core/src/configure/validate.rs` (`check_proposed`). The regression tests are `configure_validate::every_value_every_chooser_offers_is_a_valid_proposal` and `settings_state::a_shared_list_answer_reaches_the_other_key_that_uses_it`.
+
+**Mechanism:** A built-in choice table was added so that `/config` could offer value lists for keys the gateway types as plain text. `value_kind` began returning the chooser kind for those keys. The `/configure` validator still checked the chooser kind against the gateway schema's own `options`. That list is empty for plain-text keys and wrong for the corrected ones, so every AI proposal for about 80 keys was refused. The chooser itself was fine, because it built its rows from a different function. A sweep test that pushes every value the table offers through the validator caught all of them at once. In the same area, a fetched list was stored per list but accepted per asking key. Two keys sharing one list therefore dropped each other's answers.
+
+**Generalizable rule:** When two code paths decide "is this value allowed" for the same setting, make both call one function, and pin them with a sweep test over the whole table rather than a few spot checks.
+
+## 2026-11-22 — A conversation flag set at submit time must wait for the prompt to start
+
+**Evidence:** commit 375da33c; `crates/talaria-app/src/app.rs` `hivecode_note_conversation`, `crates/talaria-core/src/queue/mod.rs` `QueueState::skill_waiting`; test `a_routed_prompt_behind_a_waiting_skill_prompt_carries_the_skill_too`.
+
+**Mechanism:** Hivecode marked the workflow skill as loaded the moment a skill-carrying prompt was submitted, even when it only joined the gateway queue. A second routed prompt then went out as a one-line reminder. Removing the first prompt from the queue re-armed only future prompts, so the queued reminder ran in a conversation that never received the skill. The ledger already knows which submits have not started (`cell_drawn` is false until the turn starts), so routing now treats the skill as not yet loaded while any skill-carrying prompt still waits.
+
+**Generalizable rule:** Any state that says "the conversation now holds X" must be derived from prompts that started, not prompts that were submitted, because a queued prompt can still be removed, edited or refused.
+
+## 2026-11-22 — A notice that asks a question in the composer steals the next answer
+
+**Evidence:** commit 375da33c; test `a_changed_skill_never_takes_the_answer_meant_for_the_agent`.
+
+**Mechanism:** The changed-skill check ran on the side of each routed prompt and printed a yes-or-no question while the agent's turn was streaming. The agent's own turn ends with an approval question, so the next "yes" answered the wrong question. Replacing the question with an explicit command (`/hivecode reinstall`) removes the ambiguity; nothing typed is read as an answer.
+
+**Generalizable rule:** Never take a composer line as the answer to a question raised asynchronously while a model turn may also be asking one; give the action its own command instead.
+
+## 2026-11-22 — A renamed profile is a new name to the gateway
+
+**Evidence.** commit e7685c10, crates/talaria-core/src/profiles/mod.rs (follow_new_name, forget, the view() Progress guard).
+
+**Mechanism.** a multiplexing Hermes gateway finds profiles by rescanning, so after a rename it has never served the new name, exactly as after a create. Only the create path scheduled follow-up list reads, so a renamed row read 'not discovered' indefinitely. Separately, in the narrow layout a new view() arm that came before the detail arm made the detail-first Enter invisible, so the next Enter opened another page without the user seeing the detail.
+
+**Generalizable rule.** give every action that produces a name the gateway has not seen yet the same follow-up refreshes as a create, and when a status panel is added, check that it cannot take precedence over a view the user explicitly asked for, in both layouts.
+
+## 2026-11-22 — A verb the client calls must be served on the socket it calls it on
+
+**Evidence.** The workflow runner ended every finished agent's session with `session.close` (crates/talaria-workflow/src/hermes/port.rs `close_session`). At the pinned Hermes revision the session authority's `handlers()` table has no `session.close`, and the WebSocket legacy fallback refuses every `session.*` verb except six read-only ones, so each call got -32601. `durable.rs` discarded the result with `let _ =`. Both test gateways (`hermes/mock_wire.rs` and the runner test wire) answered `session.close` themselves, so the suite stayed green. The fix sends `session.detach {session_id, subscription_id, end_reason}`, which is canonical and is served on the session socket. Test: `runner_execute::a_finished_agent_session_is_ended_in_hermes`.
+
+**Mechanism.** The contract crate already separates the two families (`methods::legacy::session_close` and `methods::canonical::session_detach`), but the port built the method name as a raw string, so nothing checked it. A fake gateway that answers every verb the client sends can only confirm the client against itself. Discarding the error then hid the problem at run time too.
+
+**Generalizable rule.** Take method names from the contract's canonical module, make test gateways refuse what the real gateway refuses, and never drop the result of a cleanup call without at least one logged line.
+
+## 2026-11-22 — A resume flag is an override only if the stored value is the default
+
+**Evidence.** `talaria workflow resume` resolved its budget from its own flags, then from staffing.toml. The budget recorded in `manifest.json`'s roster snapshot was never read back, so a run started with `--budget-tokens 10` and resumed with no flag ran with no ceiling (`runner_execute::resume_without_a_budget_flag_keeps_the_run_budget`). Separately, a `budget_exhausted` run always opened a new execution, so reading its result with `resume --json` appended journal records. The fix falls back to the stored budget for each field, and replays a `budget_exhausted` run read-only when no budget flag is given (`reading_a_finished_run_with_resume_changes_nothing_in_its_folder`).
+
+**Mechanism.** Values recorded at run start (budget, session model, seed) are the run's identity. Re-deriving them on resume from current configuration silently changes the run. The bug became reachable once a new non-completed end state (`budget_exhausted`) appeared and the skill told the model to resume such runs.
+
+**Generalizable rule.** On resume, take every run-start setting from the run's own record and let only an explicit flag replace it. Whenever a new terminal state is added, decide whether resume replays it or re-executes it.
+
+## 2026-11-22 — An application-level test of a selector yielding to a card does not cover the terminal screen's own guards
+
+**Evidence.** crates/talaria-cli/src/run.rs (the `yield_scale` Cancel insertion in TuiScreen::input and the `prompts.is_none()` guard in draw); test crates/talaria-cli/tests/integration/effort_scale_card.rs; commit 5378c201.
+
+**Mechanism.** choice::yield_to_card closes the /effort scale only when a new card appears after the scale opened. When /effort is typed before a card arrives, the composer keeps the keys (a card takes focus only from an empty composer), so Enter opens the scale with the card already up. Only the screen layer hides the scale and cancels it on the next input. The binary test reproduces this by typing the command, sending approval.request from the mock gateway, then pressing Enter. Removing either guard fails the test. A settled card leaves '→ answered elsewhere' in the transcript, so wait on that line rather than on the command text disappearing.
+
+**Generalizable rule.** when an overlay can open while a card already holds focus, test the screen layer through the binary, because the app-level yield only sees transitions.
+
+## 2026-11-22 — Record what a queued prompt told the model only once it cannot be taken back
+
+**Evidence.** commit 0af9e517 (fix(hivecode): resend the session model after a dropped prompt and follow edits by submission id). See crates/talaria-core/src/queue/flow.rs note_dropped and crates/talaria-app/src/hivecode.rs retype_authoring. Mechanism, part 1: the 'Session model' pair was recorded at submit time. A reminder that was then removed from the queue or refused still updated the record, so the agent never heard about a /model switch. The queue now reports a dropped prompt that named a model (model_dropped, next to skill_dropped). The pair is forgotten while such a prompt still waits (model_waiting, next to skill_waiting). Mechanism, part 2: Hermes's replace_queued at the pinned revision admits an edit under a new submission id at the back of the queue. Matching building-block entries by typed text therefore picked the wrong one of two identical prompts. Entries now match by the row's input_id, take the new id and move to the back.
+
+**Generalizable rule.** key per-prompt client state by submission id, never by text, and treat anything a queued prompt carried as unsent until its turn starts.
+
+## 2026-11-22 — Chooser current-row matching must use the comparison Hermes applies, not exact text
+
+**Evidence.** commit 3f3560ad. crates/talaria-core/src/settings/values.rs reads_as and is_choice; at Hermes 3b421578, agent/i18n.py resolve_language_id and agent/fast_mode.py parse_service_tier.
+
+**Mechanism.** Hermes trims and lowercases service_tier, browser.engine, desktop.disable_gpu and personality words. For display.language it also maps _ to -, then checks the code, then the alias, then the base tag. The order matters because zh-TW is an alias for zh-hant, while zh-Hant-HK falls back to zh. Matching each row on its own checked base tags before aliases and marked the wrong row. Rule: work out which row Hermes reads once, in Hermes' own order, then compare that row with the candidate; never test each row on its own. Second entry, commit 0da61f7c: a key hint must name a key the current screen honours. A chooser types plain and Shift characters into its filter, so KeyChord::reaches_a_chooser applies the same test route_settings uses, and the hint picks the first chord that passes it.
+
+## 2026-11-22 — A Hermes subscription belongs to one connection
+
+**Evidence.** pinned Hermes gateway/session_authority.py lines 375-376 mint a new uuid4 subscription per connection actor, and session_controls.py detach refuses any id the connection does not hold; fixed in commit 406f1721 (crates/talaria-workflow/src/hermes/state.rs Reattached arm and port.rs close_session).
+
+**Mechanism.** after a reconnect the hermes-client link resumes every tracked session and receives new subscription ids. The workflow wire dropped those ids, so detach named stale ones. The wire also never untracked ended sessions, so a reconnect resumed them, which at the pinned gateway cancels their pending close.
+
+**Generalizable rule.** any per-connection id a gateway hands out must be refreshed on reattach, and any session the client ends must be untracked from the reconnecting link in the same step.
+
+## 2026-11-22 — A Hermes schema select list is not the list the runtime reads
+
+**Evidence:** The pinned Hermes schema (`_SCHEMA_OVERRIDES` in `hermes_cli/web_server_config.py`) offers `sandbox` and `function` for `terminal.modal_mode`, `default` and `custom` for `context.engine`, and `off`, `typing` and `fixed` for `human_delay.mode`. The readers accept something else:
+- `_VALID_MODAL_MODES = {"auto", "direct", "managed"}` in `tools/tool_backend_helpers.py`;
+- `"compressor"` or a plugin name, in the comment above `context.engine` in `hermes_cli/config_defaults.py`;
+- `off`, `natural` and `custom` in `_human_delay_from_config` in `gateway/run_config_loaders.py`.
+
+Talaria copied the schema lists, so a default value showed as "(not in the list)" and `/config terminal.modal_mode=direct` was refused. The fix is in `crates/talaria-core/src/settings/choices.rs` (the built-in table, with `SchemaList::Replace` for these three keys), `tools/contract-gen/config-choices.json` (the generated proof) and `crates/talaria-core/tests/integration/settings_choices.rs` (the parity tests).
+
+**Mechanism:** The Hermes schema is hand-written per key, and nothing in Hermes checks it against the code that reads the value. `PUT /api/config` stores any value, so the client's chooser is the only gate. A wrong list blocks correct values and silently allows values the runtime falls back on. Most closed sets for plain-string keys exist only as Python literals or comments, with no route that serves them. So Talaria builds them in and proves each one from the pinned source: a module constant, the literals in one function, a config comment, or a desktop suggestion list. A parity test fails when a list and its proof disagree, and `replace_specs_still_differ_from_the_schema` fails when Hermes fixes its own list, so the replacement can be removed.
+
+**Generalizable rule:** Before offering a value list from a schema, verify it against the code that reads the value, and keep a generated proof that fails when the two drift apart.
+
+## 2026-11-22 — A view's hidden root row must not take keys, and its messages must expire
+
+**Evidence:** commit 902ae775 (fix(workflows): keep the progress view usable after a fold, a reopen or a gateway broadcast). Changed code: crates/talaria-workflow/src/progress/live.rs (`repair_selection`, the `ProgressKey::Left` and `Up` handling, `tick`, `gateway`, `runner_check`), crates/talaria-app/src/workflow_progress.rs (`workflow_inbound`, `poll_run`) and crates/talaria-workflow/src/runner/execute.rs (gate journaling). Tests: progress_live.rs `left_never_collapses_the_run_row`, `footer_expires_after_five_seconds` and `session_less_and_foreign_events_never_touch_the_footer`; app.rs `closing_and_reopening_a_folded_view_lists_its_agents_and_logs_unknown_events`.
+
+**Mechanism:** The tree's first node was the run, drawn as the header rather than as a row, yet it was the initial selection. Left collapsed it, `visible_nodes` returned only that node, and the empty-list text blamed a filter. Per-run view state outlived the overlay, so reopening showed the same empty list. Separately, the footer had a setter (`refuse`) and no expiry. The gateway handler wrote to the footer for any event type it did not draw, before checking that the event's session belonged to the run. Hermes sends broadcasts with `session_id: ""`, which the client decodes as `Some("")`, so broadcasts passed an `Option` check. Runner liveness was inferred from journal silence. The runner had to journal a heartbeat every second to stay "alive", and that heartbeat pushed real log lines out of the 50-line log. Probing the run lock (before reading the journal, so a runner's last record is never missed) made the heartbeat unnecessary.
+
+**Generalizable rule:** Give every view message an expiry, never let a node that is not drawn as a row be selectable or collapsible, filter an event by its owner before you look at its type (an empty id counts as no owner), and read liveness from the lock the process holds rather than from how often it writes.
+
+## 2026-11-22 — A selector that applies by replaying the typed command needs no new apply path
+
+**Evidence:** commit 9e65afa5 (feat(effort): open bare /effort as a left/right scale). In crates/talaria-app/src/app/choice.rs, `scale_key` calls `super::local_effect(state, LocalAction::Effort, "<level> [--default]", "/effort …")` and then `local_effect(state, LocalAction::Ultracode, "on|off", "/ultracode …")`. The test crates/talaria-app/tests/integration/effort_scale.rs::the_save_switch_sends_what_typed_effort_default_sends compares two fresh application states: the mutation and the post-receipt effects from the selector equal those from typing `/effort high --default`.
+
+**Mechanism:** the `/effort` scale only stages state: the selected level, an Ultracode flag and a save flag. On Enter it rebuilds the argument string the person would have typed and sends it through the same local-command dispatcher. So the mutation ledger, the busy-turn `config.set` fallback, the held-change notices, the saved-default write and the Ultracode skill check with its install offer all run unchanged, and no handler code had to move. Moving the /ultracode handler into a shared helper, as first planned, would have touched a block other lanes were editing in the same batch.
+
+**Generalizable rule:** When an interactive control stands in for a typed command, apply it by sending that command's own argument string through the existing dispatcher, and test equality with the typed path, instead of factoring out or re-implementing the handler.
+
+## 2026-11-22 — An answer accepted by Hermes is final; do not wait for the turn to end
+
+**Evidence:** commits 4408ae8d (tests) and 12173bb6 (fix) on branch fb3/lane-4. The reducer arm is `Event::AnswerAccepted` in `crates/talaria-core/src/session/prompts.rs`. The terminal-level regression test is `a_reply_after_an_answered_prompt_reaches_scrollback_while_the_turn_runs` in `crates/talaria-tui/tests/integration/reply_commit.rs`. Hermes's `respond` in `gateway/session_pending_controls.py`, at the pinned commit, returns `resolved` only when the answer took effect, and it publishes `<kind>.settled` before it replies.
+
+**Mechanism:** a prompt settled while a turn ran stayed unsealed, so that a late `already_resolved` reply could still rewrite its answer. Only the end of the turn sealed it. The final prefix stops at the first unsealed cell, so every reply, tool and thought after an answered question stayed in the live region. That region draws its last 15 rows, so older rows silently scrolled out of view for the rest of the turn, which can be many minutes. The respond reply that removes the uncertainty already arrived, but the client never passed it to the session. Sealing on that reply (`AnswerAccepted`) frees scrollback right away and keeps the correction path for answers that have no reply yet. A cap that drops rows must also say that it did, so the live tail's first row now counts the rows that are not in scrollback yet.
+
+**Generalizable rule:** when a cell stays open only to allow a correction, close it on the first signal that rules the correction out, and never cut rows from view without saying how many and how to see them.
+
+## 2026-11-22 — A routed prompt has two texts, and every screen path must pick the typed one
+
+**Evidence:** commit a7c8fca3. In crates/talaria-core/src/session/reducer.rs, the routed submit arm stored the model text in `Submission.text`, while the plain path stored the display text. crates/talaria-core/src/queue/flow.rs then drew a queued prompt's cell from that field. crates/talaria-core/src/session/injected.rs `classify_user_row` treated the replayed `/talaria-workflows <request>` row (display kind `skill_invocation`) as typed text. Hermes `tui_gateway/session_history.py:360-363` at the pinned revision writes routed rows that way. Tests: crates/talaria-core/tests/integration/ultracode_screen.rs.
+
+**Mechanism:** A routed prompt has a model text (the expanded skill, or a one-line reminder plus the typed text) and a display text (what was typed). The live cell took Hermes's `display`, which names the skill command. The queue, queue preview, rewind list and replay each read the model text through their own path. So the fix in one place (the live cell) left five other leaks. Because the model text carries recognisable markers (Hermes's skill header and request marker, or Talaria's own reminder line), one pure function, `ultracode::typed_text`, recovers the typed text from any of them without new state. Every screen-facing path now uses it.
+
+**Generalizable rule:** When a client sends the model more than the person typed, make the hidden part recognisable from the text alone and filter it in one function that every screen path calls.
+
+## 2026-11-22 — Another profile's model list must use that profile's own ticket
+
+**Evidence:** commit e64001cc. `crates/talaria-app/src/model_roles.rs` (the LoadCatalog branch now calls `hermes_client::model_options`). The new tests are in `crates/talaria-app/tests/integration/model_roles_flow.rs`. The mock rule is in `crates/talaria-app/tests/support/mock_model.rs` (`handle_model_options`). The gateway rule is in Hermes `gateway/session_controls.py` (`_sibling_for` raises profile_mismatch unless the ticket is host-scoped). Hermes `hermes_cli/web_routers/models.py` serves GET /api/model/options and resolves no `profile` query to the native ticket's profile.
+
+**Mechanism:** The model roles page did its REST reads and writes with a native-http ticket minted for the page's profile. It fetched only the route list over the foreground socket, adding `profile=<page profile>`. That socket's ticket is profile-scoped to the connected profile, so the gateway refused the call before the handler ran. The page then dropped the reason and drew an empty picker on all five tabs. The mock gateway answered any `profile`, so no test could see the refusal. A second defect only showed once the picker worked. Leaving a subagent direct endpoint writes the endpoint keys as "". Hermes keeps any key the file already named (`_explicit_config_paths` in `save_config`), so the read-back still holds them. A strict map comparison therefore kept the change "unapplied" forever.
+
+**Generalizable rule:** A page that serves a profile other than the connection's sends every call on a client ticketed for that profile, never on the shared socket. The mock must refuse a foreign profile the way Hermes does, so a wrong transport fails in tests.
+
+## 2026-11-22 — Code rows that wrap need a marker and a space-aware break, and a bare label is not a header
+
+**Evidence:** crates/talaria-tui/src/markdown/render.rs (code block branch) and crates/talaria-tui/src/markdown/wrap.rs (`code`, `CONTINUATION`); tests in crates/talaria-tui/tests/markdown_snapshots.rs (`wide_code_line_breaks_at_a_space_in_the_last_third`, `wrapped_code_line_rejoins_to_the_original_text`); recorded view crates/talaria-tui/tests/snapshots/view_colours/syntax.json; commit 0a933eb0.
+
+**Mechanism:** Code lines went through `wrap::hard`, which is the paragraph wrapper with every space treated as literal text. It cut a wide row at the width, ignored word boundaries, and started the remainder at column 0, so a column-aligned line lost its alignment and a word fragment sat alone on a row. The language label was a plain dim row, so with colour off (or dimming not visible) it read as stray text. The fix breaks after a space that falls in the last third of the row, else at the width. Continuation rows start with a dim "↪ " marker and the line's own indent. The label is now "label ─────" to the block's width. Dropping the markers from the rows gives back the exact source line. The row never exceeds the width, because the indent is capped so at least half the row stays for content.
+
+**Generalizable rule:** When a renderer wraps preformatted text, mark every continuation row and keep the indent, so copied text stays recognisable as one line. Never signal structure (a label, a header) with style alone, because it must survive a no-colour terminal.
+
+## 2026-11-22 — A dashboard route's selector is the ticket, and slash completion ignores its own scope
+
+**Evidence:** Commit c5fced4c ("fix(settings): fetch per-profile lists into the /config choosers"); crates/talaria-app/src/settings.rs (SettingsService::choices, slash_choices); at the pinned Hermes commit 3b421578: hermes_cli/dashboard_auth/native_http.py:311, hermes_cli/web_server.py:344 and :489-494, tui_gateway/command_discovery.py:264-295.
+
+**Mechanism:** A native-http ticket is redeemed on every /api path, and its profile's home is bound for the whole request. So GET /api/tools/terminal/backends, /api/dashboard/themes and /api/dashboard/plugins/hub already answer for the ticket's profile with no ?profile= selector. _require_token on the plugins hub route also accepts that principal. On the socket, complete.slash binds the session or profile scope only around the skill lookups. The completer that lists skins and personalities runs after that block closes, and the argument stage is cut to 30 items. So naming a profile there does not change which skins come back, and naming a foreign profile only risks a refusal.
+
+**Generalizable rule:** Scope a per-profile REST read with the profile's own ticket rather than a selector, and before trusting an RPC's profile or session parameter, read where its `with scope` block ends.
+
+## 2026-11-22 — Choose the quiet form when a row is written, because scrollback cannot fold later
+
+**Evidence:** The commits 8eb07437 ('feat(reasoning): draw thinking as one line per block by default') and afb9a55c ('test(reasoning): pin thinking drawn as one line on the main screen'). Key code: `reasoning_collapses` and `ReasoningClock` in crates/talaria-tui/src/theme/cells.rs; `mark_unanswered_reasoning` in crates/talaria-core/src/session/cell.rs; the `CapturedCells::reasoning` builder in crates/talaria-cli/src/run.rs. Tests: `scrollback_reasoning_is_one_row_unless_full_or_the_only_output` and `a_turn_that_ends_in_reasoning_marks_it_unanswered`.
+
+**Mechanism:** Inline history is the terminal's own scrollback, so a reasoning block cannot be folded after it is committed. Talaria therefore decides at commit time. A reasoning block becomes one line naming its length and the transcript key, unless it is its turn's only output. The session core marks that case before the block seals, in message.complete and when a snapshot is rebuilt, so the mark exists before the commit that draws it. The duration costs nothing: the screen already looks at every cell each frame, so it records the first frame that shows a block open and the first that shows it sealed. Blocks that arrive whole (end-of-turn reasoning, resumed history) have no time and fall back to the line count. The full form goes through the unchanged renderer, so 'full' stays the same as before. The redrawable transcript view keeps the full text, so Hermes is never asked to stop sending reasoning.
+
+**Generalizable rule:** For anything written to native scrollback, decide its final form before the commit; mark what the decision needs in the domain core before the cell seals, and leave the full text to a view that can redraw.
+
+## 2026-11-22 — A budget checked only at admission is not a ceiling
+
+**Evidence:** the fix(workflows) commit on fb3/lane-5 that makes the token budget a ceiling. `crates/talaria-workflow/src/engine/runtime.rs` (the `agent()` admission check) and `src/schedule/scheduler.rs` (journal fold) were the only places spend met the budget. Hermes reports a turn's usage on its receipt only when the turn settles. A synthetic runner test (`token_budget_stops_running_agents_and_refuses_new_ones`) ran one agent streaming 1,000 tokens against a 500-token budget: with the old code its turn ran until the 12-second test timeout and was never stopped.
+
+**Mechanism:** a workflow agent is a single Hermes turn. Every agent started in one `parallel()` passes admission at zero spend, and nothing counts its spend until it ends. The engine's refusal only queued a JavaScript rejection, so neither the journal nor the summary nor the view could see it. Hermes already publishes a cumulative `session.usage` frame after every model call, and the runner's port carried those frames on its agent feed — but the runner dropped the feed. Counting each session's latest reading minus what that session has already settled gives live spend without double counting. Interrupting admitted turns through the existing `port.stop` bounds overshoot to the model calls already in flight. Journaling `agent_refused` and a `stopped` call outcome makes each budget decision its own record.
+
+**Generalizable rule:** a limit that is checked only when work starts, and fed only when work finishes, bounds how much work starts, not what it costs. Count from the stream the work already emits, enforce on running work, and journal every refusal as its own record.
+
+## 2026-11-22 — A per-session switch keyed by Hermes's runtime id is lost on every reopen
+
+**Evidence:** commit 5aa259b0. `crates/talaria-core/src/ultracode.rs` (`UltracodeState::adopt`, `rotate`, `take_saved`). `crates/talaria-app/src/app.rs` `opened_session` and the `session.info` handling in `link_event`. Tests: `ultracode_survives_return_from_another_session`, `ultracode_is_restored_after_a_restart`, `compaction_moves_ultracode_to_the_new_stored_id`.
+
+**Mechanism:** Hermes creates a new runtime session id for every create and every fresh resume. It reuses the old id only while the session is still live. After a compaction it also moves the session to a new stored id and reports that id in `session.info`. Workflow mode was stored under the runtime id. It was copied only when the session being replaced had the same stored id, so a return from another session, a restart with `--resume`, or a compaction quietly turned it off. Separately, Hermes's background self-improvement review rewrites skills it has used. Talaria already computed `SkillState::Modified` but never told the user.
+
+**Generalizable rule:** Key any client-side per-session setting by the stored session id, follow the stored-id changes Hermes reports, and announce the setting when a session opens.
+
+## 2026-11-22 — A profile's rename and delete need Hermes's registry ticket, bound to that profile
+
+**Evidence.** Commit a32dc6b9 ("feat(profiles): delete and rename a served profile from /profiles"). In the pinned Hermes source (commit 3b421578): `gateway/runtime_bootstrap.py` (the `_PURPOSE_CAPABILITIES` table and `TicketStore.mint`) and `hermes_cli/dashboard_auth/native_http.py` (`_redeem_http_ticket`, `_registry_target`, `_check_registry_scope`). In Talaria: `crates/hermes-client/src/profiles_api.rs` and the `delete_and_rename_use_a_registry_ticket_for_that_profile` test in `crates/talaria-app/tests/integration/profiles_service.rs`.
+
+**Mechanism.** Hermes's profile routes refuse an ordinary `native-http` ticket for any profile write. `PATCH` and `DELETE /api/profiles/<name>` accept only a `native-profile-registry` ticket, and only one whose profile id is that profile's own home. The ticket comes from the same control socket request, `session-ticket`, that Talaria uses for every other ticket. `TicketStore.mint` makes one only for a profile the gateway serves, and `_check_registry_scope` refuses the home the gateway was started from. So a client can rename or delete only a served profile other than the gateway's own, and only on the gateway's machine. The delete route passes `yes=True`, so the client must ask for confirmation itself. A delete whose identity cleanup fails still answers 200, with `settlement_pending` and a `retry_command`. Separately, Talaria's REST client discarded a 5xx answer's `detail`, which hid Hermes's own explanation of a failed delete; the two new calls now keep it.
+
+**Generalizable rule.** Before calling a Hermes write route, read which ticket purpose and which profile binding the pinned `native_http.py` demands for that exact method and path. The purpose names what may be done; the binding names the one home it may be done to.
+
+## 2026-11-22 — A stored tool row is not the live cell, and the pinned gateway leaves out clarify results
+
+**Evidence:** commits 966ea3ad (tests) and 17c8c757 (fix).
+- `crates/talaria-app/src/rebuild.rs` (`same_tool_call`, plus the prompt filter in `recovered`).
+- `crates/talaria-core/src/session/tool_view.rs` (`asked_questions`).
+- `crates/talaria-tui/src/tool_cell.rs` (`push_questions`).
+- Hermes v0.23.1, `tui_gateway/session_history.py`, `_history_to_messages`: a tool row gets `content` only for `write_file`, `patch` and `skill_manage`, while `args` is always sent.
+
+**Mechanism:** A live tool cell gets four things from `tool.complete`: an outcome, a duration, a summary and the full result. The stored display row has none of them, and its `args` can differ from the live ones because the live args are bounded. A live question also adds a prompt cell that no stored row matches. Gap recovery compared cells with full `PartialEq`, so any session in which a tool ran failed the prefix check and reprinted up to 50 cells. Comparing the call's identity (`tool_id`, `name`), its on-screen subject, and its result (only when both sides hold one), and skipping prompt cells, keeps real differences visible without false reprints.
+
+Separately, at the pinned revision a resumed clarify row carries its questions in `args` but no answers. The renderer therefore reads `responses` when present and falls back to the arguments.
+
+**Generalizable rule:** Compare live state with a stored projection only on the fields the projection actually carries. Check the pinned gateway's projection function before assuming that a stored row holds a field.
+
+## 2026-11-22 — A closed-set editor is a table row plus a proof recipe, and a write-only gate needs its own range check
+
+**Evidence**
+- Commits 1e0c052b (tests) and 09362d2f (implementation) on branch fb3/lane-2; `crates/talaria-core/src/settings/choices.rs` (`Pick::Many`, `Pick::Mixed`, `NumberSpec`), `crates/talaria-core/src/settings/state.rs` (`many_rows`, `stage_picks`, number nudging), `tools/contract-gen/contract_gen.py` (`CONFIG_CHOICE_SOURCES`).
+- Generating the proof file failed at the first attempt for `display.status_bar.fields`: Hermes documents that list above the parent key `status_bar`, not above `fields`, so the recipe needed an explicit anchor line.
+- A test in the same crate used `delegation.enabled` and `moa.enabled` as examples of read-only keys; neither exists in Hermes, and both turned editable once the rule was narrowed to the leaves the Model roles screen really writes.
+
+**Mechanism**
+Hermes types a list-of-values key as `list` or even `string`, so the schema alone cannot say a key is a multiple choice or takes a word-or-own-list; the built-in table gives each key its pick style, and the generated proof recipe ties every row to the pinned source or fails generation. A number's range lives in a code comment or a clamp function, not in the schema, so a second small table (`NumberSpec`) carries range, step, unit and the meaning of blank. Because `PUT /api/config` never checks values, the chooser and the parser are the only gates; the AI settings proposal validator (`check_value`) is a second, separate gate and has to learn each new editor kind or it quietly refuses or accepts the wrong values.
+
+**Generalizable rule**
+Whenever an editor kind is added, update every exhaustive `match` over the value kind, and the proposal validator, in the same change; and let Enter in a tick list keep the ticks rather than press the row under the cursor, so opening a list and pressing Enter can never clear it.
+
+## 2026-11-22 — A scripted test wire turns one new gateway call into a different failure
+
+**Evidence:** crates/talaria-workflow/src/hermes/mock_wire.rs, tests/integration/hermes_backend.rs (text_and_schema_calls_end_to_end failed after the runner began closing agent sessions); crates/talaria-workflow/src/journal/durable.rs (`finish_call`, `close_session`); crates/talaria-workflow/src/runner/execute.rs (`prepare`).
+
+**Mechanism:** The scripted wire answers calls strictly in script order, and it removes the next step even when the method does not match. One extra `session.close` after the first agent therefore consumed the step meant for the second agent's `session.create`, and that agent failed with "script expected ..., received ...". Bookkeeping calls such as a close have to be answered outside the script, and must not go through the fake gateway's failure injection or call log. Separately, a model name typed into a script is only checked when its agent starts. Reading the literal `model`/`provider` pairs from the script and checking them against the frozen roster in `prepare`, before the run folder exists, turns that late failure into an exit 2 with the nearest known spelling.
+
+**Generalizable rule:** When a runner gains a new best-effort gateway call, answer it in the test doubles outside their ordered scripts, and check every user-typed name against the roster before any work is spent.
+
+## 2026-11-22 — A step indicator for a model-driven turn can be derived from its tool calls
+
+**Evidence:** crates/talaria-core/src/ultracode/authoring.rs `progress`; crates/talaria-app/src/ultracode.rs `observe_authoring` and `authoring_view`; crates/talaria-cli/tests/integration/workflow_authoring.rs (shows the block through the binary, then measures zero bytes written by the idle screen).
+
+**Mechanism:** Hermes sends no event that marks "the agent is now writing the workflow". Every `tool.start` frame, though, carries the tool's full arguments, so the turn's own cells already contain the signals. A write to a `.workflow` file or to the drafts folder means writing, and names the script. A read of that file, or a command that names it, means checking. An open clarify prompt means waiting. A `workflow run` command means running. So the step is a pure function over the cells that follow the routed prompt, recomputed for every view. The app keeps only three things per turn: where the prompt's cell starts, the wall-clock time it was sent (so a run found later can be matched to this turn), and when the turn started. That turn start time feeds the elapsed time and comes from the application clock, because a reducer reads no clock. The prompt's cell is found by its text, starting after the number of cells the session held at submit time. That copes with a prompt queued behind a running turn, whose cell is only drawn when its turn starts. The turn is only treated as running after `message.start`, because `SubmitCommand` leaves it idle until then. The elapsed counter wakes the screen only through a deadline that is set while the block is actually drawn, so an idle screen still schedules nothing.
+
+**Generalizable rule:** Before adding a protocol signal to show progress, check whether the arguments already in the turn's tool cells show it, and keep any wall-clock wake tied to a section that is drawn on screen.
+
 ## 2026-11-22 — A streaming reply must commit its finished blocks, not wait to be final
 
 **Evidence.** A reply holding a nine-row table and three paragraphs, followed by a clarify card,

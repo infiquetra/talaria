@@ -2,6 +2,106 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-22 — Call the multi-agent mode Hivecode
+
+**Decision.** The mode that handles a plain prompt as a multi-agent workflow is named
+Hivecode: the `/hivecode` command, the `--hivecode` flag, the status word, the notices, the
+built-in workflow and the docs page. The earlier flag name `--ultracode` stays as an unlisted
+alias so an existing launcher keeps starting. The earlier slash command is not kept. Release
+notes, handoff documents and earlier journal entries keep the name they were written with.
+
+**Rationale.** The earlier name is another product's name for a similar feature, and the user
+asked for one of Talaria's own. A hidden flag alias costs one attribute and prevents a launch
+failure; a hidden slash alias would show in the command menu, so it was left out. The rename was
+done in one pass after every other change of the batch had merged, because it touches most
+files the batch touched.
+
+**Rejected.** Keeping both names (two words for one thing in notices and docs). Renaming the
+`talaria-workflows` skill as well (the skill is installed into Hermes profiles; a second name
+would strand existing installs and the setup check that compares them).
+
+**Revisit when.** The unlisted flag alias can be removed once a tagged release has carried the
+new name for one minor version.
+
+## 2026-11-22 — A workflow's token budget is a ceiling, not an admission rule
+
+**Decision.** The runner counts the usage agent sessions stream while they run. When counted
+spend reaches the budget it admits no new agent and stops the running ones through the existing
+cancel path. Each refused or stopped agent is journaled, the outcome is `budget_exhausted` (exit
+code 4) whether or not the script catches the error, and a resumed run keeps its stored budget
+unless a new one is given.
+
+**Rationale.** A run with a budget of four million tokens spent nearly twenty million, because
+the budget was read only when an agent started and usage was added only when a turn settled.
+The agents it then refused left no record, and the run was reported as completed. A number the
+operator sets as a limit must limit spending, and a run that stopped for its budget must say so
+everywhere a run is listed.
+
+**Rejected.** Refusing new agents only, and reporting the overshoot afterwards (the overshoot is
+unbounded when agents start together). Estimating an agent's cost before it starts (there is
+no basis for the estimate). Mapping the uncaught budget error to a failed run (it reads as a
+script defect).
+
+**Revisit when.** A provider streams no usage before a turn settles for a common model; the
+runner then falls back to the admission check for that agent and journals the fact once, and a
+per-agent limit may be needed.
+
+## 2026-11-22 — Draw reasoning as one line per block by default
+
+**Decision.** `[ui] reasoning` defaults to `collapsed`: each reasoning block is one row with its
+line count and, when it streamed, its duration, and names the key that opens the transcript view
+where the full text is. `/thinking full` and `reasoning = "full"` restore the earlier display. A
+completed turn whose only output is reasoning is still drawn in full.
+
+**Rationale.** One session held 93 reasoning blocks and about 440,000 characters, all written
+into scrollback. Rows in the terminal's own scrollback cannot be folded later, so the quiet form
+has to be chosen when the row is written. The transcript view already shows reasoning in full,
+searchable, so no new viewer was needed.
+
+**Rejected.** Hiding reasoning entirely (a turn that ends on reasoning alone would show nothing).
+Asking Hermes not to send it (that setting also stops other frames Talaria draws). Expanding in
+place (impossible once a row has left the live region).
+
+**Revisit when.** Users ask for a third value that hides the row as well.
+
+## 2026-11-22 — Keep the `/config` choice lists in Talaria, proved against the pinned Hermes
+
+**Decision.** `/config` offers a chooser for every key with a closed set of values. The live
+schema stays the base; a table in `talaria-core` adds the sets the schema lacks and replaces the
+schema lists the runtime does not accept. `tools/contract-gen` extracts the same sets from the
+pinned Hermes source into a committed `config-choices.json`, and a parity test compares the two
+without needing a Hermes checkout. Settings proposed by the agent are checked by the same
+function the chooser uses.
+
+**Rationale.** The gateway's schema types only about two dozen keys as selects, its save route
+does not validate values, and several of its lists differ from what the runtime reads. No
+gateway method describes the closed sets of plain-text keys, so they cannot be fetched.
+
+**Rejected.** Trusting the schema alone (most keys stay typed text, and three lists are wrong).
+Reading the sets from the Hermes checkout at run time (a client must not depend on the gateway's
+source being present). A second validation list for agent proposals (the two lists disagreed
+within a day).
+
+**Revisit when.** Hermes serves a schema with validated enumerations; the parity test fails when
+a corrected list is fixed upstream, and that entry can then be dropped.
+
+## 2026-11-22 — Reinstalling a changed workflow skill is a command, not a question
+
+**Decision.** When the installed `talaria-workflows` skill differs from the copy Talaria
+installed, Talaria says so in one notice that names `/hivecode reinstall`. No line the user
+submits is read as an answer. The yes-or-no offer remains only for a skill that is missing.
+
+**Rationale.** Hermes's background review rewrites skills it has used, and the rewritten text
+changed how the agent behaved. The first fix asked "reinstall? [y/N]" and read the next
+submitted line as the answer, which could take a "yes" the user meant for the agent's own
+question. A missing skill cannot route a prompt, so that offer has no such collision.
+
+**Rejected.** Reinstalling silently (it overwrites a file another program changed, without
+consent). Locking the skill against Hermes's review from Talaria (the lock lives in Hermes's own
+state; Talaria prints the command instead).
+
+**Revisit when.** Hermes offers a marker inside a skill's own folder that exempts it from review.
+
 ## 2026-11-20 — Explain `--resume` in the long help
 
 **Context.** `--resume` already selects a session, while the long help is silent about it.
