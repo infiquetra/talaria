@@ -745,7 +745,8 @@ impl GatewayPort for HermesPort {
         })
     }
     /// Leave the session with an end reason: Hermes ends it once no other viewer holds it. The
-    /// session socket serves no `session.close`.
+    /// session socket serves no `session.close`. An ended session is no longer followed, so a
+    /// reconnect does not resume it and open it again.
     fn close_session(
         &self,
         profile: String,
@@ -788,7 +789,9 @@ impl GatewayPort for HermesPort {
                     Some("session.detach: the gateway holds another subscription".into()),
                 ));
             }
-            Ok(())
+            wire.untrack(&session_id);
+            port.request(|reply| Command::Forget((profile, session_id), reply))
+                .await
         })
     }
 }

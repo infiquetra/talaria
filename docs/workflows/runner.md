@@ -74,9 +74,11 @@ unknown pair with its script line and the nearest known spelling. Anything prefl
 read for certain is checked when its agent starts instead: a call naming only a model, a name
 that is computed, options built elsewhere or changed by a later assignment, an object with a
 spread or computed key, and names beside a `profile` key. No script that would run is refused. When an agent's call settles, the runner leaves its Hermes session with
-`session.detach`, naming the subscription the create answer gave and the end reason
-`workflow_agent_done`, so Hermes ends the session once no other viewer holds it. The session
-socket serves no `session.close`. A detach the gateway refuses or does not answer within 15
+`session.detach`, naming the subscription the create answer gave (or, after the connection
+came back, the one the resume gave) and the end reason `workflow_agent_done`, so Hermes ends
+the session once no other viewer holds it. The runner then stops following the session, so a
+later reconnect does not resume it and open it again. The session socket serves no
+`session.close`. A detach the gateway refuses or does not answer within 15
 seconds is noted as one journal log line and changes nothing else; Hermes then ends the
 session itself, after its orphan grace period, once the runner's connection closes.
 

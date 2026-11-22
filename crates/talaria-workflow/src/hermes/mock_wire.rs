@@ -40,6 +40,7 @@ enum Command {
         reply: oneshot::Sender<Result<Value, WireError>>,
     },
     Track(String, String, Cursor),
+    Untrack(String, String),
     Emit(String, Box<WireEvent>),
     Shutdown,
 }
@@ -163,6 +164,11 @@ impl ScriptedWire {
                             state.tracked.insert(session);
                         }
                     }
+                    Command::Untrack(profile, session) => {
+                        if let Some(state) = profiles.get_mut(&profile) {
+                            state.tracked.remove(&session);
+                        }
+                    }
                     Command::Emit(profile, event) => {
                         if let Some(state) = profiles.get(&profile) {
                             let _ = state.events.send(*event).await;
@@ -212,6 +218,7 @@ impl ScriptedWire {
                                 } else {
                                     WireEvent::Reattached {
                                         session_id: session.clone(),
+                                        subscription_id: format!("{session}-{generation}"),
                                     }
                                 };
                                 let _ = state.events.send(event).await;
@@ -486,6 +493,11 @@ impl Wire for ProfileWire {
             session_id.into(),
             cursor,
         ));
+    }
+    fn untrack(&self, session_id: &str) {
+        let _ = self
+            .tx
+            .send(Command::Untrack(self.profile.clone(), session_id.into()));
     }
     fn resync(&self, session_id: &str, cursor: Cursor) {
         self.history

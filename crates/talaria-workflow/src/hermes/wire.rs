@@ -24,6 +24,8 @@ pub trait Wire: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<Value, WireError>>;
     fn generation(&self) -> u64;
     fn track(&self, session_id: &str, cursor: Cursor);
+    /// Stop following the session, so a reconnect does not resume it.
+    fn untrack(&self, session_id: &str);
     fn resync(&self, session_id: &str, cursor: Cursor);
     fn take_events(&self) -> Option<mpsc::Receiver<WireEvent>>;
     fn dropped_items(&self) -> u64 {
@@ -50,6 +52,8 @@ pub enum WireEvent {
     },
     Reattached {
         session_id: String,
+        /// The subscription the new connection holds; `session.detach` must name it.
+        subscription_id: String,
     },
     Reconnected {
         generation: u64,
@@ -111,6 +115,7 @@ impl WireFactory for LinkWireFactory {
 }
 enum Control {
     Track(String, Cursor),
+    Untrack(String),
     Resync(String, Cursor),
     Close,
 }
@@ -167,7 +172,7 @@ impl LinkWire {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    command=commands.recv()=>match command {Some(Control::Track(s,c))=>link.track(&s,c),Some(Control::Resync(s,c))=>link.resync(&s,c),Some(Control::Close)|None=>break},
+                    command=commands.recv()=>match command {Some(Control::Track(s,c))=>link.track(&s,c),Some(Control::Untrack(s))=>link.untrack(&s),Some(Control::Resync(s,c))=>link.resync(&s,c),Some(Control::Close)|None=>break},
                     event=inbound.recv()=>{
                         let Some(event)=event else{break;};
                         let mapped=match event {
@@ -177,7 +182,7 @@ impl LinkWire {
                             LinkEvent::State(LinkState::Closed)=>{state.send_replace(Connection::Closed);None},
                             LinkEvent::Gap(gap)=>Some(WireEvent::Gap{session_id:gap.session_id,reason:gap.reason.as_str().into()}),
                             LinkEvent::SessionGone{session_id}=>Some(WireEvent::Gone{session_id}),
-                            LinkEvent::Reattached{session_id,..}=>Some(WireEvent::Reattached{session_id}),
+                            LinkEvent::Reattached{session_id,subscription_id}=>Some(WireEvent::Reattached{session_id,subscription_id}),
                             LinkEvent::Inbound{item:Inbound::Event(event),..}=>event.frame.session_id.clone().map(|session_id|WireEvent::Event{session_id,frame:event.frame}),
                             LinkEvent::Inbound{item:Inbound::ServerRequest(request),..}=>{bad.fetch_add(1,Ordering::Relaxed);request.responder.ignore();None},
                             LinkEvent::Inbound{..}=>{bad.fetch_add(1,Ordering::Relaxed);None},
@@ -255,6 +260,9 @@ impl Wire for LinkWire {
     }
     fn track(&self, session_id: &str, cursor: Cursor) {
         let _ = self.control.send(Control::Track(session_id.into(), cursor));
+    }
+    fn untrack(&self, session_id: &str) {
+        let _ = self.control.send(Control::Untrack(session_id.into()));
     }
     fn resync(&self, session_id: &str, cursor: Cursor) {
         let _ = self
