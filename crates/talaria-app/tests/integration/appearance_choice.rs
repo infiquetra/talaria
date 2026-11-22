@@ -726,6 +726,38 @@ fn skin_enter_while_preview_write_in_flight_keeps_selection_after_it_answers() {
 }
 
 #[test]
+fn quit_while_an_entered_skin_waits_writes_the_choice_not_the_original() {
+    let slot = GatewaySlot::default();
+    let kept = slot.clone();
+    let (gateway, _dir) = run_with(
+        None,
+        move |gateway| {
+            skins(gateway);
+            keep(&kept, gateway);
+        },
+        |tx, mut seen, _| async move {
+            let gateway = slot.get().expect("the gateway").clone();
+            connected(&mut seen).await;
+            gateway.set_delay("config.set", Some(SLOW_SET));
+            tx.send(UserAction::Submit("/skin".into())).unwrap();
+            wait_for(&mut seen, "the selector", selected("default")).await;
+            key(&tx, ChoiceKey::Prev);
+            until(&gateway, "the ares preview write", |gateway| {
+                skin_sets(gateway) == ["ares"]
+            })
+            .await;
+            key(&tx, ChoiceKey::Prev);
+            wait_for(&mut seen, "the mono selection", selected("mono")).await;
+            key(&tx, ChoiceKey::Apply);
+            wait_for(&mut seen, "the selector to close", closed).await;
+            // Quit before the preview write answers: Enter made mono the person's choice.
+            tx.send(UserAction::Quit).unwrap();
+        },
+    );
+    assert_eq!(skin_sets(&gateway), ["ares", "mono"]);
+}
+
+#[test]
 fn skin_selector_stays_closed_when_typing_began_before_the_list_arrived() {
     let slot = GatewaySlot::default();
     let kept = slot.clone();

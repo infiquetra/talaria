@@ -732,7 +732,8 @@ pub(super) fn before_switch(state: &mut AppState, effects: Vec<AppEffect>) -> Ve
 }
 
 /// Before Talaria exits: write the original skin back when a preview changed it, through the
-/// connection and session the selector opened on.
+/// connection and session the selector opened on. A skin chosen with Enter that still waits for
+/// a preview write is the person's decision, so that skin is written instead.
 pub(super) async fn restore_on_exit(state: &mut AppState) {
     let Some(preview) = state.skin_preview.take() else {
         return;
@@ -747,10 +748,14 @@ pub(super) async fn restore_on_exit(state: &mut AppState) {
     else {
         return;
     };
+    let skin = match &preview.finish {
+        Some(Finish::Apply(chosen)) => chosen,
+        _ => &preview.original,
+    };
     let mut service = state.appearance.clone();
     let _ = tokio::time::timeout(
         RESTORE_WAIT,
-        service.preview_skin(&client, &preview.original, session.as_deref()),
+        service.preview_skin(&client, skin, session.as_deref()),
     )
     .await;
 }
