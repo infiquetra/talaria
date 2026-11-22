@@ -188,11 +188,14 @@ pub(crate) fn recovered(
     fresh.state.queue.carry_waiting_from(&old.state.queue);
     fresh.carry_background_from(&old);
     let shown = state.committed_cells.min(old.state.cells().len());
+    // A snapshot draws system rows and the notices of turns Hermes wrote (those carry a body);
+    // every other notice was this client's own and has no snapshot counterpart.
     let canonical_prefix: Vec<_> = old.state.cells()[..shown]
         .iter()
         .filter(|cell| {
             !matches!(cell, Cell::Notice(notice)
                 if notice.kind != NoticeKind::System
+                    && notice.body.is_none()
                     && notice.text != talaria_core::side::SIDE_UNKNOWN_NOTICE)
         })
         .collect();

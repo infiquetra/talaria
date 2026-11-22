@@ -7,6 +7,7 @@ pub mod cell;
 pub mod effect;
 pub mod event;
 pub mod ids;
+pub(crate) mod injected;
 pub mod notices;
 pub mod prompts;
 pub mod reducer;

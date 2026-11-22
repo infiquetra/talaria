@@ -84,6 +84,8 @@ mod herdr_peek;
 mod history_search;
 #[path = "integration/history_text.rs"]
 mod history_text;
+#[path = "integration/injected_notice.rs"]
+mod injected_notice;
 #[path = "integration/inline_setup.rs"]
 mod inline_setup;
 #[path = "integration/kanban_view.rs"]

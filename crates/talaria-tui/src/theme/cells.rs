@@ -17,6 +17,9 @@ use crate::markdown::{MarkdownOptions, render_markdown_with_theme};
 pub struct ThemedCells<'a> {
     /// The theme the cells started under.
     pub theme: &'a Theme,
+    /// The label of the key that opens the transcript view, when one is bound. A notice that
+    /// carries what Hermes handed the agent names it.
+    pub transcript_key: Option<&'a str>,
 }
 
 /// Preserve resolved reasoning attributes; an untouched default keeps the legacy dim fallback.
@@ -40,17 +43,24 @@ impl CellLines for ThemedCells<'_> {
                 );
                 return crate::history::prefixed_wrapped("> ", &cell.text, style, width);
             }
-            Cell::Notice(cell) if self.theme.views.active() => {
+            Cell::Notice(cell) => {
+                let dim = Style::default().add_modifier(Modifier::DIM);
                 let token = if cell.kind == NoticeKind::Error {
                     super::surfaces::tokens::ALERT_ERROR
                 } else {
                     super::surfaces::tokens::TRANSCRIPT_NOTICE
                 };
-                let style = self
-                    .theme
-                    .views
-                    .inline(token, Style::default().add_modifier(Modifier::DIM));
-                return crate::history::prefixed_wrapped("\u{b7} ", &cell.text, style, width);
+                let style = if self.theme.views.active() {
+                    self.theme.views.inline(token, dim)
+                } else {
+                    dim
+                };
+                return crate::history::prefixed_wrapped(
+                    "\u{b7} ",
+                    &crate::history::notice_text(cell, self.transcript_key),
+                    style,
+                    width,
+                );
             }
             Cell::HermesCommand(cell) => {
                 return hermes_command_lines_with_options_and_theme(
@@ -163,7 +173,10 @@ mod tests {
             motion: (Motion::Full, MotionSource::Default),
             terminal: TerminalColors::default(),
         });
-        let themed = ThemedCells { theme: &theme };
+        let themed = ThemedCells {
+            theme: &theme,
+            transcript_key: None,
+        };
         for (name, typed, body, shown) in [
             (
                 "yolo",

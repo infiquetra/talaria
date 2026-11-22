@@ -5,7 +5,9 @@ use std::borrow::Cow;
 use ratatui::buffer::CellWidth;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use talaria_core::session::{Cell, PromptCell, PromptState, Settlement, ToolCell, ToolStatus};
+use talaria_core::session::{
+    Cell, NoticeCell, PromptCell, PromptState, Settlement, ToolCell, ToolStatus,
+};
 pub use talaria_core::text::{is_neutralized, sanitize};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -26,7 +28,9 @@ impl CellLines for PlainCellLines {
             Cell::Assistant(assistant) => prefixed("", &assistant.text, Style::default()),
             Cell::Reasoning(reasoning) => prefixed("", &reasoning.text, dim),
             Cell::Tool(tool) => vec![Line::from(tool_line(tool))],
-            Cell::Notice(notice) => prefixed_wrapped("\u{b7} ", &notice.text, dim, width),
+            Cell::Notice(notice) => {
+                prefixed_wrapped("\u{b7} ", &notice_text(notice, None), dim, width)
+            }
             Cell::Prompt(prompt) => vec![Line::styled(prompt_line(prompt), dim)],
             Cell::Shell(shell) => {
                 crate::side::shell_cell_lines(shell, width, &crate::side::SideTheme::default())
@@ -49,6 +53,36 @@ impl CellLines for PlainCellLines {
             ),
         }
     }
+}
+
+/// What a notice shows on the main screen: its text and, when it carries what Hermes handed the
+/// agent, how many lines of that the transcript view holds. `transcript_key` is the label of the
+/// key that opens the transcript view, when one is bound; without it the hint names the view. The
+/// body itself never prints here.
+pub(crate) fn notice_text<'a>(
+    notice: &'a NoticeCell,
+    transcript_key: Option<&str>,
+) -> Cow<'a, str> {
+    match notice_body(notice) {
+        Some(body) => {
+            let count = split_lines(body).count();
+            let noun = if count == 1 { "line" } else { "lines" };
+            let place = transcript_key.map_or_else(
+                || " in transcript view".to_owned(),
+                |key| format!(", {key} to view"),
+            );
+            Cow::Owned(format!("{} (+{count} {noun}{place})", notice.text))
+        }
+        None => Cow::Borrowed(notice.text.as_str()),
+    }
+}
+
+/// What Hermes handed the agent, as a notice shows it: nothing when it only repeats the text.
+pub(crate) fn notice_body(notice: &NoticeCell) -> Option<&str> {
+    notice
+        .body
+        .as_deref()
+        .filter(|body| body.trim() != notice.text)
 }
 
 /// The text split into one line per source line, the prefix on the first, all in one style.

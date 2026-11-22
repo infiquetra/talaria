@@ -30,7 +30,11 @@ fn command_reply_respects_the_resolved_color_policy_and_palette() {
             motion: (Motion::Full, MotionSource::Default),
             terminal: TerminalColors::default(),
         });
-        let lines = ThemedCells { theme: &theme }.lines(&command, 80);
+        let lines = ThemedCells {
+            theme: &theme,
+            transcript_key: None,
+        }
+        .lines(&command, 80);
         for line in &lines {
             assert!(
                 line.style.fg.is_none()
@@ -58,7 +62,11 @@ fn command_reply_respects_the_resolved_color_policy_and_palette() {
         terminal: TerminalColors::default(),
     });
     theme.markdown.inline_code = Style::default().fg(Color::Magenta);
-    let lines = ThemedCells { theme: &theme }.lines(&command, 80);
+    let lines = ThemedCells {
+        theme: &theme,
+        transcript_key: None,
+    }
+    .lines(&command, 80);
     assert!(
         lines
             .iter()
@@ -234,6 +242,7 @@ fn inline_user_and_notice_use_theme_colours() {
 
     let drawer = ThemedCells {
         theme: &resolution.theme,
+        transcript_key: None,
     };
 
     let painted_styles = |cell: &Cell| -> Vec<(String, Vec<Style>)> {
@@ -286,6 +295,7 @@ fn inline_user_and_notice_use_theme_colours() {
             kind,
             text: text.to_owned(),
             detail: None,
+            body: None,
         });
         let lines = painted_styles(&cell);
         assert_eq!(lines.len(), 1);
@@ -302,6 +312,7 @@ fn inline_user_and_notice_use_theme_colours() {
         kind: NoticeKind::Error,
         text: "broke".to_owned(),
         detail: None,
+        body: None,
     });
     let error_lines = painted_styles(&error_cell);
     assert_eq!(error_lines.len(), 1);
@@ -344,6 +355,7 @@ fn inline_user_and_notice_use_theme_colours() {
         kind: NoticeKind::System,
         text: "the gateway restarted while the model was still answering".to_owned(),
         detail: None,
+        body: None,
     });
     for (cell, style) in [(&long_user, user_text_style), (&long_notice, notice_style)] {
         let themed = drawer.lines(cell, 24);

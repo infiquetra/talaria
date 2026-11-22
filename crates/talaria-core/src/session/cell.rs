@@ -193,6 +193,10 @@ pub struct NoticeCell {
     pub text: String,
     /// Raw `error_surface` object, when the completion had one.
     pub detail: Option<Value>,
+    /// What Hermes handed the agent, when the notice stands for a turn Hermes wrote; a resumed
+    /// snapshot draws such a notice again. The main screen shows only its line count; the
+    /// transcript view shows it whole. A body that only repeats the text shows nowhere.
+    pub body: Option<String>,
 }
 
 /// Approval or clarification.

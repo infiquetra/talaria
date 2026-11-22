@@ -3,6 +3,7 @@
 use hermes_contract::schemas::{CanonicalPendingPromptKind, CanonicalSnapshot};
 use serde_json::Value;
 
+use super::injected::draw_user_row;
 use super::{
     AssistantCell, Cell, NoticeKind, PromptCell, PromptKey, PromptKind, PromptState, ReasoningCell,
     ReplayCursor, SessionId, SessionState, TodoState, ToolCell, ToolStatus, TurnState,
@@ -59,9 +60,19 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
                             None,
                         );
                     } else {
-                        let text = crate::automation::fold_user_text(&text)
-                            .map_or(text, |folded| folded.display);
-                        state.user(text);
+                        let metadata = |key: &str| {
+                            row.display_metadata
+                                .as_ref()
+                                .and_then(|metadata| metadata.get(key))
+                                .and_then(Value::as_str)
+                        };
+                        draw_user_row(
+                            &mut state,
+                            row.display_kind.as_deref(),
+                            metadata("display_text"),
+                            metadata("notification_category"),
+                            &text,
+                        );
                     }
                 }
             }

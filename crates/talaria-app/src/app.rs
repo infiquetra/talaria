@@ -3930,7 +3930,12 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                     .as_ref()
                     .map(|opened| opened.state.cells())
                     .unwrap_or_default();
-                let last_user = cells.iter().rposition(|cell| matches!(cell, Cell::User(_)));
+                // A turn starts at the person's prompt or at the notice of a turn Hermes wrote.
+                let last_user = cells.iter().rposition(|cell| match cell {
+                    Cell::User(_) => true,
+                    Cell::Notice(notice) => notice.body.is_some(),
+                    _ => false,
+                });
                 if let Some(index) = last_user {
                     let assistant_markdown: Vec<String> = cells[index + 1..]
                         .iter()
@@ -12411,6 +12416,7 @@ fn apply<S: Screen>(
                     kind: talaria_core::session::NoticeKind::Diagnostic,
                     text: format!("Scheduled jobs: {text}"),
                     detail: None,
+                    body: None,
                 })]);
             }
             AppEffect::CronFrame => {
@@ -13021,6 +13027,7 @@ fn apply<S: Screen>(
                         },
                         text,
                         detail: None,
+                        body: None,
                     })]);
                 }
                 ModelsEffect::SaveFile(saved) => {

@@ -488,6 +488,7 @@ fn notice_cell(text: &str) -> Cell {
         kind: talaria_core::session::NoticeKind::System,
         text: text.to_owned(),
         detail: None,
+        body: None,
     })
 }
 

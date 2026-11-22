@@ -394,15 +394,24 @@ fn session(
             state.execution_generation = generation;
             state.interrupted = false;
             state.activity = None;
-            if let Some(text) = nonblank(payload, "display_text") {
-                let kind = if payload["notification_category"].as_str() == Some("diagnostic") {
-                    NoticeKind::Diagnostic
-                } else {
-                    NoticeKind::Automation
-                };
-                state.notice(kind, text.to_owned(), None);
-            }
-            crate::queue::flow::start_cell(state, admission);
+            // Hermes marks a turn it started itself with a display kind and text. That turn draws
+            // one notice that keeps what Hermes handed the agent, and never a prompt cell.
+            let injected = match crate::session::injected::classify_user_row(
+                nonblank(payload, "display_kind"),
+                nonblank(payload, "display_text"),
+                payload["text"].as_str().unwrap_or_default(),
+            ) {
+                crate::session::injected::UserRow::Injected { label, body } => {
+                    let kind = crate::session::injected::notice_kind(
+                        payload["notification_category"].as_str(),
+                    );
+                    state.notice_with_body(kind, label, body);
+                    true
+                }
+                crate::session::injected::UserRow::Skip => true,
+                crate::session::injected::UserRow::Typed(_) => false,
+            };
+            crate::queue::flow::start_cell(state, admission, injected);
         }
         "message.delta" => match payload.get("text") {
             Some(Value::Null) => state.seal_assistant(),

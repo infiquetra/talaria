@@ -167,6 +167,8 @@ mod fleet_view_pane;
 mod fleet_view_rows;
 #[path = "integration/herdr_mapping.rs"]
 mod herdr_mapping;
+#[path = "integration/injected_messages.rs"]
+mod injected_messages;
 #[path = "integration/kanban_state.rs"]
 mod kanban_state;
 #[path = "integration/layout_plan.rs"]

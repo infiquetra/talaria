@@ -1766,6 +1766,157 @@ async fn gap_resumes_rebuilds_resyncs_without_duplicates() {
     );
 }
 
+/// A user row Hermes wrote, as a resumed snapshot holds it: drawn as one diagnostic notice.
+fn injected_row() -> Value {
+    json!({
+        "role": "user",
+        "text": "[ASYNC DELEGATION BATCH COMPLETE — deleg_0001]\nTask 1: check the parser\nResult: ok",
+        "display_kind": "async_delegation_complete",
+        "display_metadata": {
+            "display_text": "Subagent Tasks Completed: check the parser (1 task)",
+            "notification_category": "diagnostic"
+        }
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gap_after_a_turn_hermes_wrote_keeps_what_was_shown() {
+    // Resumed: the snapshot already held the notice of a turn Hermes wrote. A gap whose snapshot
+    // only adds a message commits that message and nothing else.
+    let rig = Rig::start();
+    let folder = rig.folder.display().to_string();
+    let base = resume_snapshot(&folder);
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    messages.push(injected_row());
+    messages.push(json!({"role": "assistant", "text": "Subagent done."}));
+    let first = with_messages(base.clone(), messages.clone());
+    messages.push(json!({"role": "user", "text": "And one more thing."}));
+    let extended = with_messages(base, messages);
+    rig.gateway.set_resume_snapshot(first.clone());
+    let gateway = &rig.gateway;
+    let next = extended.clone();
+    let (outcome, log) = rig
+        .drive(
+            StartMode::Resume(Some("local-session-1".to_string())),
+            |driver| async move {
+                driver.opened().await;
+                settle().await;
+                gateway.queue_resume_snapshot(next);
+                overflow(gateway).await;
+                driver.line(REFRESHED_NOTICE).await;
+                settle().await;
+                driver.quit();
+            },
+        )
+        .await;
+    assert_eq!(outcome.code, 0, "{}", outcome.stderr);
+    let lines = locked(&log).lines.clone();
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("Transcript refreshed")),
+        "gap recovery reprinted the transcript: {lines:#?}"
+    );
+    let notices = locked(&log)
+        .cells
+        .iter()
+        .filter(|cell| cell.contains("Subagent Tasks Completed"))
+        .count();
+    assert_eq!(notices, 1, "the notice is committed once");
+}
+
+#[test]
+fn gap_after_a_live_turn_hermes_wrote_keeps_what_was_shown() {
+    // Live: the notice came from message.start, as a diagnostic. The snapshot draws the same
+    // notice from the stored row, so the gap commits only the new message.
+    let base = resume_snapshot("/work/proj");
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let row = injected_row();
+    messages.push(row.clone());
+    messages.push(json!({"role": "assistant", "text": "Subagent done."}));
+    messages.push(json!({"role": "user", "text": "And one more thing."}));
+    let extended = with_messages(base.clone(), messages);
+    let mut state = AppState::new(LAUNCH_ID);
+    update(
+        &mut state,
+        AppMessage::Opened {
+            opened: OpenedSession::from_snapshot(snapshot_of(&base)),
+            notice: None,
+        },
+    );
+    let session = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+        .unwrap_or_default();
+    let frames = [
+        (
+            "message.start",
+            json!({
+                "display_kind": row["display_kind"],
+                "display_text": row["display_metadata"]["display_text"],
+                "text": row["text"],
+                "notification_category": "diagnostic"
+            }),
+        ),
+        ("message.delta", json!({"text": "Subagent done."})),
+        ("message.complete", json!({"outcome": "completed"})),
+    ];
+    // After the snapshot's last sequence, so the events are new.
+    for (seq, (kind, payload)) in (20_u64..).zip(frames) {
+        let raw = json!({
+            "type": kind,
+            "session_id": session,
+            "seq": seq,
+            "replay_epoch": base["replay_epoch"],
+            "authority_epoch": 1,
+            "execution_generation": 3,
+            "admission_id": "adm-hermes",
+            "payload": payload,
+        });
+        let frame = EventFrame::from_params(&raw).expect("contract event");
+        update(
+            &mut state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: hermes_client::Inbound::Event(hermes_client::InboundEvent {
+                    generation: hermes_client::Generation(1),
+                    frame,
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+    }
+    let shown: Vec<String> = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.state.cells().iter().map(cell_text).collect())
+        .unwrap_or_default();
+    assert!(
+        shown
+            .iter()
+            .any(|cell| cell.contains("Subagent Tasks Completed")),
+        "the live notice is drawn: {shown:#?}"
+    );
+    let effects = update(
+        &mut state,
+        AppMessage::Recovered(Ok(OpenedSession::from_snapshot(snapshot_of(&extended)))),
+    );
+    let refreshed = effects.iter().any(|effect| {
+        matches!(effect, AppEffect::CommitLines(lines)
+            if lines.iter().any(|line| line.contains("Transcript refreshed")))
+    });
+    assert!(
+        !refreshed,
+        "gap recovery reprinted the transcript: {effects:#?}"
+    );
+}
 // ---------------------------------------------------------------------------------------------
 // Prompts
 // ---------------------------------------------------------------------------------------------

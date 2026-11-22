@@ -243,8 +243,9 @@ impl<'a> PagerCellLines<'a> {
         out
     }
 
-    /// A local notice.
-    fn notice_lines(&self, cell: &NoticeCell, _width: u16) -> Vec<Line<'static>> {
+    /// A local notice. A notice that carries what Hermes handed the agent shows it indented
+    /// below when expanded, and its line count when compact.
+    fn notice_lines(&self, cell: &NoticeCell, width: u16) -> Vec<Line<'static>> {
         let style = if cell.kind == talaria_core::session::NoticeKind::Error {
             self.theme.tool_failed
         } else {
@@ -258,6 +259,27 @@ impl<'a> PagerCellLines<'a> {
                 piece.to_string()
             };
             out.push(Line::styled(text, style));
+        }
+        let Some(body) = crate::history::notice_body(cell) else {
+            return out;
+        };
+        let pieces: Vec<Line<'static>> = crate::history::split_lines(body)
+            .map(|piece| crate::history::sanitize_line(Line::from(piece.to_string())))
+            .collect();
+        if self.details == Details::Compact {
+            out.push(Line::styled(
+                format!(" (+{} lines)", pieces.len()),
+                self.theme.dim,
+            ));
+            return out;
+        }
+        for line in wrap_lines(pieces, self.inner_width(width)) {
+            let text = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            out.push(Line::styled(format!("  {text}"), self.theme.dim));
         }
         out
     }

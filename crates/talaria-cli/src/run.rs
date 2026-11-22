@@ -956,6 +956,8 @@ struct CapturedCells<'a> {
     captured: &'a HashMap<CellId, Arc<Theme>>,
     /// Draws tool cells; every other cell goes through the theme.
     tools: &'a ToolCellLines,
+    /// The label of the key that opens the transcript view, when one is bound.
+    transcript_key: Option<&'a str>,
 }
 
 impl CellLines for CapturedCells<'_> {
@@ -977,7 +979,11 @@ impl CellLines for CapturedCells<'_> {
         let theme = themed_cell_id(cell)
             .and_then(|id| self.captured.get(&id))
             .map_or(self.current, |theme| theme.as_ref());
-        ThemedCells { theme }.lines(cell, width)
+        ThemedCells {
+            theme,
+            transcript_key: self.transcript_key,
+        }
+        .lines(cell, width)
     }
 }
 
@@ -4294,6 +4300,7 @@ impl Screen for TuiScreen {
                 let current = &self.theme;
                 let captured = &mut self.captured;
                 let tools = &self.cells;
+                let transcript_key = self.keymap.label(Action::TranscriptOpen);
                 state
                     .live_tail()
                     .iter()
@@ -4310,7 +4317,10 @@ impl Screen for TuiScreen {
                             ),
                             None => Arc::clone(current),
                         };
-                        let cells = ThemedCells { theme: &theme };
+                        let cells = ThemedCells {
+                            theme: &theme,
+                            transcript_key: transcript_key.as_deref(),
+                        };
                         match preview(cell, limit) {
                             Some(trimmed) => cells.lines(&trimmed, width),
                             None => cells.lines(cell, width),
@@ -4692,10 +4702,12 @@ impl Screen for TuiScreen {
                 .map(Box::new)
                 .map(WorkspaceCommit::Cell),
         );
+        let transcript_key = self.keymap.label(Action::TranscriptOpen);
         let render = CapturedCells {
             current: &self.theme,
             captured: &self.captured,
             tools: &self.cells,
+            transcript_key: transcript_key.as_deref(),
         };
         let _ = self.terminal.commit(cells, &render);
         for id in cells.iter().filter_map(themed_cell_id) {

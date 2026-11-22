@@ -207,16 +207,27 @@ fn draw_started_row(state: &mut SessionState, row: &QueuedRow) {
         forget_waiting(state, id);
     } else if state.queue.known.contains(id) {
         state.queue.drawn.insert(id.clone());
-        state.user(row.text.clone());
+        crate::session::injected::draw_user_row(state, None, None, None, &row.text);
     }
 }
 
 /// `message.start`: draw the user cell of the prompt that starts, matched by admission.
 ///
 /// Without an envelope admission, or with one this client has never heard of, the oldest waiting
-/// submit of this client is taken, as it was before the queue was tracked.
-pub(crate) fn start_cell(state: &mut SessionState, admission: Option<&str>) {
-    let Some(admission) = admission.filter(|admission| !admission.is_empty()) else {
+/// submit of this client is taken, as it was before the queue was tracked. A turn Hermes started
+/// itself (`injected`) already has its notice: it draws nothing here and takes no waiting submit,
+/// and its admission counts as drawn so the fanout that names it later draws nothing either.
+pub(crate) fn start_cell(state: &mut SessionState, admission: Option<&str>, injected: bool) {
+    let admission = admission.filter(|admission| !admission.is_empty());
+    if injected {
+        if let Some(admission) = admission {
+            let id = AdmissionId(admission.to_string());
+            state.queue.drawn.insert(id.clone());
+            forget_waiting(state, &id);
+        }
+        return;
+    }
+    let Some(admission) = admission else {
         start_from_waiting(state, None);
         return;
     };
@@ -257,7 +268,7 @@ pub(crate) fn start_cell(state: &mut SessionState, admission: Option<&str>) {
         let text = state.queue.row(&id).map(|row| row.text.clone());
         if let Some(text) = text {
             state.queue.drawn.insert(id.clone());
-            state.user(text);
+            crate::session::injected::draw_user_row(state, None, None, None, &text);
             forget_waiting(state, &id);
         }
         return;

@@ -70,6 +70,7 @@ pub fn notice(id: u64, text: &str) -> Cell {
         kind: NoticeKind::Error,
         text: text.to_string(),
         detail: None,
+        body: None,
     })
 }
 

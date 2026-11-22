@@ -83,7 +83,10 @@ fn assert_label(line: &Line<'_>, reasoning: Style) {
 #[test]
 fn reply_labels_reasoning_once_and_not_the_answer() {
     let theme = theme();
-    let themed = ThemedCells { theme: &theme };
+    let themed = ThemedCells {
+        theme: &theme,
+        transcript_key: None,
+    };
     let reasoning_text = "Weighed two routes and kept the shorter one.";
     let answer_text = "The shorter route is the one to take.";
     let reasoning_lines = themed.lines(&reasoning(1, reasoning_text), WIDTH);
@@ -119,7 +122,10 @@ fn reply_labels_reasoning_once_and_not_the_answer() {
 #[test]
 fn latest_step_reasoning_label_names_the_step() {
     let theme = theme();
-    let themed = ThemedCells { theme: &theme };
+    let themed = ThemedCells {
+        theme: &theme,
+        transcript_key: None,
+    };
     let text = "Checked the last result before answering.";
     let late = Cell::Reasoning(ReasoningCell {
         id: CellId::new(1),
@@ -145,7 +151,10 @@ fn latest_step_reasoning_label_names_the_step() {
 #[test]
 fn two_reasoning_blocks_each_get_one_label() {
     let theme = theme();
-    let themed = ThemedCells { theme: &theme };
+    let themed = ThemedCells {
+        theme: &theme,
+        transcript_key: None,
+    };
     let first = "First pass kept the river crossing.";
     let second = "Second pass dropped the bridge.";
     let reply: Vec<Line<'static>> = [reasoning(1, first), reasoning(2, second)]

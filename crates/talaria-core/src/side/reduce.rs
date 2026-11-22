@@ -259,5 +259,6 @@ fn notice(state: &mut SessionState, kind: NoticeKind, text: String) {
         kind,
         text,
         detail: None,
+        body: None,
     }));
 }

@@ -377,3 +377,66 @@ fn remote_read_aloud_speaks_nothing_and_notices_once_per_session() {
         "the remote voice notice repeated on a later reply"
     );
 }
+
+#[test]
+fn read_aloud_speaks_only_the_reply_of_a_turn_hermes_started() {
+    // A turn Hermes starts (subagent results coming back) begins at its notice, not at the
+    // person's earlier prompt, so the earlier reply is not spoken again.
+    let mut snapshot: Value = serde_json::from_str(include_str!("../data/running_turn.json"))
+        .expect("recorded session snapshot");
+    let history = json!([
+        {"role": "user", "text": "Split the work between two subagents."},
+        {"role": "assistant", "text": "Reply A."}
+    ]);
+    snapshot["running"] = json!(false);
+    snapshot["messages"] = history.clone();
+    snapshot["display_messages"] = history;
+    let snapshot: CanonicalSnapshot = serde_json::from_value(snapshot).expect("contract snapshot");
+    let mut state = AppState::new("voice-routing");
+    state.voice.configure(true, 1500);
+    update(
+        &mut state,
+        AppMessage::Opened {
+            opened: OpenedSession::from_snapshot(snapshot),
+            notice: None,
+        },
+    );
+    update(
+        &mut state,
+        AppMessage::Voice {
+            session_id: "local-session-1".into(),
+            generation: 0,
+            input: VoiceInput::ModeRead(Some("voice_only".into())),
+        },
+    );
+    update(
+        &mut state,
+        event(
+            "message.start",
+            json!({
+                "display_kind": "async_delegation_complete",
+                "display_text": "Subagent Tasks Completed: split the work (2 tasks)",
+                "text": "[ASYNC DELEGATION BATCH COMPLETE — deleg_0001]\nTask 1: ok\nTask 2: ok"
+            }),
+        ),
+    );
+    update(
+        &mut state,
+        event("message.delta", json!({"text": "Reply B."})),
+    );
+    let effects = update(
+        &mut state,
+        event("message.complete", json!({"outcome": "completed"})),
+    );
+    let spoken: Vec<&str> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            AppEffect::Voice {
+                effect: VoiceEffect::Speak(text),
+                ..
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(spoken, ["Reply B."]);
+}

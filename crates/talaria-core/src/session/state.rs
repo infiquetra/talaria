@@ -454,6 +454,23 @@ impl SessionState {
             kind,
             text,
             detail,
+            body: None,
+        }));
+    }
+
+    /// A notice that stands for a turn Hermes wrote, keeping what it handed the agent.
+    pub(crate) fn notice_with_body(
+        &mut self,
+        kind: NoticeKind,
+        text: String,
+        body: Option<String>,
+    ) {
+        self.cells.push(Cell::Notice(NoticeCell {
+            id: self.next_id(),
+            kind,
+            text,
+            detail: None,
+            body,
         }));
     }
 
