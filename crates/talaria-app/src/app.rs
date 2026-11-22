@@ -6664,6 +6664,27 @@ fn route(
                     effects.push(AppEffect::Side { key, effect });
                 }
             }
+            // An edited routed prompt keeps its building block.
+            Effect::ReplaceQueued {
+                ref admission_id,
+                ref text,
+                ..
+            } if talaria_core::hivecode::typed_text(text).is_some() => {
+                if let Some(opened) = state.opened.as_ref()
+                    && let Some(row) = opened
+                        .state
+                        .queue
+                        .rows
+                        .iter()
+                        .find(|row| row.admission_id == *admission_id)
+                {
+                    let session = SessionId::new(opened.session_id.clone());
+                    let old = talaria_core::hivecode::shown_text(&row.text).to_owned();
+                    let new = talaria_core::hivecode::shown_text(text).to_owned();
+                    state.hivecode.retype_authoring(&session, &old, &new);
+                }
+                effects.push(AppEffect::Queue(effect));
+            }
             // Issue 232. Queue and steer. The queue service will run these calls.
             Effect::CancelQueued { .. }
             | Effect::ReplaceQueued { .. }
@@ -7642,6 +7663,21 @@ fn skill_epoch(opened: &OpenedSession) -> talaria_core::hivecode::SkillEpoch {
     }
 }
 
+/// Say which conversation the open session holds before a prompt is routed. A prompt that
+/// carried the whole skill and still waits in the queue may yet be removed, so the next routed
+/// prompt carries the skill as well.
+fn hivecode_note_conversation(state: &mut AppState, session: &SessionId) {
+    let Some(opened) = state.opened.as_ref() else {
+        return;
+    };
+    let epoch = skill_epoch(opened);
+    let waiting = opened.state.queue.skill_waiting();
+    state.hivecode.note_epoch(session, &epoch);
+    if waiting {
+        state.hivecode.rearm(session);
+    }
+}
+
 /// Apply workflow routing through the existing session events and effects.
 fn hivecode_actions(state: &mut AppState, actions: Vec<crate::hivecode::Action>) -> Vec<AppEffect> {
     apply_hivecode(state, actions, true)
@@ -7671,6 +7707,7 @@ fn apply_hivecode(
                     if talaria_core::hivecode::loads_skill(&text) {
                         state.hivecode.skill_sent(&session, epoch);
                     }
+                    state.hivecode.model_sent(&session, &text);
                     state.hivecode.note_routed(&session);
                     let cells = opened.state.cells().len();
                     state.hivecode.begin_authoring(
@@ -9318,9 +9355,7 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
         if let Some(actions) = state.hivecode.answer_install(&session, &text) {
             return hivecode_actions(state, actions);
         }
-        if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
-            state.hivecode.note_epoch(&session, &epoch);
-        }
+        hivecode_note_conversation(state, &session);
         let session_model = session_model(state);
         if let Some(actions) = state.hivecode.intercept_submit_with_model(
             &session,
@@ -10567,7 +10602,7 @@ fn opened_session(
     }
     if announce_hivecode {
         state.hivecode.bind(&hivecode_session, &state.profile);
-        effects.push(notice_lines(talaria_core::hivecode::notice::OPENED_ON));
+        effects.push(notice_lines(state.hivecode.opened_notice()));
         if let Some(check) = state.hivecode.setup_check(&hivecode_session) {
             effects.extend(apply_hivecode(state, vec![check], false));
         }
@@ -10603,9 +10638,7 @@ fn opened_session(
                 effects.extend(apply_hivecode(state, actions, false));
                 continue;
             }
-            if let Some(epoch) = state.opened.as_ref().map(skill_epoch) {
-                state.hivecode.note_epoch(&session, &epoch);
-            }
+            hivecode_note_conversation(state, &session);
             let session_model = session_model(state);
             if let Some(actions) = state.hivecode.intercept_submit_with_model(
                 &session,
@@ -14408,7 +14441,7 @@ fn apply<S: Screen>(
                                     )
                                 })?;
                             let options = talaria_workflow::skill::InstallOptions {
-                                command: "talaria".into(),
+                                command: crate::hivecode_files::INSTALL_COMMAND.into(),
                                 force,
                                 dry_run: false,
                                 talaria_home: home,
@@ -14424,16 +14457,29 @@ fn apply<S: Screen>(
                                 talaria_workflow::skill::SkillError::Template(error.to_string())
                             })??;
                             report.warnings.splice(0..0, warnings);
-                            Ok::<_, talaria_workflow::skill::SkillError>(
-                                talaria_workflow::skill::report_text(
-                                    &target, &report, false, false,
-                                ),
-                            )
+                            // `/hivecode reinstall` confirms in one line.
+                            Ok::<_, talaria_workflow::skill::SkillError>(if force {
+                                talaria_core::hivecode::notice::reinstalled(
+                                    &target.profile,
+                                    report
+                                        .backup
+                                        .as_ref()
+                                        .map(|backup| backup.display().to_string())
+                                        .as_deref(),
+                                )
+                            } else {
+                                talaria_workflow::skill::report_text(&target, &report, false, false)
+                            })
                         }
                         .await;
-                        AppMessage::HivecodeNotice {
-                            text: result.unwrap_or_else(|error| error.to_string()),
-                        }
+                        let text = match result {
+                            Ok(text) => text,
+                            Err(error) if force => {
+                                talaria_core::hivecode::notice::reinstall_failed(&error.to_string())
+                            }
+                            Err(error) => error.to_string(),
+                        };
+                        AppMessage::HivecodeNotice { text }
                     });
                 }
                 _ => {}
@@ -19422,10 +19468,63 @@ mod hivecode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Hivecode stopped: interrupted while planning the workflow after 12s. No workflow started."
+                "\u{b7} Hivecode stopped: interrupted while planning the workflow after 12s. No workflow started. Hivecode is still on."
             ]
         );
         assert_eq!(stage(&state), None);
+    }
+
+    #[test]
+    fn an_interrupted_build_leaves_one_line_after_the_interrupted_notice() {
+        let expected = [
+            "\u{b7} Hivecode stopped: interrupted while planning the workflow after 12s. No workflow started. Hivecode is still on.",
+        ];
+        // Hermes's interrupt reply comes before the turn's end, and after it.
+        for reply_first in [true, false] {
+            let mut state = opened("session");
+            turn_on(&mut state, "session");
+            state.now_ms = 1_000;
+            let _ = enter(&mut state, "fix the parser");
+            let _ = dispatched(&mut state, "fix the parser");
+            let _ = frame(&mut state, "message.start", json!({}));
+            state.now_ms = 13_000;
+            let mut all = vec![];
+            if reply_first {
+                all.extend(lines(&interrupt_done(
+                    &mut state,
+                    ExecuteOutcome::Sent,
+                    Vec::new(),
+                )));
+            }
+            let ended = frame(
+                &mut state,
+                "message.complete",
+                json!({"text": "", "status": "interrupted"}),
+            );
+            all.extend(lines(&ended));
+            // Hermes's own line goes into the scrollback first.
+            let cells = state.opened.as_ref().unwrap().state.cells();
+            let committed = ended.iter().position(|effect| {
+                matches!(effect, AppEffect::CommitCells(range) if cells[range.clone()].iter().any(
+                    |cell| matches!(cell, Cell::Notice(notice) if notice.kind == NoticeKind::Interrupted)))
+            });
+            let line = ended
+                .iter()
+                .position(|effect| matches!(effect, AppEffect::CommitLines(_)));
+            assert!(committed.is_some() && committed < line, "{ended:?}");
+            if !reply_first {
+                all.extend(lines(&interrupt_done(
+                    &mut state,
+                    ExecuteOutcome::Sent,
+                    Vec::new(),
+                )));
+            }
+            assert_eq!(all, expected, "reply first: {reply_first}");
+            let interrupted = state.opened.as_ref().unwrap().state.cells().iter().any(
+                |cell| matches!(cell, Cell::Notice(notice) if notice.kind == NoticeKind::Interrupted),
+            );
+            assert!(interrupted, "Hermes's own line stays");
+        }
     }
 
     #[test]
@@ -19495,7 +19594,7 @@ mod hivecode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Hivecode stopped: interrupted after starting fix-parser.workflow, 2m 10s in. The workflow may still be running."
+                "\u{b7} Hivecode stopped: interrupted after starting fix-parser.workflow, 2m 10s in. The workflow may still be running. Hivecode is still on."
             ]
         );
     }
@@ -19552,10 +19651,110 @@ mod hivecode_visibility_tests {
         assert_eq!(
             lines(&effects),
             [
-                "\u{b7} Hivecode stopped: interrupted while planning the workflow after 3s. No workflow started."
+                "\u{b7} Hivecode stopped: interrupted while planning the workflow after 3s. No workflow started. Hivecode is still on."
             ]
         );
         assert_eq!(stage(&state), None);
+    }
+
+    #[test]
+    fn an_edited_queued_routed_prompt_keeps_its_building_block() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = frame(&mut state, "message.start", json!({}));
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        let input = sent_id(&effects);
+        state.opened.as_mut().unwrap().state.queue.rows = vec![talaria_core::queue::QueuedRow {
+            admission_id: talaria_core::queue::AdmissionId("admission-1".into()),
+            input_id: talaria_core::queue::SubmissionId(input),
+            text: expanded("fix the parser"),
+            status: talaria_core::queue::RowStatus::Queued,
+            outcome: None,
+            controls: talaria_core::queue::Controls {
+                steer: true,
+                replace: true,
+            },
+            steering: false,
+            sequence: 1,
+            execution_generation: Some(1),
+        }];
+        // Edit the queued prompt before it starts.
+        let _ = queue_intent(&mut state, QueueIntent::EnterSelection);
+        let _ = queue_intent(&mut state, QueueIntent::BeginEdit);
+        let effects = queue_intent(
+            &mut state,
+            QueueIntent::SaveEdit("fix the parser and the lexer".into()),
+        );
+        let replaced = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Queue(Effect::ReplaceQueued { submission_id, .. }) => {
+                    Some(submission_id.clone())
+                }
+                _ => None,
+            })
+            .expect("the edit replaces the row");
+        let receipt = serde_json::from_value(json!({"admission_id": "admission-2",
+            "authority_epoch": 1, "execution_generation": null, "outcome": null,
+            "ref": {"profile_id": "fixture", "session_id": "session"}, "sequence": 2,
+            "status": "queued"}))
+        .unwrap();
+        let _ = update(
+            &mut state,
+            AppMessage::PromptDone {
+                events: vec![Event::QueueCallResult {
+                    action: QueueAction::Edit,
+                    admission_id: Some(talaria_core::queue::AdmissionId("admission-1".into())),
+                    submission_id: Some(replaced),
+                    result: receipt,
+                }],
+                notices: Vec::new(),
+                masked: None,
+            },
+        );
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        // The edited row starts.
+        let raw = {
+            let opened = state.opened.as_ref().unwrap();
+            json!({"session_id": opened.session_id, "replay_epoch": opened.cursor.replay_epoch,
+                "seq": opened.cursor.last_sequence + 1, "type": "message.start",
+                "admission_id": "admission-2", "payload": {}})
+        };
+        let _ = update(
+            &mut state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: Inbound::Event(hermes_client::channel::InboundEvent {
+                    generation: hermes_client::channel::Generation(1),
+                    frame: EventFrame::from_params(&raw).unwrap(),
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("fix the parser and the lexer")
+        );
+        assert!(
+            stage(&state).is_some(),
+            "the edited prompt's turn shows the block"
+        );
+        state.now_ms = 11_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Which tests matter?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Hivecode finished in 10s without writing a workflow script."]
+        );
     }
 
     #[test]
@@ -19801,6 +20000,95 @@ mod hivecode_visibility_tests {
         }
     }
 
+    /// The routed prompt's skill dispatch, answered by Hermes with the request it was sent.
+    fn dispatched_line(state: &mut AppState, typed: &str, request: &str) -> Vec<AppEffect> {
+        let reply = json!({"type": "skill", "name": "talaria-workflows",
+            "message": expanded(request), "display": format!("/talaria-workflows {request}")});
+        update(
+            state,
+            AppMessage::HivecodeDone {
+                session: SessionId::new("session"),
+                original_text: typed.into(),
+                outcome: Ok(reply),
+            },
+        )
+    }
+
+    fn command_line(effects: &[AppEffect]) -> Option<String> {
+        effects.iter().find_map(|effect| match effect {
+            AppEffect::Hivecode {
+                action: crate::hivecode::Action::RunCommand { command_line, .. },
+                ..
+            } => Some(command_line.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_switched_model_goes_with_the_next_routed_prompt() {
+        let reminder = talaria_core::hivecode::follow_up_text;
+        let mut state = opened("session");
+        {
+            let opened = state.opened.as_mut().unwrap();
+            opened.info.model = Some("model-a".into());
+            opened.info.provider = Some("provider-a".into());
+        }
+        turn_on(&mut state, "session");
+        let effects = enter(&mut state, "fix the parser");
+        let first = command_line(&effects).expect("the first prompt carries the skill");
+        assert!(
+            first.ends_with("\nSession model: model-a on provider-a"),
+            "{first:?}"
+        );
+        let request = first.trim_start_matches("/talaria-workflows ").to_owned();
+        let _ = dispatched_line(&mut state, "fix the parser", &request);
+        let _ = turn(&mut state, "complete");
+        // The same pair is not repeated.
+        let effects = enter(&mut state, "go ahead");
+        assert_eq!(sent(&effects), [reminder("go ahead")]);
+        let _ = turn(&mut state, "complete");
+        // The user switches the session's model, then sends the next task.
+        state.model = Some("model-b".into());
+        let effects = enter(&mut state, "now add a test for the lexer");
+        assert_eq!(
+            sent(&effects),
+            [format!(
+                "{}\nSession model: model-b on provider-a",
+                reminder("now add a test for the lexer")
+            )]
+        );
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("now add a test for the lexer"),
+            "the line never shows on screen"
+        );
+        let _ = turn(&mut state, "complete");
+        let effects = enter(&mut state, "and the docs");
+        assert_eq!(sent(&effects), [reminder("and the docs")]);
+    }
+
+    #[test]
+    fn a_provider_learned_later_goes_with_the_next_routed_prompt() {
+        let reminder = talaria_core::hivecode::follow_up_text;
+        let mut state = opened("session");
+        state.opened.as_mut().unwrap().info.model = Some("model-a".into());
+        turn_on(&mut state, "session");
+        let effects = enter(&mut state, "fix the parser");
+        let first = command_line(&effects).expect("the first prompt carries the skill");
+        assert!(!first.contains("Session model"), "{first:?}");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = turn(&mut state, "complete");
+        state.opened.as_mut().unwrap().info.provider = Some("provider-a".into());
+        let effects = enter(&mut state, "go ahead");
+        assert_eq!(
+            sent(&effects),
+            [format!(
+                "{}\nSession model: model-a on provider-a",
+                reminder("go ahead")
+            )]
+        );
+    }
+
     fn scans(effects: &[AppEffect]) -> Vec<i64> {
         effects
             .iter()
@@ -19866,8 +20154,9 @@ mod hivecode_visibility_tests {
         let _ = enter(&mut state, "fix the parser");
         let effects = dispatched(&mut state, "fix the parser");
         assert_eq!(sent(&effects), [expanded("fix the parser")]);
-        let reminded = enter(&mut state, "fix the tokenizer");
-        assert!(!loads_skill(&reminded), "{reminded:?}");
+        // The first one still waits, so the second carries the skill too.
+        let second = enter(&mut state, "fix the tokenizer");
+        assert!(loads_skill(&second), "{second:?}");
         state.opened.as_mut().unwrap().state.queue.rows = vec![talaria_core::queue::QueuedRow {
             admission_id: talaria_core::queue::AdmissionId("admission-1".into()),
             input_id: talaria_core::queue::SubmissionId("input-1".into()),
@@ -19934,6 +20223,45 @@ mod hivecode_visibility_tests {
         );
         let effects = enter(&mut state, "fix the lexer");
         assert!(loads_skill(&effects), "{effects:?}");
+    }
+
+    #[test]
+    fn a_routed_prompt_behind_a_waiting_skill_prompt_carries_the_skill_too() {
+        // The prompt that carries the skill waits in the queue, so a removal could still take
+        // the skill out of the conversation: the next routed prompt carries it as well.
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        assert_eq!(sent(&effects), [expanded("fix the parser")]);
+        let effects = enter(&mut state, "fix the tokenizer");
+        assert!(loads_skill(&effects), "{effects:?}");
+        let effects = dispatched(&mut state, "fix the tokenizer");
+        assert_eq!(sent(&effects), [expanded("fix the tokenizer")]);
+        // Once the first one starts, the skill is in the conversation.
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let effects = enter(&mut state, "fix the lexer");
+        assert_eq!(
+            sent(&effects),
+            [talaria_core::hivecode::follow_up_text("fix the lexer")]
+        );
     }
 
     #[test]
@@ -20317,6 +20645,145 @@ mod hivecode_visibility_tests {
         assert!(!checks_setup(&effects), "{effects:?}");
         let effects = enter(&mut state, "fix the parser");
         assert!(!checks_setup(&effects), "{effects:?}");
+    }
+
+    #[test]
+    fn a_remote_session_opened_with_hivecode_on_says_runs_are_elsewhere() {
+        // `talaria --remote <host> --hivecode --resume stored-s`.
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
+        state.hivecode.set_remote(true);
+        let shown = lines(&opened_session(
+            &mut state,
+            session("runtime-1", "stored-s"),
+            None,
+        ));
+        assert_eq!(shown, [format!("\u{b7} {}", notice::OPENED_ON_REMOTE)]);
+        assert!(shown[0].contains("gateway's machine"), "{shown:#?}");
+        // The line a routed turn leaves once it started a run says so again.
+        let _ = enter(&mut state, "fix the parser");
+        let reply = json!({"type": "skill", "name": "talaria-workflows",
+            "message": expanded("fix the parser"), "display": "/talaria-workflows fix the parser"});
+        let _ = update(
+            &mut state,
+            AppMessage::HivecodeDone {
+                session: SessionId::new("runtime-1"),
+                original_text: "fix the parser".into(),
+                outcome: Ok(reply),
+            },
+        );
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "terminal",
+            json!({"command": format!("talaria workflow run --profile fixture --json {DRAFT}")}),
+        );
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Started.", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [format!(
+                "\u{b7} Hivecode built the workflow in 0s and started the run. {}",
+                notice::REMOTE_RUN_TAIL
+            )]
+        );
+    }
+
+    fn setup(state: &mut AppState, skill: crate::hivecode::SkillCheck) -> Vec<AppEffect> {
+        update(
+            state,
+            AppMessage::HivecodeSetup {
+                session: SessionId::new("session"),
+                profile: "fixture".into(),
+                facts: crate::hivecode::SetupFacts {
+                    skill,
+                    tiers: crate::hivecode::TierCheck::Present,
+                    missing_builtins: Vec::new(),
+                },
+            },
+        )
+    }
+
+    fn reinstalls(effects: &[AppEffect]) -> bool {
+        effects.iter().any(|effect| {
+            matches!(
+                effect,
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::ReinstallSkill { .. },
+                    ..
+                }
+            )
+        })
+    }
+
+    #[test]
+    fn a_changed_skill_never_takes_the_answer_meant_for_the_agent() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        // The setup read the routed prompt started comes back while the turn runs.
+        let shown = lines(&setup(
+            &mut state,
+            crate::hivecode::SkillCheck::Modified {
+                changes: vec!["changed:SKILL.md".into()],
+                digest: "digest-1".into(),
+            },
+        ));
+        assert!(
+            shown
+                .iter()
+                .any(|line| line.contains("/hivecode reinstall")),
+            "{shown:#?}"
+        );
+        assert!(
+            !shown.iter().any(|line| line.contains("[y/N]")),
+            "{shown:#?}"
+        );
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Here is the proposed workflow. Start it?", "status": "complete"}),
+        );
+        // The yes goes to the agent.
+        let effects = enter(&mut state, "yes");
+        assert_eq!(
+            sent(&effects),
+            [talaria_core::hivecode::follow_up_text("yes")]
+        );
+        assert!(!reinstalls(&effects), "{effects:?}");
+        // So does an empty line or a no: nothing waits for an answer.
+        assert!(!reinstalls(&enter(&mut state, "n")));
+    }
+
+    #[test]
+    fn hivecode_reinstall_reinstalls_the_skill_and_sends_it_whole_next_time() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = turn(&mut state, "complete");
+        let effects = submit(&mut state, "/hivecode reinstall".into());
+        assert!(reinstalls(&effects), "{effects:?}");
+        let effects = enter(&mut state, "go on");
+        assert!(loads_skill(&effects), "{effects:?}");
+        // A remote gateway's skill lives on its own machine.
+        let mut remote = opened("session");
+        remote.hivecode.set_remote(true);
+        let effects = submit(&mut remote, "/hivecode reinstall".into());
+        assert!(!reinstalls(&effects), "{effects:?}");
+        assert!(
+            lines(&effects)
+                .iter()
+                .any(|line| line.contains("talaria workflow skill install --force")),
+            "{effects:?}"
+        );
     }
 
     #[tokio::test]

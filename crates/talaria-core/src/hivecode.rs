@@ -23,9 +23,27 @@ const SCAFFOLD_RUNTIME_NOTE: &str = "\n\n[Runtime note:";
 pub fn follow_up_text(typed: &str) -> String {
     format!("{FOLLOW_UP_REMINDER}\n\n{typed}")
 }
+/// [`follow_up_text`], ending with the session model line when `names` is the session's
+/// `<model> on <provider>`: the line goes again whenever the pair changed since it last went.
+pub fn follow_up_with_model(typed: &str, names: Option<&str>) -> String {
+    let mut text = follow_up_text(typed);
+    if let Some(names) = names {
+        text.push_str(&format!("\n{SESSION_MODEL_LABEL}{names}"));
+    }
+    text
+}
 /// What the person typed, when `text` is what a routed prompt sent the model: the whole skill
 /// with the request at its end, or the reminder in front of it. `None` for any other text.
 pub fn typed_text(text: &str) -> Option<&str> {
+    request_text(text).map(|request| split_session_model(request).0)
+}
+/// The `<model> on <provider>` a routed prompt named in its session model line, if it has one.
+pub fn sent_session_model(text: &str) -> Option<&str> {
+    split_session_model(request_text(text)?).1
+}
+/// What a routed prompt sent after the skill or the reminder: the typed text, then any session
+/// model line.
+fn request_text(text: &str) -> Option<&str> {
     if let Some(rest) = text.strip_prefix(FOLLOW_UP_REMINDER) {
         return rest.strip_prefix("\n\n");
     }
@@ -34,27 +52,40 @@ pub fn typed_text(text: &str) -> Option<&str> {
     }
     // The skill body may quote the marker, so the person's request follows the last one.
     let rest = &text[text.rfind(SCAFFOLD_REQUEST)? + SCAFFOLD_REQUEST.len()..];
-    Some(without_session_model(
+    Some(
         rest.find(SCAFFOLD_RUNTIME_NOTE)
             .map_or(rest, |end| &rest[..end]),
-    ))
+    )
 }
 /// The label of the line a routed prompt ends with to name the session's model and provider.
 const SESSION_MODEL_LABEL: &str = "Session model: ";
+/// The session's `<model> on <provider>`, when both names are usable in the session model line:
+/// neither empty nor holding a control character.
+pub fn session_model_names(session_model: Option<(&str, &str)>) -> Option<String> {
+    let (model, provider) = session_model?;
+    [model, provider]
+        .iter()
+        .all(|name| !name.trim().is_empty() && !name.chars().any(char::is_control))
+        .then(|| format!("{model} on {provider}"))
+}
 /// `text` without the model-facing `Session model: <model> on <provider>` line a routed prompt
 /// ends with. Hermes replays a request with its line breaks folded to spaces, so the line may
 /// follow a space instead of a line break.
 fn without_session_model(text: &str) -> &str {
+    split_session_model(text).0
+}
+/// `text` split into what comes before its session model line and the names that line gives.
+fn split_session_model(text: &str) -> (&str, Option<&str>) {
     let trimmed = text.trim_end();
     let Some(at) = trimmed.rfind(SESSION_MODEL_LABEL) else {
-        return text;
+        return (text, None);
     };
     let names = &trimmed[at + SESSION_MODEL_LABEL.len()..];
     let follows_a_break = trimmed[..at].ends_with(char::is_whitespace);
     if at == 0 || !follows_a_break || names.contains('\n') || !names.contains(" on ") {
-        return text;
+        return (text, None);
     }
-    trimmed[..at].trim_end()
+    (trimmed[..at].trim_end(), Some(names))
 }
 /// True when `text` carries the whole skill: Hermes's expansion of a routed prompt, not the
 /// reminder that stands in for it once the skill is in the conversation.
@@ -122,12 +153,8 @@ pub fn route_submit_with_model(
         return SubmitRoute::Plain;
     }
     let mut command_line = format!("{SKILL_COMMAND} {}", text.trim_end());
-    if let Some((model, provider)) = session_model
-        && [model, provider]
-            .iter()
-            .all(|name| !name.trim().is_empty() && !name.chars().any(char::is_control))
-    {
-        command_line.push_str(&format!("\n{SESSION_MODEL_LABEL}{model} on {provider}"));
+    if let Some(names) = session_model_names(session_model) {
+        command_line.push_str(&format!("\n{SESSION_MODEL_LABEL}{names}"));
     }
     SubmitRoute::Workflow {
         command_line,
@@ -271,6 +298,8 @@ pub struct HivecodeState {
     sessions: HashMap<SessionId, bool>,
     /// Sessions whose conversation holds the whole skill, and the conversation it went into.
     skill: HashMap<SessionId, SkillEpoch>,
+    /// The `<model> on <provider>` each session's routed prompts last named.
+    named: HashMap<SessionId, String>,
     /// The stored session each runtime session id belongs to.
     bound: HashMap<SessionId, String>,
     /// Settings by stored session id; these are saved across restarts.
@@ -389,6 +418,9 @@ impl HivecodeState {
         if let Some(epoch) = self.skill.get(from).cloned() {
             self.skill.insert(to.clone(), epoch);
         }
+        if let Some(names) = self.named.get(from).cloned() {
+            self.named.insert(to.clone(), names);
+        }
         self.is_on(to)
     }
     /// True when the session's conversation already holds the whole skill, so a routed prompt
@@ -398,6 +430,23 @@ impl HivecodeState {
     }
     pub fn skill_sent(&mut self, id: &SessionId, epoch: SkillEpoch) {
         self.skill.insert(id.clone(), epoch);
+    }
+    /// The `<model> on <provider>` the session's routed prompts last named.
+    pub fn named_model(&self, id: &SessionId) -> Option<&str> {
+        self.named.get(id).map(String::as_str)
+    }
+    /// A routed prompt sent `text`: the whole skill names the session model or names none, and
+    /// the reminder names it only when it changed.
+    pub fn model_sent(&mut self, id: &SessionId, text: &str) {
+        match sent_session_model(text) {
+            Some(names) => {
+                self.named.insert(id.clone(), names.to_owned());
+            }
+            None if loads_skill(text) => {
+                self.named.remove(id);
+            }
+            None => {}
+        }
     }
     /// Forget the skill when the session's conversation is no longer the one it went into: a
     /// new stored id, or a compaction that may have dropped it.
@@ -422,12 +471,14 @@ pub enum HivecodeCommand {
     On,
     Off,
     Status,
+    /// Replace the installed skill with this Talaria's copy, backing it up first.
+    Reinstall,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UsageError;
 impl std::fmt::Display for UsageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Usage: /hivecode [on|off|status]")
+        f.write_str(notice::USAGE)
     }
 }
 impl std::error::Error for UsageError {}
@@ -438,6 +489,7 @@ impl HivecodeCommand {
             "on" => Ok(Self::On),
             "off" => Ok(Self::Off),
             "status" => Ok(Self::Status),
+            "reinstall" => Ok(Self::Reinstall),
             _ => Err(UsageError),
         }
     }
@@ -473,29 +525,42 @@ pub mod notice {
     use super::authoring::{
         AuthoringEnd, AuthoringProgress, AuthoringStage, RunFacts, STEPS, elapsed_text,
     };
+    use crate::providers::text::sanitize;
     /// The mode's name where a screen shows it on its own, such as the `/effort` selector.
     pub const NAME: &str = "Hivecode";
     /// What Hivecode does with a prompt, in the words every notice shares.
-    pub const SKILL_ROLE: &str = "With Hivecode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it.";
-    pub const ON: &str = "Hivecode on for this session. With Hivecode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. A started run shows above the composer, and /workflows lists every run. Hivecode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /hivecode off to stop.";
-    pub const ON_REMOTE: &str = "Hivecode on for this session. With Hivecode on, a plain prompt is handled as a workflow: the agent proposes a workflow and asks before starting it. Slash commands such as /goal still go to Hermes as typed. Runs start on the gateway's machine, so this window cannot show them; talaria workflow list there lists them. Hivecode stays on in a /branch copy, after a reconnect, and when the session is reopened or resumed after a restart; other sessions keep their own setting. /hivecode off to stop.";
+    pub const SKILL_ROLE: &str = "It lets the agent propose a workflow and ask before starting it.";
+    pub const ON: &str = "Hivecode on for this session: a plain prompt is now handled as a multi-agent workflow the agent proposes and asks before starting. /hivecode off to stop.";
+    pub const ON_REMOTE: &str = "Hivecode on for this session: a plain prompt is now handled as a multi-agent workflow the agent proposes and asks before starting. Runs start on the gateway's machine and do not show in this window. /hivecode off to stop.";
     /// The building block's first row while a routed turn builds a workflow.
     pub const AUTHORING_TITLE: &str = "Hivecode · building a workflow";
+    /// What the block adds while the agent writes project files before any workflow script.
+    const PROJECT_FILES: &str = "the agent is writing project files";
     /// The block's second row: the step in plain words, then the script once written.
     pub fn authoring_step(progress: &AuthoringProgress) -> String {
         let mut text = format!("Step {} of {STEPS}: {}", progress.step(), progress.label());
+        if progress.stage == AuthoringStage::ProjectFiles {
+            text.push_str(&format!(" · {PROJECT_FILES}"));
+        }
         if let Some(script) = &progress.script {
-            text.push_str(&format!(" · {script}"));
+            text.push_str(&format!(" · {}", clipped(script, NAME_LIMIT)));
         }
         text
     }
     /// The block as one row, on a short screen.
     pub fn authoring_short(progress: &AuthoringProgress, elapsed_ms: u64) -> String {
-        format!(
-            "Hivecode · {} · {}",
-            progress.label(),
-            elapsed_text(elapsed_ms)
-        )
+        let label = match progress.stage {
+            AuthoringStage::ProjectFiles => PROJECT_FILES,
+            _ => progress.label(),
+        };
+        format!("Hivecode · {label} · {}", elapsed_text(elapsed_ms))
+    }
+    /// What a run's status says in a sentence: the status word, except the budget's.
+    pub fn run_outcome(status: &str) -> &str {
+        match status {
+            "budget_exhausted" => "stopped by its budget",
+            other => other,
+        }
     }
     /// The one line a routed turn leaves in the transcript when it ends.
     pub fn authoring_ended(
@@ -505,9 +570,12 @@ pub mod notice {
         run: Option<RunFacts<'_>>,
     ) -> String {
         let elapsed = elapsed_text(elapsed_ms);
+        let script = progress
+            .script
+            .as_deref()
+            .map(|script| clipped(script, NAME_LIMIT));
         let stopped = |why: &str| {
-            let script = progress
-                .script
+            let script = script
                 .as_ref()
                 .map_or_else(String::new, |script| format!(" ({script})"));
             format!(
@@ -519,18 +587,18 @@ pub mod notice {
         // a remote gateway it never can, and locally the runs folder is read every 2 seconds.
         let started = progress.stage == AuthoringStage::Running;
         let started_then_stopped = |why: &str| {
-            let target = progress.script.as_deref().unwrap_or("the workflow");
+            let target = script.as_deref().unwrap_or("the workflow");
             format!(
                 "Hivecode stopped: {why} after starting {target}, {elapsed} in. The workflow may still be running."
             )
         };
-        match (end, run, &progress.script) {
+        match (end, run, &script) {
             (_, Some(run), _) => {
                 let active = matches!(run.status, "running" | "parked");
                 let state = match run.status {
                     "running" => "is running".to_owned(),
                     "parked" => "is waiting for an answer".to_owned(),
-                    other => other.to_owned(),
+                    other => run_outcome(other).to_owned(),
                 };
                 // The count is the agents the run's events name so far; none yet says nothing.
                 let agents = match (run.agents, active) {
@@ -542,7 +610,7 @@ pub mod notice {
                 };
                 format!(
                     "Hivecode built the workflow in {elapsed}: {} {state}{agents}.",
-                    run.name
+                    clipped(run.name, NAME_LIMIT)
                 )
             }
             (AuthoringEnd::Interrupted, None, _) if started => started_then_stopped("interrupted"),
@@ -561,9 +629,16 @@ pub mod notice {
             }
         }
     }
+    /// Ends the line an interrupted routed turn leaves, in place of a separate notice.
+    pub const STILL_ON_TAIL: &str = "Hivecode is still on.";
+    /// Ends the line a routed turn leaves on a remote gateway once it started a run.
+    pub const REMOTE_RUN_TAIL: &str =
+        "Runs start on the gateway's machine and do not show in this window.";
     pub const BRANCH_CARRIED: &str = "Hivecode stays on in this branch.";
     /// Printed when a session opens with Hivecode on.
     pub const OPENED_ON: &str = "Hivecode is on in this session: a plain prompt is handled as a workflow. /hivecode off to stop.";
+    /// [`OPENED_ON`] on a remote gateway.
+    pub const OPENED_ON_REMOTE: &str = "Hivecode is on in this session: a plain prompt is handled as a workflow. Runs start on the gateway's machine and do not show in this window. /hivecode off to stop.";
     /// Printed after an interrupt in a session that routed a prompt.
     pub const STILL_ON: &str =
         "Hivecode is still on: your next plain prompt is handled as a workflow too.";
@@ -573,7 +648,44 @@ pub mod notice {
     /// Names the routed request in an error Talaria words for a slash command.
     pub const REQUEST: &str = "the workflow request";
     pub const NO_SESSION: &str = "No session to set hivecode on.";
-    pub const USAGE: &str = "Usage: /hivecode [on|off|status]";
+    pub const USAGE: &str = "Usage: /hivecode [on|off|status|reinstall]";
+    /// The longest name or path a notice shows; a longer one keeps its end.
+    const NAME_LIMIT: usize = 40;
+    /// The longest reason from a file or a gateway a notice shows; a longer one keeps its start.
+    const REASON_LIMIT: usize = 80;
+    /// `text` cleaned of control characters, shortened to its last `max` characters.
+    fn clipped(text: &str, max: usize) -> String {
+        let text = sanitize(text);
+        let count = text.chars().count();
+        if count <= max {
+            return text;
+        }
+        let tail: String = text.chars().skip(count + 1 - max).collect();
+        format!("…{tail}")
+    }
+    /// `text` cleaned of control characters, shortened to `max` characters by cutting out its
+    /// middle, so a file name keeps its start and its extension.
+    fn clipped_middle(text: &str, max: usize) -> String {
+        let text = sanitize(text);
+        let count = text.chars().count();
+        if count <= max {
+            return text;
+        }
+        let head = (max - 1) / 2;
+        let tail = max - 1 - head;
+        let start: String = text.chars().take(head).collect();
+        let end: String = text.chars().skip(count - tail).collect();
+        format!("{start}…{end}")
+    }
+    /// `text` cleaned of control characters, shortened to its first `max` characters.
+    fn clipped_reason(text: &str) -> String {
+        let text = sanitize(text);
+        if text.chars().count() <= REASON_LIMIT {
+            return text;
+        }
+        let head: String = text.chars().take(REASON_LIMIT - 1).collect();
+        format!("{}…", head.trim_end())
+    }
     pub fn bypassed(command: &str) -> String {
         format!(
             "Hivecode does not apply to /{command}; it goes to Hermes as typed. To have the task handled as a workflow, send it as a plain prompt without /{command}."
@@ -605,9 +717,16 @@ pub mod notice {
             "Hivecode needs the talaria-workflows skill in profile {profile}. {SKILL_ROLE} Install it with: talaria workflow skill install --profile {profile}"
         )
     }
+    /// [`missing`] on a remote gateway, whose skills live on its own machine.
+    pub fn missing_remote(profile: &str) -> String {
+        format!(
+            "Hivecode needs the talaria-workflows skill in profile {profile} on the gateway's machine. Install it there with: talaria workflow skill install --profile {profile}"
+        )
+    }
     pub fn unknown(reason: &str) -> String {
         format!(
-            "Cannot check for the talaria-workflows skill yet: {reason}. {SKILL_ROLE} Try again once connected."
+            "Cannot check for the talaria-workflows skill yet: {}. {SKILL_ROLE} Try again once connected.",
+            clipped_reason(reason)
         )
     }
     pub fn unavailable(profile: &str) -> String {
@@ -626,58 +745,101 @@ pub mod notice {
     pub fn lock_command(profile: &str) -> String {
         format!("hermes -p {profile} curator lock talaria-workflows")
     }
+    /// The second notice after a changed skill: how to stop Hermes changing it again.
+    pub fn skill_lock(profile: &str) -> String {
+        format!(
+            "To stop Hermes changing the skill again, run: {}",
+            lock_command(profile)
+        )
+    }
+    /// How many changed files a notice names before it counts the rest.
+    const FILES_SHOWN: usize = 3;
+    /// The longest file name a notice shows; a longer one keeps its end.
+    const FILE_LIMIT: usize = 16;
+    /// What a skill that is not Talaria's copy causes, in the words both notices share.
+    const NOT_FOLLOWED: &str = "so the agent may stop proposing workflows";
     /// `changes` are the inspection's `changed:`, `added:` and `removed:` entries.
     pub fn skill_changed(profile: &str, changes: &[String]) -> String {
-        let files = changes
+        let mut files = changes
             .iter()
-            .map(|change| match change.split_once(':') {
-                Some((kind, path)) => format!("{kind} {path}"),
-                None => change.clone(),
+            .take(FILES_SHOWN)
+            .map(|change| {
+                let path = change
+                    .split_once(':')
+                    .map_or(change.as_str(), |(_, path)| path);
+                let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+                clipped_middle(name, FILE_LIMIT)
             })
             .collect::<Vec<_>>()
             .join(", ");
+        if changes.len() > FILES_SHOWN {
+            files.push_str(&format!(" and {} more", changes.len() - FILES_SHOWN));
+        }
+        let files = if files.is_empty() {
+            String::new()
+        } else {
+            format!(" ({files})")
+        };
         format!(
-            "The talaria-workflows skill in profile {profile} was changed by another program after Talaria installed it ({files}). This is most often Hermes's self-improvement review, which rewrites skills it has used. With changed instructions the agent may not follow Talaria's instructions, for example by building the project itself instead of proposing a workflow. To stop Hermes changing it again after a reinstall, run: {}",
-            lock_command(profile)
+            "Another program changed the talaria-workflows skill in profile {profile}{files}, {NOT_FOLLOWED}. {REINSTALL} restores Talaria's copy."
+        )
+    }
+    /// The command that puts this Talaria's copy of the skill back.
+    const REINSTALL: &str = "/hivecode reinstall";
+    /// A skill Talaria has no install record for, whose files are not this Talaria's copy.
+    pub fn skill_differs(profile: &str) -> String {
+        format!(
+            "The talaria-workflows skill in profile {profile} differs from the copy in this Talaria, {NOT_FOLLOWED}. {REINSTALL} replaces it."
         )
     }
     pub fn skill_outdated(profile: &str) -> String {
         format!(
-            "The talaria-workflows skill in profile {profile} is older than the copy in this Talaria, so the agent follows older instructions."
+            "The talaria-workflows skill in profile {profile} is older than the copy in this Talaria, so the agent follows older instructions. {REINSTALL} updates it."
         )
     }
-    pub fn reinstall_offer(profile: &str) -> String {
-        format!(
-            "Reinstall Talaria's talaria-workflows skill into profile {profile} now? The installed copy is backed up first. [y/N]"
-        )
-    }
-    pub fn reinstall_declined(profile: &str) -> String {
-        format!(
-            "Kept the installed talaria-workflows skill. Reinstall it later with: talaria workflow skill install --force --profile {profile}"
-        )
-    }
-    /// `tiers` says why no staffing tier is usable, when none is.
-    pub fn setup_missing(profile: &str, tiers: Option<&str>, builtins: &[String]) -> String {
-        let mut text = "Workflow setup is incomplete, so the agent must write each workflow by hand and name every model itself.".to_owned();
-        if let Some(reason) = tiers {
-            text.push_str(&format!(
-                " Staffing tiers: {reason}. Add [tiers.<name>] tables with a model and provider to staffing.toml in Talaria's home folder (~/.talaria unless TALARIA_CONFIG_DIR is set), then check them with: talaria workflow roster --profile {profile}"
-            ));
+    /// The one line `/hivecode reinstall` ends with. `backup` is where the old copy went.
+    pub fn reinstalled(profile: &str, backup: Option<&str>) -> String {
+        match backup {
+            Some(backup) => format!(
+                "Reinstalled Talaria's talaria-workflows skill in profile {profile}; the old copy is in {}.",
+                clipped(backup, 2 * NAME_LIMIT)
+            ),
+            None => format!("Installed Talaria's talaria-workflows skill in profile {profile}."),
         }
-        if !builtins.is_empty() {
-            text.push_str(&format!(
-                " Built-in workflows not installed: {}. Install them with: talaria workflow builtins install",
-                builtins.join(", ")
-            ));
-        }
-        text
+    }
+    pub fn reinstall_failed(reason: &str) -> String {
+        format!(
+            "Could not reinstall the talaria-workflows skill: {}",
+            clipped_reason(reason)
+        )
+    }
+    /// `/hivecode reinstall` on a remote gateway, whose skills live on its own machine.
+    pub fn reinstall_remote(profile: &str) -> String {
+        format!(
+            "This session's skill is on the gateway's machine. Reinstall it there with: talaria workflow skill install --force --profile {profile}"
+        )
+    }
+    /// The staffing tiers are missing or unreadable; `reason` says which.
+    pub fn setup_tiers(profile: &str, reason: &str) -> String {
+        format!(
+            "Staffing tiers: {}, so the agent names every model itself. Add tiers to staffing.toml, then check them with: talaria workflow roster --profile {profile}",
+            clipped_reason(reason)
+        )
+    }
+    pub fn setup_builtins(builtins: &[String]) -> String {
+        format!(
+            "Built-in workflows not installed ({}), so the agent writes each workflow itself. Install them with: talaria workflow builtins install",
+            clipped_reason(&builtins.join(", "))
+        )
     }
     pub fn status(on: bool, profile: &str, skill: &SkillAvailability) -> String {
         let skill = match skill {
             SkillAvailability::Installed { origin } => format!("installed ({origin})"),
             SkillAvailability::Missing => format!("not found in profile {profile}"),
             SkillAvailability::Collision => "unknown (command hides the skill)".into(),
-            SkillAvailability::Unknown { reason } => format!("unknown ({reason})"),
+            SkillAvailability::Unknown { reason } => {
+                format!("unknown ({})", clipped_reason(reason))
+            }
         };
         format!(
             "Hivecode is {} for this session. Skill: {skill}.",

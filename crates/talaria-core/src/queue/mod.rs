@@ -414,6 +414,21 @@ impl QueueState {
         std::mem::take(&mut self.skill_dropped)
     }
 
+    /// True while a prompt that carried the whole workflow skill waits to start: it may still be
+    /// removed, so the conversation does not hold the skill yet.
+    #[must_use]
+    pub fn skill_waiting(&self) -> bool {
+        let carries = |text: &str| crate::hivecode::loads_skill(text);
+        self.ledger
+            .values()
+            .any(|entry| !entry.cell_drawn && carries(&entry.text))
+            || self.rows.iter().any(|row| {
+                !row.steering
+                    && matches!(row.status, RowStatus::Queued | RowStatus::Unknown)
+                    && carries(&row.text)
+            })
+    }
+
     /// Rows that count toward the indicator, in sequence order.
     pub(crate) fn counted(&self) -> impl Iterator<Item = &QueuedRow> {
         self.rows.iter().filter(|row| {

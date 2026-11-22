@@ -439,7 +439,7 @@ const BUILTIN: &[LocalCommand] = &[
         name: "hivecode",
         aliases: &[],
         summary: "Handle plain prompts as multi-agent workflows",
-        args_hint: "[on|off|status]",
+        args_hint: "[on|off|status|reinstall]",
         takes_argument: true,
         action: LocalAction::Hivecode,
         tag: "talaria",
