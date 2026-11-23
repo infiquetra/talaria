@@ -100,6 +100,8 @@ with the usual caveat that a `0.x` line may break anything between releases.
   directly.
 - The workflow skill installs whatever the length of the Hermes folder path; its size limit is
   measured on the skill text itself.
+- The `url` crate is updated to 2.5.9, which fixes a stack overflow in `Url::origin()` on nested
+  `blob:` URLs (RUSTSEC-2026-0592).
 
 ## [0.9.1] — 2026-11-21
 

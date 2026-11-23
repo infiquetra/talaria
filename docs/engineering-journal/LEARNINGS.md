@@ -2,6 +2,21 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — A test that spaces key presses with sleeps measures the machine
+
+**Evidence.** The process-level test for a held interrupt key wrote one press every 40 ms from the
+test thread. It passed locally and failed on the macOS CI runner with "a held interrupt key
+interrupted the turn": the runner stretched the sleeps past the 110 ms settle time, so the stream
+arrived as separate taps. The repeats now go in one write, each as the unambiguous CSI-u form of
+the key, and the two taps that follow use the same form, which shows it is read as the interrupt
+key (`crates/talaria-cli/tests/integration/idle_after_close.rs`).
+
+**Mechanism.** The test's timing was part of its input, and a loaded machine changed the input.
+
+**Generalizable rule.** When a test feeds timed input to a program, make the timing that matters
+impossible for a slow machine to change: send what must be close together in one write, and leave
+only generous gaps to sleeps.
+
 ## 2026-11-23 — A held key reaches a terminal program as ordinary presses
 
 **Evidence.** Talaria asks the terminal only for the basic keyboard mode

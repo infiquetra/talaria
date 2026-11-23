@@ -118,14 +118,12 @@ fn the_idle_screen_writes_nothing_after_the_effort_scale_and_a_thinking_row_clos
         terminal.screen_text()
     );
     // A held key reaches the program as a stream of presses: one, a pause, then fast repeats.
-    // It interrupts nothing.
+    // It interrupts nothing. The repeats go in one write, each as the unambiguous form of the
+    // key, so a slow machine cannot stretch the gaps between them into separate taps.
     terminal.type_keys("\x1b");
     std::thread::sleep(Duration::from_millis(400));
-    for _ in 0..20 {
-        terminal.type_keys("\x1b");
-        std::thread::sleep(Duration::from_millis(40));
-    }
-    std::thread::sleep(Duration::from_millis(500));
+    terminal.type_keys(&"\x1b[27u".repeat(20));
+    std::thread::sleep(Duration::from_millis(1_000));
     assert!(
         gateway.requests("session.interrupt").is_empty(),
         "a held interrupt key interrupted the turn"
@@ -133,10 +131,11 @@ fn the_idle_screen_writes_nothing_after_the_effort_scale_and_a_thinking_row_clos
     // Let the confirmation lapse, so the two taps below start from nothing.
     std::thread::sleep(Duration::from_millis(2_100));
     // Esc asks for a second press before it interrupts, and the interrupt follows the second
-    // press with no further input.
-    terminal.type_keys("\x1b");
+    // press with no further input. The same form of the key as the repeats above, which shows
+    // that form is read as the interrupt key.
+    terminal.type_keys("\x1b[27u");
     std::thread::sleep(Duration::from_millis(300));
-    terminal.type_keys("\x1b");
+    terminal.type_keys("\x1b[27u");
     assert!(
         gateway
             .wait_request("session.interrupt", 0, Duration::from_secs(10))
