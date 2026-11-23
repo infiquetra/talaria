@@ -302,7 +302,7 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
             "{}  {}  {}  agents {}/{}{}  tokens {}  money {}  {}  {}\n",
             safe(&run.run_id),
             safe(&run.name),
-            run.status.as_str(),
+            run.status.label(),
             run.agents_finished,
             run.agents_total_known,
             parked,

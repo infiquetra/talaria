@@ -70,6 +70,11 @@ impl RunStatus {
             Self::Unreadable => "unreadable",
         }
     }
+    /// The status as a person reads it: the raw word with its underscores as spaces. JSON keeps
+    /// [`Self::as_str`].
+    pub fn label(self) -> String {
+        self.as_str().replace('_', " ")
+    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RunSummary {

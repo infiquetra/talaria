@@ -269,6 +269,49 @@ fn the_run_list_reads_token_counts_in_thousands_and_millions() {
     }
 }
 
+#[test]
+fn the_run_list_words_a_status_with_underscores_as_plain_words() {
+    use talaria_workflow::runner::{RunStatus, RunSummary};
+    let row = RunSummary {
+        run_id: "01JB2X9Q4M8Z7K3T5V6W8Y0A1C".into(),
+        name: "review-branch".into(),
+        profile: "fixture".into(),
+        started_at_ms: 1_000,
+        status: RunStatus::CompletedWithFailures,
+        agents_finished: 3,
+        agents_total_known: 3,
+        parked: 0,
+        tokens_spent: None,
+        money_spent_usd: None,
+        run_dir: "/runs/example".into(),
+        warning: None,
+    };
+    let text = talaria_tui::workflow_view::picker_row(&row);
+    assert!(
+        text.contains("  completed with failures  agents 3/3"),
+        "{text}"
+    );
+    assert!(!text.contains("completed_with_failures"), "{text}");
+    let dock = talaria_tui::workflow_view::WorkflowDock::new(
+        "review-branch",
+        "completed_with_failures",
+        3,
+        3,
+        None,
+        ratatui::style::Style::default(),
+        ratatui::style::Style::default(),
+    );
+    let line: String = dock.lines(120)[0]
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(
+        line.contains("· completed with failures · 3/3 agents"),
+        "{line}"
+    );
+}
+
 /// A run of three agents: one finished plainly, one failed, one cut short at its step cap.
 fn mixed_lines(run: RunOutcomeKind) -> Vec<RecordLine> {
     let intent = |key: &str, label: &str| Record::CallIntent {

@@ -810,6 +810,18 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
     );
     let rows: Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert_eq!(rows[0]["status"], "completed_with_failures");
+    // The text listing says it in words; only JSON keeps the underscores.
+    let plain_list = text(
+        &output(
+            command(temp.path(), "failed-wire.json")
+                .args(["workflow", "list", "--runs-dir"])
+                .arg(&runs),
+        )
+        .stdout,
+    );
+    assert!(plain_list.contains("  completed with failures  agents "), "{plain_list}");
+    assert!(!plain_list.contains("completed_with_failures"), "{plain_list}");
+    assert!(plain_list.contains("(including cache reads)"), "{plain_list}");
     let replay = output(
         command(temp.path(), "failed-wire.json")
             .env_remove("TALARIA_WORKFLOW_MOCK")
