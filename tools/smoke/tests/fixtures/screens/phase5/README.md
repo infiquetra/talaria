@@ -1,4 +1,4 @@
-These fixtures capture the integrated Phase 5 Talaria binary at the ultracode branch base
+These fixtures capture the integrated Phase 5 Talaria binary at the hivecode branch base
 `be66bca4`. CLI commands used throwaway configuration and runs folders. Interactive screens
 used the real binary in a 120-column pseudo-terminal with the existing contract-backed
 loopback gateway; held and completed turns use controlled recorded frame inputs. No installed

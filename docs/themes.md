@@ -127,12 +127,31 @@ surfaces do not paint backgrounds.
 
 ## Commands
 
-- `/skin` shows the profile's skin and how Hermes resolved it.
+- `/skin` shows the profile's skin and how Hermes resolved it, then opens a selector under the
+  composer that lists Hermes's skins with their descriptions and marks the current one. Typing
+  filters the list, Up and Down move, Enter keeps the selected skin as `/skin <name>` does, and
+  Esc closes the list. Hermes cannot show a skin without making it the profile's skin, so once
+  the selection rests for about 300 ms Talaria sets it for the profile to preview it; Esc, or
+  quitting while the list is open, sets the original skin again. A switch to another session or
+  profile closes the list first and starts once the original skin is set again. Other Hermes
+  windows on the profile change with each preview.
 - `/skin <name>` sets the profile's Hermes skin (`display.skin`), as Hermes's own `/skin` does,
   so other Hermes windows on the profile change too.
 - `/theme` shows the skin, the background, the colour depth and the motion setting, each with
   where it came from. `/theme light`, `/theme dark` and `/theme auto` change the background for
   this session only; nothing is written to disk.
+- After its report, `/theme` opens a selector under the composer: Configured (follow
+  `config.toml`), the built-in themes, the files in `themes/`, and the Light, Dark and Auto
+  backgrounds, each with a description and the current ones marked. Moving the selection
+  previews it at once, in memory; Enter selects it for this session, as `/theme use <id>` or
+  `/theme light|dark|auto` does, and prints the `config.toml` line that keeps it; Esc puts back
+  what was in force. Lines already in scrollback keep their colours, and lines that reach
+  scrollback while the list is open take the look in force, not the preview, so both selectors
+  draw a short sample of transcript rows in the selected look above the list, when the screen
+  has room for it beside the composer and the status bar; on a short screen the list alone
+  previews. In either selector, typing `/` or pasting text closes the list as Esc does and hands
+  the composer the key or the text; a selector whose list arrives after you have started typing
+  stays closed.
 - `/theme use <id>` selects a file for this session. `/theme use` returns to the configured
   selection. `/theme reload` rereads the active file. When a file is selected, `/theme` also
   reports its identifier, base, skin participation, per-field sources and warnings. Without a
@@ -152,6 +171,17 @@ The rule every component that draws follows, under reduced motion:
 
 Under full motion the same is recommended. Any future animation must be off under reduced motion
 and must not draw while nothing changes.
+
+Talaria has two animations: the working row above the composer and the spinner in the launch
+dialog. The launch dialog shows the spinner beside the stage it has reached while it starts a
+session, one frame for every 100 milliseconds since the launch began.
+
+The working row is the larger one. Under full motion, while a
+turn runs, a glow sweeps across the row and back every two seconds, drawn at most about 12 times
+a second. Its colour runs from the status bar's muted colour to a colour halfway between the text
+and the accent. A 256-colour terminal shows the nearest palette colours, and a 16-colour or
+colourless terminal shows dim, normal and bold bands instead. Under reduced motion the row is
+static and redraws once a second for its elapsed time. With no turn running nothing is scheduled.
 
 ## Known limit
 

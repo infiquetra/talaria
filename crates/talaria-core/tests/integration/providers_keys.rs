@@ -1067,7 +1067,7 @@ fn notices_banner_and_reloads() {
     let text = joined(&state);
     assert!(
         text.contains(
-            "Could not load keys: This Hermes has no /api/env. It may be older or newer than Talaria expects."
+            "Could not load keys: This Hermes has no /api/env. It may differ from the Hermes this Talaria was tested against."
         ),
         "{text}"
     );

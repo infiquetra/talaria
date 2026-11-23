@@ -2,10 +2,14 @@
 //!
 //! Closing it shrinks the live region. Nothing is written into scrollback.
 
+mod choice;
+mod effort;
 mod render;
 
 use talaria_core::commands::PaletteState;
 
+pub use choice::{ChoiceSection, sample_lines};
+pub use effort::{EffortScaleSection, ScaleKeyLabels, scale_key_labels};
 pub use render::{render_palette, render_palette_with_theme};
 
 /// One frame of the slash palette.

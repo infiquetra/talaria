@@ -4,7 +4,8 @@ use crate::directory_drive as drive;
 use crate::mock_gateway;
 
 use drive::{
-    committed_text, locked, resume_snapshot, settle_short, snapshot_of, state_with_opened,
+    committed_order, committed_text, locked, resume_snapshot, settle_short, snapshot_of,
+    state_with_opened,
 };
 use serde_json::json;
 use talaria_app::app::{AppState, UserAction};
@@ -13,6 +14,7 @@ use talaria_app::sessions::OpenedSession;
 use talaria_app::switch::{SwitchOutcome, switch_foreground};
 use talaria_core::directory::rows::RowKey;
 use talaria_core::directory::state::{PickerAction, PickerInput};
+use talaria_core::profiles::{KeyAction, ProfilesInput};
 
 fn target(profile: &str, session_id: &str) -> RowKey {
     RowKey {
@@ -112,6 +114,26 @@ async fn same_profile_switch_opens_first_then_lets_go() {
             .any(|line| line.contains("Resumed: Second work")),
         "the new separator: {lines:?}"
     );
+
+    // The notice is the last thing on screen after the replayed history, so the replay does
+    // not bury it.
+    let order = committed_order(&log);
+    let notice = order
+        .iter()
+        .position(|entry| entry.contains("Now showing"))
+        .unwrap_or_else(|| panic!("the switch notice: {order:?}"));
+    let header = order
+        .iter()
+        .position(|entry| entry.contains("Resumed: Second work"))
+        .expect("the new separator");
+    let last_cell = order
+        .iter()
+        .rposition(|entry| entry.starts_with("cell: "))
+        .expect("the history is replayed");
+    assert!(
+        notice > header && notice > last_cell,
+        "the switch notice comes after the replayed history: {order:?}"
+    );
 }
 
 #[tokio::test]
@@ -206,7 +228,14 @@ async fn other_profile_switch_opens_a_new_link_first() {
         })
         .await;
 
-    let tickets = rig.gateway.ticket_records();
+    // The background look at each profile's Hermes settings mints its own REST ticket; this test
+    // counts the session links only.
+    let tickets: Vec<_> = rig
+        .gateway
+        .ticket_records()
+        .into_iter()
+        .filter(|ticket| ticket.purpose != "native-http")
+        .collect();
     assert_eq!(tickets.len(), 3, "launch, side, and the new profile link");
     assert_eq!(tickets[2].scope, "profile");
     // Quitting detaches the new session afterwards; the old one is let go once, by the switch.
@@ -235,8 +264,140 @@ async fn other_profile_switch_opens_a_new_link_first() {
         lines.iter().any(|line| line.contains("Now showing")),
         "the switch notice: {lines:?}"
     );
+    // The services that hold a client moved to the new link with the session: nothing reports
+    // a lost connection after the old link closes.
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("not connected to Hermes")),
+        "a service still called the closed link: {lines:?}"
+    );
     let session = locked(&log).session.clone();
     assert_eq!(session.as_deref(), Some("s-default"));
+}
+
+/// In /profiles, select `default` and connect to it, retrying until the list has loaded.
+async fn connect_to_default(
+    driver: &drive::Driver,
+    gateway: &mock_gateway::StandaloneGateway,
+    done: &str,
+) {
+    driver.submit("/profiles");
+    for _ in 0..30 {
+        settle_short().await;
+        for key in [KeyAction::Up, KeyAction::Connect, KeyAction::Char('y')] {
+            driver.send(UserAction::Profiles(ProfilesInput::Key(key)));
+        }
+        settle_short().await;
+        if gateway.requests("session.create").len() >= 2 {
+            driver.line(done).await;
+            return;
+        }
+    }
+    panic!("the start on default was never sent: {done}");
+}
+
+#[tokio::test]
+async fn profile_start_opens_a_new_session_on_a_new_link_first() {
+    let rig = drive::Rig::start();
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            connect_to_default(&driver, gateway, "Connected to profile default").await;
+            driver.submit("after the start");
+            settle_short().await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+
+    // The background look at each profile's Hermes settings mints its own REST ticket; this test
+    // counts the session links only.
+    let tickets: Vec<_> = rig
+        .gateway
+        .ticket_records()
+        .into_iter()
+        .filter(|ticket| ticket.purpose != "native-http")
+        .collect();
+    assert_eq!(tickets.len(), 2, "the launch link and the new profile link");
+    assert_ne!(
+        tickets[1].profile_id, tickets[0].profile_id,
+        "the new link is scoped to the other profile"
+    );
+    let creates = rig.gateway.requests("session.create");
+    assert_eq!(creates.len(), 2, "the launch session and the new one");
+    assert_ne!(creates[1].connection, creates[0].connection);
+    let detaches: Vec<_> = rig
+        .gateway
+        .requests("session.detach")
+        .into_iter()
+        .filter(|detach| detach.params["session_id"] == json!("local-session-1"))
+        .collect();
+    assert_eq!(detaches.len(), 1, "the old session is let go once");
+    assert!(
+        creates[1].at < detaches[0].at,
+        "the new session opens before the old one is let go"
+    );
+    assert!(
+        tickets[1].at < detaches[0].at,
+        "the new link's ticket comes before the detach"
+    );
+    assert!(
+        detaches[0].params.get("end_reason").is_none(),
+        "it keeps running"
+    );
+
+    // Prompts afterwards travel on the new link.
+    let submits = rig.gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 1);
+    assert_eq!(submits[0].connection, creates[1].connection);
+
+    let lines = committed_text(&log);
+    let notice = lines
+        .iter()
+        .find(|line| line.contains("Connected to profile default"))
+        .expect("the notice");
+    assert!(notice.contains("/resume returns to it"), "{notice}");
+    assert!(notice.contains("talaria --profile default"), "{notice}");
+}
+
+#[tokio::test]
+async fn profile_start_failure_keeps_the_old_session() {
+    let rig = drive::Rig::start();
+    rig.gateway
+        .queue_behavior("session.create", mock_gateway::Behavior::Normal);
+    rig.gateway.queue_behavior(
+        "session.create",
+        mock_gateway::Behavior::Refuse("profile_unavailable".to_owned()),
+    );
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            connect_to_default(
+                &driver,
+                gateway,
+                "Could not start a session on profile default",
+            )
+            .await;
+            assert!(
+                gateway.requests("session.detach").is_empty(),
+                "the failed start detaches nothing"
+            );
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+
+    let lines = committed_text(&log);
+    assert!(
+        lines.iter().any(|line| line
+            == "Could not start a session on profile default: Hermes refused (profile_unavailable). Still in the old session."),
+        "the failure text: {lines:?}"
+    );
+    let session = locked(&log).session.clone();
+    assert_eq!(session.as_deref(), Some("local-session-1"));
 }
 
 #[tokio::test]
@@ -463,4 +624,65 @@ async fn target_events_during_delayed_detach_are_replayed_after_the_snapshot() {
     assert!(log.cells.iter().any(|cell| cell.contains("target answer")));
     assert!(!log.cells.iter().any(|cell| cell.contains("old duplicate")));
     assert!(!log.running, "the target turn completed");
+}
+
+#[tokio::test]
+async fn a_profile_with_a_harmful_setting_is_told_once_without_a_new_link() {
+    let rig = drive::Rig::start();
+    rig.gateway.set_config_reply(json!({
+        "compression": {"in_place": false},
+        "agent": {"max_turns": 60}
+    }));
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            driver.line("compression.in_place is false").await;
+            driver.line("agent.max_turns is 60").await;
+            // Later activity in the session does not say it again.
+            driver.submit("hello");
+            settle_short().await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+    let lines = locked(&log).lines.clone();
+    for key in ["compression.in_place is false", "agent.max_turns is 60"] {
+        assert_eq!(
+            lines.iter().filter(|line| line.contains(key)).count(),
+            1,
+            "{key}"
+        );
+    }
+    assert_eq!(
+        gateway.config_requests().len(),
+        1,
+        "read once for the profile"
+    );
+    assert_eq!(
+        gateway.websocket_connections(),
+        1,
+        "the settings read is plain HTTP, not a second link"
+    );
+}
+
+#[tokio::test]
+async fn a_healthy_profile_shows_no_settings_notice() {
+    let rig = drive::Rig::start();
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            settle_short().await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+    assert!(
+        locked(&log)
+            .lines
+            .iter()
+            .all(|line| !line.contains("compression.in_place") && !line.contains("max_turns"))
+    );
+    assert!(gateway.config_requests().len() <= 1);
 }

@@ -24,6 +24,8 @@ pub(super) struct Warnings {
 pub(super) struct Session {
     pub info: SessionInfo,
     pub stored_id: String,
+    /// This connection's subscription to the session, which `session.detach` names.
+    pub subscription_id: String,
     pub execution_generation: i64,
     pub resumed_on: u64,
     pub cursor: Option<Cursor>,
@@ -52,6 +54,8 @@ pub(super) enum Command {
     Ready(String, Arc<dyn Wire>, oneshot::Sender<()>),
     Gate(Key, oneshot::Sender<Arc<Mutex<()>>>),
     Lookup(Key, oneshot::Sender<Option<Session>>),
+    /// The session was ended: drop it and any events held for it.
+    Forget(Key, oneshot::Sender<()>),
     Pending(String, oneshot::Sender<()>),
     EndPending(String),
     Snapshot {
@@ -86,7 +90,7 @@ impl State {
             WireEvent::Event { session_id, .. }
             | WireEvent::Gap { session_id, .. }
             | WireEvent::Gone { session_id }
-            | WireEvent::Reattached { session_id } => session_id.clone(),
+            | WireEvent::Reattached { session_id, .. } => session_id.clone(),
             WireEvent::Reconnected { .. } => return,
         };
         let key = (profile.clone(), session_id.clone());
@@ -151,7 +155,11 @@ impl State {
                     session_id,
                 });
             }
-            WireEvent::Reattached { .. } => {
+            WireEvent::Reattached {
+                subscription_id, ..
+            } => {
+                // The new connection holds a new subscription; a detach naming the old one is refused.
+                session.subscription_id = subscription_id;
                 session.resumed_on = self
                     .view
                     .wires
@@ -231,6 +239,7 @@ impl State {
             Session {
                 info,
                 stored_id: snapshot.stored_session_id,
+                subscription_id: snapshot.subscription_id,
                 execution_generation: snapshot.execution_generation,
                 resumed_on: generation,
                 cursor: Some(Cursor {
@@ -291,6 +300,12 @@ pub(super) fn start(
                 Command::Lookup(key, reply) => {
                     let _ = reply.send(state.view.sessions.get(&key).cloned());
                 }
+                Command::Forget(key, reply) => {
+                    state.view.sessions.remove(&key);
+                    state.held.remove(&key);
+                    state.publish();
+                    let _ = reply.send(());
+                }
                 Command::Pending(profile, reply) => {
                     *state.pending.entry(profile).or_default() += 1;
                     let _ = reply.send(());
@@ -330,6 +345,7 @@ pub(super) fn start(
                                 reasoning_effort: None,
                             },
                             stored_id: String::new(),
+                            subscription_id: String::new(),
                             execution_generation: receipt.execution_generation.unwrap_or(0),
                             resumed_on: 0,
                             cursor: None,

@@ -216,10 +216,7 @@ class BinaryTests(unittest.TestCase):
                 "no version check",
             )
 
-            compatibility = (
-                "hermes: pinned v0.23.1 (3b421578), "
-                "supported from v0.23.0, tested to v0.23.1"
-            )
+            compatibility = "hermes: tested against v0.23.1 (3b421578)"
             write_script(
                 "compat.sh",
                 f"printf '%s\\n' 'talaria 0.9.0' '{compatibility}'\n",

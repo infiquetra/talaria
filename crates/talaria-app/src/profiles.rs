@@ -7,13 +7,15 @@ use std::time::Duration;
 use hermes_client::control_verbs::{
     ControlVerbError, RESCAN_TIMEOUT, rescan_profiles, scrub_reason, served_and_parked,
 };
+use hermes_client::profiles_api::{self, ProfileRegistryMinter, RegistryError};
 use hermes_client::rest::{NativeHttpMinter, RestClient, RestError, RestOptions};
 use hermes_client::{CallError, CallOptions, Client, DiscoverOptions, EnsurePolicy, discover_with};
 use hermes_contract::{method::Method, native::NativeMethod, schemas};
 use serde_json::{Value, json};
 use talaria_core::profiles::{
-    Applied, CallFailure, CreatedProfile, Description, DiscoveryFailure, GatewayView, HostTopology,
-    ProfilesEffect, ProfilesInput, RescanFailure, RescanSummary, RosterEntry, Section,
+    Applied, CallFailure, CreatedProfile, DeleteOutcome, Description, DiscoveryFailure,
+    GatewayView, HostTopology, ProfilesEffect, ProfilesInput, RegistryFailure, RescanFailure,
+    RescanSummary, RosterEntry, Section,
 };
 
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -139,6 +141,14 @@ impl ProfilesService {
                     });
                 ProfilesInput::CreateAnswered(result)
             }
+            ProfilesEffect::Delete { name } => {
+                let result = delete_profile(&self.home, &name).await;
+                ProfilesInput::DeleteAnswered(name, result)
+            }
+            ProfilesEffect::Rename { name, new_name } => {
+                let result = rename_profile(&self.home, &name, &new_name).await;
+                ProfilesInput::RenameAnswered(name, result)
+            }
             ProfilesEffect::Configure {
                 name,
                 section,
@@ -184,6 +194,8 @@ impl ProfilesService {
                 ProfilesInput::RescanAnswered(result)
             }
             ProfilesEffect::OpenEditor(_)
+            | ProfilesEffect::OpenModelRoles { .. }
+            | ProfilesEffect::StartSession { .. }
             | ProfilesEffect::ScheduleTick { .. }
             | ProfilesEffect::CancelTicks
             | ProfilesEffect::Notice(_)
@@ -211,6 +223,101 @@ pub async fn load_topology(home: &Path, profile: &str) -> Result<HostTopology, S
         .await
         .map_err(|error| rest_failure(&error))?;
     parse_topology(&reply, home)
+}
+
+/// Delete one served profile over Hermes's profile route, on a ticket bound to that profile.
+/// It needs no session socket, so it runs whether or not Talaria is connected.
+pub async fn delete_profile(home: &Path, name: &str) -> Result<DeleteOutcome, RegistryFailure> {
+    let rest = registry_client(home, name).await?;
+    match profiles_api::delete_profile(&rest, name).await {
+        Ok(profiles_api::DeleteReply::Deleted) => Ok(DeleteOutcome::Deleted),
+        Ok(profiles_api::DeleteReply::SettlementPending { retry_command }) => {
+            Ok(DeleteOutcome::SettlementPending {
+                retry_command: scrub_reason(&retry_command, home),
+            })
+        }
+        Err(error) => Err(registry_failure(error, home)),
+    }
+}
+
+/// Rename one served profile; returns the name Hermes kept.
+pub async fn rename_profile(
+    home: &Path,
+    name: &str,
+    new_name: &str,
+) -> Result<String, RegistryFailure> {
+    let rest = registry_client(home, name).await?;
+    profiles_api::rename_profile(&rest, name, new_name)
+        .await
+        .map_err(|error| registry_failure(error, home))
+}
+
+/// A REST client whose tickets carry Hermes's registry grant for this one served profile.
+/// The ticket comes from the local control socket, so only a gateway on this machine gives one.
+async fn registry_client(home: &Path, name: &str) -> Result<RestClient, RegistryFailure> {
+    let endpoint = discover_with(home, &discovery_options())
+        .await
+        .map_err(|error| RegistryFailure::NotSent(sentence(&error.to_string())))?;
+    let profile = endpoint
+        .resolve_profile(name)
+        .map_err(|_| RegistryFailure::Gone("the gateway no longer serves it".into()))?;
+    let origin = endpoint.api_origin().to_owned();
+    let minter = Arc::new(ProfileRegistryMinter::new(
+        home.to_path_buf(),
+        Arc::new(endpoint),
+        profile,
+    ));
+    RestClient::new(&origin, minter, RestOptions::default()).map_err(|_| {
+        RegistryFailure::NotSent("the gateway's address is not on this machine".into())
+    })
+}
+
+fn sentence(text: &str) -> String {
+    text.trim().trim_end_matches('.').to_owned()
+}
+
+fn registry_failure(error: RegistryError, home: &Path) -> RegistryFailure {
+    match error {
+        RegistryError::InvalidName => {
+            RegistryFailure::NotSent("that is not a name Hermes serves".into())
+        }
+        RegistryError::Failed {
+            status: 403,
+            detail,
+        } => RegistryFailure::Refused(format!(
+            "{} (Hermes lets a client rename or delete only a profile the gateway serves, never the profile the gateway was started from)",
+            detail
+                .as_deref()
+                .map_or_else(|| "forbidden".to_owned(), |text| scrub_reason(text, home))
+        )),
+        // Hermes answers 404 when the profile's folder is not there any more.
+        RegistryError::Failed {
+            status: 404,
+            detail,
+        } => RegistryFailure::Gone(detail.map_or_else(
+            || "Hermes has no profile by that name".to_owned(),
+            |text| sentence(&scrub_reason(&text, home)),
+        )),
+        RegistryError::Failed { status, detail } => RegistryFailure::Refused(detail.map_or_else(
+            || format!("HTTP {status}"),
+            |text| scrub_reason(&text, home),
+        )),
+        RegistryError::Rest(RestError::Ticket(error)) => RegistryFailure::NoTicket(format!(
+            "{}. {}",
+            sentence(&error.to_string()),
+            error.next_step()
+        )),
+        RegistryError::Rest(RestError::Unauthorized) => {
+            RegistryFailure::NoTicket("the gateway did not accept Talaria's ticket".into())
+        }
+        RegistryError::Rest(error) if error.outcome_unknown() => RegistryFailure::Unknown,
+        RegistryError::Rest(RestError::BadBody(_) | RestError::BodyTooLarge) => {
+            RegistryFailure::Unknown
+        }
+        RegistryError::Rest(_) => {
+            RegistryFailure::NotSent("the gateway did not take the request".into())
+        }
+    }
 }
 
 fn discovery_options() -> DiscoverOptions {

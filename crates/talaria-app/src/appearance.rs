@@ -46,6 +46,17 @@ pub struct AppearanceService {
     file_generation: u64,
     file_loading: bool,
     file_commands: VecDeque<String>,
+    /// What the `/theme` selector shows in place of the file or background, while it is open.
+    preview: Option<ThemePreview>,
+}
+
+/// A look the `/theme` selector shows before it is chosen. Nothing else changes while it shows.
+#[derive(Clone, Debug)]
+pub enum ThemePreview {
+    /// This file, or no file, in place of the active one.
+    File(Option<(String, crate::theme_file::ThemeFile)>),
+    /// This background, or the start-up decision for `None`, in place of the one in force.
+    Background(Option<Polarity>),
 }
 
 impl AppearanceService {
@@ -65,7 +76,13 @@ impl AppearanceService {
             file_generation: 0,
             file_loading: false,
             file_commands: VecDeque::new(),
+            preview: None,
         }
+    }
+
+    /// Show this look until it is replaced or cleared; the session's choices stay as they are.
+    pub fn set_theme_preview(&mut self, preview: Option<ThemePreview>) {
+        self.preview = preview;
     }
 
     /// The captured start-up probe colours. Nothing else writes them.
@@ -482,6 +499,108 @@ impl AppearanceService {
             }
         }
     }
+
+    /// Write `name` as the profile's skin and describe it, without the checks `/skin <name>`
+    /// makes: the `/skin` selector offers only names Hermes listed.
+    pub async fn preview_skin(
+        &mut self,
+        client: &Client,
+        name: &str,
+        session: Option<&str>,
+    ) -> Result<(), SkinPreviewError> {
+        let mut params = Map::new();
+        if let Some(session) = session {
+            params.insert("session_id".to_owned(), json!(session));
+        }
+        params.insert("key".to_owned(), json!("skin"));
+        params.insert("value".to_owned(), json!(name));
+        match call(client, "config.set", Value::Object(params)).await {
+            Ok(_) => {}
+            Err(CallError::Rpc(error)) => {
+                return Err(SkinPreviewError::Refused(format!(
+                    "Hermes refused to change the skin ({})",
+                    reason(&error)
+                )));
+            }
+            Err(error) if not_sent(&error) => {
+                return Err(SkinPreviewError::Refused(
+                    "Talaria could not reach Hermes".to_owned(),
+                ));
+            }
+            Err(_) => {
+                return Err(SkinPreviewError::Unknown(
+                    "Hermes did not answer the skin change".to_owned(),
+                ));
+            }
+        }
+        if let Ok(payload) = describe(client).await {
+            self.update(AppearanceInput::Described {
+                payload,
+                requested: Some(name.to_owned()),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Why a skin preview stopped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SkinPreviewError {
+    /// Nothing was written.
+    Refused(String),
+    /// The write may have happened.
+    Unknown(String),
+}
+
+/// What the `/skin` selector lists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkinChoices {
+    /// The profile's skin setting, `default` when it is empty.
+    pub configured: String,
+    /// Each skin Hermes offers, with its description.
+    pub items: Vec<(String, String)>,
+}
+
+/// Read the profile's skin setting and the skins Hermes offers, with their descriptions
+/// (`complete.slash` gives each item's description as `meta`).
+pub async fn skin_choices(client: &Client, session: Option<&str>) -> Result<SkinChoices, String> {
+    let mut params = Map::new();
+    params.insert("key".to_owned(), json!("skin"));
+    if let Some(session) = session {
+        params.insert("session_id".to_owned(), json!(session));
+    }
+    let configured = call(client, "config.get", Value::Object(params))
+        .await
+        .map_err(|_| "Talaria could not read the skin from Hermes.".to_owned())?
+        .get("value")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("default")
+        .to_owned();
+    let mut params = Map::new();
+    params.insert("text".to_owned(), json!("/skin "));
+    if let Some(session) = session {
+        params.insert("session_id".to_owned(), json!(session));
+    }
+    let result = call(client, "complete.slash", Value::Object(params))
+        .await
+        .map_err(|_| "The list of skins could not be fetched.".to_owned())?;
+    let items = result
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let name = item.get("text").and_then(Value::as_str)?.trim();
+                    let meta = item.get("meta").and_then(Value::as_str).unwrap_or("");
+                    valid_skin_name(name).then(|| (name.to_owned(), meta.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(SkinChoices { configured, items })
 }
 
 /// `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`.
@@ -680,6 +799,34 @@ impl ThemeFileSession {
         }
     }
 
+    /// The file chosen for this session with `/theme use <id>`, if any.
+    pub fn session_choice(&self) -> Option<&str> {
+        self.session_file.as_deref()
+    }
+
+    /// The file the configuration selects for this profile, if any.
+    pub fn configured_id(&self) -> Option<&str> {
+        self.theme
+            .profiles
+            .get(&self.profile)
+            .map(String::as_str)
+            .or(self.theme.file.as_deref())
+    }
+
+    /// The `config.toml` table that keeps a file choice for this profile.
+    pub fn file_table(&self) -> String {
+        if self.theme.profiles.contains_key(&self.profile) {
+            format!("[theme.profiles.{}]", self.profile)
+        } else {
+            "[theme]".to_owned()
+        }
+    }
+
+    /// Talaria's `config.toml`, beside which the `themes` folder lives.
+    pub fn config_path(&self) -> &std::path::Path {
+        &self.config_path
+    }
+
     pub fn selected_id(&self) -> Option<&str> {
         self.session_file
             .as_deref()
@@ -832,17 +979,36 @@ pub struct AppearanceView<'a> {
     pub file: Option<&'a crate::theme_file::ThemeFile>,
     /// The identifier of the last valid selected file.
     pub file_id: Option<&'a str>,
+    /// The `/theme` selector is showing a look that is not in force. Rows committed meanwhile
+    /// keep the look in force.
+    pub previewing: bool,
 }
 
 impl AppearanceService {
     /// The inputs the screen resolves the theme from.
     pub fn view(&self) -> AppearanceView<'_> {
+        let (file, file_id) = match &self.preview {
+            Some(ThemePreview::File(file)) => (
+                file.as_ref().map(|(_, file)| file),
+                file.as_ref().map(|(id, _)| id.as_str()),
+            ),
+            _ => (
+                self.files.as_ref().and_then(ThemeFileSession::file),
+                self.files.as_ref().and_then(ThemeFileSession::active_id),
+            ),
+        };
+        let polarity = match self.preview {
+            Some(ThemePreview::Background(Some(polarity))) => (polarity, PolaritySource::Command),
+            Some(ThemePreview::Background(None)) => self.startup_polarity,
+            _ => self.polarity(),
+        };
         AppearanceView {
             skin: self.skin(),
             skipped: self.skipped(),
-            polarity: self.polarity(),
-            file: self.files.as_ref().and_then(ThemeFileSession::file),
-            file_id: self.files.as_ref().and_then(ThemeFileSession::active_id),
+            polarity,
+            file,
+            file_id,
+            previewing: self.preview.is_some(),
         }
     }
 }

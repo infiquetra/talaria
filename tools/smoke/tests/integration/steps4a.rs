@@ -26,7 +26,7 @@ fn built_for_find() -> &'static str {
             .find_map(|s| s.strip_prefix("commit="))
             .unwrap_or("");
         let prefix: String = commit.chars().take(8).collect();
-        format!("built for: {tag} ({prefix})")
+        format!("tested against: {tag} ({prefix})")
     })
 }
 
@@ -816,7 +816,7 @@ pair!(
             "doctor-overlay-r1.txt",
             built_for_find(),
             "",
-            "\"built for:\" detail missing"
+            "\"tested against:\" detail missing"
         ),
         ("@doctor-close-once", "", "", "doctor did not close on Esc"),
     ]

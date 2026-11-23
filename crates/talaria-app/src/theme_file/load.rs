@@ -16,6 +16,39 @@ pub fn reserved_id(id: &str) -> bool {
     matches!(id, "terminal" | "dark" | "light" | "ember" | "paper")
 }
 
+/// Every user theme file beside `config`, sorted by identifier, each loaded or with the reason
+/// it cannot be. Reserved and invalid identifiers, other files and symbolic links are left out,
+/// and a missing or linked `themes` folder lists nothing.
+pub fn list_themes(config: &Path) -> Vec<(String, Result<ThemeFile, String>)> {
+    let parent = config
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let folder = parent.join("themes");
+    if !std::fs::symlink_metadata(&folder).is_ok_and(|meta| meta.is_dir()) {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(&folder) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let id = name.strip_suffix(".toml")?;
+            (valid_id(id) && !reserved_id(id)).then(|| id.to_owned())
+        })
+        .collect();
+    ids.sort();
+    ids.into_iter()
+        .map(|id| {
+            let file = load(config, &id);
+            (id, file)
+        })
+        .collect()
+}
+
 pub fn load(config: &Path, id: &str) -> Result<ThemeFile, String> {
     if !valid_id(id) {
         return Err("invalid theme identifier".into());

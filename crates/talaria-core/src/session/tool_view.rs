@@ -4,6 +4,7 @@
 //! judges a result again. It only words what the cell holds.
 
 use serde_json::{Map, Value};
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::text::strip_terminal_escapes;
 use super::{ToolCell, ToolProgress, ToolStatus};
@@ -28,6 +29,19 @@ pub struct ToolView {
     pub diff: Option<DiffModel>,
     /// Quiet tools draw no body.
     pub quiet: bool,
+    /// What a question row restored from history asked, and the answers it records. Empty for
+    /// every other cell, a live question included: its prompt cell already shows both.
+    pub questions: Vec<AskedQuestion>,
+}
+
+/// One question a restored question row asked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AskedQuestion {
+    /// The question, on one line.
+    pub question: String,
+    /// The answer, `no answer` when it was skipped or left unanswered, or `None` when the row
+    /// does not record it.
+    pub answer: Option<String>,
 }
 
 /// How the header states the outcome.
@@ -153,11 +167,60 @@ fn first_line_of(args: Option<&Value>, key: &str) -> Option<String> {
     text.lines().find_map(one_line)
 }
 
+/// Tools whose subject is the file they act on, taken from the `path` argument.
+const FILE_TOOLS: [&str; 3] = ["read_file", "write_file", "patch"];
+/// A path longer than this many characters loses its middle in the subject.
+const PATH_SUBJECT_CHARS: usize = 100;
+
+/// `text` cut to at most `max` columns by replacing its middle with `…`, so the last path
+/// segment (the file name) stays visible. `width` measures one grapheme cluster in columns. With
+/// no `/` the end is kept, so a file extension survives.
+#[must_use]
+pub fn shorten_middle(text: &str, max: usize, width: impl Fn(&str) -> usize) -> String {
+    let clusters: Vec<&str> = text.graphemes(true).collect();
+    let widths: Vec<usize> = clusters.iter().map(|cluster| width(cluster)).collect();
+    if widths.iter().sum::<usize>() <= max {
+        return text.to_owned();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let budget = max - 1;
+    let name_start = clusters
+        .iter()
+        .rposition(|cluster| matches!(*cluster, "/" | "\\"))
+        .map_or(0, |at| at + 1);
+    // The tail starts at the separator before the file name, or at the whole text.
+    let mut tail_start = name_start.saturating_sub(1);
+    let mut tail_width: usize = widths[tail_start..].iter().sum();
+    while tail_width > budget && tail_start < clusters.len() {
+        tail_width -= widths[tail_start];
+        tail_start += 1;
+    }
+    let mut head_end = 0;
+    let mut head_width = 0;
+    while head_end < tail_start && head_width + widths[head_end] + tail_width <= budget {
+        head_width += widths[head_end];
+        head_end += 1;
+    }
+    let mut out: String = clusters[..head_end].concat();
+    out.push('\u{2026}');
+    out.push_str(&clusters[tail_start..].concat());
+    out
+}
+
+fn path_subject(args: Option<&Value>) -> Option<String> {
+    let path = one_line(args?.get("path")?.as_str()?)?;
+    Some(shorten_middle(&path, PATH_SUBJECT_CHARS, |_| 1))
+}
+
 fn subject_of(cell: &ToolCell) -> Option<String> {
     let context = || cell.context.as_deref().and_then(one_line);
     match cell.name.as_str() {
         "terminal" => first_line_of(cell.args.as_ref(), "command").or_else(context),
         "execute_code" => first_line_of(cell.args.as_ref(), "code").or_else(context),
+        // Hermes's own preview of the call is cut at a fixed width and can lose the file name.
+        name if FILE_TOOLS.contains(&name) => path_subject(cell.args.as_ref()).or_else(context),
         _ => context(),
     }
 }
@@ -362,6 +425,69 @@ fn diff_of(cell: &ToolCell, parsed: Option<&Parsed>) -> Option<DiffModel> {
     Some(parse_diff(&strip_terminal_escapes(text))).filter(|model| !model.is_empty())
 }
 
+/// The answer one clarify response records.
+fn answer_of(response: &Value) -> String {
+    let answered = response.get("status").and_then(Value::as_str) == Some("answered");
+    let text = match response.get("user_response") {
+        Some(Value::String(text)) => one_line(text),
+        Some(Value::Array(items)) => {
+            let picked: Vec<String> = items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(one_line)
+                .collect();
+            (!picked.is_empty()).then(|| picked.join(", "))
+        }
+        _ => None,
+    };
+    text.filter(|_| answered)
+        .unwrap_or_else(|| "no answer".to_owned())
+}
+
+/// What a restored `clarify` row asked: from the stored result's `responses` when the gateway
+/// sent it, else the questions in its arguments with no answer.
+fn asked_questions(cell: &ToolCell, parsed: Option<&Parsed>) -> Vec<AskedQuestion> {
+    if cell.name != "clarify" || cell.status != ToolStatus::Unknown {
+        return Vec::new();
+    }
+    let responses = parsed
+        .and_then(|parsed| parsed.object.as_ref())
+        .and_then(|map| map.get("responses"))
+        .and_then(Value::as_array);
+    let answered: Vec<AskedQuestion> = responses
+        .into_iter()
+        .flatten()
+        .filter_map(|response| {
+            let question = response.get("question")?.as_str().and_then(one_line)?;
+            Some(AskedQuestion {
+                question,
+                answer: Some(answer_of(response)),
+            })
+        })
+        .collect();
+    if !answered.is_empty() {
+        return answered;
+    }
+    let Some(args) = cell.args.as_ref() else {
+        return Vec::new();
+    };
+    let listed = args.get("questions").and_then(Value::as_array);
+    let single = args.get("question").map(std::slice::from_ref);
+    listed
+        .map(Vec::as_slice)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("question"))
+        .chain(single.into_iter().flatten())
+        .filter_map(Value::as_str)
+        .filter_map(one_line)
+        .map(|question| AskedQuestion {
+            question,
+            answer: None,
+        })
+        .collect()
+}
+
 /// Derive the view. Issue 221.
 #[must_use]
 pub fn tool_view(cell: &ToolCell) -> ToolView {
@@ -406,6 +532,7 @@ pub fn tool_view(cell: &ToolCell) -> ToolView {
         },
         ToolStatus::Failed => failed_outcome(parsed.as_ref().unwrap_or(&Parsed::default())),
     };
+    let questions = asked_questions(cell, parsed.as_ref());
     ToolView {
         title,
         subject,
@@ -415,6 +542,7 @@ pub fn tool_view(cell: &ToolCell) -> ToolView {
         output,
         diff,
         quiet,
+        questions,
     }
 }
 

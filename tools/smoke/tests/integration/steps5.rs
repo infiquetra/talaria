@@ -82,7 +82,7 @@ fn passes(step: &str) {
             }
         }
         "workflows-empty" => assert!(text.contains(&"/workflows")),
-        "ultracode-status" => assert!(text.contains(&"/ultracode status")),
+        "hivecode-status" => assert!(text.contains(&"/hivecode status")),
         "quit" => assert!(text.iter().filter(|line| **line == "/quit").count() >= 2),
         "builtins-cli" => {
             assert_eq!(
@@ -177,7 +177,7 @@ pair!(workflows_empty_passes, workflows_empty_fails, "workflows-empty", [
     &["before-workflows"] => "the step did not start idle",
     &["after-workflows"] => "the step did not end idle",
 ]);
-pair!(ultracode_status_passes, ultracode_status_fails, "ultracode-status", [
+pair!(hivecode_status_passes, hivecode_status_fails, "hivecode-status", [
     &["status-missing"] => "the status text was not shown",
     &["turn-started"] => "a turn started",
     &["toggle-on"] => "the toggle did not stay off",
@@ -249,8 +249,8 @@ fn a_full_run_returns_to_idle_between_steps() {
     assert_eq!(names, STEPS);
     let calls = &exec.calls;
     for (open, next) in [
-        ("/workflows", "/ultracode status"),
-        ("/ultracode status", "/quit"),
+        ("/workflows", "/hivecode status"),
+        ("/hivecode status", "/quit"),
     ] {
         let start = calls
             .iter()
@@ -317,7 +317,7 @@ fn a_failing_step_stops_the_run_and_cleans_up() {
     assert!(matches!(
         exec.report.outcomes.last(),
         Some(StepOutcome::Fail {
-            step: "ultracode-status",
+            step: "hivecode-status",
             ..
         })
     ));

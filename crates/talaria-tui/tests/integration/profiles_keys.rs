@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 
 use talaria_core::commands::local::{LocalAction, LocalCommandTable};
 use talaria_core::profiles::{
-    Description, GatewayView, HostTopology, KeyAction, Panel, ProfilesEffect, ProfilesInput,
-    ProfilesState, RosterEntry,
+    Description, GatewayView, HostTopology, KeyAction, KeyLabels, Panel, ProfilesEffect,
+    ProfilesInput, ProfilesState, RosterEntry,
 };
 use talaria_tui::keys::{Action, Key, KeyCode, KeyContext, KeyKind, KeyMap, Mods};
+use talaria_tui::profiles::{key_action, key_labels};
 
 fn press(code: KeyCode, ctrl: bool, shift: bool) -> Key {
     Key {
@@ -37,6 +38,7 @@ fn key_of(text: &str) -> Key {
         "ctrl+s" => press(KeyCode::Char('s'), true, false),
         "ctrl+g" => press(KeyCode::Char('g'), true, false),
         "R" => press(KeyCode::Char('R'), false, true),
+        "N" => press(KeyCode::Char('N'), false, true),
         single => {
             let mut chars = single.chars();
             match (chars.next(), chars.next()) {
@@ -67,8 +69,12 @@ fn keys_and_rebinding() {
         ("r", Action::ProfilesRefresh),
         ("R", Action::ProfilesRescan),
         ("n", Action::ProfilesNew),
+        ("d", Action::ProfilesDelete),
+        ("N", Action::ProfilesRename),
         ("e", Action::ProfilesDescription),
         ("s", Action::ProfilesSoul),
+        ("m", Action::ProfilesModels),
+        ("c", Action::ProfilesConnect),
         ("esc", Action::ProfilesBack),
     ] {
         assert_eq!(resolve(&map, text), Some(action), "{text}");
@@ -88,6 +94,46 @@ fn keys_and_rebinding() {
     assert_eq!(resolve(&map, "ctrl+g"), Some(Action::ProfilesRefresh));
     assert_eq!(resolve(&map, "r"), None, "the old chord is gone");
     assert_eq!(resolve(&map, "R"), Some(Action::ProfilesRescan));
+    let mut entries = BTreeMap::new();
+    entries.insert("profiles_models".to_owned(), vec!["x".to_owned()]);
+    entries.insert("profiles_connect".to_owned(), vec!["ctrl+g".to_owned()]);
+    let (map, notices) = KeyMap::from_entries(&entries);
+    assert!(notices.is_empty(), "{notices:?}");
+    assert_eq!(resolve(&map, "x"), Some(Action::ProfilesModels));
+    assert_eq!(resolve(&map, "ctrl+g"), Some(Action::ProfilesConnect));
+    assert_eq!(resolve(&map, "m"), None, "the old chord is gone");
+
+    // The new keys reach the state machine, and stay text while a field has focus.
+    let map = KeyMap::defaults();
+    assert_eq!(
+        key_action(&map, &key_of("m"), false),
+        Some(KeyAction::Models)
+    );
+    assert_eq!(
+        key_action(&map, &key_of("c"), false),
+        Some(KeyAction::Connect)
+    );
+    assert_eq!(
+        key_action(&map, &key_of("m"), true),
+        Some(KeyAction::Char('m'))
+    );
+    assert_eq!(
+        key_action(&map, &key_of("c"), true),
+        Some(KeyAction::Char('c'))
+    );
+    assert_eq!(
+        key_action(&map, &key_of("d"), false),
+        Some(KeyAction::Delete)
+    );
+    assert_eq!(
+        key_action(&map, &key_of("N"), false),
+        Some(KeyAction::Rename)
+    );
+    // Typing a profile's name to confirm a delete keeps d as a letter.
+    assert_eq!(
+        key_action(&map, &key_of("d"), true),
+        Some(KeyAction::Char('d'))
+    );
 
     // `/profiles` opens the overlay.
     let table = LocalCommandTable::builtin();
@@ -191,5 +237,43 @@ fn keys_and_rebinding() {
     assert_eq!(
         machine.update(ProfilesInput::Key(KeyAction::Back), 40),
         vec![ProfilesEffect::Close]
+    );
+}
+
+/// The hints name the keys the keymap binds: the defaults read as before, a rebound
+/// action shows its new key, and an unbound action has no label.
+#[test]
+fn hint_labels_follow_the_keymap() {
+    assert_eq!(key_labels(&KeyMap::defaults()), KeyLabels::default());
+
+    let entries: BTreeMap<String, Vec<String>> = [
+        ("profiles_models", vec!["f5"]),
+        ("profiles_connect", vec![]),
+        ("profiles_description", vec!["ctrl+e"]),
+        ("profiles_soul", vec!["shift+o"]),
+        ("profiles_delete", vec!["ctrl+x"]),
+        ("profiles_rename", vec![]),
+    ]
+    .into_iter()
+    .map(|(name, chords)| {
+        (
+            name.to_owned(),
+            chords.into_iter().map(str::to_owned).collect(),
+        )
+    })
+    .collect();
+    let (map, notices) = KeyMap::from_entries(&entries);
+    assert!(notices.is_empty(), "{notices:?}");
+    assert_eq!(
+        key_labels(&map),
+        KeyLabels {
+            models: Some("F5".to_owned()),
+            connect: None,
+            description: Some("Ctrl+E".to_owned()),
+            soul: Some("O".to_owned()),
+            delete: Some("Ctrl+X".to_owned()),
+            rename: None,
+            ..KeyLabels::default()
+        }
     );
 }

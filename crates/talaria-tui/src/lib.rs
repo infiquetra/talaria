@@ -1,5 +1,6 @@
 //! Terminal rendering, input and overlays projected from domain state.
 
+pub mod activity;
 pub mod automation;
 pub mod background;
 pub mod checklist;
@@ -32,6 +33,7 @@ pub mod profiles;
 pub mod prompts;
 pub mod providers;
 pub mod queue;
+pub mod reply_commit;
 pub mod review_view;
 pub mod rewind;
 pub mod session_picker;

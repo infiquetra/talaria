@@ -23,7 +23,7 @@ The inventory contains 35 JSONL fixtures. Journal fixtures use the workflow jour
 | [p5-02-idempotency.jsonl](p5-02-idempotency.jsonl) | Gateway frame replay |
 | [p5-04-model-options.jsonl](p5-04-model-options.jsonl) | Gateway frame replay |
 | [p5-05-progress.jsonl](p5-05-progress.jsonl) | Workflow journal |
-| [p5-09-ultracode-skill.jsonl](p5-09-ultracode-skill.jsonl) | Gateway frame replay |
+| [p5-09-hivecode-skill.jsonl](p5-09-hivecode-skill.jsonl) | Gateway frame replay |
 | [permissions-cd.jsonl](permissions-cd.jsonl) | Gateway frame replay |
 | [plain-answer.jsonl](plain-answer.jsonl) | Gateway frame replay |
 | [profiles.jsonl](profiles.jsonl) | Gateway frame replay |

@@ -273,7 +273,7 @@ fn open_refused_while_turn_runs() {
         effects,
         vec![RewindEffect::Notice(
             NoticeKind::Warning,
-            "A reply is running. Stop it with Esc, then rewind.".into()
+            "A reply is running. Stop it with Esc twice, then rewind.".into()
         )]
     );
     assert_eq!(h.screen(), RewindScreen::Closed);
@@ -1188,7 +1188,7 @@ fn typed_commands_check_turn_and_list_first() {
         let effects = h.send(input);
         assert_eq!(
             texts(&effects),
-            "A reply is running. Stop it with Esc, then rewind."
+            "A reply is running. Stop it with Esc twice, then rewind."
         );
         assert!(calls(&effects).is_empty());
     }

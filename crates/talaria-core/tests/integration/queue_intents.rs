@@ -783,6 +783,144 @@ fn take_back_keeps_a_draft() {
 }
 
 #[test]
+fn a_prompt_carrying_the_workflow_skill_that_never_starts_is_reported_once() {
+    let skill = "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\n\nThe user has provided the following instruction alongside the skill invocation: fix the parser";
+    let reminder = talaria_core::hivecode::follow_up_text("fix the lexer");
+    let remove = |state: &mut SessionState| {
+        let _ = update(
+            state,
+            Event::QueueCallResult {
+                action: QueueAction::Remove,
+                admission_id: Some(aid("adm-a")),
+                submission_id: None,
+                result: receipt("adm-a", Status::Terminal, Some("cancelled")),
+            },
+        );
+    };
+    // Removed from the queue: the person gets back what they typed.
+    let mut state = running();
+    state.queue.rows = vec![queued("adm-a", skill, 1)];
+    remove(&mut state);
+    assert_eq!(state.queue.take_returned(), ["fix the parser"]);
+    assert!(state.queue.take_skill_dropped());
+    assert!(!state.queue.take_skill_dropped(), "reported once");
+    // A plain prompt or a reminder prompt leaves the skill where it was.
+    for text in ["alpha", reminder.as_str()] {
+        let mut state = running();
+        state.queue.rows = vec![queued("adm-a", text, 1)];
+        remove(&mut state);
+        assert!(!state.queue.take_skill_dropped(), "{text:?}");
+    }
+    // Refused by Hermes.
+    let mut state = SessionState::empty(sid());
+    let _ = update(
+        &mut state,
+        Event::SubmitCommand {
+            text: skill.to_string(),
+            display: "fix the parser".to_string(),
+            submission_id: "sub-1".to_string(),
+        },
+    );
+    assert!(!state.queue.take_skill_dropped(), "sent, not dropped");
+    let _ = update(
+        &mut state,
+        Event::SubmitFailed {
+            submission_id: "sub-1".to_string(),
+            reason: "refused".to_string(),
+        },
+    );
+    assert!(state.queue.take_skill_dropped());
+    // Never confirmed after its one retry: the typed text comes back.
+    let mut state = running();
+    let _ = update(
+        &mut state,
+        Event::SubmitCommand {
+            text: skill.to_string(),
+            display: "fix the parser".to_string(),
+            submission_id: "sub-2".to_string(),
+        },
+    );
+    for _ in 0..2 {
+        let _ = update(
+            &mut state,
+            Event::QueueCallUnknown {
+                action: QueueAction::Submit,
+                admission_id: None,
+                submission_id: Some(sub("sub-2")),
+            },
+        );
+        let _ = update(
+            &mut state,
+            Event::QueueReconcileDue {
+                action: QueueAction::Submit,
+                admission_id: None,
+                submission_id: Some(sub("sub-2")),
+            },
+        );
+    }
+    assert_eq!(state.queue.take_returned(), ["fix the parser"]);
+    assert!(state.queue.take_skill_dropped());
+}
+
+#[test]
+fn a_routed_prompt_naming_the_session_model_that_never_starts_is_reported_once() {
+    let named = format!(
+        "{}\nSession model: model-b on provider-a",
+        talaria_core::hivecode::follow_up_text("fix the lexer")
+    );
+    let bare = talaria_core::hivecode::follow_up_text("fix the lexer");
+    // Waiting in the queue, it may still be removed.
+    let mut state = running();
+    state.queue.rows = vec![queued("adm-a", &named, 1)];
+    assert!(state.queue.model_waiting());
+    let _ = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Remove,
+            admission_id: Some(aid("adm-a")),
+            submission_id: None,
+            result: receipt("adm-a", Status::Terminal, Some("cancelled")),
+        },
+    );
+    assert_eq!(state.queue.take_returned(), ["fix the lexer"]);
+    assert!(!state.queue.model_waiting());
+    assert!(state.queue.take_model_dropped());
+    assert!(!state.queue.take_model_dropped(), "reported once");
+    // A reminder that names no model leaves the record alone.
+    let mut state = running();
+    state.queue.rows = vec![queued("adm-a", &bare, 1)];
+    assert!(!state.queue.model_waiting());
+    let _ = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Remove,
+            admission_id: Some(aid("adm-a")),
+            submission_id: None,
+            result: receipt("adm-a", Status::Terminal, Some("cancelled")),
+        },
+    );
+    assert!(!state.queue.take_model_dropped());
+    // Refused by Hermes.
+    let mut state = SessionState::empty(sid());
+    let _ = update(
+        &mut state,
+        Event::SubmitCommand {
+            text: named.clone(),
+            display: "fix the lexer".to_string(),
+            submission_id: "sub-1".to_string(),
+        },
+    );
+    let _ = update(
+        &mut state,
+        Event::SubmitFailed {
+            submission_id: "sub-1".to_string(),
+            reason: "refused".to_string(),
+        },
+    );
+    assert!(state.queue.take_model_dropped());
+}
+
+#[test]
 fn lost_submit_shows_sending() {
     let mut state = running();
     let _ = update(

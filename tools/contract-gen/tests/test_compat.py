@@ -21,10 +21,10 @@ def _hermes_line_from_toml(repo: Path) -> str:
         (repo / "crates" / "hermes-contract" / "compat.toml").read_text(encoding="utf-8")
     )
     row = data["release"][-1]
-    return (
-        f"hermes: pinned {row['pinned_tag']} ({row['pinned_commit'][:8]}), "
-        f"supported from {row['floor']}, tested to {row['newest_tested']}"
-    )
+    line = f"hermes: tested against {row['pinned_tag']} ({row['pinned_commit'][:8]})"
+    if row["newest_tested"] != row["pinned_tag"]:
+        line += f", newest tested {row['newest_tested']}"
+    return line
 
 
 class CompatTests(unittest.TestCase):

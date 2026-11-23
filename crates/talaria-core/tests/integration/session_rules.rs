@@ -657,6 +657,441 @@ fn reasoning_runs_are_separate_cells_complete_reasoning_once() {
     assert!(reasoning(&empty).is_empty());
 }
 
+/// The transcript order as one short line per cell, as a reader would scan it.
+fn order(state: &SessionState) -> Vec<String> {
+    state
+        .cells()
+        .iter()
+        .map(|cell| match cell {
+            Cell::Assistant(cell) => format!("reply {}", cell.text),
+            Cell::Reasoning(cell) if cell.latest_step => {
+                format!("thinking (latest step) {}", cell.text)
+            }
+            Cell::Reasoning(cell) => format!("thinking {}", cell.text),
+            Cell::Tool(cell) => format!("tool {}", cell.tool_id),
+            Cell::Prompt(cell) => format!("prompt {}", cell.key.prompt_id),
+            Cell::Notice(cell) => format!("notice {}", cell.text),
+            _ => "other".to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn completion_reasoning_goes_before_the_streamed_reply() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Hi"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "complete", "text": "Hi", "reasoning": "because"}),
+        ),
+    ]);
+    assert_eq!(order(&state), vec!["thinking because", "reply Hi"]);
+    assert!(reasoning(&state)[0].sealed);
+    assert!(assistants(&state)[0].sealed);
+}
+
+#[test]
+fn completion_reasoning_in_a_tool_turn_is_the_latest_step() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Plan"})),
+        ev(
+            3,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "terminal"}),
+        ),
+        ev(
+            4,
+            "tool.complete",
+            json!({"tool_id": "call-1", "name": "terminal", "result": "ok"}),
+        ),
+        ev(5, "message.delta", json!({"text": "Done"})),
+        ev(
+            6,
+            "message.complete",
+            json!({"status": "complete", "text": "Done", "reasoning": "why"}),
+        ),
+    ]);
+    assert_eq!(
+        order(&state),
+        vec![
+            "reply Plan",
+            "tool call-1",
+            "thinking (latest step) why",
+            "reply Done"
+        ]
+    );
+    assert_eq!(tools(&state)[0].status, ToolStatus::Succeeded);
+}
+
+/// Whether each reasoning cell is marked as the turn's only output, in order.
+fn unanswered(state: &SessionState) -> Vec<bool> {
+    reasoning(state).iter().map(|cell| cell.no_reply).collect()
+}
+
+fn tool_events(seq: u64) -> Vec<Event> {
+    vec![
+        ev(
+            seq,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "terminal"}),
+        ),
+        ev(
+            seq + 1,
+            "tool.complete",
+            json!({"tool_id": "call-1", "name": "terminal", "result": "ok"}),
+        ),
+    ]
+}
+
+#[test]
+fn a_turn_that_ends_in_reasoning_marks_it_unanswered() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "complete", "text": ""}),
+        ),
+    ]);
+    assert_eq!(unanswered(&state), vec![true]);
+    assert!(reasoning(&state)[0].sealed);
+}
+
+#[test]
+fn reasoning_followed_by_a_reply_is_answered() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(3, "message.delta", json!({"text": "done"})),
+        ev(
+            4,
+            "message.complete",
+            json!({"status": "complete", "text": "done"}),
+        ),
+    ]);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn reasoning_answered_only_by_the_completion_text_is_answered() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "complete", "text": "done"}),
+        ),
+    ]);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn reasoning_before_a_tool_is_answered() {
+    let mut events = vec![start(), ev(2, "reasoning.delta", json!({"text": "run it"}))];
+    events.extend(tool_events(3));
+    events.push(ev(
+        5,
+        "message.complete",
+        json!({"status": "complete", "text": ""}),
+    ));
+    let (state, _) = run(events);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn end_of_turn_reasoning_with_blank_text_is_unanswered() {
+    let mut events = vec![start()];
+    events.extend(tool_events(2));
+    events.push(ev(
+        4,
+        "message.complete",
+        json!({"status": "complete", "text": "", "reasoning": "last step"}),
+    ));
+    let (state, _) = run(events);
+    assert!(reasoning(&state)[0].latest_step);
+    assert_eq!(unanswered(&state), vec![true]);
+}
+
+#[test]
+fn reasoning_in_a_turn_that_already_replied_is_answered() {
+    let mut events = vec![start(), ev(2, "message.delta", json!({"text": "Plan"}))];
+    events.extend(tool_events(3));
+    events.push(ev(
+        5,
+        "message.complete",
+        json!({"status": "complete", "text": "", "reasoning": "last step"}),
+    ));
+    let (state, _) = run(events);
+    assert_eq!(unanswered(&state), vec![false]);
+}
+
+#[test]
+fn an_interrupted_or_failed_turn_keeps_reasoning_collapsible() {
+    let (interrupted, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        Event::Interrupt,
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "interrupted", "text": ""}),
+        ),
+    ]);
+    assert_eq!(unanswered(&interrupted), vec![false]);
+    let (failed, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "weighing it"})),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "error", "error": "boom"}),
+        ),
+    ]);
+    assert_eq!(unanswered(&failed), vec![false]);
+}
+
+#[test]
+fn completion_reasoning_that_repeats_this_turns_commentary_is_not_drawn_again() {
+    let events = |reasoning: &str| {
+        vec![
+            start(),
+            ev(2, "message.delta", json!({"text": "Found the file."})),
+            ev(
+                3,
+                "tool.start",
+                json!({"tool_id": "call-1", "name": "terminal"}),
+            ),
+            ev(
+                4,
+                "tool.complete",
+                json!({"tool_id": "call-1", "name": "terminal", "result": "ok"}),
+            ),
+            ev(5, "message.delta", json!({"text": "Done"})),
+            ev(
+                6,
+                "message.complete",
+                json!({"status": "complete", "text": "Done", "reasoning": reasoning}),
+            ),
+        ]
+    };
+    let (repeated, _) = run(events(" Found the file.\n"));
+    assert_eq!(
+        order(&repeated),
+        vec!["reply Found the file.", "tool call-1", "reply Done"]
+    );
+    // Reasoning the reader has not seen is still drawn.
+    let (fresh, _) = run(events("Found the file, now reading it."));
+    assert_eq!(
+        order(&fresh),
+        vec![
+            "reply Found the file.",
+            "tool call-1",
+            "thinking (latest step) Found the file, now reading it.",
+            "reply Done"
+        ]
+    );
+    // Only the paragraph already shown is left out.
+    let (partly, _) = run(events("Checking the folder first.\n\nFound the file."));
+    assert_eq!(
+        order(&partly),
+        vec![
+            "reply Found the file.",
+            "tool call-1",
+            "thinking (latest step) Checking the folder first.",
+            "reply Done"
+        ]
+    );
+}
+
+#[test]
+fn completion_reasoning_after_a_sealed_reply_appends() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Hi"})),
+        ev(3, "message.delta", json!({"text": null})),
+        ev(
+            4,
+            "message.complete",
+            json!({"status": "complete", "text": "Hi", "reasoning": "because"}),
+        ),
+    ]);
+    assert_eq!(order(&state), vec!["reply Hi", "thinking because"]);
+}
+
+#[test]
+fn completion_reasoning_insert_keeps_prompt_positions() {
+    let (state, effects) = run(vec![
+        start(),
+        ev(
+            2,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "terminal"}),
+        ),
+        ev(3, "message.delta", json!({"text": "Asking"})),
+        ev(
+            4,
+            "approval.request",
+            approval_request("p1", 1, &["once", "deny"]),
+        ),
+        ev(5, "message.delta", json!({"text": " first"})),
+        ev(
+            6,
+            "message.complete",
+            json!({"status": "complete", "text": "Asking first", "reasoning": "careful"}),
+        ),
+        Event::AnswerApproval {
+            key: key("p1", 1),
+            choice: "once".to_string(),
+        },
+    ]);
+    // The approval sealed "Asking", so the text after it is a reply of its own and the
+    // end-of-turn reasoning goes in front of that one.
+    assert_eq!(
+        order(&state),
+        vec![
+            "tool call-1",
+            "reply Asking",
+            "prompt p1",
+            "thinking (latest step) careful",
+            "reply  first",
+        ]
+    );
+    assert!(effects.iter().any(
+        |effect| matches!(effect, Effect::RespondApproval { choice, .. } if choice == "once")
+    ));
+    assert!(
+        matches!(prompts(&state)[0].state, PromptState::Answering(ref value) if value == "once")
+    );
+    assert_eq!(state.open_prompts().count(), 1);
+}
+
+/// The index of the first cell whose short line is `wanted`.
+fn position(state: &SessionState, wanted: &str) -> usize {
+    order(state)
+        .iter()
+        .position(|line| line == wanted)
+        .unwrap_or_else(|| panic!("no {wanted:?} in {:?}", order(state)))
+}
+
+#[test]
+fn a_question_seals_the_open_reply_so_it_commits_while_the_card_waits() {
+    let reply = "| step | what |\n|---|---|\n| 1 | plan |\n\nWhich one?";
+    let (asked, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": reply})),
+        ev(
+            3,
+            "clarify.request",
+            clarify_request("c1", 1, "Which path?"),
+        ),
+    ]);
+    assert_eq!(
+        order(&asked),
+        vec![format!("reply {reply}"), "prompt c1".to_string()]
+    );
+    assert!(
+        assistants(&asked)[0].sealed,
+        "the reply stays open behind the question card"
+    );
+    assert!(
+        asked.final_prefix_len() > position(&asked, &format!("reply {reply}")),
+        "the reply is not final, so it never reaches scrollback while the card waits"
+    );
+
+    // Text after the answer starts a new reply, and the final text is not drawn a third time.
+    let (answered, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": reply})),
+        ev(
+            3,
+            "clarify.request",
+            clarify_request("c1", 1, "Which path?"),
+        ),
+        ev(
+            4,
+            "clarify.settled",
+            clarify_request("c1", 1, "Which path?"),
+        ),
+        ev(
+            5,
+            "message.delta",
+            json!({"text": "\n\nGoing with plan 1."}),
+        ),
+        ev(
+            6,
+            "message.complete",
+            json!({
+                "status": "complete",
+                "text": format!("{reply}\n\nGoing with plan 1."),
+            }),
+        ),
+    ]);
+    assert_eq!(
+        assistant_text(&answered),
+        vec![reply.to_string(), "Going with plan 1.".to_string()]
+    );
+    assert!(position(&answered, "prompt c1") < position(&answered, "reply Going with plan 1."));
+}
+
+#[test]
+fn an_approval_seals_the_open_reasoning_block() {
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "reasoning.delta", json!({"text": "Checking the folder"})),
+        ev(
+            3,
+            "approval.request",
+            approval_request("p1", 1, &["once", "deny"]),
+        ),
+        ev(4, "reasoning.delta", json!({"text": "Now deleting"})),
+    ]);
+    assert_eq!(
+        order(&state),
+        vec![
+            "thinking Checking the folder",
+            "prompt p1",
+            "thinking Now deleting"
+        ]
+    );
+    assert!(reasoning(&state)[0].sealed);
+    assert!(state.final_prefix_len() >= 1);
+}
+
+#[test]
+fn a_question_after_the_clarify_tool_started_keeps_one_reply() {
+    // The recorded order: the clarify tool's start seals the reply before the request comes.
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Plan first."})),
+        ev(3, "tool.generating", json!({"name": "clarify"})),
+        ev(4, "message.delta", json!({"text": " Then ask."})),
+        ev(
+            5,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "clarify"}),
+        ),
+        ev(
+            6,
+            "clarify.request",
+            clarify_request("c1", 1, "Which path?"),
+        ),
+        ev(
+            7,
+            "message.complete",
+            json!({"status": "complete", "text": "Plan first. Then ask."}),
+        ),
+    ]);
+    assert_eq!(
+        order(&state),
+        vec!["reply Plan first. Then ask.", "tool call-1", "prompt c1"]
+    );
+}
+
 #[test]
 fn tool_complete_without_start_still_makes_a_cell() {
     let (state, _) = run(vec![
@@ -769,6 +1204,31 @@ fn running_tools_become_unfinished_and_repeats_change_nothing() {
     ]);
     assert_eq!(tools(&open)[0].status, ToolStatus::Unfinished);
     assert!(tools(&open)[0].result.is_none());
+}
+
+#[test]
+fn an_abandoned_turn_ends_and_seals_what_streamed() {
+    let (mut state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Hal"})),
+        ev(
+            3,
+            "tool.start",
+            json!({"tool_id": "call-1", "name": "terminal"}),
+        ),
+    ]);
+    assert_eq!(state.turn(), &TurnState::Running);
+    state.abandon_turn();
+    assert_eq!(state.turn(), &TurnState::Idle);
+    assert!(state.activity().is_none());
+    assert!(assistants(&state)[0].sealed);
+    assert_eq!(tools(&state)[0].status, ToolStatus::Unfinished);
+    assert!(state.live_tail().is_empty(), "{:?}", state.live_tail());
+
+    // An idle session is left as it is.
+    let before = state.clone();
+    state.abandon_turn();
+    assert_eq!(state.cells(), before.cells());
 }
 
 #[test]
@@ -1430,6 +1890,21 @@ fn known_but_unmodelled_events_are_silent() {
     assert!(effects.is_empty());
 }
 
+/// The list the workflow view also reads: every event on it is silent here, so the two cannot
+/// disagree about what Hermes is expected to send.
+#[test]
+fn every_event_on_the_shared_known_list_is_silent() {
+    let events: Vec<_> = hermes_contract::events::KNOWN_UNDRAWN_EVENTS
+        .iter()
+        .enumerate()
+        .map(|(index, name)| ev(index as u64 + 1, name, json!({})))
+        .collect();
+    assert!(!events.is_empty());
+    let (state, _) = run(events);
+    assert!(state.cells().is_empty());
+    assert!(state.unknown_event_types().is_empty());
+}
+
 fn generated_variant(name: &str) -> bool {
     let raw = json!({"type": name, "session_id": SESSION, "payload": {}});
     match EventFrame::from_params(&raw) {
@@ -1908,6 +2383,149 @@ fn answer_already_resolved_settles_elsewhere() {
     assert!(!prompt.sealed);
 }
 
+/// A question answered and accepted while the turn runs, with `.settled` and the accepted
+/// reply in the given order, then the reply that follows.
+fn accepted_mid_turn(accepted_first: bool) -> SessionState {
+    let settled = ev(
+        5,
+        "clarify.settled",
+        json!({"prompt_id": "q1", "execution_generation": 1}),
+    );
+    let accepted = Event::AnswerAccepted { key: key("q1", 1) };
+    let (first, second) = if accepted_first {
+        (accepted, settled)
+    } else {
+        (settled, accepted)
+    };
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "Here is the plan."})),
+        ev(
+            3,
+            "tool.start",
+            json!({"tool_id": "call-q1", "name": "clarify"}),
+        ),
+        ev(4, "clarify.request", clarify_request("q1", 1, "Start?")),
+        Event::AnswerClarify {
+            key: key("q1", 1),
+            answer: "skip".to_string(),
+        },
+        first,
+        second,
+        ev(
+            6,
+            "tool.complete",
+            json!({"tool_id": "call-q1", "name": "clarify"}),
+        ),
+        ev(7, "message.delta", json!({"text": "After the answer."})),
+    ]);
+    state
+}
+
+#[test]
+fn an_accepted_answer_seals_the_prompt_while_the_turn_runs() {
+    for accepted_first in [false, true] {
+        let state = accepted_mid_turn(accepted_first);
+        assert_eq!(state.turn(), &TurnState::Running);
+        let prompt = prompts(&state)[0];
+        assert!(
+            matches!(prompt.state, PromptState::Settled(Settlement::Answered(ref value)) if value == "skip"),
+            "accepted first: {accepted_first}: {:?}",
+            prompt.state
+        );
+        assert!(prompt.sealed, "accepted first: {accepted_first}");
+        // Everything before the reply that is still streaming is final, so it can reach
+        // scrollback while the turn runs.
+        let after = state
+            .cells()
+            .iter()
+            .position(
+                |cell| matches!(cell, Cell::Assistant(reply) if reply.text == "After the answer."),
+            )
+            .expect("the reply after the answer");
+        assert_eq!(
+            state.final_prefix_len(),
+            after,
+            "accepted first: {accepted_first}"
+        );
+        assert_eq!(state.open_prompts().count(), 0);
+    }
+
+    // Once accepted, a late `already_resolved` no longer rewrites the answer.
+    let mut state = accepted_mid_turn(false);
+    let _ = update(
+        &mut state,
+        Event::AnswerAlreadyResolved { key: key("q1", 1) },
+    );
+    assert!(matches!(
+        prompts(&state)[0].state,
+        PromptState::Settled(Settlement::Answered(_))
+    ));
+}
+
+#[test]
+fn an_answer_not_yet_accepted_can_still_be_corrected_late() {
+    // `already_resolved` before `.settled`: settled elsewhere, and the late `.settled`
+    // changes nothing.
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "clarify.request", clarify_request("q1", 1, "Start?")),
+        Event::AnswerClarify {
+            key: key("q1", 1),
+            answer: "skip".to_string(),
+        },
+        Event::AnswerAlreadyResolved { key: key("q1", 1) },
+        ev(
+            3,
+            "clarify.settled",
+            json!({"prompt_id": "q1", "execution_generation": 1}),
+        ),
+    ]);
+    let prompt = prompts(&state)[0];
+    assert!(matches!(
+        prompt.state,
+        PromptState::Settled(Settlement::Elsewhere)
+    ));
+    assert!(prompt.sealed);
+    assert_eq!(state.open_prompts().count(), 0);
+
+    // `.settled` with no reply to the answer yet keeps the prompt open to a correction.
+    let (mut state, _) = run(vec![
+        start(),
+        ev(2, "clarify.request", clarify_request("q1", 1, "Start?")),
+        Event::AnswerClarify {
+            key: key("q1", 1),
+            answer: "skip".to_string(),
+        },
+        ev(
+            3,
+            "clarify.settled",
+            json!({"prompt_id": "q1", "execution_generation": 1}),
+        ),
+    ]);
+    assert!(!prompts(&state)[0].sealed);
+    let _ = update(
+        &mut state,
+        Event::AnswerAlreadyResolved { key: key("q1", 1) },
+    );
+    let prompt = prompts(&state)[0];
+    assert!(matches!(
+        prompt.state,
+        PromptState::Settled(Settlement::Elsewhere)
+    ));
+    assert!(prompt.sealed);
+
+    // An accepted reply for a prompt never answered from here changes nothing.
+    let (state, _) = run(vec![
+        start(),
+        ev(2, "clarify.request", clarify_request("q1", 1, "Start?")),
+        Event::AnswerAccepted { key: key("q1", 1) },
+    ]);
+    let prompt = prompts(&state)[0];
+    assert_eq!(prompt.state, PromptState::Open);
+    assert!(!prompt.sealed);
+}
+
 #[test]
 fn status_log_keeps_last_fifty_and_drops_latest_repeat() {
     let mut batch = Vec::new();
@@ -2064,6 +2682,99 @@ fn recorded_agent_print_is_visible() {
             .map(|c| (&c.kind, &c.text))
             .collect::<Vec<_>>()
     );
+    let interrupt_lines = notices(&state)
+        .into_iter()
+        .filter(|cell| cell.text.contains("Interrupted"))
+        .count();
+    assert_eq!(interrupt_lines, 1, "one interruption shows one notice");
+}
+
+#[test]
+fn gateway_interrupt_line_replaces_the_generic_interrupted_notice() {
+    let (state, _) = run(vec![
+        start(),
+        Event::Interrupt,
+        ev(
+            2,
+            "agent.print",
+            json!({"text": "\u{26a1} Interrupted during API call."}),
+        ),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "interrupted", "text": ""}),
+        ),
+    ]);
+    assert_eq!(state.turn(), &TurnState::Finished(TurnOutcome::Interrupted));
+    let lines: Vec<_> = notices(&state)
+        .into_iter()
+        .filter(|cell| cell.text.contains("nterrupt"))
+        .map(|cell| (cell.kind, cell.text.clone()))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![(
+            NoticeKind::System,
+            "\u{26a1} Interrupted during API call.".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn gateway_interrupt_line_without_local_interrupt_also_counts() {
+    let (state, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "agent.print",
+            json!({"text": "\u{26a1} Interrupt: cancelling 2 pending concurrent tool(s)"}),
+        ),
+        ev(3, "message.complete", json!({"status": "interrupted"})),
+    ]);
+    assert!(
+        notices(&state)
+            .iter()
+            .all(|note| note.kind != NoticeKind::Interrupted)
+    );
+}
+
+#[test]
+fn unrelated_lightning_print_keeps_the_generic_notice() {
+    let (state, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "agent.print",
+            json!({"text": "\u{26a1} Delegating 2 tasks"}),
+        ),
+        ev(3, "message.complete", json!({"status": "interrupted"})),
+    ]);
+    let interrupted: Vec<_> = notices(&state)
+        .into_iter()
+        .filter(|note| note.kind == NoticeKind::Interrupted)
+        .collect();
+    assert_eq!(interrupted.len(), 1);
+    assert_eq!(interrupted[0].text, INTERRUPTED);
+}
+
+#[test]
+fn interrupt_line_latch_resets_for_the_next_turn() {
+    let (state, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "agent.print",
+            json!({"text": "\u{26a1} Interrupted during API call."}),
+        ),
+        ev(3, "message.complete", json!({"status": "interrupted"})),
+        ev(4, "message.start", json!({})),
+        ev(5, "message.complete", json!({"status": "interrupted"})),
+    ]);
+    let interrupted = notices(&state)
+        .into_iter()
+        .filter(|note| note.kind == NoticeKind::Interrupted && note.text == INTERRUPTED)
+        .count();
+    assert_eq!(interrupted, 1, "the second turn still says Interrupted");
 }
 
 #[test]

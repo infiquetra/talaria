@@ -119,7 +119,10 @@ impl std::fmt::Display for CostEstimate {
                 high_usd,
                 unpriced_tiers,
             } => {
-                write!(f, "${low_usd:.2} to ${high_usd:.2}")?;
+                write!(
+                    f,
+                    "${low_usd:.2} to ${high_usd:.2}, not counting cache reads"
+                )?;
                 if !unpriced_tiers.is_empty() {
                     write!(
                         f,
@@ -129,6 +132,9 @@ impl std::fmt::Display for CostEstimate {
                 }
                 Ok(())
             }
+            Self::NeedsTokenBudget { tier_prices } if tier_prices.is_empty() => f.write_str(
+                "no estimate without a token budget; no tiers are set, so there is no price list",
+            ),
             Self::NeedsTokenBudget { tier_prices } => write!(
                 f,
                 "no estimate without a token budget; tier prices: {}",
@@ -191,6 +197,8 @@ pub struct ProviderReport {
     pub slug: String,
     pub name: String,
     pub models: usize,
+    pub model_ids: Vec<String>,
+    pub unavailable_models: Vec<String>,
     pub availability: String,
     pub warning: Option<String>,
 }
@@ -215,7 +223,14 @@ pub struct RosterReport {
     pub limits: LimitsReport,
     pub budget: RunBudget,
     pub check: RosterCheck,
+    pub current: Option<CurrentReport>,
     pub estimate: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CurrentReport {
+    pub model: String,
+    pub provider: String,
+    pub source: String,
 }
 impl RosterReport {
     pub fn build(
@@ -231,6 +246,25 @@ impl RosterReport {
                 slug: display_safe(&p.slug),
                 name: display_safe(&p.name),
                 models: p.models.len(),
+                // Only a signed in provider lists its ids; the others keep the count.
+                model_ids: if p.authenticated {
+                    p.models
+                        .iter()
+                        .filter(|m| !p.unavailable.contains(*m))
+                        .map(|m| display_safe(m))
+                        .collect()
+                } else {
+                    vec![]
+                },
+                unavailable_models: if p.authenticated {
+                    p.models
+                        .iter()
+                        .filter(|m| p.unavailable.contains(*m))
+                        .map(|m| display_safe(m))
+                        .collect()
+                } else {
+                    vec![]
+                },
                 availability: display_safe(&availability_text(&roster.availability(
                     &p.slug,
                     p.models.first().map(String::as_str).unwrap_or_default(),
@@ -299,6 +333,17 @@ impl RosterReport {
             },
             budget: budget.clone(),
             check: check_tiers(table, roster, budget, now),
+            current: Some(CurrentReport {
+                model: display_safe(roster.current().0),
+                provider: display_safe(roster.current().1),
+                source: if roster.current_from_session() {
+                    "session"
+                } else {
+                    "profile"
+                }
+                .into(),
+            })
+            .filter(|c| !c.model.is_empty() && !c.provider.is_empty()),
             estimate: estimate_run_cost(table, roster, budget.tokens).to_string(),
         }
     }
@@ -322,9 +367,27 @@ impl RosterReport {
                 p.models,
                 display_safe(&p.availability)
             );
+            if !p.model_ids.is_empty() {
+                s += &format!("    models: {}\n", p.model_ids.join(", "));
+            }
+            if !p.unavailable_models.is_empty() {
+                s += &format!("    unavailable: {}\n", p.unavailable_models.join(", "));
+            }
             if let Some(w) = &p.warning {
                 s += &format!("    {}\n", display_safe(w));
             }
+        }
+        if let Some(c) = &self.current {
+            s += &format!(
+                "\nCurrent model: {} on {}{}\n",
+                display_safe(&c.model),
+                display_safe(&c.provider),
+                if c.source == "session" {
+                    " (this session)"
+                } else {
+                    ""
+                }
+            );
         }
         s += "\nTiers\n";
         let w1 = self

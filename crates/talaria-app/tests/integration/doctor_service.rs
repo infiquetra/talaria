@@ -38,6 +38,7 @@ async fn gather_ready_gateway() {
         .gather("fixture")
         .await;
     let report = diagnose(&facts);
+    // A healthy configuration adds no row.
     assert_eq!(report.checks.len(), 7);
     assert!(report.checks.iter().all(|row| row.severity == Severity::Ok));
     assert!(matches!(facts.status, StatusFacts::Read(_)));
@@ -48,18 +49,68 @@ async fn gather_ready_gateway() {
             .iter()
             .filter(|r| r.verb == "session-ticket")
             .count(),
-        1
+        2
     );
     let tickets = server.ticket_records();
-    assert_eq!(tickets.len(), 1);
-    assert_eq!(tickets[0].purpose, "interactive");
+    let mut purposes: Vec<_> = tickets.iter().map(|t| t.purpose.as_str()).collect();
+    purposes.sort_unstable();
+    assert_eq!(
+        purposes,
+        ["interactive", "native-http"],
+        "the attach and the settings read"
+    );
+    // The settings read is plain HTTP with its own ticket, not a second connection.
     assert_eq!(server.websocket_connections(), 1);
+    let config = server.config_requests();
+    assert_eq!(config.len(), 1);
+    assert_eq!(config[0].method, "GET");
+    assert!(config[0].target.starts_with("/api/config"));
     let http = server.doctor_http_requests();
     assert_eq!(http.len(), 1);
     assert_eq!(http[0].method, "GET");
     assert_eq!(http[0].target, "/api/status");
     assert_eq!(header_count(&http[0], "x-hermes-gateway-ticket"), 0);
     assert_eq!(header_count(&http[0], "origin"), 0);
+}
+
+#[tokio::test]
+async fn gather_reports_the_two_harmful_settings_as_warnings() {
+    let (_temp, server) = gateway();
+    server.set_config_reply(serde_json::json!({
+        "compression": {"in_place": false},
+        "agent": {"max_turns": 60}
+    }));
+    let facts = DoctorService::new(server.home().to_path_buf())
+        .gather("fixture")
+        .await;
+    let report = diagnose(&facts);
+    assert_eq!(report.checks.len(), 9);
+    assert_eq!(report.checks[7].id, CheckId::Compression);
+    assert_eq!(report.checks[8].id, CheckId::StepCap);
+    assert!(
+        report.checks[7..]
+            .iter()
+            .all(|row| row.severity == Severity::Warn)
+    );
+}
+
+#[tokio::test]
+async fn gather_shows_an_unreadable_configuration_as_an_info_row() {
+    let (_temp, server) = gateway();
+    // An answer that is not a configuration cannot be read; nothing else about the report changes.
+    server.set_config_reply(serde_json::json!(["not", "an", "object"]));
+    let facts = DoctorService::new(server.home().to_path_buf())
+        .gather("fixture")
+        .await;
+    let report = diagnose(&facts);
+    assert_eq!(report.checks.len(), 8);
+    assert_eq!(report.checks[7].id, CheckId::Settings);
+    assert_eq!(report.checks[7].severity, Severity::Info);
+    assert!(
+        report.checks[..7]
+            .iter()
+            .all(|row| row.severity == Severity::Ok)
+    );
 }
 
 #[tokio::test]

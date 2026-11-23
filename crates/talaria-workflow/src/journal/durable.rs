@@ -131,12 +131,32 @@ fn abort_journal(e: JournalError) -> AgentOutcome {
     }
 }
 impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P, T, L, G> {
+    /// A gate refusal ends the call as stopped when the budget caused it.
+    fn skipped(&self) -> AgentOutcome {
+        self.gate
+            .budget_stop()
+            .map_or(AgentOutcome::Skipped, |reason| AgentOutcome::Stopped {
+                reason,
+            })
+    }
     async fn finish_call(
         &self,
         key: &str,
         attempt: u32,
         turns: u32,
         outcome: AgentOutcome,
+    ) -> Result<AgentOutcome, JournalError> {
+        self.finish_call_after(key, attempt, turns, outcome, true)
+            .await
+    }
+    /// `sweep` is false when the caller has just swept the route itself.
+    async fn finish_call_after(
+        &self,
+        key: &str,
+        attempt: u32,
+        turns: u32,
+        outcome: AgentOutcome,
+        sweep: bool,
     ) -> Result<AgentOutcome, JournalError> {
         if matches!(outcome, AgentOutcome::Abort { .. }) {
             return Ok(outcome);
@@ -147,7 +167,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             turns,
             outcome: CallOutcome::from_agent(outcome.clone()),
         };
-        match self.journal.append(record).await {
+        let finished = match self.journal.append(record).await {
             Ok(_) => Ok(outcome),
             Err(JournalError::RecordTooLarge { t, .. }) => {
                 let outcome = AgentOutcome::Failed {
@@ -160,11 +180,165 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                         turns,
                         outcome: CallOutcome::from_agent(outcome.clone()),
                     })
-                    .await?;
-                Ok(outcome)
+                    .await
+                    .map(|_| outcome)
             }
             Err(e) => Err(e),
+        };
+        if let Ok(ended) = &finished {
+            // Only a failed call can leave work behind on its route.
+            if sweep && matches!(ended, AgentOutcome::Failed { .. }) {
+                // The outcome is recorded; the caller's scheduler permit is already dropped.
+                let _ = self.route_busy(key).await;
+            }
+            self.detach_session(key).await;
         }
+        finished
+    }
+    /// Look at the call's route and say why it is not quiet, or `None` when nothing the run
+    /// does not follow is still running there. A check that could not be made counts as not
+    /// quiet.
+    async fn route_busy(&self, key: &str) -> Option<String> {
+        // A route that cannot even be named was not checked, and an unchecked route is not quiet.
+        let Ok(history) = self.journal.history(key) else {
+            return Some(ROUTE_UNREADABLE.into());
+        };
+        let Some((label, launch, session, stored)) = history.route() else {
+            return Some(ROUTE_UNREADABLE.into());
+        };
+        self.sweep_route(label, launch, &session, &stored).await
+    }
+    /// End the call's session in Hermes once its outcome is recorded; left open, it lingers
+    /// until the runner's connection closes. A failed end changes nothing the run depends on,
+    /// so it is only noted in the journal.
+    async fn detach_session(&self, key: &str) {
+        let Ok(history) = self.journal.history(key) else {
+            return;
+        };
+        let (Some(session), Some((_, launch, _, _))) = (history.session(), history.intent()) else {
+            return;
+        };
+        let profile = launch.profile.clone();
+        let failure = match tokio::time::timeout(
+            Duration::from_secs(15),
+            self.port.close_session(profile, session.clone()),
+        )
+        .await
+        {
+            Ok(Ok(())) => return,
+            Ok(Err(PortError::Refused { reason, detail, .. })) => detail.unwrap_or(reason),
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "no answer within 15 seconds".into(),
+        };
+        self.note(format!(
+            "runner: agent session {session} was not ended in Hermes ({failure}); Hermes ends it when the run's connection closes"
+        ))
+        .await;
+    }
+    /// A note about a route: journaled, and shown live in the runner's output.
+    async fn note_route(&self, message: String) {
+        self.note(message.clone()).await;
+        self.journal.notice(JournalNotice::RouteNote { message });
+    }
+    async fn note(&self, message: String) {
+        let _ = self
+            .journal
+            .record_engine_event(&crate::engine::EngineEvent::Log {
+                message,
+                workflow_path: vec![],
+            })
+            .await;
+    }
+    /// Look for work on the call's route that the run is not following, stop it, and write what
+    /// was found to the journal. Hermes resets a conversation that outgrew its model and then
+    /// starts the next queued input on the route's fresh stored session, which the run never
+    /// bound. That session would keep editing the call's working folder. Returns why the route
+    /// is not quiet, or `None` when it is.
+    async fn sweep_route(
+        &self,
+        label: &str,
+        launch: &ResolvedLaunch,
+        session: &str,
+        stored: &str,
+    ) -> Option<String> {
+        let folder = launch.cwd.as_deref().unwrap_or("its working folder");
+        let swept = tokio::time::timeout(
+            Duration::from_secs(60),
+            self.port
+                .sweep_route(launch.profile.clone(), session.into(), stored.into()),
+        )
+        .await;
+        let sweep = match swept {
+            Ok(Ok(sweep)) => sweep,
+            Ok(Err(e)) => {
+                self.note_route(format!(
+                    "{ROUTE_UNCHECKED}agent {label}: could not check whether anything else was still running on session {session} ({e}); look in {folder}"
+                ))
+                .await;
+                return Some(format!(
+                    "Talaria could not check whether Hermes is still running untracked work in {folder} (session {session}: {e})"
+                ));
+            }
+            Err(_) => {
+                self.note_route(format!(
+                    "{ROUTE_UNCHECKED}agent {label}: no answer within 60 seconds when checking whether anything else was still running on session {session}; look in {folder}"
+                ))
+                .await;
+                return Some(format!(
+                    "Talaria could not check whether Hermes is still running untracked work in {folder} (session {session}: no answer within 60 seconds)"
+                ));
+            }
+        };
+        if let (Some(moved), Some(tokens)) = (&sweep.moved_to, sweep.moved_tokens) {
+            self.gate.count_untracked_usage(
+                &format!("untracked:{moved}"),
+                crate::tokens::Reading {
+                    total: tokens,
+                    cache_read: sweep.moved_cache_read_tokens,
+                },
+            );
+        }
+        let busy = sweep.still_active.then(|| {
+            format!("Hermes is still running untracked work in {folder} (session {session})")
+        });
+        if !sweep.found_untracked() && sweep.problems.is_empty() {
+            return busy;
+        }
+        let mut parts = Vec::new();
+        if let Some(moved) = &sweep.moved_to {
+            parts.push(format!(
+                "Hermes moved the conversation onto a new stored session {moved}, which this run did not start"
+            ));
+        }
+        if sweep.cancelled > 0 {
+            parts.push(format!(
+                "Talaria cancelled {} turn(s) there that it was not tracking",
+                sweep.cancelled
+            ));
+        }
+        if let Some(tokens) = sweep.moved_tokens {
+            // The reading is kept in memory; a resumed run does not count it again.
+            parts.push(match sweep.moved_cache_read_tokens {
+                Some(cache) => format!(
+                    "Hermes reports {tokens} tokens used there, {cache} of them cache reads; the rest count toward this execution's budget"
+                ),
+                None => format!(
+                    "Hermes reports {tokens} tokens used there and did not say how many were cache reads, so all of them count toward this execution's budget"
+                ),
+            });
+        }
+        if sweep.still_active {
+            parts.push(format!(
+                "something is still running there and could not be stopped, so it may still be changing files in {folder}"
+            ));
+        }
+        parts.extend(sweep.problems.iter().cloned());
+        self.note_route(format!(
+            "{ROUTE_WARNING}agent {label}, session {session}, working folder {folder}: {}",
+            parts.join("; ")
+        ))
+        .await;
+        busy
     }
     async fn run(&self, request: AgentRequest) -> Result<AgentOutcome, JournalError> {
         let launch = match self.resolver.resolve(&request) {
@@ -212,7 +386,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     h.last().map(|r| &r.record),
                     Some(
                         Record::CallFinished {
-                            outcome: CallOutcome::Failed { .. },
+                            outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
                             ..
                         } | Record::CallRetryFinished { .. }
                     )
@@ -276,9 +450,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 permit = match decision {
                     GateDecision::Proceed(p) => Some(p),
                     GateDecision::Skip => {
-                        return self
-                            .finish_call(&key, attempt, 0, AgentOutcome::Skipped)
-                            .await;
+                        return self.finish_call(&key, attempt, 0, self.skipped()).await;
                     }
                     GateDecision::Abort { reason } => return Ok(AgentOutcome::Abort { reason }),
                 };
@@ -477,9 +649,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     GateDecision::Proceed(p) => permit = Some(p),
                     GateDecision::Abort { reason } => return Ok(AgentOutcome::Abort { reason }),
                     GateDecision::Skip if reason == GateReason::Fresh => {
-                        return self
-                            .finish_call(&key, attempt, 0, AgentOutcome::Skipped)
-                            .await;
+                        return self.finish_call(&key, attempt, 0, self.skipped()).await;
                     }
                     GateDecision::Skip => {
                         return Ok(AgentOutcome::Abort {
@@ -519,7 +689,16 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     }
                 }
                 Record::SessionBound { .. } => {
-                    let text = self.policy.first_turn(&request, stored_launch);
+                    if let Some(reason) = self.gate.budget_stop() {
+                        drop(permit.take());
+                        return self
+                            .finish_call(&key, attempt, 0, AgentOutcome::Stopped { reason })
+                            .await;
+                    }
+                    let mut text = self.policy.first_turn(&request, stored_launch);
+                    if h.previous_attempt_overflowed() {
+                        text = format!("{OVERFLOW_RESTART_NOTE}\n\n{text}");
+                    }
                     self.turn_intent(&key, attempt, 0, text).await?;
                     Ok(())
                 }
@@ -654,8 +833,107 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 }
                 Record::TurnSettled { .. } => {
                     let turns = h.turns(self.journal.dir().path())?;
-                    match self.policy.after_turn(&request, &turns) {
+                    let next = self.policy.after_turn(&request, &turns);
+                    // A finished answer is kept; anything else would spend past the budget.
+                    if !matches!(
+                        next,
+                        NextStep::Finish(
+                            AgentOutcome::Completed(_) | AgentOutcome::CutShort { .. }
+                        )
+                    ) && let Some(reason) = self.gate.budget_stop()
+                    {
+                        drop(permit.take());
+                        return self
+                            .finish_call(
+                                &key,
+                                attempt,
+                                turns.len() as u32,
+                                AgentOutcome::Stopped { reason },
+                            )
+                            .await;
+                    }
+                    match next {
                         NextStep::Finish(outcome) => {
+                            if matches!(outcome, AgentOutcome::Failed { .. })
+                                && let Some(last) = turns.last()
+                                && last.result_meta["failure_reason"] == CONTEXT_OVERFLOW
+                            {
+                                // The count comes from the journal, so a resume keeps it.
+                                let used = h.overflow_restarts();
+                                drop(permit.take());
+                                if used >= MAX_OVERFLOW_RESTARTS {
+                                    let reason = overflow_exhausted(h.overflowed());
+                                    return self
+                                        .finish_call(
+                                            &key,
+                                            attempt,
+                                            turns.len() as u32,
+                                            AgentOutcome::Failed { reason },
+                                        )
+                                        .await;
+                                }
+                                // Nothing untracked may keep working in the folder a restart
+                                // reuses: look at the route first, restart only when it is quiet.
+                                if let Some(why) = self.route_busy(&key).await {
+                                    return self
+                                        .finish_call_after(
+                                            &key,
+                                            attempt,
+                                            turns.len() as u32,
+                                            AgentOutcome::Failed {
+                                                reason: format!(
+                                                    "{why}, so the agent was not restarted"
+                                                ),
+                                            },
+                                            false,
+                                        )
+                                        .await;
+                                }
+                                if self.gate.authorise_restart(
+                                    &request,
+                                    &launch,
+                                    last,
+                                    attempt,
+                                    used + 1,
+                                    MAX_OVERFLOW_RESTARTS,
+                                ) {
+                                    self.journal
+                                        .append(Record::CallRetryFinished {
+                                            key: key.clone(),
+                                            attempt,
+                                            outcome: CallOutcome::from_agent(outcome.clone()),
+                                            turns: turns.len() as u32,
+                                        })
+                                        .await?;
+                                    let _ = self
+                                        .journal
+                                        .record_engine_event(&crate::engine::EngineEvent::Log {
+                                            message: format!(
+                                                "agent {}: restarted {} of {MAX_OVERFLOW_RESTARTS} after a context overflow",
+                                                request.label,
+                                                used + 1
+                                            ),
+                                            workflow_path: request.workflow_path.clone(),
+                                        })
+                                        .await;
+                                    self.detach_session(&key).await;
+                                    next_attempt = Some(
+                                        attempt
+                                            .checked_add(1)
+                                            .ok_or_else(|| io_error("attempt overflow"))?,
+                                    );
+                                    continue;
+                                }
+                                return self
+                                    .finish_call_after(
+                                        &key,
+                                        attempt,
+                                        turns.len() as u32,
+                                        outcome,
+                                        false,
+                                    )
+                                    .await;
+                            }
                             if matches!(outcome, AgentOutcome::Failed { .. })
                                 && !self.retried.lock().map_err(io_error)?.contains(&key)
                             {
@@ -673,6 +951,8 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                                             turns: turns.len() as u32,
                                         })
                                         .await?;
+                                    let _ = self.route_busy(&key).await;
+                                    self.detach_session(&key).await;
                                     self.retried.lock().map_err(io_error)?.insert(key.clone());
                                     next_attempt = Some(
                                         attempt
@@ -682,11 +962,13 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                                     continue;
                                 }
                             }
+                            drop(permit.take());
                             return self
                                 .finish_call(&key, attempt, turns.len() as u32, outcome)
                                 .await;
                         }
                         NextStep::Turn { .. } if turns.len() >= MAX_TURNS_PER_CALL as usize => {
+                            drop(permit.take());
                             return self
                                 .finish_call(
                                     &key,
@@ -778,6 +1060,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         } else {
             e.to_string()
         };
+        drop(permit.take());
         self.finish_call(
             key,
             h.attempt(),
@@ -933,9 +1216,10 @@ pub(crate) fn settled_record(key: &str, attempt: u32, turn: u32, r: Receipt) -> 
             "model",
             "provider",
             "failure_reason",
+            "error",
         ] {
             if let Some(v) = result.get(field) {
-                if field == "failure_reason" && !v.is_string() {
+                if matches!(field, "failure_reason" | "error") && !v.is_string() {
                     continue;
                 }
                 meta.insert(
@@ -965,4 +1249,20 @@ pub(crate) fn settled_record(key: &str, attempt: u32, turn: u32, r: Receipt) -> 
         result_meta: Value::Object(meta),
         usage: r.usage,
     }
+}
+
+/// Starts every journal note about work found on a route the run was not following; the run
+/// result lists these.
+pub const ROUTE_WARNING: &str = "runner: untracked work: ";
+/// Starts every journal note about a route Talaria could not check. Not untracked work: nothing
+/// was found, so the run result does not list it.
+pub const ROUTE_UNCHECKED: &str = "runner: route not checked: ";
+/// Why a restart is refused when the journal does not say which session the call ran on.
+const ROUTE_UNREADABLE: &str = "Talaria could not read this call's session from the run journal, so it could not check whether Hermes is still running untracked work there";
+/// Put at the top of the first prompt of an agent started again after a context overflow.
+const OVERFLOW_RESTART_NOTE: &str = "Note: an earlier attempt at this task ran out of context and was stopped. Its working folder still holds whatever it wrote or committed. Check that folder first and continue from it rather than starting over. Keep your notes in files rather than in the conversation.";
+fn overflow_exhausted(overflowed: u32) -> String {
+    format!(
+        "the agent ran out of context {overflowed} times; its {MAX_OVERFLOW_RESTARTS} restarts are used up, so it was not started again"
+    )
 }

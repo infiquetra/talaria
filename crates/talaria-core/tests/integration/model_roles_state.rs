@@ -712,3 +712,230 @@ fn keys_table() {
             || shown(&state).contains("Esc")
     );
 }
+
+fn picker_status(state: &ModelRolesState) -> Option<String> {
+    state.view().picker.and_then(|picker| picker.status)
+}
+
+fn picker_rows(state: &ModelRolesState) -> Vec<String> {
+    state
+        .view()
+        .picker
+        .map(|picker| picker.rows.into_iter().map(|row| row.text).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_failed_model_list_says_why() {
+    let cases = [
+        (
+            RolesError::Refused {
+                status: 409,
+                detail: Some("profile busy".to_owned()),
+            },
+            "Hermes refused the model list: profile busy. Ctrl+R to retry.",
+        ),
+        (
+            RolesError::NotSent {
+                reason: "connection refused".to_owned(),
+            },
+            "Could not load the model list: connection refused. Ctrl+R to retry.",
+        ),
+        (
+            RolesError::Server { status: 500 },
+            "Hermes could not read the model list. Ctrl+R to retry.",
+        ),
+        (
+            RolesError::Forbidden {
+                detail: "profile_scope_mismatch".to_owned(),
+            },
+            "Hermes refused this profile (profile_scope_mismatch). This is a Talaria defect; please report it.",
+        ),
+    ];
+    for (error, expected) in cases {
+        let mut state = open();
+        state.update(RolesInput::Key(RolesKey::Enter));
+        state.update(RolesInput::CatalogFailed { error });
+        assert_eq!(picker_status(&state).as_deref(), Some(expected));
+    }
+}
+
+fn provider(slug: &str, name: &str, models: &[&str], authenticated: bool) -> RouteProvider {
+    RouteProvider {
+        slug: slug.to_owned(),
+        name: name.to_owned(),
+        models: models.iter().map(|model| (*model).to_owned()).collect(),
+        authenticated,
+        is_user_defined: false,
+        api_url: String::new(),
+    }
+}
+
+/// Hermes's order, with providers that are not set up mixed in.
+fn unready_catalog() -> RouteCatalog {
+    RouteCatalog {
+        providers: vec![
+            provider("keyless", "Keyless", &[], false),
+            provider("public", "Public", &["alpha"], true),
+            provider("unsigned", "Unsigned", &["beta"], false),
+            provider("second", "Second", &["gamma"], true),
+        ],
+    }
+}
+
+/// Providers that are set up come first in Hermes's order, then the rest with a short mark;
+/// the full reason shows on the status line only while such a row is selected.
+#[test]
+fn providers_that_are_set_up_come_first_and_the_rest_say_why_when_selected() {
+    let mut own = open();
+    own.update(RolesInput::CatalogLoaded(unready_catalog()));
+    own.update(RolesInput::Key(RolesKey::Enter));
+    assert_eq!(
+        picker_rows(&own),
+        vec![
+            "Public".to_owned(),
+            "Second".to_owned(),
+            "Keyless  not set up".to_owned(),
+            "Unsigned  not set up".to_owned(),
+        ]
+    );
+    assert_eq!(picker_status(&own), None);
+    own.update(RolesInput::Key(RolesKey::Down));
+    assert_eq!(picker_status(&own), None);
+    own.update(RolesInput::Key(RolesKey::Down));
+    assert_eq!(
+        picker_status(&own).as_deref(),
+        Some("not set up: add it under Providers")
+    );
+    // Enter on it goes nowhere; Up to a set-up provider clears the line.
+    own.update(RolesInput::Key(RolesKey::Enter));
+    assert_eq!(own.view().picker.unwrap().title, "Choose a provider");
+    own.update(RolesInput::Key(RolesKey::Up));
+    assert_eq!(picker_status(&own), None);
+    // Enter on the first row opens the first set-up provider's models.
+    own.update(RolesInput::Key(RolesKey::Home));
+    own.update(RolesInput::Key(RolesKey::Enter));
+    assert_eq!(own.view().picker.unwrap().title, "Choose a model - Public");
+
+    // Another profile's page points to /profiles.
+    let mut other = open();
+    other.set_connection_profile("elsewhere");
+    other.update(RolesInput::CatalogLoaded(unready_catalog()));
+    other.update(RolesInput::Key(RolesKey::Enter));
+    other.update(RolesInput::Key(RolesKey::End));
+    assert_eq!(
+        picker_status(&other).as_deref(),
+        Some(
+            "not set up for this profile: connect to it from /profiles, then add it under Providers"
+        )
+    );
+
+    // Naming the page's own profile is the connected case.
+    let mut same = open();
+    same.set_connection_profile("fixture");
+    same.update(RolesInput::CatalogLoaded(unready_catalog()));
+    same.update(RolesInput::Key(RolesKey::Enter));
+    same.update(RolesInput::Key(RolesKey::End));
+    assert_eq!(
+        picker_status(&same).as_deref(),
+        Some("not set up: add it under Providers")
+    );
+
+    // A filter keeps the same order.
+    let mut filtered = open();
+    filtered.update(RolesInput::CatalogLoaded(unready_catalog()));
+    filtered.update(RolesInput::Key(RolesKey::Enter));
+    filtered.update(RolesInput::Key(RolesKey::Char('e')));
+    assert_eq!(
+        picker_rows(&filtered),
+        vec![
+            "Second".to_owned(),
+            "Keyless  not set up".to_owned(),
+            "Unsigned  not set up".to_owned(),
+        ]
+    );
+}
+
+/// After another model is staged, the facts under it never describe the old model.
+#[test]
+fn a_staged_model_never_shows_the_old_models_facts() {
+    let mut state = open();
+    let mut capabilities = Map::new();
+    capabilities.insert("supports_tools".to_owned(), json!(true));
+    capabilities.insert("max_output_tokens".to_owned(), json!(8192));
+    capabilities.insert("model_family".to_owned(), json!("old-family"));
+    state.update(RolesInput::Loaded(Loaded::Info(RolesInfo {
+        model: "alpha".to_owned(),
+        provider: "public".to_owned(),
+        auto_context_length: 200_000,
+        config_context_length: 0,
+        capabilities,
+    })));
+    state.update(RolesInput::CatalogLoaded(RouteCatalog {
+        providers: vec![provider("public", "Public", &["alpha", "omega"], true)],
+    }));
+    let text = shown(&state);
+    assert!(
+        text.contains("Context window: 200,000 tokens (auto-detected)"),
+        "{text}"
+    );
+    assert!(text.contains("Can use: tools"), "{text}");
+    assert!(text.contains("Max output: 8,192 tokens"), "{text}");
+    assert!(text.contains("Family: old-family"), "{text}");
+
+    // Stage omega: Public, then its second model.
+    state.update(RolesInput::Key(RolesKey::Enter));
+    state.update(RolesInput::Key(RolesKey::Enter));
+    state.update(RolesInput::Key(RolesKey::Down));
+    state.update(RolesInput::Key(RolesKey::Enter));
+    let text = shown(&state);
+    assert!(
+        text.contains("Model: omega (via public) (changed)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Context window: shown after saving"),
+        "{text}"
+    );
+    assert!(text.contains("Capabilities: shown after saving"), "{text}");
+    for old in ["200,000", "Can use:", "Max output", "old-family"] {
+        assert!(!text.contains(old), "{old}: {text}");
+    }
+
+    // A context the user sets is still shown as set.
+    state.update(RolesInput::Key(RolesKey::Context));
+    for ch in "64000".chars() {
+        state.update(RolesInput::Key(RolesKey::Char(ch)));
+    }
+    state.update(RolesInput::Key(RolesKey::Enter));
+    assert!(shown(&state).contains("Context window: 64,000 tokens (set) (changed)"));
+
+    // Choosing the saved model again shows its facts again.
+    state.update(RolesInput::Key(RolesKey::Enter));
+    state.update(RolesInput::Key(RolesKey::Enter));
+    state.update(RolesInput::Key(RolesKey::Enter));
+    let text = shown(&state);
+    assert!(text.contains("Family: old-family"), "{text}");
+}
+
+#[test]
+fn the_picker_shows_the_stored_route_while_the_model_list_is_missing() {
+    let mut state = open();
+    state.update(RolesInput::Loaded(Loaded::Info(RolesInfo {
+        model: "stored-model".to_owned(),
+        provider: "public".to_owned(),
+        auto_context_length: 0,
+        config_context_length: 0,
+        capabilities: Map::new(),
+    })));
+    state.update(RolesInput::CatalogFailed {
+        error: RolesError::Server { status: 500 },
+    });
+    state.update(RolesInput::Key(RolesKey::Enter));
+    let rows = picker_rows(&state);
+    assert_eq!(rows, vec!["public / stored-model (current)".to_owned()]);
+    // Choosing it changes nothing, so nothing is pending.
+    state.update(RolesInput::Key(RolesKey::Enter));
+    assert!(state.view().picker.is_none());
+    assert!(!shown(&state).contains("unapplied"));
+}

@@ -4,7 +4,7 @@ use crate::bake;
 
 use serde_json::{Value, json};
 use talaria_core::session::{
-    Cell, CellId, OutcomeView, ToolCell, ToolProgress, ToolStatus, format_duration,
+    AskedQuestion, Cell, CellId, OutcomeView, ToolCell, ToolProgress, ToolStatus, format_duration,
     format_progress, tool_view,
 };
 
@@ -372,4 +372,76 @@ fn quiet_tools_have_no_body() {
         assert!(view.quiet, "{name}");
         assert!(view.output.is_none() || view.quiet);
     }
+}
+
+#[test]
+fn a_restored_question_lists_what_it_asked() {
+    // synthetic: a single `question` argument, a result whose answer is empty, and a live cell
+    let mut restored = cell("clarify", ToolStatus::Unknown);
+    restored.args = Some(json!({"question": "Ship it?"}));
+    assert_eq!(
+        tool_view(&restored).questions,
+        vec![AskedQuestion {
+            question: "Ship it?".to_string(),
+            answer: None,
+        }]
+    );
+    restored.result = Some(
+        json!({"responses": [{"question": "Ship it?", "status": "answered", "user_response": ""}]})
+            .to_string(),
+    );
+    assert_eq!(
+        tool_view(&restored).questions[0].answer.as_deref(),
+        Some("no answer")
+    );
+    let mut live = restored.clone();
+    live.status = ToolStatus::Succeeded;
+    assert!(tool_view(&live).questions.is_empty());
+    let mut other = restored;
+    other.name = "todo".to_string();
+    assert!(tool_view(&other).questions.is_empty());
+}
+
+#[test]
+fn a_file_tool_subject_is_the_path_argument_with_its_middle_shortened() {
+    let mut tool = cell("write_file", ToolStatus::Succeeded);
+    tool.context = Some("/work/project/crates/some-long".to_string());
+    tool.args = Some(json!({"path": "/work/project/src/lib.rs", "content": "x"}));
+    assert_eq!(
+        tool_view(&tool).subject.as_deref(),
+        Some("/work/project/src/lib.rs")
+    );
+    let long = format!("/work/{}/final_name.rs", "deeply/".repeat(30));
+    tool.args = Some(json!({"path": long, "content": "x"}));
+    let subject = tool_view(&tool).subject.unwrap();
+    assert!(subject.chars().count() <= 100, "{subject}");
+    assert!(subject.starts_with("/work/deeply/"), "{subject}");
+    assert!(subject.ends_with("/final_name.rs"), "{subject}");
+    assert!(subject.contains('\u{2026}'), "{subject}");
+    // Without a path argument the context is still the subject.
+    tool.args = Some(json!({"content": "x"}));
+    assert_eq!(
+        tool_view(&tool).subject.as_deref(),
+        Some("/work/project/crates/some-long")
+    );
+}
+
+#[test]
+fn shortening_the_middle_keeps_the_file_name_or_the_end() {
+    use talaria_core::session::shorten_middle;
+    let one = |_: &str| 1;
+    assert_eq!(shorten_middle("a/b/c.rs", 20, one), "a/b/c.rs");
+    assert_eq!(
+        shorten_middle("/aaaa/bbbb/cccc/file.rs", 15, one),
+        "/aaaa/\u{2026}/file.rs"
+    );
+    assert_eq!(
+        shorten_middle("/a/b/a_rather_long_name.rs", 10, one),
+        "\u{2026}g_name.rs"
+    );
+    assert_eq!(
+        shorten_middle("no_separators_here.txt", 9, one),
+        "\u{2026}here.txt"
+    );
+    assert_eq!(shorten_middle("abc", 0, one), "");
 }

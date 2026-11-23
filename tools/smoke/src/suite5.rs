@@ -25,7 +25,7 @@ const STEPS: [&str; 10] = [
     "startup",
     "plain-answer",
     "workflows-empty",
-    "ultracode-status",
+    "hivecode-status",
     "quit",
     "resume",
     "builtins-cli",

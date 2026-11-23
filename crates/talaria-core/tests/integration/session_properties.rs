@@ -103,6 +103,9 @@ fn arb_local() -> impl Strategy<Value = Event> {
         Just(Event::AnswerAlreadyResolved {
             key: events::key("p1", 1),
         }),
+        Just(Event::AnswerAccepted {
+            key: events::key("p1", 1),
+        }),
         Just(Event::AnswerApproval {
             key: events::key("p1", 1),
             choice: "once".to_string(),

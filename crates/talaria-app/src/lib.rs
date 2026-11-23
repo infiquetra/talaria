@@ -49,6 +49,8 @@ pub mod side_connection;
 pub mod subagents;
 pub mod switch;
 pub mod theme_file;
+pub mod workflow_agent;
+pub mod workflow_origin;
 pub mod workflow_progress;
 pub mod workspace;
 pub mod worktree;
@@ -59,5 +61,6 @@ pub mod settings;
 
 pub mod doctor;
 
-pub mod ultracode;
+pub mod hivecode;
+pub mod hivecode_files;
 pub mod voice;

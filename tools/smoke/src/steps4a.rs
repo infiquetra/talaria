@@ -604,8 +604,8 @@ fn screen_step_inner(run: &Run<'_>, name: &'static str) -> Result<Step, Abort> {
                 .find_map(|s| s.strip_prefix("commit="))
                 .unwrap_or("");
             let prefix: String = commit.chars().take(8).collect();
-            if !r1.contains(&format!("{DOCTOR_BUILT_FOR}{tag} ({prefix})")) {
-                return fail("\"built for:\" detail missing");
+            if !r1.contains(&format!("{DOCTOR_TESTED_AGAINST}{tag} ({prefix})")) {
+                return fail("\"tested against:\" detail missing");
             }
             key(run, "esc")?;
             let r2 = read(run)?;

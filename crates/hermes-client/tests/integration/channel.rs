@@ -258,6 +258,110 @@ async fn runtime_describe_typed_call_drops_null_skin_colours() {
 }
 
 #[tokio::test]
+async fn reply_with_non_finite_number_completes_with_null() {
+    guard(async {
+        let (parts, mut peer) = Peer::pair().await;
+        let (client, _inbound) = Client::start(parts);
+        let caller = client.clone();
+        let call = tokio::spawn(async move {
+            caller
+                .call_raw("profiles.list", json!({}), CallOptions::default())
+                .await
+        });
+        let request = peer.recv_json().await;
+        let id = request["id"].as_u64().expect("integer id");
+        // The gateway writes a float that overflowed in its own YAML reader as a bare token.
+        peer.send_text(&format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"profiles":[{{"name":"Infinity","ui_meta":{{"chat":Infinity,"low":-Infinity,"odd":NaN}}}}]}}}}"#
+        ))
+        .await;
+        let result = call
+            .await
+            .expect("call task ended")
+            .expect("the reply is usable");
+        let row = &result["profiles"][0];
+        assert_eq!(row["name"], "Infinity");
+        assert!(row["ui_meta"]["chat"].is_null());
+        assert!(row["ui_meta"]["low"].is_null());
+        assert!(row["ui_meta"]["odd"].is_null());
+        let stats = client.stats().await;
+        assert_eq!(stats.malformed_frames, 0);
+        assert_eq!(stats.pending_calls, 0);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn unreadable_reply_with_known_id_fails_fast() {
+    guard(async {
+        let (parts, mut peer) = Peer::pair().await;
+        let (client, mut inbound) = Client::start(parts);
+        let caller = client.clone();
+        let call = tokio::spawn(async move {
+            caller
+                .call_raw(
+                    "profiles.list",
+                    json!({}),
+                    CallOptions {
+                        timeout: Some(Duration::from_secs(60)),
+                    },
+                )
+                .await
+        });
+        let request = peer.recv_json().await;
+        let id = request["id"].as_u64().expect("integer id");
+        peer.send_text(&format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"a":tru}}}}"#
+        ))
+        .await;
+        let err = call_err(call.await.expect("call task ended"));
+        match &err {
+            CallError::BadResult { method, reason } => {
+                assert_eq!(method, "profiles.list");
+                assert_eq!(*reason, "reply was not valid JSON");
+            }
+            _ => panic!("expected a bad result"),
+        }
+        assert_eq!(err.to_string(), "profiles.list: reply was not valid JSON");
+        assert!(!err.outcome_unknown());
+        let stats = client.stats().await;
+        assert_eq!(stats.pending_calls, 0);
+        assert_eq!(stats.malformed_frames, 1);
+        let Some(Inbound::Malformed(frame)) = inbound.next().await else {
+            panic!("the unreadable frame is still reported");
+        };
+        assert_eq!(frame.kind, MalformedKind::NotJson);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn unreadable_frame_without_id_still_times_out() {
+    guard(async {
+        let (parts, mut peer) = Peer::pair().await;
+        let (client, _inbound) = Client::start(parts);
+        let caller = client.clone();
+        let call = tokio::spawn(async move {
+            caller
+                .call_raw(
+                    "profiles.list",
+                    json!({}),
+                    CallOptions {
+                        timeout: Some(Duration::from_millis(300)),
+                    },
+                )
+                .await
+        });
+        let _request = peer.recv_json().await;
+        peer.send_text(r#"{"jsonrpc":"2.0","result":{"a":tru}}"#)
+            .await;
+        let err = call_err(call.await.expect("call task ended"));
+        assert!(matches!(err, CallError::TimedOut { .. }));
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn caller_drop_removes_the_entry() {
     guard(async {
         let (parts, mut peer) = Peer::pair().await;

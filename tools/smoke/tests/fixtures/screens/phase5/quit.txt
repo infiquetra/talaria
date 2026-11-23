@@ -1,5 +1,5 @@
 # recorded
-· Ultracode is off for this session. Skill: not found in profile fixture.
+· Hivecode is off for this session. Skill: not found in profile fixture.
 > Reply with one word.
 <token>
 The user asks a simple arithmetic question and wants only the number. The system prompt says never call tools to

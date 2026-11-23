@@ -1,5 +1,8 @@
 # Updating Hermes compatibility
 
+Talaria does not pin Hermes and nothing here is required. These commands update the record of
+the Hermes release the contract is generated from and tested against, when a maintainer chooses to.
+
 Hermes has no release schedule. These commands take an explicit tag and set no
 polling schedule. They use the last `[[release]]` entry in
 `crates/hermes-contract/compat.toml`; the Talaria version and compatibility floor

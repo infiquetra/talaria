@@ -1,10 +1,13 @@
 use ratatui::layout::Rect;
-use talaria_core::profiles::{FormField, FormView, Panel, ProfilesView};
+use talaria_core::profiles::{FormField, FormView, Panel, ProfilesView, TypedInput};
 use unicode_width::UnicodeWidthStr;
 
+use super::render::wrapped;
 use crate::history::sanitize;
 
-pub(super) fn lines(panel: &Panel) -> Vec<String> {
+/// The panel's lines at this width. Only the delete and rename lines wrap: what a delete
+/// removes must stay readable in a narrow window.
+pub(super) fn lines(panel: &Panel, width: usize) -> Vec<String> {
     match panel {
         Panel::Form(form) => form_lines(form),
         Panel::Review(lines) => {
@@ -23,8 +26,26 @@ pub(super) fn lines(panel: &Panel) -> Vec<String> {
             out.push("Enter review · Esc cancel".into());
             out
         }
+        Panel::Delete(input) | Panel::Rename(input) => {
+            let mut out = typed_lines(input, width);
+            out.push(format!("> {}", input.text));
+            if let Some(error) = &input.error {
+                out.extend(wrapped(error, width));
+            }
+            out.push(input.footer.clone());
+            out
+        }
         _ => Vec::new(),
     }
+}
+
+/// The wrapped lines above a delete or rename input.
+fn typed_lines(input: &TypedInput, width: usize) -> Vec<String> {
+    input
+        .lines
+        .iter()
+        .flat_map(|line| wrapped(line, width))
+        .collect()
 }
 
 fn form_lines(form: &FormView) -> Vec<String> {
@@ -88,6 +109,12 @@ pub fn cursor_position(view: &ProfilesView, area: Rect) -> Option<(u16, u16)> {
             2 + u16::from(form.name_error.is_some()),
         ),
         Panel::DescriptionInput { text, cursor, .. } => ("> ", text, *cursor, 1),
+        Panel::Delete(input) | Panel::Rename(input) => (
+            "> ",
+            &input.text,
+            input.cursor,
+            u16::try_from(typed_lines(input, usize::from(area.width)).len()).ok()?,
+        ),
         _ => return None,
     };
     let before: String = text.chars().take(cursor).collect();

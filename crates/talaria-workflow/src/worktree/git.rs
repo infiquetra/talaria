@@ -7,6 +7,9 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
+mod manage;
+pub use manage::{CleanupAction, CleanupEntry, IgnoredEntry, IgnoredKind, WorktreeReport};
+
 /// One provider owns a run's provenance and serialises its local Git operations.
 pub struct GitWorktrees {
     run_dir: PathBuf,
@@ -30,11 +33,21 @@ pub struct WorktreeInfo {
     pub dirty: bool,
 }
 
+/// Every git call here may run in a folder an agent wrote to. Repository configuration there can
+/// name programs (`core.fsmonitor`), so the options that could run one are switched off and no
+/// optional locks are taken, as the leftover-edits check in the runner does.
 fn run(repo: &Path, args: &[&OsStr]) -> Result<Output, String> {
     Command::new("git")
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+        ])
         .arg("-C")
         .arg(repo)
         .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -94,9 +107,17 @@ fn present(path: &Path) -> bool {
 }
 
 fn dirty(path: &Path) -> bool {
-    checked(path, &["status".as_ref(), "--porcelain".as_ref()])
-        .map(|out| !out.is_empty())
-        .unwrap_or(true)
+    checked(
+        path,
+        &[
+            "status".as_ref(),
+            "--porcelain".as_ref(),
+            "--untracked-files=normal".as_ref(),
+            "--ignore-submodules=all".as_ref(),
+        ],
+    )
+    .map(|out| !out.is_empty())
+    .unwrap_or(true)
 }
 
 impl GitWorktrees {
@@ -231,7 +252,8 @@ impl GitWorktrees {
         }
     }
 
-    fn prune_if_registered(repo: &Path, folder: &Path) -> Result<(), String> {
+    /// Whether Git's worktree inventory has an entry for `folder` (which may no longer exist).
+    fn registered(repo: &Path, folder: &Path) -> Result<bool, String> {
         let output = run(
             repo,
             &[
@@ -256,7 +278,7 @@ impl GitWorktrees {
             )?;
             legacy_paths(&lines, folder)?
         };
-        let registered = paths.iter().any(|bytes| {
+        Ok(paths.iter().any(|bytes| {
             #[cfg(unix)]
             let path = {
                 use std::os::unix::ffi::OsStringExt;
@@ -265,8 +287,11 @@ impl GitWorktrees {
             #[cfg(not(unix))]
             let path = PathBuf::from(String::from_utf8_lossy(bytes).as_ref());
             canonical(&path).as_deref() == Ok(folder)
-        });
-        if registered {
+        }))
+    }
+
+    fn prune_if_registered(repo: &Path, folder: &Path) -> Result<(), String> {
+        if Self::registered(repo, folder)? {
             checked(repo, &["worktree".as_ref(), "prune".as_ref()])?;
         }
         Ok(())

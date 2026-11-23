@@ -32,10 +32,10 @@ async fn replay_reuses_every_finished_review_agent() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn replay_reuses_every_finished_ultracode_agent() {
+async fn replay_reuses_every_finished_hivecode_agent() {
     let source = BUILTINS
         .iter()
-        .find(|b| b.name == "ultracode")
+        .find(|b| b.name == "hivecode")
         .unwrap()
         .source;
     let review = BUILTINS
@@ -44,10 +44,10 @@ async fn replay_reuses_every_finished_ultracode_agent() {
         .unwrap()
         .source;
     let resolver = Arc::new(MapResolver::new().with_name("review-branch", review));
-    let first = backend(include_str!("../data/builtins/ultracode/happy.mock.json"));
+    let first = backend(include_str!("../data/builtins/hivecode/happy.mock.json"));
     let mut cfg = config();
     cfg.args = Some(
-        serde_json::from_str(include_str!("../data/builtins/ultracode/happy.args.json")).unwrap(),
+        serde_json::from_str(include_str!("../data/builtins/hivecode/happy.args.json")).unwrap(),
     );
     let (out, events) = execute(source, cfg.clone(), first.clone(), resolver.clone()).await;
     let original = result(out);

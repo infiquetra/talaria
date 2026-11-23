@@ -124,9 +124,18 @@ async fn respond_params_have_exactly_four_keys() {
     assert_eq!(clarify_effects, vec![respond_clarify(&clarify_key, "prod")]);
 
     let mut service = PromptService::new(submission_ids());
-    for effect in approval_effects.into_iter().chain(clarify_effects) {
+    let answered = [approval_key.clone(), clarify_key.clone()];
+    for (effect, key) in approval_effects
+        .into_iter()
+        .chain(clarify_effects)
+        .zip(&answered)
+    {
         let executed = service.execute(&client, effect).await;
-        assert!(executed.events.is_empty());
+        // A resolved reply says the answer took effect, so the session can seal the prompt.
+        assert_eq!(
+            executed.events,
+            vec![Event::AnswerAccepted { key: key.clone() }]
+        );
         assert!(executed.notices.is_empty());
     }
 
@@ -180,12 +189,15 @@ async fn note_becomes_submit_event_only_after_resolved() {
         .await;
     assert_eq!(
         executed.events,
-        vec![Event::Submit {
-            text: NOTE.to_owned(),
-            display: NOTE.to_owned(),
-            submission_id: "sub-1".to_owned(),
-            attachments: Vec::new(),
-        }]
+        vec![
+            Event::AnswerAccepted { key: first.clone() },
+            Event::Submit {
+                text: NOTE.to_owned(),
+                display: NOTE.to_owned(),
+                submission_id: "sub-1".to_owned(),
+                attachments: Vec::new(),
+            },
+        ]
     );
     assert!(executed.notices.is_empty());
 
@@ -196,12 +208,17 @@ async fn note_becomes_submit_event_only_after_resolved() {
         .await;
     assert_eq!(
         executed.events,
-        vec![Event::Submit {
-            text: "second note".to_owned(),
-            display: "second note".to_owned(),
-            submission_id: "sub-2".to_owned(),
-            attachments: Vec::new(),
-        }]
+        vec![
+            Event::AnswerAccepted {
+                key: second.clone()
+            },
+            Event::Submit {
+                text: "second note".to_owned(),
+                display: "second note".to_owned(),
+                submission_id: "sub-2".to_owned(),
+                attachments: Vec::new(),
+            },
+        ]
     );
 
     // An answer with no note gives no follow-up prompt.
@@ -209,7 +226,10 @@ async fn note_becomes_submit_event_only_after_resolved() {
     let executed = service
         .execute(&client, respond_approval(&plain, "once"))
         .await;
-    assert!(executed.events.is_empty());
+    assert_eq!(
+        executed.events,
+        vec![Event::AnswerAccepted { key: plain.clone() }]
+    );
 
     // Nothing was sent as a prompt by the service itself.
     assert!(mock.requests("prompt.submit").is_empty());

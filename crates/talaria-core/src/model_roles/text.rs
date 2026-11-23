@@ -29,7 +29,16 @@ pub const REVIEW_FOOTER: &str = "Enter apply  Esc back";
 pub const KEY_SET: &str = "[key set]";
 pub const NOT_SET: &str = "(not set)";
 pub const NOT_IN_LIST: &str = "(not in the model list)";
+/// The facts of a staged model: the loaded lists do not carry them, Hermes reports them later.
+pub(super) const CONTEXT_AFTER_SAVE: &str = "Context window: shown after saving";
+pub(super) const CAPABILITIES_AFTER_SAVE: &str = "Capabilities: shown after saving";
 pub const NOT_SET_UP: &str = "not set up: add it under Providers";
+/// The short mark on a provider row; the status line gives the reason while it is selected.
+pub const NOT_SET_UP_MARK: &str = "not set up";
+/// Providers manages the connected profile, so another profile's key is added after connecting.
+pub const NOT_SET_UP_OTHER: &str =
+    "not set up for this profile: connect to it from /profiles, then add it under Providers";
+pub const CURRENT_ROUTE: &str = "(current)";
 pub const LOADING_MODELS: &str = "loading models...";
 pub const UNAVAILABLE: &str = "This Hermes has no {route}.";
 pub const NO_ANSWER: &str = "Hermes did not answer. Ctrl+R to retry.";

@@ -13,7 +13,7 @@ talaria workflow builtins show review-branch
 talaria workflow builtins install
 talaria workflow builtins install --force --json
 talaria workflow builtins check review-branch --staffing ./staffing.toml
-talaria workflow builtins check ultracode --args '{"designers":2}'
+talaria workflow builtins check hivecode --args '{"designers":2}'
 ```
 
 `list` reports phases, role defaults, toolsets, worktree use, the default agent
@@ -36,6 +36,9 @@ level are errors. Each role can be overridden through `args.tiers`; list roles
 accept one to five tier names and cycle through them. Tier names match
 `^[a-z][a-z0-9_-]{0,31}$`. Roles select tiers, never fixed models or providers.
 Results have a stable set of keys even for empty, failed-agent or blocked paths.
+When the run's budget refuses or stops an agent, a workflow starts no further agents
+and returns what it has so far with `status` `budget-exhausted`, so the run ends as
+budget exhausted, not failed.
 Agent and repository material is capped and fenced as evidence, not instructions.
 Replay uses the recorded results and starts no backend calls.
 
@@ -71,8 +74,8 @@ One reviewer runs per lens. Findings are deduplicated within each lens, numbered
 once, then ordered by severity, lens and number. Up to `maxFindings` are verified;
 the rest are `not_verified`. A failed verifier gives `uncertain`, and failed
 reviewers appear in `reviewers_failed`. A failed collector or all reviewers
-failing ends the run with an error. The result includes `status` (`reviewed` or
-`nothing-to-review`), refs, commits, `files_reviewed`, `truncated`, `lenses`,
+failing ends the run with an error. The result includes `status` (`reviewed`,
+`nothing-to-review` or `budget-exhausted`), refs, commits, `files_reviewed`, `truncated`, `lenses`,
 `confirmed`, `uncertain`, `refuted`, `not_verified`, `reviewers_failed`, `summary`,
 `ranked` and `themes`. Unknown synthesis ids are discarded and omitted ids appended.
 Default maximum: **17 agents**; `2 + lenses.length + maxFindings`, at most **27**.
@@ -106,8 +109,8 @@ trailing slash. Sources merge by exact normalized location and rank by distinct
 searcher count, kind and location. Claims survive only when every cited source
 was actually read and accessible.
 
-The result contains `status` (`answered` or `no-sources`), `question`, `answer`,
-`claims`, `removed_claims` with reasons, `open_questions`, `sources_read`,
+The result contains `status` (`answered`, `no-sources` or `budget-exhausted`),
+`question`, `answer`, `claims`, `removed_claims` with reasons, `open_questions`, `sources_read`,
 `sources_unread` and `unavailable`. No accessible reads means no synthesizer;
 a failed synthesizer after accessible reads fails the run.
 Default maximum: **13 agents**; `2 + searchers + maxReads`, up to five searchers
@@ -137,12 +140,12 @@ a completed suite and no new failing ids outside the baseline. A nonzero suite
 exit with no named failures is unverified. Only a valid commit starts a verifier.
 
 The result includes `status` (`fixed-all`, `partial`, `none-fixed`, `no-failures`,
-`unparsed-failure`), `test_command`, `exit_code`, `excerpt`, `failing_total`,
+`unparsed-failure`, `budget-exhausted`), `test_command`, `exit_code`, `excerpt`, `failing_total`,
 `baseline`, per-test `attempted` records, `not_attempted` and `next_steps`.
 Nothing is merged or pushed. Review each local branch before accepting it.
 Default maximum: **11 agents**; `1 + 2 * maxFixes`, at most **21**.
 
-## ultracode
+## hivecode
 
 Surveys code, compares independent designs, chooses a plan, implements it tests
 first, then calls `review-branch` as a child workflow. Phases: Understand, Design,
@@ -169,8 +172,8 @@ proposal bypasses the chooser. The implementer records its base commit, writes
 and runs failing tests before code, runs the suite, and commits on its own branch.
 A partial implementation with valid distinct commits is still reviewed.
 
-The result contains `status` (`implemented` when review was attempted, otherwise
-`blocked`), `task`, `design`, proposal titles, `implementation`, `review`,
+The result contains `status` (`implemented` when review was attempted,
+`budget-exhausted` when the budget ended it first, otherwise `blocked`), `task`, `design`, proposal titles, `implementation`, `review`,
 `review_error` and `next_steps`. Missing child scripts produce the installation
 hint `run talaria workflow builtins install`. A review failure preserves the
 reviewable implementation. Nothing is merged or pushed.
@@ -218,6 +221,6 @@ by default only when there is no process/session yolo, approval-mode bypass or
 saved pattern approval; `approvals.single_query_mode` can also enable approval.
 Plain `git push`, `git commit` and `git merge --ff-only` are not dangerous-command
 patterns in the pinned Hermes release. Prompts forbid pushing; only fixers and
-the ultracode implementer may commit, on their current local branch. No built-in
+the hivecode implementer may commit, on their current local branch. No built-in
 merges into the operator's checkout or pushes. Review commits yourself before
 accepting them. Secret-shaped diff text may be masked in stored Hermes results.

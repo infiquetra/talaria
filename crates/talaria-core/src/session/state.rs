@@ -140,6 +140,9 @@ pub struct SessionState {
     pub(crate) final_prefix: usize,
     pub(crate) turn: TurnState,
     pub(crate) turn_start: usize,
+    /// The snapshot this state came from showed a turn already running, so that turn's earlier
+    /// cells sit before `turn_start` and its tools are not in `tools`. A new turn clears it.
+    pub(crate) resumed_running: bool,
     pub(crate) assistant: Option<usize>,
     pub(crate) reasoning: Option<usize>,
     pub(crate) had_reasoning: bool,
@@ -197,6 +200,7 @@ impl SessionState {
             final_prefix: 0,
             turn: TurnState::Idle,
             turn_start: 0,
+            resumed_running: false,
             assistant: None,
             reasoning: None,
             had_reasoning: false,
@@ -293,6 +297,13 @@ impl SessionState {
     /// reply streams after it. The stored positions of later cells move with them.
     pub fn insert_final(&mut self, cell: Cell) {
         let at = self.final_prefix.min(self.cells.len());
+        self.insert_cell_at(at, cell);
+    }
+
+    /// Insert one cell at `at`, never inside the final prefix. The stored positions of later
+    /// cells move with them.
+    pub(crate) fn insert_cell_at(&mut self, at: usize, cell: Cell) {
+        let at = at.clamp(self.final_prefix.min(self.cells.len()), self.cells.len());
         self.cells.insert(at, cell);
         let shift = |index: &mut usize| {
             if *index >= at {
@@ -330,6 +341,19 @@ impl SessionState {
     /// Idle, running, or finished.
     pub fn turn(&self) -> &TurnState {
         &self.turn
+    }
+
+    /// The gateway can no longer finish the open turn: it lost the session, or the link gave up.
+    /// What streamed is sealed, running tools are marked unfinished, and no turn is left open,
+    /// so nothing waits on a turn that will never end.
+    pub fn abandon_turn(&mut self) {
+        if self.turn != TurnState::Running {
+            return;
+        }
+        self.seal_all();
+        self.advance_prefix();
+        self.turn = TurnState::Idle;
+        self.activity = None;
     }
 
     /// Latest `thinking.delta` text. Empty text clears it.
@@ -447,6 +471,23 @@ impl SessionState {
             kind,
             text,
             detail,
+            body: None,
+        }));
+    }
+
+    /// A notice that stands for a turn Hermes wrote, keeping what it handed the agent.
+    pub(crate) fn notice_with_body(
+        &mut self,
+        kind: NoticeKind,
+        text: String,
+        body: Option<String>,
+    ) {
+        self.cells.push(Cell::Notice(NoticeCell {
+            id: self.next_id(),
+            kind,
+            text,
+            detail: None,
+            body,
         }));
     }
 
@@ -497,6 +538,7 @@ impl SessionState {
     pub(crate) fn begin_turn(&mut self) {
         self.seal_all();
         self.turn_start = self.cells.len();
+        self.resumed_running = false;
         self.turn = TurnState::Running;
         self.tools.clear();
         self.had_reasoning = false;

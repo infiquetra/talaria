@@ -11,6 +11,7 @@ use talaria_workflow::journal::{CallOutcome, Record, RecordLine};
 use talaria_workflow::progress::live::{
     GatewayFailure, NodeKey, ProgressInput, ProgressKey, ProgressState, update,
 };
+use talaria_workflow::progress::text::run_line;
 use talaria_workflow::progress::{
     AgentState, ControlOutcome, ControlRequest, Filter, ProgressEffect, RunProgress,
 };
@@ -197,6 +198,293 @@ fn live_events_enrich_without_creating_agents() {
         [ProgressEffect::AttachAndReconcile { session_id }] if session_id == "sess-running"
     ));
     assert_eq!(state.progress().agents().len(), 1);
+}
+
+/// Decode one gateway frame the way the link does, so the test sends real event shapes.
+fn frame(value: serde_json::Value) -> Notification {
+    hermes_contract::events::EventFrame::from_params(&value)
+        .expect("frame decodes")
+        .notification
+}
+
+fn agent_visible(state: &ProgressState, key: &str) -> bool {
+    state
+        .visible_nodes()
+        .iter()
+        .any(|node| matches!(&node.key, NodeKey::Agent(k) if k == key))
+}
+
+#[test]
+fn opening_selects_the_first_agent_row() {
+    let state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    assert_eq!(state.selection, NodeKey::Agent(lines::KEY_RUNNING.into()));
+}
+
+#[test]
+fn left_never_collapses_the_run_row() {
+    // A state that has not been through the reducer still starts on the hidden run row.
+    let mut state = ProgressState::new(RunProgress::from_records(
+        &lines::manifest(),
+        &lines::live_running(lines::KEY_RUNNING, "sess-running", 3),
+    ));
+    update(&mut state, ProgressInput::Key(ProgressKey::Left));
+    assert!(agent_visible(&state, lines::KEY_RUNNING));
+    assert!(!state.collapsed.contains(&NodeKey::Run));
+
+    // Climbing to the top and pressing Left repeatedly folds the phase at most.
+    for _ in 0..5 {
+        update(&mut state, ProgressInput::Key(ProgressKey::Up));
+    }
+    for _ in 0..4 {
+        update(&mut state, ProgressInput::Key(ProgressKey::Left));
+    }
+    assert!(!state.collapsed.contains(&NodeKey::Run));
+    assert!(
+        state.visible_nodes().len() > 1,
+        "{:?}",
+        state.visible_nodes()
+    );
+    update(&mut state, ProgressInput::Key(ProgressKey::Right));
+    assert!(agent_visible(&state, lines::KEY_RUNNING));
+}
+
+#[test]
+fn reopen_clears_the_footer_collapse_and_confirmation_but_keeps_the_selection() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    state.collapsed.insert(NodeKey::Run);
+    state
+        .collapsed
+        .insert(NodeKey::Agent(lines::KEY_RUNNING.into()));
+    update(&mut state, ProgressInput::Key(ProgressKey::StopRun));
+    assert!(state.confirmation_text().is_some());
+    state.footer = Some("run already finished".into());
+    update(&mut state, ProgressInput::Reopen { connected: true });
+    assert_eq!(state.footer, None);
+    assert_eq!(state.confirmation_text(), None);
+    assert!(state.collapsed.is_empty());
+    assert!(agent_visible(&state, lines::KEY_RUNNING));
+    assert_eq!(state.selection, NodeKey::Agent(lines::KEY_RUNNING.into()));
+}
+
+#[test]
+fn footer_expires_after_five_seconds() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(&mut state, ProgressInput::Connected(false));
+    update(&mut state, ProgressInput::Clock { now_ms: 1_000 });
+    update(&mut state, ProgressInput::Key(ProgressKey::OpenAgent));
+    assert_eq!(
+        state.footer.as_deref(),
+        Some("gateway disconnected — showing the journal")
+    );
+    update(&mut state, ProgressInput::Clock { now_ms: 5_900 });
+    assert!(state.footer.is_some(), "a footer lasts five seconds");
+    let before = state.revision;
+    update(&mut state, ProgressInput::Clock { now_ms: 6_100 });
+    assert_eq!(state.footer, None);
+    assert!(state.revision > before, "clearing the footer redraws");
+}
+
+#[test]
+fn session_less_and_foreign_events_never_touch_the_footer() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    for (session, event) in [
+        (
+            "",
+            frame(json!({"type": "platforms.changed", "session_id": "", "payload": {}})),
+        ),
+        (
+            "",
+            frame(json!({"type": "groups.changed", "session_id": "", "payload": {}})),
+        ),
+        (
+            "sess-other",
+            frame(json!({"type": "status.update", "session_id": "sess-other",
+                "payload": {"kind": "status", "text": "working"}})),
+        ),
+        (
+            "sess-running",
+            frame(
+                json!({"type": "thinking.delta", "session_id": "sess-running",
+                "payload": {"text": "hmm"}}),
+            ),
+        ),
+        (
+            "sess-running",
+            frame(
+                json!({"type": "sessions.changed", "session_id": "sess-running",
+                "payload": {}}),
+            ),
+        ),
+    ] {
+        update(
+            &mut state,
+            ProgressInput::Gateway {
+                session_id: session.into(),
+                event,
+            },
+        );
+        assert_eq!(state.footer, None, "{session}");
+    }
+    assert!(state.take_diagnostics().is_empty());
+}
+
+#[test]
+fn unknown_type_is_recorded_once_per_connection_not_shown() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    let unknown = || ProgressInput::Gateway {
+        session_id: "sess-running".into(),
+        event: frame(
+            json!({"type": "groups.changed", "session_id": "sess-running",
+            "payload": {}}),
+        ),
+    };
+    update(&mut state, unknown());
+    update(&mut state, unknown());
+    assert_eq!(state.footer, None);
+    let recorded = state.take_diagnostics();
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert!(recorded[0].contains("groups.changed"), "{recorded:?}");
+    assert!(state.take_diagnostics().is_empty());
+    update(&mut state, ProgressInput::Connected(false));
+    update(&mut state, ProgressInput::Connected(true));
+    update(&mut state, unknown());
+    assert_eq!(state.take_diagnostics().len(), 1);
+}
+
+#[test]
+fn run_total_includes_live_usage() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(
+        &mut state,
+        ProgressInput::Gateway {
+            session_id: "sess-running".into(),
+            event: Notification::SessionUsage(SessionUsagePayload {
+                total_tokens: Some(2_500),
+                ..Default::default()
+            }),
+        },
+    );
+    assert_eq!(state.progress().run().tokens, 2_500);
+    assert!(
+        run_line(&state).contains("2.5k tokens"),
+        "{}",
+        run_line(&state)
+    );
+}
+
+#[test]
+fn a_live_reading_shows_its_cache_reads_apart_from_the_tokens_the_budget_counts() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(
+        &mut state,
+        ProgressInput::Gateway {
+            session_id: "sess-running".into(),
+            event: Notification::SessionUsage(SessionUsagePayload {
+                total_tokens: Some(9_000),
+                cache_read_tokens: Some(8_500),
+                ..Default::default()
+            }),
+        },
+    );
+    let run = state.progress().run();
+    assert_eq!((run.tokens, run.cache_read), (500, 8_500));
+    assert!(
+        run_line(&state).contains("500 tokens + 8.5k cache reads"),
+        "{}",
+        run_line(&state)
+    );
+}
+
+#[test]
+fn free_lock_marks_a_running_journal_as_not_running() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(&mut state, ProgressInput::Clock { now_ms: 2_000 });
+    state.last_journal_seen_ms = 2_000;
+    update(&mut state, ProgressInput::Runner { alive: false });
+    // A resuming runner takes the lock only after its preflight, so one free probe is not enough.
+    assert!(!state.no_live_runner, "{}", run_line(&state));
+    update(&mut state, ProgressInput::Clock { now_ms: 12_000 });
+    update(&mut state, ProgressInput::Tick);
+    assert!(state.no_live_runner);
+    assert!(
+        run_line(&state).contains(&format!(
+            "runner not running — talaria workflow resume {} continues it",
+            lines::RUN_ID
+        )),
+        "{}",
+        run_line(&state)
+    );
+    // A held lock means a live runner even after a long journal silence.
+    update(&mut state, ProgressInput::Runner { alive: true });
+    update(&mut state, ProgressInput::Clock { now_ms: 122_000 });
+    assert!(!state.no_live_runner, "{}", run_line(&state));
+}
+
+#[test]
+fn a_new_run_is_not_called_dead_before_its_runner_takes_the_lock() {
+    let mut state = ProgressState::blank(&lines::manifest());
+    assert_eq!(state.progress().last_seq, 0);
+    update(&mut state, ProgressInput::Clock { now_ms: 1_000 });
+    state.opened_at_ms = 1_000;
+    state.last_journal_seen_ms = 1_000;
+    update(&mut state, ProgressInput::Runner { alive: false });
+    assert!(!state.no_live_runner, "{}", run_line(&state));
+    update(&mut state, ProgressInput::Clock { now_ms: 30_000 });
+    update(&mut state, ProgressInput::Tick);
+    assert!(
+        !run_line(&state).contains("runner not running"),
+        "{}",
+        run_line(&state)
+    );
+    // A runner that never wrote its first record within a minute is gone.
+    update(&mut state, ProgressInput::Clock { now_ms: 61_000 });
+    update(&mut state, ProgressInput::Tick);
+    assert!(state.no_live_runner, "{}", run_line(&state));
+}
+
+#[test]
+fn an_unreadable_lock_never_calls_a_quiet_runner_dead() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(&mut state, ProgressInput::Clock { now_ms: 1_000 });
+    state.opened_at_ms = 1_000;
+    state.last_journal_seen_ms = 1_000;
+    state.pending_controls.pause = Some(talaria_workflow::progress::PendingRequest {
+        v: 1,
+        kind: "pause".into(),
+        key: None,
+        at_ms: 1_500,
+    });
+    // The runner journals the paused gate once, then stays quiet; no Runner input arrives.
+    update(&mut state, ProgressInput::Clock { now_ms: 2_000 });
+    state.last_journal_seen_ms = 2_000;
+    for now_ms in [12_000, 30_000, 130_000] {
+        update(&mut state, ProgressInput::Clock { now_ms });
+        update(&mut state, ProgressInput::Tick);
+        assert!(!state.no_live_runner, "{}", run_line(&state));
+        assert!(
+            !state
+                .footer
+                .as_deref()
+                .is_some_and(|f| f.contains("no runner answered")),
+            "{:?}",
+            state.footer
+        );
+    }
+}
+
+#[test]
+fn active_filter_is_named_in_the_header() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    assert!(!run_line(&state).contains("filter:"));
+    for _ in 0..3 {
+        update(&mut state, ProgressInput::Key(ProgressKey::CycleFilter));
+    }
+    assert_eq!(state.filter, Filter::Failed);
+    assert!(
+        run_line(&state).contains("filter: failed"),
+        "{}",
+        run_line(&state)
+    );
 }
 
 #[test]
@@ -411,6 +699,7 @@ fn journal_settlement_reports_whether_completion_beat_pending_interrupt() {
                         CallOutcome::Completed {
                             value: Some(json!("done")),
                             value_ref: None,
+                            cut_short: None,
                         }
                     } else {
                         CallOutcome::Failed {
@@ -623,4 +912,83 @@ fn picker_agrees_with_runner_discovery() {
     let picker = ProgressPicker::load(&runs);
     assert_eq!(picker.rows(), discovered.as_slice());
     assert_eq!(picker.empty_message(), None);
+}
+
+/// Every event Hermes sent in a recorded live run, in order, as it would reach the view for the
+/// agent whose session is `session`.
+fn recorded_events(name: &str, session: &str) -> Vec<Notification> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/hermes/recorded")
+        .join(name);
+    std::fs::read_to_string(path)
+        .expect("recorded fixture")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|row| row["kind"] == "frame" && row["frame"]["method"] == "event")
+        .filter_map(|row| {
+            let mut params = row["frame"]["params"].clone();
+            params["session_id"] = json!(session);
+            hermes_contract::events::EventFrame::from_params(&params).ok()
+        })
+        .map(|frame| frame.notification)
+        .collect()
+}
+
+#[test]
+fn a_recorded_run_with_agent_steps_logs_nothing_and_shows_the_last_step() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    let events = recorded_events("live_schema_agent_returns_object.jsonl", "sess-running");
+    let steps = events
+        .iter()
+        .filter(|event| matches!(event, Notification::Unknown(p) if p["type"] == "agent.step"))
+        .count();
+    assert_eq!(steps, 14, "the fixture carries its agent.step frames");
+    for event in events {
+        update(
+            &mut state,
+            ProgressInput::Gateway {
+                session_id: "sess-running".into(),
+                event,
+            },
+        );
+    }
+    // Hermes's ordinary step event is known: no diagnostic, and no line in the view.
+    assert_eq!(state.take_diagnostics(), Vec::<String>::new());
+    let agent = state.progress.agent(lines::KEY_RUNNING).expect("agent");
+    assert_eq!(agent.step, Some(14));
+    assert_eq!(agent.progress_note().as_deref(), Some("step 14"));
+}
+
+#[test]
+fn a_new_step_changes_the_view_and_a_repeat_does_not() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    let step = |n: u64| ProgressInput::Gateway {
+        session_id: "sess-running".into(),
+        event: frame(json!({"type": "agent.step", "session_id": "sess-running",
+            "payload": {"iteration": n}})),
+    };
+    update(&mut state, step(1));
+    let revision = state.revision;
+    update(&mut state, step(1));
+    assert_eq!(state.revision, revision);
+    update(&mut state, step(2));
+    assert!(state.revision > revision);
+}
+
+#[test]
+fn the_other_known_undrawn_events_are_silent_too() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    for name in hermes_contract::events::KNOWN_UNDRAWN_EVENTS {
+        update(
+            &mut state,
+            ProgressInput::Gateway {
+                session_id: "sess-running".into(),
+                // Built directly: some of these decode to a known type only with a full payload.
+                event: Notification::Unknown(
+                    json!({"type": name, "session_id": "sess-running", "payload": {}}),
+                ),
+            },
+        );
+    }
+    assert_eq!(state.take_diagnostics(), Vec::<String>::new());
 }

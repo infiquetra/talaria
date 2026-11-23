@@ -169,3 +169,52 @@ fn resolve_script_arg_rules() {
     );
     assert!(resolve_script_arg("no-such-builtin", d).is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn one_unreadable_builtin_is_kept_with_its_reason_and_the_rest_still_install() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = setup();
+    let d = t.path().join("workflows");
+    fs::create_dir(&d).unwrap();
+    // The second built-in in the list exists but cannot be read.
+    let blocked = &BUILTINS[1];
+    let path = d.join(format!("{}.js", blocked.name));
+    fs::write(&path, "kept as it is").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read(&path).is_ok() {
+        return; // running with rights that ignore permissions
+    }
+    for mode in [InstallMode::MissingOnly, InstallMode::Overwrite] {
+        let reports = install(&d, mode).unwrap();
+        assert_eq!(reports.len(), BUILTINS.len());
+        for (builtin, report) in BUILTINS.iter().zip(&reports) {
+            assert_eq!(report.name, builtin.name);
+            if builtin.name == blocked.name {
+                assert_eq!(report.action, InstallAction::KeptModified);
+                assert!(
+                    report
+                        .reason
+                        .as_deref()
+                        .is_some_and(|r| r.starts_with("could not be read: ")),
+                    "{:?}",
+                    report.reason
+                );
+            } else {
+                assert!(report.reason.is_none());
+                assert!(
+                    matches!(
+                        report.action,
+                        InstallAction::Created | InstallAction::Unchanged
+                    ),
+                    "{}: {:?}",
+                    builtin.name,
+                    report.action
+                );
+                assert!(d.join(format!("{}.js", builtin.name)).is_file());
+            }
+        }
+    }
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "kept as it is");
+}

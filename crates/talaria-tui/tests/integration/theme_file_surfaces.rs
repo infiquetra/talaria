@@ -206,14 +206,22 @@ fn draw(file: &ThemeFile) -> vt100::Parser {
             base_style: Style::default(),
         },
     );
-    lines.extend(theme::cells::ThemedCells { theme: &theme }.lines(
-        &Cell::Reasoning(ReasoningCell {
-            id: CellId::new(1),
-            text: "Reasoning prose".into(),
-            sealed: true,
-        }),
-        100,
-    ));
+    lines.extend(
+        theme::cells::ThemedCells {
+            theme: &theme,
+            transcript_key: None,
+        }
+        .lines(
+            &Cell::Reasoning(ReasoningCell {
+                id: CellId::new(1),
+                text: "Reasoning prose".into(),
+                sealed: true,
+                latest_step: false,
+                no_reply: false,
+            }),
+            100,
+        ),
+    );
     lines.extend(tool_lines(
         &ToolCell {
             id: CellId::new(2),

@@ -605,6 +605,279 @@ async fn budget_skips_queued_and_resumed_fresh_calls_but_reattach_proceeds() {
     };
     assert!(!s.retry_after_failure(&request(4), &l, &last, 0));
 }
+fn overflow() -> Value {
+    json!({"failure_reason":"context_overflow"})
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn the_restart_count_is_read_from_the_journal_and_ignores_other_retries() {
+    let c = Context::new(data(), 10).await;
+    let (q, l) = (request(0), launch("fixture", "alpha"));
+    let key = journal_key(&q.call_id, &l);
+    let rate = json!({"failure_reason":"rate_limit"});
+    // A rate-limit retry, two overflow restarts, then an overflow nobody restarted.
+    c.record(&q, &l, 0, vec![(cost(0.0, "included"), rate)], true)
+        .await;
+    assert_eq!(c.journal.history(&key).unwrap().overflow_restarts(), 0);
+    for attempt in 1..3 {
+        c.record(
+            &q,
+            &l,
+            attempt,
+            vec![(cost(0.0, "included"), overflow())],
+            true,
+        )
+        .await;
+    }
+    c.record(&q, &l, 3, vec![(cost(0.0, "included"), overflow())], false)
+        .await;
+    // A fresh history reads the same numbers: a resumed run starts from the journal.
+    let h = c.journal.history(&key).unwrap();
+    assert_eq!(h.overflow_restarts(), 2);
+    assert_eq!(h.overflowed(), 3);
+    assert!(h.previous_attempt_overflowed());
+    // The route check needs the bound session; a call the journal knows nothing about has none,
+    // so its route cannot be checked and a restart is refused.
+    assert!(h.route().is_some());
+    assert!(
+        c.journal
+            .history("a call the journal never saw")
+            .is_ok_and(|h| h.route().is_none())
+    );
+    // An attempt that a resume runs again after a plain failed finish follows an overflow too.
+    c.record(&q, &l, 4, vec![(cost(0.0, "included"), overflow())], false)
+        .await;
+    assert!(
+        c.journal
+            .history(&key)
+            .unwrap()
+            .previous_attempt_overflowed()
+    );
+    // An attempt after a rate-limit retry is not a restart after an overflow.
+    c.record(
+        &q,
+        &l,
+        5,
+        vec![(
+            cost(0.0, "included"),
+            json!({"failure_reason":"rate_limit"}),
+        )],
+        true,
+    )
+    .await;
+    c.record(&q, &l, 6, vec![(cost(0.0, "included"), json!({}))], false)
+        .await;
+    let h = c.journal.history(&key).unwrap();
+    assert_eq!(h.overflow_restarts(), 2);
+    assert!(!h.previous_attempt_overflowed());
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn the_scheduler_authorises_a_restart_only_while_the_budget_has_room() {
+    let mut c = Context::new(data(), 10).await;
+    c.table.budget.money_usd = Some(0.02);
+    let (s, mut events) = c.start().await;
+    let (q, l) = (request(0), launch("fixture", "alpha"));
+    let last = SettledTurn {
+        turn: 0,
+        outcome: "failed".into(),
+        final_text: None,
+        result_meta: overflow(),
+        usage: None,
+    };
+    assert!(s.authorise_restart(&q, &l, &last, 0, 1, 3));
+    assert!(matches!(
+        events.0.try_recv().unwrap().event,
+        SchedulerEvent::AgentRestarted { restart: 1, max: 3, attempt: 1, ref reason, .. } if reason == "context_overflow"
+    ));
+    // The restart's own turns spend: once the budget is reached, no further restart is allowed.
+    c.record(
+        &request(1),
+        &l,
+        0,
+        vec![(cost(0.025, "actual"), json!({}))],
+        false,
+    )
+    .await;
+    assert!(!s.authorise_restart(&q, &l, &last, 1, 2, 3));
+    assert!(
+        !std::iter::from_fn(|| events.0.try_recv().ok())
+            .any(|e| matches!(e.event, SchedulerEvent::AgentRestarted { .. }))
+    );
+}
+fn reading(total: u64) -> crate::tokens::Reading {
+    crate::tokens::Reading {
+        total,
+        cache_read: None,
+    }
+}
+async fn bind(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, session: &str) {
+    let key = journal_key(&q.call_id, l);
+    let dir = c.journal.dir();
+    c.journal
+        .append(Record::CallIntent {
+            key: key.clone(),
+            attempt: 0,
+            call_id: q.call_id.clone(),
+            label: q.label.clone(),
+            phase: None,
+            workflow_path: vec![],
+            launch: l.clone(),
+            request_id: request_id(dir.run_id(), &key, 0),
+        })
+        .await
+        .unwrap();
+    c.journal
+        .append(Record::SessionBound {
+            key,
+            attempt: 0,
+            session_id: session.into(),
+            stored_session_id: session.into(),
+        })
+        .await
+        .unwrap();
+}
+async fn settle(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, tokens: u64) {
+    settle_usage(c, q, l, json!({"total_tokens":tokens})).await;
+}
+async fn settle_usage(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, usage: Value) {
+    let key = journal_key(&q.call_id, l);
+    let dir = c.journal.dir();
+    c.journal
+        .append(Record::TurnIntent {
+            key: key.clone(),
+            attempt: 0,
+            turn: 0,
+            submission_id: submission_id(dir.run_id(), &key, 0, 0),
+            text: Some("test".into()),
+            text_ref: None,
+        })
+        .await
+        .unwrap();
+    for record in [
+        Record::TurnAdmitted {
+            key: key.clone(),
+            attempt: 0,
+            turn: 0,
+            admission_id: "admission".into(),
+            status: AdmissionState::Started,
+            outcome: None,
+            execution_generation: Some(1),
+            authority_epoch: 1,
+        },
+        Record::TurnSettled {
+            key,
+            attempt: 0,
+            turn: 0,
+            admission_id: "admission".into(),
+            outcome: "completed".into(),
+            final_text: Some("ok".into()),
+            final_text_ref: None,
+            result_meta: json!({}),
+            usage: Some(usage),
+        },
+    ] {
+        c.journal.append(record).await.unwrap();
+    }
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn live_usage_counts_toward_the_token_budget_before_a_turn_settles() {
+    let mut c = Context::new(data(), 1).await;
+    c.table.budget.tokens = Some(1000);
+    let (s, mut events) = c.start().await;
+    let l = launch("fixture", "alpha");
+    let p = permit(s.acquire(&request(0), &l, GateReason::Fresh).await);
+    bind(&c, &request(0), &l, "s-live").await;
+    let mut queued = s.acquire(&request(1), &l, GateReason::Fresh);
+    assert!(poll!(&mut queued).is_pending());
+    s.observe_usage("s-live", reading(600));
+    assert_eq!(s.budget().tokens_spent, 600);
+    assert_eq!(s.budget_stop(), None);
+    // A lower or repeated reading never takes spend back.
+    s.observe_usage("s-live", reading(400));
+    assert_eq!(s.budget().tokens_spent, 600);
+    s.observe_usage("s-live", reading(1200));
+    assert_eq!(s.budget().tokens_spent, 1200);
+    assert_eq!(
+        s.budget_stop().as_deref(),
+        Some("token budget exhausted (spent 1200 of 1000)")
+    );
+    // The waiting call is refused without its holder releasing the gate.
+    assert!(matches!(queued.await, GateDecision::Skip));
+    assert!(
+        std::iter::from_fn(|| events.0.try_recv().ok()).any(|e| matches!(
+            e.event,
+            SchedulerEvent::BudgetReached {
+                kind: BudgetKind::Tokens,
+                tokens_spent: 1200,
+                ..
+            }
+        ))
+    );
+    // Settling the turn replaces its live reading instead of adding to it.
+    settle(&c, &request(0), &l, 1300).await;
+    drop(p);
+    settle_tasks().await;
+    assert_eq!(s.budget().tokens_spent, 1300);
+    assert_eq!(s.status().spend.tokens, 1300);
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_live_reading_and_the_turn_that_settles_it_count_cache_reads_once() {
+    let mut c = Context::new(data(), 1).await;
+    c.table.budget.tokens = Some(1000);
+    let (s, _events) = c.start().await;
+    let l = launch("fixture", "alpha");
+    let p = permit(s.acquire(&request(0), &l, GateReason::Fresh).await);
+    bind(&c, &request(0), &l, "s-cache").await;
+    // Nine thousand tokens in all, most of them cheap cache reads: the budget sees 500.
+    s.observe_usage(
+        "s-cache",
+        crate::tokens::Reading {
+            total: 9000,
+            cache_read: Some(8500),
+        },
+    );
+    assert_eq!(s.budget().tokens_spent, 500);
+    assert_eq!(s.budget_stop(), None);
+    assert_eq!(s.status().spend.cache_read_tokens, 8500);
+    // The settled turn replaces its live share; neither number is counted twice.
+    settle_usage(
+        &c,
+        &request(0),
+        &l,
+        json!({"total_tokens":9000,"session_cache_read_tokens":8500}),
+    )
+    .await;
+    drop(p);
+    settle_tasks().await;
+    let spend = s.status().spend;
+    assert_eq!((spend.tokens, spend.cache_read_tokens), (500, 8500));
+    assert_eq!(spend.cache_unknown_turns, 0);
+    assert_eq!(s.budget().tokens_spent, 500);
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_turn_that_settles_without_live_usage_is_reported_once() {
+    let mut c = Context::new(data(), 1).await;
+    c.table.budget.tokens = Some(1_000_000);
+    let (s, mut events) = c.start().await;
+    let l = launch("fixture", "alpha");
+    let p = permit(s.acquire(&request(0), &l, GateReason::Fresh).await);
+    bind(&c, &request(0), &l, "s-quiet").await;
+    settle(&c, &request(0), &l, 50).await;
+    drop(p);
+    let p = permit(s.acquire(&request(1), &l, GateReason::Fresh).await);
+    bind(&c, &request(1), &l, "s-metered").await;
+    s.observe_usage("s-metered", reading(40));
+    settle(&c, &request(1), &l, 50).await;
+    drop(p);
+    settle_tasks().await;
+    let unmetered: Vec<_> = std::iter::from_fn(|| events.0.try_recv().ok())
+        .filter_map(|e| match e.event {
+            SchedulerEvent::UsageUnmetered { label, .. } => Some(label),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(unmetered, ["call-0"]);
+    assert_eq!(s.budget().tokens_spent, 100);
+}
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn events_are_flat_timed_and_lossless_for_slow_subscribers() {
     let c = Context::new(data(), 10).await;
@@ -743,6 +1016,7 @@ impl Wire for TestWire {
         1
     }
     fn track(&self, _: &str, _: Cursor) {}
+    fn untrack(&self, _: &str) {}
     fn resync(&self, _: &str, _: Cursor) {}
     fn take_events(&self) -> Option<tokio::sync::mpsc::Receiver<WireEvent>> {
         None
@@ -969,6 +1243,308 @@ mod composed {
             assert!(
                 std::iter::from_fn(|| events.0.try_recv().ok())
                     .any(|e| matches!(e.event, SchedulerEvent::RetryAuthorised { .. }))
+            );
+        }
+    }
+    /// A port whose first `failing` attempts settle with a context overflow.
+    /// What the route sweep finds after an overflowed attempt.
+    #[derive(Clone, Copy)]
+    enum Route {
+        Quiet,
+        Busy,
+        Unchecked,
+    }
+    #[derive(Clone)]
+    struct Overflow {
+        fake: FakeGateway,
+        sessions: Arc<Mutex<BTreeMap<String, bool>>>,
+        failing: u32,
+        route: Route,
+    }
+    impl Overflow {
+        fn decorate(&self, mut r: Receipt) -> Receipt {
+            if r.status == AdmissionState::Terminal
+                && self.sessions.lock().unwrap().get(&r.session_id) == Some(&true)
+            {
+                r.outcome = Some("failed".into());
+                r.result = Some(
+                    json!({"failed":true,"failure_reason":"context_overflow","final_response":""}),
+                );
+            }
+            r
+        }
+    }
+    impl GatewayPort for Overflow {
+        fn create_session(
+            &self,
+            r: CreateSession,
+        ) -> BoxFuture<'static, Result<SessionBound, PortError>> {
+            let this = self.clone();
+            Box::pin(async move {
+                // Attempt zero has a bare request id; later attempts end in `:a<number>`.
+                let attempt: u32 = r
+                    .request_id
+                    .rsplit(':')
+                    .next()
+                    .filter(|tail| tail.len() <= 4)
+                    .and_then(|tail| tail.strip_prefix('a')?.parse().ok())
+                    .unwrap_or(0);
+                let bound = this.fake.create_session(r).await?;
+                this.sessions
+                    .lock()
+                    .unwrap()
+                    .insert(bound.session_id.clone(), attempt < this.failing);
+                Ok(bound)
+            })
+        }
+        fn attach(&self, p: String, s: String) -> BoxFuture<'static, Result<(), PortError>> {
+            self.fake.attach(p, s)
+        }
+        fn submit(&self, r: SubmitTurn) -> BoxFuture<'static, Result<Receipt, PortError>> {
+            self.fake.submit(r)
+        }
+        fn receipt(
+            &self,
+            p: String,
+            s: String,
+            a: String,
+        ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+            let this = self.clone();
+            Box::pin(async move {
+                let r = this.fake.receipt(p, s, a).await?;
+                Ok(this.decorate(r))
+            })
+        }
+        fn wait_settled(
+            &self,
+            p: String,
+            s: String,
+            a: String,
+        ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+            let this = self.clone();
+            Box::pin(async move {
+                let r = this.fake.wait_settled(p, s, a).await?;
+                Ok(this.decorate(r))
+            })
+        }
+        fn resolve_unknown(
+            &self,
+            p: String,
+            s: String,
+            a: String,
+            g: i64,
+        ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+            self.fake.resolve_unknown(p, s, a, g)
+        }
+        fn sweep_route(
+            &self,
+            _: String,
+            _: String,
+            _: String,
+        ) -> BoxFuture<'static, Result<RouteSweep, PortError>> {
+            let route = self.route;
+            Box::pin(async move {
+                match route {
+                    Route::Quiet => Ok(RouteSweep::default()),
+                    Route::Busy => Ok(RouteSweep {
+                        still_active: true,
+                        ..Default::default()
+                    }),
+                    Route::Unchecked => Err(PortError::Transport("gateway gone".into())),
+                }
+            })
+        }
+    }
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_context_overflow_restarts_the_agent_at_most_three_times() {
+        for failing in [2u32, 9] {
+            let c = Context::new(data(), 10).await;
+            let (s, mut events) = c.start().await;
+            let fake = FakeGateway::new().with_script(vec![ScriptRule {
+                duration: Duration::from_millis(1),
+                usage: cost(0.0, "included"),
+                ..Default::default()
+            }]);
+            let port = Overflow {
+                fake: fake.clone(),
+                sessions: Default::default(),
+                failing,
+                route: Route::Quiet,
+            };
+            let result=run(&c,s.clone(),port,"export const meta={name:'overflow',description:'test',phases:[]}; return await agent('one',{model:'m',provider:'alpha'});").await;
+            let value = match result {
+                RunOutcome::Completed { result } => result,
+                v => panic!("{v:?}"),
+            };
+            let exhausted = failing > MAX_OVERFLOW_RESTARTS;
+            let restarts = if exhausted { 3 } else { failing };
+            assert_eq!(value, if exhausted { Value::Null } else { json!("ok") });
+            // Never more than the first attempt and three restarts.
+            assert_eq!(fake.stats().sessions, restarts + 1);
+            let (lines, _) = JournalReader::read_from(c.journal.dir().path(), 0).unwrap();
+            let retries = lines
+                .iter()
+                .filter(|l| matches!(l.record, Record::CallRetryFinished { .. }))
+                .count();
+            assert_eq!(retries as u32, restarts);
+            assert!(
+                !lines
+                    .iter()
+                    .any(|l| l.record.identity().is_some_and(|(_, a)| a > 3))
+            );
+            // Each restart's first prompt starts with the note; the first attempt's does not.
+            let prompts: Vec<(u32, String)> = lines
+                .iter()
+                .filter_map(|l| match &l.record {
+                    Record::TurnIntent {
+                        attempt,
+                        turn: 0,
+                        text: Some(text),
+                        ..
+                    } => Some((*attempt, text.clone())),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(prompts.len() as u32, restarts + 1);
+            for (attempt, text) in &prompts {
+                assert_eq!(
+                    text.starts_with("Note: an earlier attempt at this task ran out of context"),
+                    *attempt > 0,
+                    "attempt {attempt}: {text}"
+                );
+                if *attempt > 0 {
+                    for part in [
+                        "stopped",
+                        "working folder still holds whatever it wrote or committed",
+                        "continue from it rather than starting over",
+                        "notes in files rather than in the conversation",
+                    ] {
+                        assert!(text.contains(part), "{part} missing: {text}");
+                    }
+                }
+            }
+            // Each restart is announced in the scheduler stream and written to the journal.
+            let announced: Vec<(u32, u32)> = std::iter::from_fn(|| events.0.try_recv().ok())
+                .filter_map(|e| match e.event {
+                    SchedulerEvent::AgentRestarted {
+                        restart,
+                        max,
+                        attempt,
+                        ..
+                    } => {
+                        assert_eq!((max, attempt), (3, restart));
+                        Some((restart, max))
+                    }
+                    SchedulerEvent::RetryAuthorised { .. } => panic!("not a rate limit"),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                announced,
+                (1..=restarts).map(|n| (n, 3)).collect::<Vec<_>>()
+            );
+            let logged: Vec<String> = lines
+                .iter()
+                .filter_map(|l| match &l.record {
+                    Record::Engine {
+                        event: Some(crate::engine::EngineEvent::Log { message, .. }),
+                        ..
+                    } => Some(message.clone()),
+                    _ => None,
+                })
+                .filter(|m| m.contains("after a context overflow"))
+                .collect();
+            assert_eq!(
+                logged,
+                (1..=restarts)
+                    .map(|n| format!("agent call-0: restarted {n} of 3 after a context overflow"))
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(|m| m.replace("call-0", "one"))
+                    .collect::<Vec<_>>()
+            );
+            if exhausted {
+                let reason = lines
+                    .iter()
+                    .rev()
+                    .find_map(|l| match &l.record {
+                        Record::CallFinished {
+                            outcome: CallOutcome::Failed { reason },
+                            ..
+                        } => Some(reason.clone()),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(reason.contains("ran out of context 4 times"), "{reason}");
+            }
+            // The workflow view row says how many restarts there were.
+            let progress =
+                crate::progress::RunProgress::from_records(c.journal.dir().manifest(), &lines);
+            let agent = &progress.agents()[0];
+            assert_eq!(agent.overflow_restarts, restarts);
+            let row = crate::progress::text::agent_line(agent, 0);
+            if restarts > 0 {
+                assert!(
+                    row.contains(&format!(
+                        "restarted {restarts} of 3 after a context overflow"
+                    )),
+                    "{row}"
+                );
+            }
+        }
+    }
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_restart_waits_for_a_quiet_route() {
+        for (route, why) in [
+            (Route::Busy, "Hermes is still running untracked work in "),
+            (
+                Route::Unchecked,
+                "Talaria could not check whether Hermes is still running untracked work in ",
+            ),
+        ] {
+            let c = Context::new(data(), 10).await;
+            let (s, mut events) = c.start().await;
+            let fake = FakeGateway::new().with_script(vec![ScriptRule {
+                duration: Duration::from_millis(1),
+                usage: cost(0.0, "included"),
+                ..Default::default()
+            }]);
+            let port = Overflow {
+                fake: fake.clone(),
+                sessions: Default::default(),
+                failing: 2,
+                route,
+            };
+            let result=run(&c,s.clone(),port,"export const meta={name:'busy',description:'test',phases:[]}; return await agent('one',{model:'m',provider:'alpha'});").await;
+            assert!(matches!(result, RunOutcome::Completed { result } if result == Value::Null));
+            // No second agent was put into the folder.
+            assert_eq!(fake.stats().sessions, 1);
+            let (lines, _) = JournalReader::read_from(c.journal.dir().path(), 0).unwrap();
+            assert!(
+                !lines
+                    .iter()
+                    .any(|l| matches!(l.record, Record::CallRetryFinished { .. }))
+            );
+            let reason = lines
+                .iter()
+                .find_map(|l| match &l.record {
+                    Record::CallFinished {
+                        outcome: CallOutcome::Failed { reason },
+                        ..
+                    } => Some(reason.clone()),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(reason.contains(why), "{reason}");
+            assert!(
+                reason.ends_with(", so the agent was not restarted"),
+                "{reason}"
+            );
+            // The call's own scheduler permit was released before the call ended.
+            assert_eq!(s.status().in_flight, 0);
+            assert!(
+                !std::iter::from_fn(|| events.0.try_recv().ok())
+                    .any(|e| matches!(e.event, SchedulerEvent::AgentRestarted { .. }))
             );
         }
     }

@@ -135,6 +135,9 @@ impl PaletteState {
 pub enum PaletteInput {
     /// The draft or the caret changed. `caret` is a byte offset.
     DraftChanged { text: String, caret: usize },
+    /// The composer shows a history entry. The palette stays shut until that text is edited,
+    /// so Up and Down keep walking history.
+    Recalled { text: String },
     /// The catalogue store changed. Rows are derived again.
     CatalogChanged,
     /// A `complete.slash` reply for `request_id`.
@@ -684,6 +687,19 @@ fn draft_changed(
     effects
 }
 
+/// A history entry is on show: close as Esc does, without opening for that same text.
+fn recalled(state: &mut PaletteState, text: String) -> Vec<PaletteEffect> {
+    let was_open = state.open;
+    close_quietly(state);
+    state.closed_for = Some(text.clone());
+    state.draft = text;
+    if was_open {
+        vec![PaletteEffect::Redraw]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Code points to a byte offset of `text`. `None` past the end.
 fn byte_offset(text: &str, code_points: i64) -> Option<usize> {
     let wanted = usize::try_from(code_points).ok()?;
@@ -946,6 +962,7 @@ pub fn update(
 ) -> Vec<PaletteEffect> {
     match input {
         PaletteInput::DraftChanged { text, caret } => draft_changed(state, text, caret, ctx),
+        PaletteInput::Recalled { text } => recalled(state, text),
         PaletteInput::CatalogChanged => {
             if !state.open {
                 return Vec::new();

@@ -33,7 +33,7 @@
     nemotron-3-nano:30b
     deepseek-v4.1-flash
     gpt-oss:120b
-    mistral-large-3:675b                                                                                                                                        no effort
+    mistral-large-3:675b                                                                                                                               effort not offered
     kimi-k2.6
     mistral-large-4
     nemotron-3-super

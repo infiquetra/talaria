@@ -57,6 +57,8 @@ mod background_output;
 mod background_process;
 #[path = "integration/background_schedule.rs"]
 mod background_schedule;
+#[path = "integration/background_workflow.rs"]
+mod background_workflow;
 #[path = "integration/capabilities_props.rs"]
 mod capabilities_props;
 #[path = "integration/capabilities_rows.rs"]
@@ -75,6 +77,8 @@ mod checklist_model;
 mod checklist_snapshot;
 #[path = "integration/checklist_tracker.rs"]
 mod checklist_tracker;
+#[path = "integration/choice_list.rs"]
+mod choice_list;
 #[path = "integration/commands_catalog.rs"]
 mod commands_catalog;
 #[path = "integration/commands_local.rs"]
@@ -93,6 +97,8 @@ mod commands_parse;
 mod commands_state;
 #[path = "integration/composer_chips.rs"]
 mod composer_chips;
+#[path = "integration/config_check.rs"]
+mod config_check;
 #[path = "integration/configure_brief.rs"]
 mod configure_brief;
 #[path = "integration/configure_props.rs"]
@@ -147,6 +153,8 @@ mod doctor_diagnose;
 mod doctor_restart;
 #[path = "integration/drop_path.rs"]
 mod drop_path;
+#[path = "integration/effort_scale.rs"]
+mod effort_scale;
 #[path = "integration/fleet_attention.rs"]
 mod fleet_attention;
 #[path = "integration/fleet_external_seam.rs"]
@@ -167,6 +175,16 @@ mod fleet_view_pane;
 mod fleet_view_rows;
 #[path = "integration/herdr_mapping.rs"]
 mod herdr_mapping;
+#[path = "integration/hivecode_authoring.rs"]
+mod hivecode_authoring;
+#[path = "integration/hivecode_notices.rs"]
+mod hivecode_notices;
+#[path = "integration/hivecode_route.rs"]
+mod hivecode_route;
+#[path = "integration/hivecode_screen.rs"]
+mod hivecode_screen;
+#[path = "integration/injected_messages.rs"]
+mod injected_messages;
 #[path = "integration/kanban_state.rs"]
 mod kanban_state;
 #[path = "integration/layout_plan.rs"]
@@ -301,6 +319,8 @@ mod session_replay;
 mod session_rules;
 #[path = "integration/session_snapshot.rs"]
 mod session_snapshot;
+#[path = "integration/settings_choices.rs"]
+mod settings_choices;
 #[path = "integration/settings_command.rs"]
 mod settings_command;
 #[path = "integration/settings_diff.rs"]
@@ -341,10 +361,6 @@ mod text_sanitize;
 mod tool_generating;
 #[path = "integration/tool_view.rs"]
 mod tool_view;
-#[path = "integration/ultracode_notices.rs"]
-mod ultracode_notices;
-#[path = "integration/ultracode_route.rs"]
-mod ultracode_route;
 #[path = "integration/voice_barge_in.rs"]
 mod voice_barge_in;
 #[path = "integration/voice_client_core.rs"]

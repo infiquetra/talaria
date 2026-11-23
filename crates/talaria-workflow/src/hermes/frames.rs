@@ -2,6 +2,13 @@
 use crate::journal::ResolvedLaunch;
 use serde_json::{Map, Value, json};
 
+/// The `max_turns` value that tells Hermes "no step cap". Hermes accepts a positive cap, or 0,
+/// -1, "none" or "unlimited" for no cap (`gateway/session_policy.py`, `resolve_turn_limit`), in
+/// the running build and at tag v0.23.1. A missing key is NOT the same: the session then inherits
+/// the profile's own `agent.max_turns`, which an old profile may have pinned to a finite number.
+/// A null value is refused, so the key must always carry a number.
+pub const NO_STEP_CAP: i64 = 0;
+
 pub const CREATE_KEYS: [&str; 10] = [
     "request_id",
     "source",
@@ -52,9 +59,12 @@ pub fn create_params(
     if !launch.skills.is_empty() {
         params.insert("skills".into(), json!(launch.skills));
     }
-    if let Some(max_turns) = launch.max_turns {
-        params.insert("max_turns".into(), json!(max_turns));
-    }
+    // `None` in the launch record means the script asked for no cap; say so on the wire instead
+    // of leaving the profile's own cap to apply.
+    match launch.max_turns {
+        Some(max_turns) => params.insert("max_turns".into(), json!(max_turns)),
+        None => params.insert("max_turns".into(), json!(NO_STEP_CAP)),
+    };
     Ok(params)
 }
 pub fn submit_params(

@@ -1,4 +1,5 @@
 //! Journal-owned rows with optional, non-authoritative live enrichment.
+pub mod agent_session;
 pub mod blobs;
 pub mod control;
 pub mod live;
@@ -19,7 +20,10 @@ pub mod journal_tree {
     };
 }
 
-use crate::journal::{Manifest, RecordLine};
+use crate::{
+    journal::{Manifest, RecordLine},
+    tokens::Reading,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -67,6 +71,7 @@ impl RunProgress {
     }
     pub fn from_records(manifest: &Manifest, lines: &[RecordLine]) -> Self {
         let mut result = Self::empty(manifest.workflow.name.clone());
+        result.run.run_id = manifest.run_id.as_str().to_owned();
         for line in lines {
             result.apply_inner(line);
         }
@@ -87,6 +92,16 @@ impl RunProgress {
         let i = *self.sessions.get(session)?;
         self.agents.get_mut(i)
     }
+    /// The agent whose current attempt is bound to this session id, stored or runtime.
+    pub fn for_session(&self, session: &str) -> Option<&AgentNode> {
+        self.sessions.get(session).map(|i| &self.agents[*i])
+    }
+    /// The agent the journal recorded for a call: its digest and which repeat of it this is.
+    pub fn for_call(&self, digest: &str, occurrence: u32) -> Option<&AgentNode> {
+        self.calls
+            .get(&format!("{digest}#{occurrence}"))
+            .map(|i| &self.agents[*i])
+    }
     pub fn bind_runtime(&mut self, stored: &str, runtime: &str) {
         if let Some(i) = self.sessions.get(stored).copied() {
             self.sessions.insert(runtime.into(), i);
@@ -95,13 +110,12 @@ impl RunProgress {
                 && previous != runtime
             {
                 if let Some(n) = a.settled_sessions.remove(&previous) {
-                    *a.settled_sessions.entry(runtime.into()).or_default() += n;
+                    let slot = a.settled_sessions.entry(runtime.into()).or_default();
+                    *slot = slot.plus(n);
                 }
                 if let Some(n) = a.live_sessions.remove(&previous) {
-                    a.live_sessions
-                        .entry(runtime.into())
-                        .and_modify(|old| *old = (*old).max(n))
-                        .or_insert(n);
+                    let kept = Reading::latest(a.live_sessions.get(runtime).copied(), n);
+                    a.live_sessions.insert(runtime.into(), kept);
                 }
             }
         }
@@ -149,6 +163,7 @@ impl RunProgress {
                 }
                 self.run.state = RunState::Running;
                 self.run.finished_at_ms = None;
+                self.run.refused = 0;
                 if self.run.started_at_ms.is_none() {
                     self.run.started_at_ms = Some(line.at_ms);
                 }
@@ -162,6 +177,8 @@ impl RunProgress {
             "run_finished" => {
                 self.run.state = match string(&record, "outcome").as_str() {
                     "completed" => RunState::Completed,
+                    "completed_with_failures" => RunState::CompletedWithFailures,
+                    "budget_exhausted" => RunState::BudgetExhausted,
                     "aborted" => RunState::Aborted,
                     _ => RunState::Failed,
                 };
@@ -231,6 +248,9 @@ impl RunProgress {
             a.attempt = attempt;
             a.turn = 0;
             a.last_outcome = None;
+            a.failure = None;
+            a.cut_short = None;
+            a.step = None;
             a.attention = None;
             a.ended = false;
             a.stopping = false;
@@ -248,6 +268,7 @@ impl RunProgress {
             a.last_tool = None;
             a.subagents = talaria_core::subagents::SubagentTree::new();
             a.restart_requested = false;
+            a.failure_reason = None;
         }
         match kind.as_str() {
             "call_intent" => {
@@ -278,6 +299,7 @@ impl RunProgress {
                 a.turn = record["turn"].as_u64().unwrap_or(0) as u32;
                 a.prompt = record["text"].as_str().map(str::to_owned);
                 a.prompt_ref = serde_json::from_value(record["text_ref"].clone()).ok();
+                a.step = None;
                 a.admission_status = None;
                 a.admission_id = None;
                 a.live_active = false;
@@ -294,16 +316,24 @@ impl RunProgress {
             "turn_settled" => {
                 let admission = string(&record, "admission_id");
                 if a.settlements.insert(admission) {
-                    if let Some(tokens) = settled_tokens(&record["usage"]) {
-                        a.settled_tokens = a.settled_tokens.saturating_add(tokens);
+                    let attempt = record["attempt"].as_u64().unwrap_or_default();
+                    if let Some(turn) = a.cache.settle(attempt, &record["usage"]) {
+                        a.settled = a.settled.plus(turn.tokens);
+                        if !turn.cache_known {
+                            a.cache_unknown_turns = a.cache_unknown_turns.saturating_add(1);
+                        }
                         if let Some(session) = &a.session_id {
-                            *a.settled_sessions.entry(session.clone()).or_default() += tokens;
+                            let slot = a.settled_sessions.entry(session.clone()).or_default();
+                            *slot = slot.plus(turn.tokens);
                         }
                     } else {
                         a.tokens_unknown = true;
                     }
                     a.money = settled_money(&record["usage"]);
                 }
+                a.failure_reason = record["result_meta"]["failure_reason"]
+                    .as_str()
+                    .map(str::to_owned);
                 a.stopped = record["outcome"].as_str() == Some("interrupted");
                 if a.stopped {
                     a.last_outcome = Some("failed".into());
@@ -330,8 +360,30 @@ impl RunProgress {
                     .or_else(|| record["outcome"]["kind"].as_str())
                     .unwrap_or("failed");
                 a.last_outcome = Some(outcome.into());
+                a.cut_short = record["outcome"]["cut_short"].is_object().then(|| {
+                    crate::engine::CutShort {
+                        steps: record["outcome"]["cut_short"]["steps"]
+                            .as_u64()
+                            .and_then(|n| u32::try_from(n).ok()),
+                        limit: record["outcome"]["cut_short"]["limit"]
+                            .as_u64()
+                            .and_then(|n| u32::try_from(n).ok()),
+                    }
+                    .describe()
+                });
+                a.failure = (outcome == "failed")
+                    .then(|| record["outcome"]["reason"].as_str().map(str::to_owned))
+                    .flatten();
+                a.step = None;
+                // A retry finish after a context overflow is Talaria starting the agent again.
+                if record["retry"].as_bool() == Some(true)
+                    && a.failure_reason.as_deref() == Some(crate::journal::CONTEXT_OVERFLOW)
+                {
+                    a.overflow_restarts = a.overflow_restarts.saturating_add(1);
+                }
                 a.finished_at_ms = Some(line.at_ms);
                 a.stopping = false;
+                a.stopped |= outcome == "stopped";
                 if let Some(reason) = record["outcome"]["reason"].as_str() {
                     a.stopped |= matches!(reason, "interrupted" | "stopped" | "cancelled");
                     a.push_tail(reason);
@@ -364,6 +416,17 @@ impl RunProgress {
             }
             "log" => {
                 self.run.logs.push_back(string(event, "message"));
+                while self.run.logs.len() > 50 {
+                    self.run.logs.pop_front();
+                }
+            }
+            "agent_refused" => {
+                self.run.refused += 1;
+                self.run.logs.push_back(format!(
+                    "agent {} refused: {}",
+                    string(event, "label"),
+                    string(event, "reason")
+                ));
                 while self.run.logs.len() > 50 {
                     self.run.logs.pop_front();
                 }
@@ -407,13 +470,25 @@ impl RunProgress {
     pub fn recount(&mut self) {
         self.run.counts = Counts::default();
         self.run.tokens = 0;
+        self.run.cache_read = 0;
+        self.run.cache_unknown_turns = 0;
         self.run.tokens_unknown = false;
         self.run.unpriced = 0;
+        self.run.budget_stopped = 0;
         let mut money = 0.0;
         for a in &mut self.agents {
             a.derive();
             self.run.counts.add(a.state);
-            self.run.tokens = self.run.tokens.saturating_add(a.settled_tokens);
+            if a.last_outcome.as_deref() == Some("stopped") {
+                self.run.budget_stopped += 1;
+            }
+            // Settled plus live usage, as each agent row shows it.
+            self.run.tokens = self.run.tokens.saturating_add(a.tokens);
+            self.run.cache_read = self.run.cache_read.saturating_add(a.cache_read);
+            self.run.cache_unknown_turns = self
+                .run
+                .cache_unknown_turns
+                .saturating_add(a.cache_unknown_turns);
             self.run.tokens_unknown |= a.tokens_unknown;
             if let Some(n) = a.money {
                 money += n;
@@ -455,27 +530,6 @@ fn strings(v: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-pub(crate) fn settled_tokens(v: &Value) -> Option<u64> {
-    v["total_tokens"].as_u64().or_else(|| {
-        Some(
-            v["input_tokens"]
-                .as_u64()?
-                .saturating_add(v["output_tokens"].as_u64()?),
-        )
-    })
-}
-pub(crate) fn live_tokens(v: &Value) -> Option<u64> {
-    v["total"]
-        .as_u64()
-        .or_else(|| {
-            Some(
-                v["prompt"]
-                    .as_u64()?
-                    .saturating_add(v["completion"].as_u64()?),
-            )
-        })
-        .or_else(|| Some(v["input"].as_u64()?.saturating_add(v["output"].as_u64()?)))
 }
 fn settled_money(v: &Value) -> Option<f64> {
     let c = &v["session_cost"];

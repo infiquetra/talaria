@@ -475,6 +475,123 @@ fn wrap_lines_borrows_unsplit_ascii_spans_and_plain_text_reuses_width() {
     );
 }
 
+fn user_cell(text: &str) -> Cell {
+    Cell::User(talaria_core::session::UserCell {
+        id: talaria_core::session::CellId::new(1),
+        text: text.to_owned(),
+    })
+}
+
+fn notice_cell(text: &str) -> Cell {
+    Cell::Notice(talaria_core::session::NoticeCell {
+        id: talaria_core::session::CellId::new(2),
+        kind: talaria_core::session::NoticeKind::System,
+        text: text.to_owned(),
+        detail: None,
+        body: None,
+    })
+}
+
+fn plain_rows(cell: &Cell, width: u16) -> Vec<String> {
+    use talaria_tui::history::{CellLines, PlainCellLines};
+    PlainCellLines
+        .lines(cell, width)
+        .iter()
+        .map(row_text)
+        .collect()
+}
+
+#[test]
+fn user_and_notice_cells_wrap_at_word_boundaries() {
+    let prose = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+    assert_eq!(
+        plain_rows(&user_cell(prose), 20),
+        vec![
+            "> alpha beta gamma",
+            "  delta epsilon",
+            "  zeta eta theta",
+            "  iota kappa",
+        ]
+    );
+    assert_eq!(
+        plain_rows(&notice_cell(prose), 20),
+        vec![
+            "\u{b7} alpha beta gamma",
+            "  delta epsilon",
+            "  zeta eta theta",
+            "  iota kappa",
+        ]
+    );
+}
+
+#[test]
+fn second_prompt_line_hangs_under_the_marker() {
+    assert_eq!(
+        plain_rows(&user_cell("first line\nsecond line"), 40),
+        vec!["> first line", "  second line"]
+    );
+}
+
+#[test]
+fn long_unbreakable_token_still_hard_breaks() {
+    let path = "/srv/example/projects/demo/src/module/inner/file_name.rs";
+    let rows = plain_rows(&notice_cell(path), 20);
+    for row in &rows {
+        assert!(row.chars().count() <= 20, "{row:?} is wider than 20");
+    }
+    let rejoined: String = rows
+        .iter()
+        .map(|row| &row[row.char_indices().nth(2).unwrap().0..])
+        .collect();
+    assert_eq!(rejoined, path);
+}
+
+#[test]
+fn wrapped_user_prompt_keeps_inner_spacing() {
+    assert_eq!(
+        plain_rows(&user_cell("a    b\n    indented"), 40),
+        vec!["> a    b", "      indented"]
+    );
+}
+
+#[test]
+fn trailing_spaces_at_the_wrap_width_add_no_blank_row() {
+    assert_eq!(
+        plain_rows(&user_cell("abcdefghijklmnopqr  \nnext"), 20),
+        vec!["> abcdefghijklmnopqr", "  next"]
+    );
+    assert_eq!(
+        plain_rows(&notice_cell("abcdefghijklmnopqr  "), 20),
+        vec!["\u{b7} abcdefghijklmnopqr"]
+    );
+}
+
+#[test]
+fn empty_prompt_line_keeps_its_blank_row() {
+    assert_eq!(
+        plain_rows(&user_cell("first\n\nthird"), 20),
+        vec!["> first", "", "  third"]
+    );
+}
+
+#[test]
+fn wrapped_cell_rows_pass_through_commit_wrap_unchanged() {
+    use talaria_tui::history::{CellLines, PlainCellLines};
+    let text = "a sentence with several words, a /long/path/without/any/spaces/at/all and \
+                \u{4e2d}\u{6587} wide text";
+    for width in 4..=80 {
+        for cell in [user_cell(text), notice_cell(text)] {
+            let rows = PlainCellLines.lines(&cell, width);
+            let count = rows.len();
+            assert_eq!(
+                wrap_lines(rows, width).len(),
+                count,
+                "width {width} must need no commit-time break"
+            );
+        }
+    }
+}
+
 fn ids(cells: &[Cell]) -> Vec<String> {
     cells.iter().map(|cell| format!("{cell:?}")).collect()
 }
@@ -521,4 +638,66 @@ fn ledger_holds_back_everything_behind_a_live_cell() {
     let more = support::cells(&[true, true, true, true, true, true]);
     assert_eq!(ledger.take_ready(&more), &more[4..6]);
     assert!(ledger.take_ready(&more).is_empty());
+}
+
+fn committed_text(lines: &[&str], width: u16) -> Vec<String> {
+    talaria_tui::history::committed_text_rows(
+        lines.iter().map(|line| (*line).to_owned()).collect(),
+        width,
+    )
+    .iter()
+    .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect())
+    .collect()
+}
+
+#[test]
+fn a_committed_notice_line_breaks_between_words_under_a_hanging_indent() {
+    let rows = committed_text(
+        &[
+            "\u{b7} Connected to profile example. To start on this profile next time: talaria --profile example",
+        ],
+        60,
+    );
+    assert_eq!(
+        rows,
+        [
+            "\u{b7} Connected to profile example. To start on this profile",
+            "  next time: talaria --profile example",
+        ]
+    );
+}
+
+#[test]
+fn a_committed_plain_line_breaks_between_words_with_no_indent() {
+    let rows = committed_text(
+        &["Transcript refreshed after the gateway came back with news"],
+        31,
+    );
+    assert_eq!(
+        rows,
+        [
+            "Transcript refreshed after the",
+            "gateway came back with news"
+        ]
+    );
+}
+
+#[test]
+fn committed_lines_that_fit_or_are_preformatted_keep_their_shape() {
+    // A line that fits is untouched, spacing and all.
+    assert_eq!(committed_text(&["\u{b7} a   b"], 20), ["\u{b7} a   b"]);
+    // Leading indentation, an indented line under the marker, and a table border carry
+    // meaning, so they keep the terminal's plain hard wrap.
+    assert_eq!(
+        committed_text(&["    indented output that runs long"], 20),
+        ["    indented output ", "that runs long"]
+    );
+    assert_eq!(
+        committed_text(&["\u{b7}   nested item that runs long"], 20),
+        ["\u{b7}   nested item that", " runs long"]
+    );
+    assert_eq!(
+        committed_text(&["\u{2502} cell one \u{2502} cell two \u{2502}"], 12),
+        ["\u{2502} cell one \u{2502}", " cell two \u{2502}"]
+    );
 }

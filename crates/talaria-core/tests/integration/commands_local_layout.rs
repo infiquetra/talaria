@@ -32,3 +32,41 @@ fn invalid_arguments_have_a_single_line_usage_notice() {
         );
     }
 }
+
+#[test]
+fn thinking_is_a_local_command_that_reaches_hermes_never() {
+    let table = LocalCommandTable::builtin();
+    let command = table
+        .find("/thinking")
+        .expect("/thinking is a display choice and never reaches Hermes slash.exec");
+    assert!(command.takes_argument);
+    assert_eq!(command.tag, "talaria");
+}
+
+#[test]
+fn thinking_sets_or_toggles_the_reasoning_display() {
+    use talaria_core::layout::{ReasoningDisplay, parse_thinking_args};
+    assert_eq!(ReasoningDisplay::default(), ReasoningDisplay::Collapsed);
+    for current in [ReasoningDisplay::Collapsed, ReasoningDisplay::Full] {
+        assert_eq!(
+            parse_thinking_args("full", current),
+            Ok(ReasoningDisplay::Full)
+        );
+        assert_eq!(
+            parse_thinking_args(" collapsed ", current),
+            Ok(ReasoningDisplay::Collapsed)
+        );
+    }
+    assert_eq!(
+        parse_thinking_args("", ReasoningDisplay::Collapsed),
+        Ok(ReasoningDisplay::Full)
+    );
+    assert_eq!(
+        parse_thinking_args("  ", ReasoningDisplay::Full),
+        Ok(ReasoningDisplay::Collapsed)
+    );
+    assert_eq!(
+        parse_thinking_args("loud", ReasoningDisplay::Full),
+        Err("Usage: /thinking [collapsed|full]".to_owned())
+    );
+}

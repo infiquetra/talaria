@@ -261,3 +261,38 @@ async fn effort_read_set_and_mutate_params() {
         other => panic!("expected the mutate result, got {other:?}"),
     }
 }
+
+/// Hermes refuses a profile-bound connection that names another profile before the handler
+/// runs, so the mock does too. Naming the connection's own profile, or none, is answered.
+#[tokio::test]
+async fn options_naming_another_profile_are_refused_like_hermes() {
+    use hermes_client::{CallError, RpcError};
+    use hermes_contract::{methods::legacy::model_options, schemas::ModelOptionsParams};
+
+    let (gateway, client, _stream) = MockGateway::start().await;
+    let catalogue = catalogue();
+    gateway.set_model_options(catalogue.clone(), catalogue);
+    gateway.set_connection_profile("fixture");
+    let params = |profile: Option<&str>| ModelOptionsParams {
+        explicit_only: true,
+        include_unconfigured: true,
+        refresh: false,
+        profile: profile.map(str::to_owned),
+        session_id: None,
+    };
+    let refused = client
+        .call::<model_options::Marker>(params(Some("other")))
+        .await;
+    assert!(
+        matches!(
+            &refused,
+            Err(CallError::Rpc(RpcError { code: 4001, reason: Some(reason), .. }))
+                if reason == "profile_mismatch"
+        ),
+        "{refused:?}"
+    );
+    for profile in [None, Some("fixture"), Some("")] {
+        let answered = client.call::<model_options::Marker>(params(profile)).await;
+        assert!(answered.is_ok(), "{profile:?}: {answered:?}");
+    }
+}

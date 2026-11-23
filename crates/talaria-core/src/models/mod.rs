@@ -6,6 +6,7 @@ mod effort;
 mod pick;
 mod picker;
 mod saved;
+mod scale;
 mod text;
 
 pub use browse::{BrowseCounts, BrowseView, ListScope};
@@ -20,6 +21,7 @@ pub use saved::{
     SavedCheck, SavedDefault, SavedModels, StaleReason, check_saved_default, parse_effort_command,
     parse_model_command,
 };
+pub use scale::{EffortScale, ScaleEffect, ScaleFacts, ScaleKey};
 pub use text::{
     notice_already, notice_deferred, notice_effort, notice_effort_back, notice_effort_held,
     notice_effort_held_profile, notice_kept, notice_kept_pending, notice_not_offered, notice_saved,

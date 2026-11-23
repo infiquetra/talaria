@@ -195,7 +195,15 @@ impl Redactor {
     }
 
     fn redact(&mut self, text: &str, outbound: bool) -> Redacted {
-        let mut frame: Value = match serde_json::from_str(text) {
+        let parsed = serde_json::from_str::<Value>(text).or_else(|error| {
+            // An inbound frame gets the same bare Infinity/NaN repair the live reader applies,
+            // so the recording holds the frame the client acted on and a replay matches it.
+            match crate::rpc::parse_frame_repaired(text.as_bytes()) {
+                Some((frame, _)) if !outbound => Ok(frame),
+                _ => Err(error),
+            }
+        });
+        let mut frame: Value = match parsed {
             Ok(frame) => frame,
             Err(error) => {
                 // serde_json's message is a position and an expectation; it never quotes input.
@@ -1077,5 +1085,35 @@ mod connector_link_tests {
                 entry.path.ends_with("connect_url") && entry.reason == "free-text"
             }));
         }
+    }
+}
+
+#[cfg(test)]
+mod non_finite_repair_tests {
+    use super::Redactor;
+    use serde_json::json;
+
+    #[test]
+    fn an_inbound_reply_with_bare_infinity_is_recorded_as_the_frame_the_client_read() {
+        let text = r#"{"jsonrpc":"2.0","id":7,"result":{"usage":{"cost":Infinity,"rate":NaN}}}"#;
+        let redacted = Redactor::new(Vec::new())
+            .expect("empty substitutions")
+            .redact_inbound(text);
+        assert_eq!(redacted.parse_error, None);
+        assert_eq!(
+            redacted.frame,
+            Some(
+                json!({"jsonrpc": "2.0", "id": 7, "result": {"usage": {"cost": null, "rate": null}}})
+            )
+        );
+    }
+
+    #[test]
+    fn inbound_text_that_no_repair_can_read_still_records_a_parse_error() {
+        let redacted = Redactor::new(Vec::new())
+            .expect("empty substitutions")
+            .redact_inbound(r#"{"id":7,"result":Infinite}"#);
+        assert_eq!(redacted.frame, None);
+        assert!(redacted.parse_error.is_some());
     }
 }

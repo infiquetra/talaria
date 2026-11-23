@@ -20,6 +20,10 @@ CRATE = ROOT / "crates/hermes-contract"
 CONTRACT = CRATE / "vendor/gateway-contract.openrpc.json"
 OUT = CRATE / "src/generated"
 OWNER_FILE = ROOT / "tools/contract-gen/native-owner-methods.txt"
+CONFIG_CHOICES_FILE = ROOT / "tools/contract-gen/config-choices.json"
+CONFIG_DEFAULTS = "hermes_cli/config_defaults.py"
+SCHEMA_SOURCE = "hermes_cli/web_server_config.py"
+DESKTOP_CHOICES = "apps/desktop/src/app/settings/constants.ts"
 REPO = "NousResearch/hermes-agent"
 CONTRACT_PATH = "apps/shared/src/gateway-contract.openrpc.json"
 CATALOGUES = ("methods", "x-canonical-methods", "x-notifications", "x-server-requests")
@@ -412,6 +416,324 @@ def extract_owner_methods(checkout, commit=None):
 owner_methods_from_checkout = extract_owner_methods
 
 
+# The /config choice proof. Talaria's built-in choice table
+# (crates/talaria-core/src/settings/choices.rs) offers closed value sets that the Hermes schema
+# does not carry. Each recipe below says where the pinned Hermes source states that set:
+#   constant  a module-level literal (select: "keys", "names" or one dict item)
+#   function  string literals inside one function
+#   comment   the comment block at a DEFAULT_CONFIG key, or at an anchor text
+#   desktop   the desktop app's per-key suggestion list
+# Every _select in the schema overrides is recorded too, so a test can tell when Hermes fixes a
+# list that Talaria replaces. A missing constant, function, anchor or value fails generation.
+CONFIG_CHOICE_SOURCES = [
+    {"key": "agent.agent_cache.memory_high_mb", "kind": "comment", "values": ["auto", "off"]},
+    {"key": "agent.coding_context", "kind": "comment", "values": ["auto", "focus", "on", "off"]},
+    {"key": "agent.disabled_toolsets", "kind": "comment", "values": []},
+    {"key": "agent.execution_guidance", "kind": "comment", "values": ["auto", "true", "false"]},
+    {"key": "agent.image_input_mode", "kind": "comment", "values": ["auto", "native", "text"]},
+    {"key": "agent.intent_ack_continuation", "kind": "comment", "values": ["auto", "true", "false"]},
+    {"key": "agent.service_tier", "kind": "constant", "file": "agent/fast_mode.py", "name": "SERVICE_TIER_WORDS", "select": "keys", "match": "subset"},
+    {"key": "agent.text_verbosity", "kind": "comment", "values": ["low", "medium", "high"]},
+    {"key": "agent.tool_use_enforcement", "kind": "comment", "values": ["auto", "true", "false"]},
+    {"key": "approvals.approvers", "kind": "comment", "values": ["*"]},
+    {"key": "approvals.cron_mode", "kind": "comment", "anchor": "cron_mode / single_query_mode / unattended_mode: deny | approve", "values": ["deny", "approve"]},
+    {"key": "approvals.mode", "kind": "constant", "file": "hermes_cli/approval_mode.py", "name": "VALID_APPROVAL_MODES"},
+    {"key": "approvals.single_query_mode", "kind": "comment", "anchor": "cron_mode / single_query_mode / unattended_mode: deny | approve", "values": ["deny", "approve"]},
+    {"key": "approvals.unattended_mode", "kind": "comment", "anchor": "cron_mode / single_query_mode / unattended_mode: deny | approve", "values": ["deny", "approve"]},
+    {"key": "auth.codex_login_flow", "kind": "comment", "values": ["device_code", "browser"]},
+    {"key": "bedrock.guardrail.stream_processing_mode", "kind": "comment", "values": ["async", "sync"]},
+    {"key": "bedrock.guardrail.trace", "kind": "comment", "values": ["disabled", "enabled", "enabled_full"]},
+    {"key": "bot_desktop.placement", "kind": "comment", "values": ["auto", "terminal", "gateway"]},
+    {"key": "browser.dialog_policy", "kind": "comment", "values": ["must_respond", "auto_dismiss", "auto_accept"]},
+    {"key": "browser.engine", "kind": "comment", "values": ["auto", "lightpanda"]},
+    {"key": "code_execution.mode", "kind": "comment", "values": ["project", "strict"]},
+    {"key": "compression.codex_app_server_auto", "kind": "comment", "values": ["native", "hermes", "off"]},
+    {"key": "compression.tail_mode", "kind": "comment", "values": ["lean", "legacy"]},
+    {"key": "computer_use.capture_after_mode", "kind": "comment", "values": ["som", "ax", "vision"]},
+    {"key": "computer_use.no_overlay", "kind": "comment", "values": ["true", "false"]},
+    {"key": "computer_use.permission_mode", "kind": "comment", "values": ["standard", "bounded"]},
+    {"key": "context.engine", "kind": "comment", "anchor": "\"compressor\" =", "values": ["compressor"]},
+    {"key": "dashboard.theme", "kind": "constant", "file": "hermes_cli/web_server_dashboard.py", "name": "_BUILTIN_DASHBOARD_THEMES", "select": "names"},
+    {"key": "database.journal_mode", "kind": "function", "file": "hermes_state_wal.py", "function": "resolve_journal_mode", "values": ["wal", "delete"]},
+    {"key": "delegation.gateway_mode", "kind": "comment", "values": ["inline", "background", "auto"]},
+    {"key": "desktop.disable_gpu", "kind": "comment", "values": ["auto", "true", "false"]},
+    {"key": "desktop.ozone_platform_hint", "kind": "comment", "values": ["auto", "x11", "wayland"]},
+    {"key": "desktop.password_store", "kind": "comment", "values": ["auto", "gnome-libsecret", "kwallet", "kwallet5", "kwallet6", "basic"]},
+    {"key": "discord.server_actions", "kind": "comment", "values": ["list_guilds", "server_info", "list_channels", "channel_info", "list_roles", "member_info", "search_members", "fetch_messages", "list_pins", "pin_message", "unpin_message", "create_thread", "add_role", "remove_role"]},
+    {"key": "display.background_process_notifications", "kind": "comment", "values": ["concise", "all", "result", "error", "off"]},
+    {"key": "display.cli_layout", "kind": "comment", "values": ["modern", "classic"]},
+    {"key": "display.copy_shortcut", "kind": "comment", "values": ["auto", "ctrl_c", "ctrl_shift_c", "disabled"]},
+    {"key": "display.final_response_markdown", "kind": "comment", "values": ["strip", "render", "raw"]},
+    {"key": "display.focus_saved_tool_progress", "kind": "constant", "file": "tui_gateway/agent_factory.py", "name": "_TOOL_PROGRESS_MODES"},
+    {"key": "display.inline_images", "kind": "comment", "values": ["auto", "kitty", "iterm", "unicode", "off"]},
+    {"key": "display.interface", "kind": "comment", "values": ["cli", "tui"]},
+    {"key": "display.language", "kind": "constant", "file": "agent/i18n.py", "name": "SUPPORTED_LANGUAGES"},
+    {"key": "display.memory_notifications", "kind": "comment", "values": ["on", "off", "verbose"]},
+    {"key": "display.personality", "kind": "constant", "file": "hermes_cli/personality.py", "name": "BUILTIN_PERSONALITIES", "select": "keys"},
+    {"key": "display.pet.render_mode", "kind": "constant", "file": "agent/pet/render.py", "name": "RENDER_MODES"},
+    {"key": "display.reasoning_style", "kind": "comment", "values": ["code", "blockquote", "subtext"]},
+    {"key": "display.runtime_footer.fields", "kind": "comment", "values": ["model", "context_pct", "cwd", "latency", "served_model"]},
+    {"key": "display.skin", "kind": "constant", "file": "hermes_cli/skin_engine.py", "name": "_BUILTIN_SKINS", "select": "keys"},
+    {"key": "display.status_bar.fields", "kind": "comment", "anchor": "CLI/TUI status bar fields.", "values": ["model", "context_detail", "context_pct", "cache_hit", "latency", "tps", "compressions", "bg_tasks", "bg_processes", "bg_subagents", "goal", "git_branch", "duration", "prompt_elapsed", "idle_since", "focus", "yolo", "stash", "battery", "title", "total_tokens"]},
+    {"key": "display.tool_progress_grouping", "kind": "comment", "values": ["accumulate", "separate"]},
+    {"key": "display.tui_status_indicator", "kind": "constant", "file": "hermes_constants.py", "name": "INDICATOR_STYLES"},
+    {"key": "gateway.service_install_choice", "kind": "comment", "values": ["install", "decline"]},
+    {"key": "human_delay.mode", "kind": "function", "file": "gateway/run_config_loaders.py", "function": "_human_delay_from_config", "values": ["off", "natural", "custom"]},
+    {"key": "kanban.default_assignee", "kind": "comment", "values": []},
+    {"key": "kanban.orchestrator_profile", "kind": "comment", "values": []},
+    {"key": "local_runtime.backend", "kind": "comment", "values": ["auto", "cuda", "metal", "vulkan", "hip", "cpu"]},
+    {"key": "lsp.install_strategy", "kind": "comment", "values": ["auto", "manual", "off"]},
+    {"key": "lsp.package_manager", "kind": "comment", "values": ["npm", "pnpm", "yarn"]},
+    {"key": "lsp.wait_mode", "kind": "comment", "values": ["document", "full"]},
+    {"key": "nous.anthropic_wire", "kind": "comment", "values": ["chat", "native", "auto"]},
+    {"key": "onboarding.profile_build", "kind": "comment", "values": ["ask", "off"]},
+    {"key": "onboarding.run", "kind": "comment", "values": ["true", "false"]},
+    {"key": "plugins.isolation", "kind": "comment", "values": ["in_process", "host"]},
+    {"key": "prompt_caching.cache_ttl", "kind": "comment", "values": ["5m", "1h", "auto", "off"]},
+    {"key": "proxy.credential_source", "kind": "comment", "values": ["env", "bitwarden"]},
+    {"key": "security.approval.transport_fallback", "kind": "comment", "values": ["deny", "builtin"]},
+    {"key": "sessions.fts_optimize_notice", "kind": "comment", "values": ["advise", "require", "off"]},
+    {"key": "skills.auto_load", "kind": "comment", "values": []},
+    {"key": "streaming.transport", "kind": "comment", "values": ["auto", "draft", "edit", "off"]},
+    {"key": "stt.elevenlabs.model_id", "kind": "constant", "file": "tools/transcription_common.py", "name": "STT_MODEL_CATALOG", "select": "elevenlabs"},
+    {"key": "stt.groq.model", "kind": "constant", "file": "tools/transcription_common.py", "name": "STT_MODEL_CATALOG", "select": "groq"},
+    {"key": "stt.local.model", "kind": "constant", "file": "tools/transcription_common.py", "name": "STT_MODEL_CATALOG", "select": "local"},
+    {"key": "stt.mistral.model", "kind": "constant", "file": "tools/transcription_common.py", "name": "STT_MODEL_CATALOG", "select": "mistral"},
+    {"key": "stt.openai.model", "kind": "constant", "file": "tools/transcription_common.py", "name": "STT_MODEL_CATALOG", "select": "openai"},
+    {"key": "stt.xai.model", "kind": "constant", "file": "tools/transcription_common.py", "name": "STT_MODEL_CATALOG", "select": "xai"},
+    {"key": "terminal.degraded_mode", "kind": "comment", "values": ["warn", "fail"]},
+    {"key": "terminal.home_mode", "kind": "comment", "values": ["auto", "real", "profile"]},
+    {"key": "terminal.modal_mode", "kind": "constant", "file": "tools/tool_backend_helpers.py", "name": "_VALID_MODAL_MODES"},
+    {"key": "terminal.vercel_runtime", "kind": "constant", "file": "tools/terminal_tool_backends.py", "name": "_SUPPORTED_VERCEL_RUNTIMES"},
+    {"key": "tools.tool_search.enabled", "kind": "comment", "values": ["auto", "on", "off"]},
+    {"key": "tools.tool_search.listing", "kind": "comment", "values": ["auto", "on", "off"]},
+    {"key": "toolsets", "kind": "comment", "values": ["hermes-cli"]},
+    {"key": "tts.edge.voice", "kind": "desktop"},
+    {"key": "tts.elevenlabs.model_id", "kind": "comment", "values": ["eleven_multilingual_v2"]},
+    {"key": "tts.gemini.voice", "kind": "desktop"},
+    {"key": "tts.kittentts.model", "kind": "desktop"},
+    {"key": "tts.minimax.model", "kind": "desktop"},
+    {"key": "tts.neutts.device", "kind": "comment", "values": ["cpu", "cuda", "mps"]},
+    {"key": "tts.neutts.model", "kind": "desktop"},
+    {"key": "tts.openai.model", "kind": "constant", "file": "tools/tts_tool_openai.py", "name": "MANAGED_OPENAI_TTS_MODELS"},
+    {"key": "tts.openai.voice", "kind": "comment", "values": ["alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"]},
+    {"key": "tts.piper.voice", "kind": "desktop"},
+    {"key": "tts.provider", "kind": "constant", "file": "tools/tts_command_provider.py", "name": "BUILTIN_TTS_PROVIDERS"},
+    {"key": "updates.non_interactive_local_changes", "kind": "comment", "values": ["stash", "discard"]},
+    {"key": "updates.parked_branch_strategy", "kind": "comment", "values": ["switch", "update_in_place"]},
+    {"key": "updates.pre_update_backup", "kind": "comment", "values": ["quick", "full", "off"]},
+    {"key": "vault.key_storage", "kind": "comment", "values": ["file", "keychain"]},
+    {"key": "voice.gpt_live.voice", "kind": "constant", "file": "tools/voice_live.py", "name": "GPT_LIVE_VOICES"},
+    {"key": "voice.submit_mode", "kind": "comment", "values": ["direct", "draft"]},
+    {"key": "voice.voice_chat_mode", "kind": "comment", "values": ["chained", "gpt-live"]},
+    {"key": "wake_word.capture", "kind": "comment", "values": ["auto", "local", "client"]},
+    {"key": "wake_word.provider", "kind": "comment", "values": ["auto", "openwakeword", "sherpa", "porcupine"]},
+    {"key": "wake_word.surface", "kind": "comment", "values": ["auto", "cli", "tui", "gui"]},
+    {"key": "web.search_backend", "kind": "constant", "file": "agent/web_search_registry.py", "name": "_LEGACY_PREFERENCE"},
+    {"key": "x_search.reasoning_effort", "kind": "constant", "file": "tools/x_search_tool.py", "name": "X_SEARCH_REASONING_EFFORTS"},
+]
+
+
+def _module(root, path):
+    file = Path(root) / path
+    if not file.exists():
+        raise ContractError("config choices: {} is missing".format(path))
+    return file.read_text(encoding="utf-8")
+
+
+def _assignment(tree, name):
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets) and node.value is not None:
+            return node.value
+    return None
+
+
+def _string_items(node):
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("frozenset", "set", "tuple", "list") and node.args:
+        return _string_items(node.args[0])
+    if isinstance(node, (ast.Set, ast.Tuple, ast.List)):
+        values = [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+        return sorted(values) if isinstance(node, ast.Set) else values
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    raise ContractError("config choices: not a literal list of strings")
+
+
+def _dict_keys(node):
+    if not isinstance(node, ast.Dict):
+        raise ContractError("config choices: not a literal dict")
+    return [k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+
+
+def _config_key_lines(text):
+    lines = {}
+
+    def walk(node, prefix):
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    full = prefix + "." + key.value if prefix else key.value
+                    lines[full] = key.lineno
+                    walk(value, full)
+    value = _assignment(ast.parse(text), "DEFAULT_CONFIG")
+    if value is not None:
+        walk(value, "")
+    return lines
+
+
+def _comment_block(lines, index):
+    start = end = index
+    while start > 0 and lines[start - 1].strip().startswith("#"):
+        start -= 1
+    while end + 1 < len(lines) and lines[end + 1].strip().startswith("#"):
+        end += 1
+    return "\n".join(lines[start:end + 1])
+
+
+def _names(text, value):
+    spellings = [value] + ([value.capitalize()] if value in ("true", "false") else [])
+    return any(re.search(r"(?<![\w.-])" + re.escape(s) + r"(?![\w-])", text) for s in spellings)
+
+
+def config_choice_entry(root, recipe):
+    """One proof entry: the recipe plus the values read from the checkout at ``root``."""
+    key, kind = recipe["key"], recipe["kind"]
+    entry = {"key": key, "kind": kind}
+    if kind == "constant":
+        tree = ast.parse(_module(root, recipe["file"]))
+        node = _assignment(tree, recipe["name"])
+        if node is None:
+            raise ContractError("config choices: {} has no {} for {}".format(recipe["file"], recipe["name"], key))
+        select = recipe.get("select")
+        if select == "keys":
+            values = _dict_keys(node)
+        elif select == "names":
+            if not isinstance(node, ast.List):
+                raise ContractError("config choices: {} is not a list".format(recipe["name"]))
+            values = [v.value for item in node.elts if isinstance(item, ast.Dict)
+                      for k, v in zip(item.keys, item.values)
+                      if isinstance(k, ast.Constant) and k.value == "name" and isinstance(v, ast.Constant)]
+        elif select:
+            found = [v for k, v in zip(node.keys, node.values) if isinstance(k, ast.Constant) and k.value == select] if isinstance(node, ast.Dict) else []
+            if not found:
+                raise ContractError("config choices: {}[{}] is missing".format(recipe["name"], select))
+            values = _string_items(found[0])
+        else:
+            values = _string_items(node)
+        entry.update(file=recipe["file"], name=recipe["name"])
+        if select:
+            entry["select"] = select
+    elif kind == "function":
+        tree = ast.parse(_module(root, recipe["file"]))
+        functions = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == recipe["function"]]
+        if not functions:
+            raise ContractError("config choices: {} has no function {}".format(recipe["file"], recipe["function"]))
+        literals = {n.value for n in ast.walk(functions[0]) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+        missing = [v for v in recipe["values"] if v not in literals]
+        if missing:
+            raise ContractError("config choices: {} does not name {} for {}".format(recipe["function"], missing, key))
+        values = list(recipe["values"])
+        entry.update(file=recipe["file"], function=recipe["function"])
+    elif kind == "comment":
+        path = recipe.get("file", CONFIG_DEFAULTS)
+        text = _module(root, path)
+        lines = text.splitlines()
+        if "anchor" in recipe:
+            index = next((i for i, line in enumerate(lines) if recipe["anchor"] in line), None)
+            if index is None:
+                raise ContractError("config choices: anchor {!r} for {} is missing".format(recipe["anchor"], key))
+            entry["anchor"] = recipe["anchor"]
+        else:
+            line = _config_key_lines(text).get(key)
+            if line is None:
+                raise ContractError("config choices: {} is not in DEFAULT_CONFIG".format(key))
+            index = line - 1
+        block = _comment_block(lines, index)
+        missing = [v for v in recipe["values"] if not _names(block, v)]
+        if missing:
+            raise ContractError("config choices: the comment for {} does not name {}".format(key, missing))
+        values = list(recipe["values"])
+        entry["file"] = path
+    elif kind == "desktop":
+        text = _module(root, DESKTOP_CHOICES)
+        match = re.search(r"'" + re.escape(key) + r"'\s*:\s*\[(.*?)\]", text, re.S)
+        if not match:
+            raise ContractError("config choices: the desktop list for {} is missing".format(key))
+        values = re.findall(r"'([^']*)'", match.group(1))
+        entry["file"] = DESKTOP_CHOICES
+    else:
+        raise ContractError("config choices: unknown kind {} for {}".format(kind, key))
+    if recipe.get("match"):
+        entry["match"] = recipe["match"]
+    entry["values"] = values
+    return entry
+
+
+def config_schema_selects(root):
+    """Every ``_select`` in the schema overrides: its literal options, and whether more are added."""
+    tree = ast.parse(_module(root, SCHEMA_SOURCE))
+    node = _assignment(tree, "_SCHEMA_OVERRIDES")
+    if not isinstance(node, ast.Dict):
+        raise ContractError("config choices: _SCHEMA_OVERRIDES is missing")
+    selects = []
+    for key, value in zip(node.keys, node.values):
+        if not (isinstance(key, ast.Constant) and isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name) and value.func.id == "_select"):
+            continue
+        options = [a.value for a in value.args[1:] if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+        dynamic = any(isinstance(a, ast.Starred) for a in value.args[1:])
+        selects.append({"key": key.value, "options": options, "dynamic": dynamic})
+    return selects
+
+
+def extract_config_choices(checkout, commit=None, tag=None, recipes=None):
+    if commit:
+        require_pinned_checkout(checkout, commit)
+    return {
+        "hermes": {"tag": tag, "commit": commit},
+        "choices": [config_choice_entry(checkout, r) for r in (recipes or CONFIG_CHOICE_SOURCES)],
+        "schema": config_schema_selects(checkout),
+    }
+
+
+def render_config_choices(data):
+    return json.dumps(data, indent=1, ensure_ascii=False) + "\n"
+
+
+def config_choices(checkout, check=False, out=None):
+    tag, commit = read_pin()
+    rendered = render_config_choices(extract_config_choices(checkout, commit, tag))
+    target = Path(out or CONFIG_CHOICES_FILE)
+    if check:
+        if not target.exists() or target.read_text(encoding="utf-8") != rendered:
+            print("config choices differ from the pinned Hermes source: " + str(target))
+            return 1
+        print("config choices are current")
+        return 0
+    target.write_text(rendered, encoding="utf-8")
+    return 0
+
+
+def config_choices_drift(checkout, commit):
+    """Lines for the drift report: values that differ between the committed proof and a release."""
+    old = json.loads(CONFIG_CHOICES_FILE.read_text(encoding="utf-8"))
+    report = []
+    try:
+        new = extract_config_choices(checkout, commit)
+    except ContractError as error:
+        return ["Config choices could not be read: " + " ".join(str(error).splitlines())]
+    before = {e["key"]: e["values"] for e in old["choices"]}
+    for entry in new["choices"]:
+        if before.get(entry["key"]) != entry["values"]:
+            report.append("Config choices for {}: {} -> {}".format(entry["key"], before.get(entry["key"]), entry["values"]))
+    schema = {e["key"]: e for e in old["schema"]}
+    for entry in new["schema"]:
+        if schema.get(entry["key"]) != entry:
+            report.append("Schema select {} changed: {}".format(entry["key"], entry["options"]))
+    return report or ["Config choices: no differences"]
+
+
 def typify_available():
     try:
         return run(["cargo", "typify", "--version"]).decode().strip() == "cargo-typify " + TYPIFY_VERSION
@@ -634,8 +956,10 @@ def read_compat():
 
 
 def compat_line(row):
-    return "hermes: pinned {} ({}), supported from {}, tested to {}".format(
-        row["pinned_tag"], row["pinned_commit"][:8].lower(), row["floor"], row["newest_tested"])
+    line = "hermes: tested against {} ({})".format(row["pinned_tag"], row["pinned_commit"][:8].lower())
+    if row["newest_tested"] != row["pinned_tag"]:
+        line += ", newest tested {}".format(row["newest_tested"])
+    return line
 
 
 def compat_readme(text, line):
@@ -658,7 +982,13 @@ def compat_readme(text, line):
 def compat(write=False):
     rows = read_compat()
     current = rows[-1]
-    table = ["# Compatibility", "", "| Talaria | Floor | Pinned Hermes | Newest tested |",
+    table = ["# Compatibility", "",
+             "Talaria does not pin Hermes. Each Talaria release records the Hermes release it was",
+             "generated from and tested against. Hermes ships often, and Talaria works with the",
+             "gateway you run or it gets fixed. A newer gateway is not a warning, and Talaria never",
+             "refuses to run because of the gateway's version. A gateway older than the oldest",
+             "tested release gets one plain note that some features may be missing.", "",
+             "| Talaria | Oldest tested | Tested against | Newest tested |",
              "| --- | --- | --- | --- |"]
     table.extend("| {} | {} | {} {} | {} |".format(
         row["talaria"], row["floor"], row["pinned_tag"], row["pinned_commit"][:8].lower(), row["newest_tested"])
@@ -956,6 +1286,7 @@ def drift(tag, summary=None, hermes_checkout=None):
             fresh = extract_owner_methods(hermes_checkout, commit)
             report.append("Owner methods added: {}; removed: {}".format(sorted(set(fresh) - set(owners)), sorted(set(owners) - set(fresh))))
             owners = fresh
+            report.append("\n".join(config_choices_drift(hermes_checkout, commit)))
         else:
             note = "owner list was not refreshed; using the committed list"
             print(note)
@@ -1008,6 +1339,9 @@ def main(argv=None):
     gen.add_argument("--out", type=Path, default=OUT)
     gen.add_argument("--hermes-checkout", type=Path)
     gen.add_argument("--check", action="store_true")
+    choices = sub.add_parser("config-choices", help="write or check config-choices.json from a pinned Hermes checkout")
+    choices.add_argument("--hermes-checkout", type=Path, required=True)
+    choices.add_argument("--check", action="store_true")
     chk = sub.add_parser("check")
     chk.add_argument("--require-typify", action="store_true")
     compat_parser = sub.add_parser("compat")
@@ -1031,6 +1365,8 @@ def main(argv=None):
             if args.check:
                 return check(True)
             generate(args.contract, args.out, args.hermes_checkout)
+        elif args.command == "config-choices":
+            return config_choices(args.hermes_checkout, args.check)
         elif args.command == "check":
             return check(args.require_typify)
         elif args.command == "compat":

@@ -24,8 +24,8 @@ use super::{
     *,
 };
 
-const ROOT_PREFIX: &str = "(async function () {\"use strict\";";
-const CHILD_PREFIX: &str = "(async function (agent, parallel, pipeline, phase, log, args, budget, workflow, now, random) {\"use strict\";";
+pub(super) const ROOT_PREFIX: &str = "(async function () {\"use strict\";";
+const CHILD_PREFIX: &str = "(async function (agent, parallel, pipeline, phase, log, args, budget, workflow, now, random, cutShort) {\"use strict\";";
 
 struct NoModules(Arc<AtomicBool>);
 impl Resolver for NoModules {
@@ -308,32 +308,15 @@ impl<'a> State<'a> {
                 self.fatal = Some(failure("Error", "backend budget snapshot is invalid"));
                 return;
             }
-            if let Some(total) = budget
-                .tokens_total
-                .filter(|total| budget.tokens_spent >= *total)
-            {
-                self.reject(
-                    id,
-                    "BudgetExhaustedError",
-                    format!(
-                        "token budget exhausted (spent {} of {total})",
-                        budget.tokens_spent
-                    ),
-                );
-                return;
-            }
-            if let Some(total) = budget
-                .money_total
-                .filter(|total| budget.money_spent >= *total)
-            {
-                self.reject(
-                    id,
-                    "BudgetExhaustedError",
-                    format!(
-                        "money budget exhausted (spent {} of {total})",
-                        budget.money_spent
-                    ),
-                );
+            if let Some(reason) = exhausted(&budget) {
+                // A refused call never starts, so it is reported here or nowhere.
+                self.emit(EngineEvent::AgentRefused {
+                    label: request.label.clone(),
+                    phase: request.phase.clone(),
+                    workflow_path: request.workflow_path.clone(),
+                    reason: reason.clone(),
+                });
+                self.reject(id, "BudgetExhaustedError", reason);
                 return;
             }
         }
@@ -425,9 +408,26 @@ impl<'a> State<'a> {
         }
         let (kind, value) = match outcome {
             AgentOutcome::Completed(value) => (OutcomeKind::Completed, value),
+            AgentOutcome::CutShort { value, cut_short } => (
+                OutcomeKind::CutShort {
+                    steps: cut_short.steps,
+                    limit: cut_short.limit,
+                },
+                value,
+            ),
             AgentOutcome::Failed { reason } => (OutcomeKind::Failed { reason }, Value::Null),
             AgentOutcome::Skipped => (OutcomeKind::Skipped, Value::Null),
+            AgentOutcome::Stopped { reason } => (OutcomeKind::Stopped { reason }, Value::Null),
             AgentOutcome::Abort { .. } => unreachable!(),
+        };
+        let delivery = match &kind {
+            OutcomeKind::Stopped { reason } => {
+                json!({"id":pending.id,"error":{"name":"BudgetExhaustedError","message":reason}})
+            }
+            OutcomeKind::CutShort { steps, limit } => {
+                json!({"id":pending.id,"value":value,"cut_short":{"steps":steps,"limit":limit}})
+            }
+            _ => json!({"id":pending.id,"value":value}),
         };
         self.emit(EngineEvent::AgentFinished {
             call_id: pending.request.call_id,
@@ -435,7 +435,7 @@ impl<'a> State<'a> {
             outcome: kind,
         });
         self.completion_seq += 1;
-        Some(Ok(json!({"id":pending.id,"value":value})))
+        Some(Ok(delivery))
     }
     fn finish(&mut self, outcome: &RunOutcome, imported: bool) {
         let aborted = matches!(outcome, RunOutcome::Aborted { .. }) || imported;

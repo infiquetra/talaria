@@ -1,5 +1,5 @@
 use super::{AdmissionState, AttentionCause, JournalError, Resolution, ResolvedLaunch, corrupt};
-use crate::engine::{AgentOutcome, CallId, EngineEvent, RunOutcomeKind};
+use crate::engine::{AgentOutcome, CallId, CutShort, EngineEvent, RunOutcomeKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -27,11 +27,18 @@ pub enum CallOutcome {
         value: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         value_ref: Option<BlobRef>,
+        /// Present when Hermes stopped the agent at its step cap and its reply was kept.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cut_short: Option<CutShort>,
     },
     Failed {
         reason: String,
     },
     Skipped,
+    /// The run's budget ended the call; a resume runs it again.
+    Stopped {
+        reason: String,
+    },
 }
 fn present_value<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
     Ok(Some(Value::deserialize(d)?))
@@ -42,11 +49,20 @@ impl CallOutcome {
             AgentOutcome::Completed(value) => Self::Completed {
                 value: Some(value),
                 value_ref: None,
+                cut_short: None,
+            },
+            AgentOutcome::CutShort { value, cut_short } => Self::Completed {
+                value: Some(value),
+                value_ref: None,
+                cut_short: Some(cut_short),
             },
             AgentOutcome::Failed { reason } | AgentOutcome::Abort { reason } => Self::Failed {
                 reason: super::cut(&reason, 4096),
             },
             AgentOutcome::Skipped => Self::Skipped,
+            AgentOutcome::Stopped { reason } => Self::Stopped {
+                reason: super::cut(&reason, 4096),
+            },
         }
     }
     pub fn kind(&self) -> &'static str {
@@ -54,6 +70,7 @@ impl CallOutcome {
             Self::Completed { .. } => "completed",
             Self::Failed { .. } => "failed",
             Self::Skipped => "skipped",
+            Self::Stopped { .. } => "stopped",
         }
     }
 }
@@ -64,6 +81,15 @@ pub struct FinishSummary {
     pub skipped: usize,
     pub parked: usize,
     pub unfinished: usize,
+    /// Calls the budget refused before they started, in the latest execution.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub refused: usize,
+    /// Calls the budget ended after they started.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub stopped: usize,
+}
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 // Keep public constructors compatible while the wire format grows optional fields.
 macro_rules! records {
@@ -301,7 +327,10 @@ impl Record {
                     && !(final_text.is_some() && final_text_ref.is_some())
             }
             Self::CallFinished {
-                outcome: CallOutcome::Completed { value, value_ref },
+                outcome:
+                    CallOutcome::Completed {
+                        value, value_ref, ..
+                    },
                 turns,
                 ..
             } => *turns <= 2 && value.is_some() != value_ref.is_some(),

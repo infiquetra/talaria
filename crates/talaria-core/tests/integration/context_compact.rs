@@ -96,7 +96,7 @@ fn test_17_refusal_reasons_map_to_exact_texts() {
         (
             "session_busy",
             None,
-            "Hermes cannot compact while the agent is working. Wait for the reply to finish, or press Esc to stop it, then run /compact again.",
+            "Hermes cannot compact while the agent is working. Wait for the reply to finish, or press Esc twice to stop it, then run /compact again.",
         ),
         (
             "unknown_execution",

@@ -34,6 +34,7 @@ pub struct PausingGate {
 }
 struct PauseState {
     paused: AtomicBool,
+    stopping: AtomicBool,
     changed: Notify,
 }
 impl PausingGate {
@@ -42,6 +43,7 @@ impl PausingGate {
             inner: Arc::new(inner),
             state: Arc::new(PauseState {
                 paused: AtomicBool::new(false),
+                stopping: AtomicBool::new(false),
                 changed: Notify::new(),
             }),
         }
@@ -53,6 +55,10 @@ impl PausingGate {
     }
     pub fn is_paused(&self) -> bool {
         self.state.paused.load(Ordering::SeqCst)
+    }
+    /// The run is being stopped: no agent may be restarted from now on.
+    pub fn set_stopping(&self) {
+        self.state.stopping.store(true, Ordering::SeqCst);
     }
 }
 impl AdmissionGate for PausingGate {
@@ -98,6 +104,23 @@ impl AdmissionGate for PausingGate {
     ) -> bool {
         self.inner
             .retry_after_failure(request, launch, turn, attempt)
+    }
+    fn authorise_restart(
+        &self,
+        request: &AgentRequest,
+        launch: &ResolvedLaunch,
+        turn: &SettledTurn,
+        attempt: u32,
+        restart: u32,
+        max: u32,
+    ) -> bool {
+        !self.state.stopping.load(Ordering::SeqCst)
+            && self
+                .inner
+                .authorise_restart(request, launch, turn, attempt, restart, max)
+    }
+    fn count_untracked_usage(&self, id: &str, reading: crate::tokens::Reading) {
+        self.inner.count_untracked_usage(id, reading);
     }
 }
 
@@ -179,7 +202,7 @@ pub fn request_stop(runs_dir: &Path, target: &str, timeout: Duration) -> StopExi
             Err(_) => return StopExit::Unconfirmed,
         };
         match fold.terminal.as_deref() {
-            Some("completed" | "failed") => {
+            Some("completed" | "completed_with_failures" | "budget_exhausted" | "failed") => {
                 return StopExit::AlreadyFinished {
                     outcome: fold.terminal.unwrap_or_default(),
                 };
@@ -347,7 +370,11 @@ pub(crate) fn restart_needs_execution(
         let Some(record) = latest.get(key) else {
             continue;
         };
-        required |= record["t"] != "call_finished" || record["outcome"]["kind"] == "failed";
+        required |= record["t"] != "call_finished"
+            || matches!(
+                record["outcome"]["kind"].as_str(),
+                Some("failed" | "stopped")
+            );
     }
     Ok(required)
 }
@@ -424,4 +451,96 @@ pub(crate) fn latest_summary(records: &[RecordLine]) -> Value {
 
 pub(crate) fn remove_stale_runner(dir: &Path) -> io::Result<()> {
     files::remove(&dir.join("runner.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::journal::{CallOutcome, Record};
+
+    #[test]
+    fn a_restarted_stopped_call_needs_another_execution() {
+        let finish = |key: &str, outcome| RecordLine {
+            v: 1,
+            seq: 1,
+            at_ms: 0,
+            record: Record::CallFinished {
+                key: key.into(),
+                attempt: 0,
+                outcome,
+                turns: 1,
+            },
+        };
+        let records = [
+            finish(
+                "stopped",
+                CallOutcome::Stopped {
+                    reason: "token budget exhausted (spent 20 of 10)".into(),
+                },
+            ),
+            finish("skipped", CallOutcome::Skipped),
+        ];
+        let keys = |key: &str| BTreeSet::from([key.to_owned()]);
+        assert_eq!(
+            restart_needs_execution(&records, &keys("stopped")),
+            Ok(true)
+        );
+        assert_eq!(
+            restart_needs_execution(&records, &keys("skipped")),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn a_run_that_is_stopping_authorises_no_restart_after_a_context_overflow() {
+        use crate::{
+            engine::{AgentRequest, CallId},
+            journal::{AdmissionGate, NoGate, ResolvedLaunch, SettledTurn},
+        };
+        let request = AgentRequest {
+            call_id: CallId {
+                digest: "0".repeat(64),
+                occurrence: 0,
+            },
+            label: "review".into(),
+            phase: None,
+            prompt: "p".into(),
+            schema: None,
+            tier: None,
+            model: None,
+            provider: None,
+            effort: None,
+            profile: None,
+            toolsets: None,
+            skills: None,
+            isolation: None,
+            max_turns: None,
+            workflow_path: vec![],
+        };
+        let launch = ResolvedLaunch {
+            profile: "fixture".into(),
+            model: "m".into(),
+            provider: None,
+            effort: None,
+            toolsets: vec![],
+            skills: vec![],
+            max_turns: None,
+            isolation: None,
+            cwd: None,
+        };
+        let turn = SettledTurn {
+            turn: 0,
+            outcome: "failed".into(),
+            final_text: None,
+            result_meta: serde_json::json!({"failure_reason":"context_overflow"}),
+            usage: None,
+        };
+        let gate = PausingGate::new(NoGate);
+        assert!(gate.authorise_restart(&request, &launch, &turn, 0, 1, 3));
+        // An operator pause only holds a restart at the gate; a stop ends it.
+        gate.set_paused(true);
+        assert!(gate.authorise_restart(&request, &launch, &turn, 0, 1, 3));
+        gate.set_stopping();
+        assert!(!gate.authorise_restart(&request, &launch, &turn, 0, 1, 3));
+    }
 }

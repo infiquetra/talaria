@@ -474,6 +474,17 @@ fn profiles(fixtures: &mut Vec<Fixture>, resolved: &ThemeFileResolution) {
     let mut view = ProfilesView {
         loading: false,
         header: "Profiles · connected fixture".into(),
+        hints: [
+            "m models",
+            "c connect",
+            "r refresh",
+            "R rescan",
+            "n new",
+            "e description",
+            "s soul",
+        ]
+        .map(String::from)
+        .to_vec(),
         rows: vec![RowView {
             name_cell: "fixture".into(),
             label: "needs attention".into(),
@@ -486,6 +497,7 @@ fn profiles(fixtures: &mut Vec<Fixture>, resolved: &ThemeFileResolution) {
         panel: Panel::None,
         notice: Some("Review the configuration".into()),
         confirm: None,
+        empty: None,
     };
     fixtures.push(draw("profiles", "profiles", true, |area, buffer| {
         resolved.draw_profiles(&view, area, buffer);
@@ -935,6 +947,7 @@ fn picker(fixtures: &mut Vec<Fixture>, resolved: &ThemeFileResolution) {
             details: &details,
             details_open: false,
             details_scroll: 0,
+            current: None,
         }),
     };
     fixtures.push(draw("picker", "picker", true, |area, buffer| {
@@ -1156,6 +1169,17 @@ pub fn wide_profile_divider(resolved: &ThemeFileResolution) -> Buffer {
     let view = ProfilesView {
         loading: false,
         header: "Profiles · connected fixture".into(),
+        hints: [
+            "m models",
+            "c connect",
+            "r refresh",
+            "R rescan",
+            "n new",
+            "e description",
+            "s soul",
+        ]
+        .map(String::from)
+        .to_vec(),
         rows: vec![RowView {
             name_cell: "fixture".into(),
             label: "needs attention".into(),
@@ -1172,6 +1196,7 @@ pub fn wide_profile_divider(resolved: &ThemeFileResolution) -> Buffer {
         }),
         notice: None,
         confirm: None,
+        empty: None,
     };
     let area = Rect::new(0, 0, 120, 24);
     let mut buffer = Buffer::empty(area);

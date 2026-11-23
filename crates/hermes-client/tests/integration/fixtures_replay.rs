@@ -48,7 +48,7 @@ const NAMES: [&str; 31] = [
     "review-session-info",
     "review-oneshot",
     "profiles",
-    "p5-09-ultracode-skill",
+    "p5-09-hivecode-skill",
     "sudo-prompt",
     "secret-prompt",
 ];
@@ -228,10 +228,10 @@ fn each_has_v3_header_and_gapless_seq() {
             "{name}: header has no subprotocols list"
         );
         let scenario = header["scenario"].as_str();
-        let expected = if name == "p5-09-ultracode-skill"
-            && scenario == Some("p5-09-ultracode-skill-synthetic")
+        let expected = if name == "p5-09-hivecode-skill"
+            && scenario == Some("p5-09-hivecode-skill-synthetic")
         {
-            "p5-09-ultracode-skill-synthetic"
+            "p5-09-hivecode-skill-synthetic"
         } else {
             name
         };
@@ -854,7 +854,7 @@ fn scenario_evidence_present() {
                     "{name}: {method} names no session"
                 );
             }
-            "p5-09-ultracode-skill" => {
+            "p5-09-hivecode-skill" => {
                 let slash = records
                     .iter()
                     .find(|r| r["dir"] == "out" && r["frame"]["method"] == "slash.exec")

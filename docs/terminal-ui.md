@@ -8,10 +8,68 @@ cannot run. Below 60 columns the headings collapse; below 16 rows the menu is te
 Talaria keeps finished conversation output in native terminal scrollback. Full-screen views
 temporarily cover it; closing a view restores the conversation and the draft.
 
+While a turn runs, a working row sits directly above the composer, for example
+`✻ Working · 12s · Esc twice to interrupt`. It shows Hermes's own activity text in place of `Working`
+when Hermes sends one, counts the turn's time, and names the bound interrupt key. A prompt card
+or the compacting row takes its place while one is shown. Under full motion a soft glow sweeps
+across the row and back; under reduced motion the row is static and only its seconds change.
+Interrupting takes two presses of the bound interrupt key, so a stray press does not stop a long
+turn. The first press interrupts nothing and changes the hint to `Esc again to interrupt` for two
+seconds; a second press inside that time interrupts about a tenth of a second later, unless another
+press follows at once. A held key sends a stream of presses, so holding the key does not interrupt.
+Three things follow from that rule: a hold that starts within two seconds of a tap is that tap's
+second press and does interrupt; three or more very fast taps count as a held key, so pause and tap
+twice; and a keyboard repeat rate slower than a tenth of a second is not told apart from taps.
+After the two seconds the hint reads normally again and the next press starts over. Ctrl+C interrupts on one press. Closing a menu, list, selector or
+view with Esc, and the idle double Esc that opens rewind, work as before.
+A narrow terminal drops the interrupt hint first, then shortens the activity text (an armed hint
+shrinks to `Esc again` before it goes). The hint is
+also left out while the key would do something else (the focused menu bar, an open selector,
+slash palette, mention list or history search takes it first) and while the link to the gateway is redialling. When the
+gateway reports the session gone, or the link gives up, the turn ends and the row leaves.
+
+While a workflow run of the open session is running, its dock line above the composer shows
+that the run is alive: `⠹ Workflow <name> · running 5m51s · 1/4 agents · Alt+W to open`. The
+spinner moves under full motion and is the still `⚙` under reduced motion, where only the
+seconds change. The time counts from the start time in the run's own records, so it is right
+after switching sessions and coming back; when that time is unknown the line shows none. A run
+that is completed, failed, aborted, out of budget, parked or interrupted has a still line with
+no spinner and no time. A narrow line drops the `Alt+W to open` hint first, then the time, and
+keeps the agent count. Nothing redraws for the line while no run is running.
+
+A background process that is the shell command `talaria workflow run` or `talaria workflow
+resume` and carries the run the dock line shows has no row of its own, because the dock line
+covers it; it stays in `/processes` and in the status bar's count, and the line above the
+composer leaves it out of its own count. A process that failed keeps its row. Talaria knows which run a process
+carries from the run id or folder a `resume` command names, or from the `run_started` line a
+`run` prints first (the JSON event with `--json`, `run <id> in <folder>` without); it does not
+guess from names or times. A workflow process whose run is not shown, or whose start line was
+never seen, keeps its row, named `talaria workflow run <script>` or `talaria workflow resume
+<run>` instead of the first command of the shell line, and its last output line, when it is a
+JSON event, reads as the event and its label (`scheduler queued · fix-1`) instead of raw JSON.
+Every other background process row is unchanged.
+
+The model's thinking is drawn as one dim line per reasoning block. While a block streams, the
+line counts its lines in place, for example `∴ thinking… (+12 lines, Ctrl+O to view)`. When it
+ends, the line says how long it took, `∴ thought for 12s (+34 lines, Ctrl+O to view)`, or only
+its length when Talaria did not see it stream (Hermes's end-of-turn reasoning and resumed
+history). Hermes's end-of-turn reasoning in a turn that ran tools reads
+`∴ thinking, latest step (+34 lines, Ctrl+O to view)`. The transcript view shows every block in
+full. A turn whose only output is its reasoning shows it in full on the main screen too.
+`/thinking full` draws blocks in full from then on, and `/thinking collapsed` returns to one
+line; scrollback already written keeps its form. The optional workspace draws reasoning the same
+way and redraws every block when `/thinking` changes the form. `[ui] reasoning` in the
+[configuration](configuration.md#ui) sets the form at startup.
+
 The status bar's model segment shows the session's requested effort. If Hermes reports a lower
 provider level, an arrow shows both, such as `max→high`. When the model's catalogue row offers no
 effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the
 catalogue or provider level is unavailable, the requested level is shown without a claim about it.
+
+When Talaria is connected to a Hermes profile other than `default`, the status bar names it
+before the model, as `profile <name>`. It appears after `talaria --profile <name>`, after a
+connect from `/profiles`, and after `/resume` opens a session on another profile. On a narrow
+terminal it is kept longer than the context and folder segments.
 
 The optional work panel shows the status row's attention count, the focused session's goal,
 turn and explicit verdict, its task checklist, and its agents. The waiting requests come from
@@ -53,7 +111,7 @@ Mouse capture remains off. If a terminal or multiplexer consumes Alt+D, use the 
 and composer draft, with the optional workspace and menu either off or on. Mouse capture stays off.
 Typing always searches: every whitespace-separated term must match the provider name, slug or
 model identifier, without regard to case. Ctrl+U clears the filter. Tab (`model_chips_next`) and
-Shift+Tab (`model_chips_prev`) cycle All, Starred, Configured and Set up without clearing it.
+Shift+Tab (`model_chips_prev`) cycle All, Starred, Configured and Needs setup without clearing it.
 Configured means Hermes lists the provider as authenticated; it does not verify the saved credential.
 
 All shows stars once in starring order, configured providers in Hermes order, then Needs setup
@@ -63,11 +121,18 @@ providers. Group headers cannot be selected. Arrow and page keys move; Home and 
 Search and reload preserve the selected route when it remains visible. The `>` selection pointer,
 `★` star and `●` current-route marker have separate meanings, including in monochrome.
 
-Each row keeps one badge, in this priority: not listed, unavailable, rate limited, not offered,
-effort unknown. Long identifiers end in an ellipsis without splitting a visible character or losing
-the badge. Details show requested effort, unverified support and unknown applied effort separately.
-`not offered` means the catalogue does not advertise reasoning. It does not prove how a provider
-handled a previous request. Context is unknown; prices appear only when Hermes supplies them.
+An ordinary row has no badge. A row shows at most one, in this priority: not listed, unavailable,
+rate limited, needs setup, effort not offered, current. Long identifiers end in an ellipsis without
+splitting a visible character or losing the badge. The count line names the current route and its
+effort. `effort not offered` means the catalogue does not advertise reasoning; the details line
+then reads `Reasoning effort: not offered` and the effort line `effort: not offered`. It does not prove how a provider
+handled a previous request. Details wrap and show only what Hermes reported. For the current route
+they show the effort Hermes actually sends, from `session.info`, and the context window, from
+`session.info`, `session.usage` or `message.complete`; for any other route they say Hermes limits
+the requested effort to what that route accepts, and leave out context, because `model.options`
+carries neither. Prices appear only when Hermes supplies them. A configured provider's warning
+appears as a Warning line in the details of that provider's own rows; an unconfigured provider's
+setup hint appears as a Setup line on its Needs setup row.
 Deferred changes say pending turn end; lost write replies say outcome unknown and are not resent.
 
 At 80×24, details sit below the list; at least 112×28 places them beside it. Below 60×16 the list is
@@ -81,6 +146,25 @@ Ctrl+F stars, Ctrl+G toggles the save scope (this session versus this session an
 Ctrl+R reloads, and Left/Right adjust requested effort. These retain their existing behavior,
 including confirmation, deferred changes and uncertain outcomes. Escape closes full details,
 then clears a non-empty filter, then closes the picker. Rebinding conflicts produce a notice.
+
+Bare `/effort` opens an effort selector under the composer, in the slash list's place. It shows
+all eight Hermes levels on one scale from `Faster` to `Smarter` (`none` is left out when the
+catalogue says the model cannot turn reasoning off), a marker over the selected level, one line
+describing it, and where the session's own level is. Left and Right (`effort_down`, `effort_up`)
+move the marker and Home and End jump to the ends; nothing is sent while it moves. Tab stages
+Hivecode on or off, and Ctrl+G (`model_scope`) stages saving the level for new sessions too; the
+selector shows both switches as on or off. Enter applies what was staged by running the typed
+commands, `/effort <level>` (with `--default` when saving) and then `/hivecode on` or `off`, so
+their notices and checks are the same. Esc, a paste, a typed `/` or a session switch closes it and
+sends nothing, and Enter with nothing changed closes it quietly. `/effort <level>` typed in full
+still sets the level directly. At 80 columns and wider the Hivecode switch sits beside the scale;
+narrower, it gets its own row, and below about 53 columns the scale becomes one `◀ level ▶` row.
+Like the slash list, it takes at most a third of the terminal's rows, so the composer and the
+working row keep theirs. A short terminal drops the save line, the note, the description and the
+`Faster … Smarter` row in that order, then keeps one key hint row naming Enter and Esc, then
+uses the one-row scale. The title, the scale and that hint row always stay. A question or
+approval card that needs the keys closes the selector, as Esc does, so the card is shown in full.
+Nothing in it animates, and the marker and the bold label show the selection without colour.
 
 | State | Message and recovery |
 | --- | --- |
@@ -303,7 +387,7 @@ whose reply was lost is reported as uncertain and the list is reloaded; the chan
 Entering from a model picker setup stub remembers that picker's filter, list scope, selected route
 and requested effort. Closing a setup card stays in Providers so read-back remains visible.
 Closing Providers resumes and reloads the model picker without changing the model. A newly listed
-provider selects its first model; if the saved Set up scope would hide it, the picker changes to
+provider selects its first model; if the saved Needs setup scope would hide it, the picker changes to
 All while keeping the filter and requested effort. Without new models the saved selection remains.
 Opening Providers directly does not create this return path. If the original session has ended,
 the return reports that no session is open. Account-only targets absent from the model catalogue

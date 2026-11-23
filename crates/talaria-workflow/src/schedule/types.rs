@@ -39,7 +39,13 @@ pub enum MoneySource {
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Spend {
+    /// Tokens the budget counts: everything except cache reads. A turn whose cache reads Hermes
+    /// did not report is counted whole here (see `cache_unknown_turns`).
     pub tokens: u64,
+    /// Cache reads Hermes reported. They are not part of `tokens` and not in the budget.
+    pub cache_read_tokens: u64,
+    /// Settled turns whose cache reads were not reported; their tokens are all in `tokens`.
+    pub cache_unknown_turns: u32,
     pub money_usd: f64,
     pub money_source: MoneySource,
     pub money_unknown_turns: u32,
@@ -49,6 +55,8 @@ impl Default for Spend {
     fn default() -> Self {
         Self {
             tokens: 0,
+            cache_read_tokens: 0,
+            cache_unknown_turns: 0,
             money_usd: 0.0,
             money_source: MoneySource::None,
             money_unknown_turns: 0,
@@ -143,6 +151,23 @@ pub enum SchedulerEvent {
         key: String,
         attempt: u32,
         reason: String,
+    },
+    /// An agent whose turn ran out of context starts again in a fresh session.
+    AgentRestarted {
+        key: String,
+        label: String,
+        /// The attempt number the restart runs as.
+        attempt: u32,
+        /// Which restart this is, counting from 1.
+        restart: u32,
+        /// The most restarts one agent call gets.
+        max: u32,
+        reason: String,
+    },
+    /// A turn settled before its session streamed any usage, so only settlement counts it.
+    UsageUnmetered {
+        key: String,
+        label: String,
     },
     BudgetReached {
         kind: BudgetKind,

@@ -17,7 +17,12 @@ the five sections, and a section Hermes could not read adds ` (stale)` to its ta
 
 Every section loads on its own, so one failure leaves the others usable. The model list behind
 the picker comes from Hermes and takes about a second; until it arrives the picker says
-`loading models...`.
+`loading models...`. It is read for the page's own profile, the same way as every other read and
+write on the page, so another profile's page lists that profile's providers. Talaria waits up to
+60 seconds for it, because Hermes may first fetch provider catalogues it has not cached. When the
+list cannot be read, the picker says why, for example `Hermes refused the model list: <reason>.
+Ctrl+R to retry.` or `Could not load the model list: <reason>. Ctrl+R to retry.`, and still shows
+the route already set, as `<provider> / <model> (current)`; choosing that row keeps it.
 
 Without a connection to the gateway the page says `Model roles need the Hermes gateway, and
 Talaria is not connected.`; Ctrl+R tries again and Esc closes.
@@ -26,6 +31,8 @@ Talaria is not connected.`; Ctrl+R tries again and Esc closes.
 
 Main shows the profile's main model and provider, its context window, what the model can do
 (tools, images, reasoning, maximum output, family), and the profile's default reasoning effort.
+Hermes reports these facts only for the saved model, so after you choose another model they read
+`shown after saving` until the change is applied.
 
 - Enter opens the picker: choose a provider, then a model.
 - `c` sets a context-window override; `0` or empty means auto-detect.
@@ -143,9 +150,13 @@ example into the profile, which the review says, and enabled presets then appear
 | `?` | List the keys |
 
 In the picker, typing filters the list, Enter chooses, Backspace on an empty filter goes back to
-the providers, Esc cancels, and Ctrl+R refreshes the model list. A provider that is not set up is
-dimmed and says `not set up: add it under Providers`. A stored model missing from the list is
-shown with `(not in the model list)`, never replaced.
+the providers, Esc cancels, and Ctrl+R refreshes the model list. Providers that are set up come
+first, then the rest. A provider that is not set up is dimmed and marked `not set up`; while it is
+selected, the status line says `not set up: add it under Providers`. Providers sets up the
+profile Talaria is connected to, so on another profile's page the status line says `not set up
+for this profile: connect to it from /profiles, then add it under Providers`. A stored model missing from the list is
+shown with `(not in the model list)`, never replaced. Esc in the picker opened by adding a Mixture
+of Agents reference removes the empty reference it added.
 
 Only one section holds unapplied changes at a time. Changing section, reloading or closing with
 changes pending asks `a` apply, `d` discard, or Esc stay.

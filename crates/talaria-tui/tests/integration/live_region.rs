@@ -244,6 +244,71 @@ fn idle_draw_writes_zero_bytes() {
     assert!(fourth.drew, "control: a real change does draw");
 }
 
+#[test]
+fn activity_sweep_frame_writes_only_changed_cells() {
+    use talaria_tui::activity::{ActivityClock, ActivityLine, ActivityStyle, FRAME_MS};
+    use talaria_tui::theme::{
+        ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, Rgb,
+        TerminalColors, ThemeInputs, resolve,
+    };
+    let terminal = TerminalColors {
+        background: Some(Rgb(0, 0, 0)),
+        foreground: Some(Rgb(200, 200, 200)),
+    };
+    let theme = resolve(&ThemeInputs {
+        skin: None,
+        skipped: &[],
+        follow_hermes_skin: true,
+        polarity: (Polarity::Dark, PolaritySource::Default),
+        depth: (ColorDepth::TrueColor, DepthSource::Default),
+        motion: (Motion::Full, MotionSource::Default),
+        terminal,
+    });
+    let style = ActivityStyle::from_theme(&theme, terminal);
+    let composer = PlainTextSection::new("LIVE# composer");
+    let mut rig = Rig::new(false, 2);
+    let mut draw = |sections: Vec<&dyn LiveSection>| {
+        let stats = rig
+            .term
+            .draw_live(&LiveView { sections })
+            .expect("draw_live");
+        let bytes = rig.sink.take();
+        assert_eq!(stats.bytes, bytes.len());
+        bytes.len()
+    };
+    let row = |elapsed_ms| ActivityLine {
+        activity: None,
+        elapsed_ms,
+        interrupt: Some("Esc"),
+        interrupt_armed: false,
+        style: &style,
+    };
+
+    // Idle: no row, and the same view again writes nothing and asks for no wake.
+    assert!(draw(vec![&composer]) > 0, "the first frame paints");
+    assert_eq!(draw(vec![&composer]), 0, "an idle redraw writes nothing");
+    let idle = ActivityClock::default();
+    assert_eq!(
+        idle.next_wake(Motion::Full, std::time::Instant::now()),
+        None
+    );
+
+    let start = row(500);
+    assert!(draw(vec![&start, &composer]) > 0, "the row appears");
+    assert_eq!(
+        draw(vec![&start, &composer]),
+        0,
+        "the same moment again writes nothing"
+    );
+    let next = row(500 + FRAME_MS);
+    let frame = draw(vec![&next, &composer]);
+    assert!(frame > 0, "the glow moved");
+    assert!(
+        frame < 1_200,
+        "one sweep frame rewrites only the cells near the glow: {frame} bytes"
+    );
+}
+
 /// Bytes of one single-character change after `history` committed lines, from a fresh terminal.
 fn one_character_change_bytes(history: usize) -> usize {
     let mut rig = Rig::new(false, 2);
@@ -550,5 +615,92 @@ fn changed_line_shows_its_new_text() {
         vt.rows(),
         screen_of(22, &["LIVE# fixed", "LIVE# a"]),
         "a shortened line keeps no tail of the old text"
+    );
+}
+
+fn numbered(count: usize) -> Vec<ratatui::text::Line<'static>> {
+    (1..=count)
+        .map(|n| ratatui::text::Line::from(format!("row {n:02}")))
+        .collect()
+}
+
+fn line_texts(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
+    lines.iter().map(ToString::to_string).collect()
+}
+
+/// The rows a cut tail draws into `height` rows.
+fn drawn_tail(lines: Vec<ratatui::text::Line<'static>>, height: u16) -> Vec<String> {
+    let section =
+        talaria_tui::markdown::section::MarkdownTailSection::cut_with(lines, 15, |hidden| {
+            ratatui::text::Line::from(format!("marker {hidden}"))
+        });
+    let area = Rect::new(0, 0, 20, height.min(section.height(20)));
+    let mut buf = Buffer::empty(area);
+    section.render(area, &mut buf);
+    (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn a_tail_that_fits_is_drawn_whole_without_a_marker() {
+    let lines = numbered(15);
+    assert_eq!(drawn_tail(lines.clone(), 22), line_texts(&lines));
+}
+
+#[test]
+fn a_cut_tail_starts_with_a_marker_counting_every_row_not_drawn() {
+    let lines = numbered(40);
+    let kept = drawn_tail(lines.clone(), 22);
+    assert_eq!(
+        kept.len(),
+        15,
+        "the cap stays at 15 rows, the marker among them"
+    );
+    assert_eq!(kept[0], "marker 26");
+    assert_eq!(kept[1..], line_texts(&lines[26..]));
+}
+
+#[test]
+fn a_tail_the_layout_shortens_keeps_the_marker_and_counts_the_rows_it_drops() {
+    let lines = numbered(40);
+    let kept = drawn_tail(lines.clone(), 10);
+    assert_eq!(kept[0], "marker 31");
+    assert_eq!(kept[1..], line_texts(&lines[31..]));
+    // Rows that fit the cap but not the layout get the marker too.
+    let lines = numbered(12);
+    let kept = drawn_tail(lines.clone(), 10);
+    assert_eq!(kept[0], "marker 3");
+    assert_eq!(kept[1..], line_texts(&lines[3..]));
+    // One row holds only the marker.
+    assert_eq!(drawn_tail(numbered(12), 1), ["marker 12"]);
+}
+
+#[test]
+fn the_cut_marker_says_how_many_rows_wait_and_which_key_shows_them() {
+    use talaria_tui::live::tail_cut_text;
+    assert_eq!(
+        tail_cut_text(26, false, Some("Ctrl+O")),
+        "\u{2191} 26 earlier rows are not in scrollback yet \u{b7} Ctrl+O shows them now"
+    );
+    assert_eq!(
+        tail_cut_text(1, false, Some("F2")),
+        "\u{2191} 1 earlier row is not in scrollback yet \u{b7} F2 shows it now"
+    );
+    // A long reply already trimmed before the cut: the count is a floor.
+    assert_eq!(
+        tail_cut_text(26, true, Some("Ctrl+O")),
+        "\u{2191} more than 26 earlier rows are not in scrollback yet \u{b7} Ctrl+O shows them now"
+    );
+    // No key opens the transcript: name the view instead.
+    assert_eq!(
+        tail_cut_text(26, false, None),
+        "\u{2191} 26 earlier rows are not in scrollback yet \u{b7} the transcript view shows them"
     );
 }

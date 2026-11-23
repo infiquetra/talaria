@@ -228,6 +228,46 @@ pub fn to_ansi16(color: Rgb) -> u8 {
         .map_or(0, |(index, _)| index as u8)
 }
 
+/// The colour `t` of the way from `a` to `b`, per channel; `t` is clamped to 0.0 to 1.0.
+pub fn blend(a: Rgb, b: Rgb, t: f64) -> Rgb {
+    let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
+    let mix = |from: u8, to: u8| -> u8 {
+        let value = f64::from(from) + (f64::from(to) - f64::from(from)) * t;
+        value.round().clamp(0.0, 255.0) as u8
+    };
+    Rgb(mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2))
+}
+
+/// The reference RGB value of a style colour, or `None` for the terminal's own default.
+///
+/// Named colours map to their conventional ANSI reference values, since the terminal's real
+/// palette is unknown.
+pub fn rgb_of(color: ratatui::style::Color) -> Option<Rgb> {
+    use ratatui::style::Color;
+    let index = match color {
+        Color::Reset => return None,
+        Color::Rgb(r, g, b) => return Some(Rgb(r, g, b)),
+        Color::Indexed(index) => return Some(indexed_rgb(index)),
+        Color::Black => 0,
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Yellow => 3,
+        Color::Blue => 4,
+        Color::Magenta => 5,
+        Color::Cyan => 6,
+        Color::Gray => 7,
+        Color::DarkGray => 8,
+        Color::LightRed => 9,
+        Color::LightGreen => 10,
+        Color::LightYellow => 11,
+        Color::LightBlue => 12,
+        Color::LightMagenta => 13,
+        Color::LightCyan => 14,
+        Color::White => 15,
+    };
+    Some(ANSI16[index])
+}
+
 /// Apply the terminal's depth after file layering, to any style colour field.
 pub fn constrain_color(
     color: ratatui::style::Color,
@@ -247,5 +287,58 @@ pub fn constrain_color(
             Some(Color::Indexed(to_ansi256(Rgb(r, g, b))))
         }
         (_, color) => Some(color),
+    }
+}
+
+/// An RGB value as a style colour the terminal's depth can show.
+pub fn depth_color(
+    color: Rgb,
+    depth: talaria_core::appearance::ColorDepth,
+) -> Option<ratatui::style::Color> {
+    constrain_color(ratatui::style::Color::Rgb(color.0, color.1, color.2), depth)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Rgb, blend, depth_color, rgb_of};
+    use ratatui::style::Color;
+    use talaria_core::appearance::ColorDepth;
+
+    #[test]
+    fn depth_color_follows_the_terminal_depth() {
+        let colour = Rgb(255, 0, 0);
+        assert_eq!(
+            depth_color(colour, ColorDepth::TrueColor),
+            Some(Color::Rgb(255, 0, 0))
+        );
+        assert_eq!(
+            depth_color(colour, ColorDepth::Ansi256),
+            Some(Color::Indexed(196))
+        );
+        assert_eq!(
+            depth_color(colour, ColorDepth::Ansi16),
+            Some(Color::LightRed)
+        );
+        assert_eq!(depth_color(colour, ColorDepth::None), None);
+    }
+
+    #[test]
+    fn blend_returns_endpoints_and_midpoint() {
+        let (a, b) = (Rgb(0, 100, 255), Rgb(200, 0, 55));
+        assert_eq!(blend(a, b, 0.0), a);
+        assert_eq!(blend(a, b, 1.0), b);
+        assert_eq!(blend(a, b, 0.5), Rgb(100, 50, 155));
+        assert_eq!(blend(a, b, -1.0), a, "below zero clamps");
+        assert_eq!(blend(a, b, 2.0), b, "above one clamps");
+    }
+
+    #[test]
+    fn rgb_of_maps_rgb_indexed_and_named_colours() {
+        assert_eq!(rgb_of(Color::Rgb(1, 2, 3)), Some(Rgb(1, 2, 3)));
+        assert_eq!(rgb_of(Color::Indexed(196)), Some(Rgb(255, 0, 0)));
+        assert_eq!(rgb_of(Color::Indexed(232)), Some(Rgb(8, 8, 8)));
+        assert_eq!(rgb_of(Color::Cyan), Some(Rgb(0, 128, 128)));
+        assert_eq!(rgb_of(Color::White), Some(Rgb(255, 255, 255)));
+        assert_eq!(rgb_of(Color::Reset), None);
     }
 }

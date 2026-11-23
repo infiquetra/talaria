@@ -10,6 +10,99 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+### Added
+
+- `talaria doctor`, a one-time notice at session start and the start of `talaria workflow run` now
+  warn when the profile's Hermes configuration has `compression.in_place` set to false (workflow
+  agents cannot compress their conversations and will overflow) or `agent.max_turns` set to a
+  number (sessions stop after that many steps). Each warning names the setting and what to change.
+- A workflow agent whose conversation overflows its context is started again in a fresh session
+  with its working folder intact, at most three times per agent. Each restart shows in the run
+  output and on the agent's row. It does not restart while something else is still running on that
+  agent's session.
+- A workflow run now ends `completed_with_failures` when its script finished but at least one
+  agent failed. The failed agents, with reasons, come before the result in the text and JSON
+  output and above the rows in the workflow view. `workflow resume` replays the stored result as
+  for a completed run.
+- An agent that Hermes stopped at a step cap is marked "cut short" and its reply is kept. Scripts
+  can see the mark through a `cutShort()` function and a hidden `cutShort` property on object and
+  array replies.
+- The run result lists agent working folders that still hold uncommitted changes, and any work
+  found on an agent's session that the run did not start.
+- Each running agent's row in the workflow view shows its current step.
+- `talaria workflow run` warns when its working folder is not inside a git repository, and an
+  isolated agent's first message names its working folder.
+- `talaria workflow check <script>` checks a workflow script before a run: its header, its syntax
+  with line and column, and what the engine would refuse, by running it against stand-in agents.
+  It contacts no gateway and spends nothing.
+- `talaria workflow worktrees list` shows the worktrees and branches runs have kept, and `talaria
+  workflow worktrees remove <run>` removes them. Without `--force` it removes only what holds
+  nothing and only for a run that has finished; `--dry-run` shows what would happen.
+- When the open session belongs to a workflow agent, a line above the composer names the agent,
+  its state and its run, and the first prompt into it asks for a second submit.
+- `talaria workflow run --json` ends with one short plain line after the result: the run, the
+  outcome, the spend and the command that prints the result again.
+- Every `talaria workflow` subcommand has a description in `--help`.
+- `/hivecode reinstall` and the first-time install also install any built-in workflow that is
+  missing, and `talaria workflow roster` warns when none is installed.
+- In a workflow agent's session opened from the workflow view, Left arrow on an empty composer
+  returns to the session you came from with the run view open again (`workflow_agent_back`).
+- While a workflow run is running, the Workflow line above the composer shows a spinner and the
+  time since the run started.
+
+### Changed
+
+- Talaria no longer treats a newer Hermes gateway as a problem. `talaria doctor` shows one plain
+  line, for example "Hermes 0.23.3; this Talaria was tested against v0.23.1", and its overall result
+  is unchanged by the gateway's version. The connect notice for a gateway newer than the tested
+  release is gone. A gateway older than the oldest tested release still gets one plain note that
+  some features may be missing, as a warning instead of a failure.
+- `talaria --version` reports "hermes: tested against v0.23.1 (3b421578)" instead of a pin and a
+  supported range. The doctor JSON keeps its `hermes_tag` and `hermes_commit` fields.
+- The weekly contract drift workflow reports in its run summary and no longer turns the run red
+  because a newer Hermes release changes the contract.
+- Workflow agents run with no step cap unless the script sets `maxTurns`. Before, a step cap in
+  the profile's Hermes configuration applied to every agent.
+- The `talaria-workflows` skill text changed: how to start a brand-new project, staying in an
+  agent's own working folder, waiting once on a run, the commands Hermes refuses in unattended
+  agents, basing a cost estimate on past runs, and reporting failed agents. An installed copy
+  reads as changed until `/hivecode reinstall`.
+- File tool headers keep the file name: a long path is shortened in the middle, and the line
+  counts say "partial" when Hermes cut the preview.
+- The workflow token budget and every token total leave cache reads out and report them as their
+  own number (`cache_read_tokens`; "N tokens + M cache reads" in text). `spend.tokens` and
+  `tokens_spent` change meaning with this. A turn whose cache reads are unknown is counted in
+  full, and the output says so.
+- A run's status reads "completed with failures" in words in text output, and `workflow run` and
+  `workflow resume` exit 5 for that outcome instead of 0. The result is still printed.
+- `workflow worktrees remove` deletes an ignored build folder only after a marker on disk confirms
+  what it is; a folder that only has the name keeps the worktree, with the reason.
+- The notice about locking the installed skill also shows the command to type in a session.
+- The interrupt key (Esc) must be pressed twice within 2 seconds to interrupt a running turn; the
+  working row says so. Holding the key does not count as a second press. Ctrl+C still interrupts
+  at once.
+- The background process line for a workflow run is not drawn when the Workflow line already shows
+  that run; otherwise it is named after the workflow command and shows a readable event instead of
+  raw JSON.
+
+### Removed
+
+- The daily `Hermes sync` workflow, which opened an issue and a branch for every Hermes release.
+  Talaria does not follow Hermes releases automatically; the contract is regenerated by hand when
+  Talaria is next tested against a newer one.
+
+### Fixed
+
+- A failed workflow agent now shows the reason Hermes gave. Before, the reason was dropped and the
+  run said "no reason given".
+- The workflow view no longer logs Hermes's `agent.step` event as an unknown event type.
+- The staffing report no longer prints an empty price list when a script names its models
+  directly.
+- The workflow skill installs whatever the length of the Hermes folder path; its size limit is
+  measured on the skill text itself.
+- The `url` crate is updated to 2.5.9, which fixes a stack overflow in `Url::origin()` on nested
+  `blob:` URLs (RUSTSEC-2026-0592).
+
 ## [0.9.1] — 2026-11-21
 
 Talaria 0.9.1 is the packaged binary and Homebrew release of 0.9.0 after

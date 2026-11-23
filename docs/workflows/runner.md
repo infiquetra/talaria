@@ -7,7 +7,19 @@ Closing a viewer leaves the runner and its agents working.
 In the terminal, `/workflows` opens the same discovery rows used by `workflow list`.
 Use the arrow keys and Enter to open a run. Escape closes only the viewer; reopening
 the picker refreshes discovery. With no runs it shows
-`no runs yet — talaria workflow run starts one`.
+`no runs yet — talaria workflow run starts one`, then says that with Hivecode on a plain
+prompt goes to the talaria-workflows skill, and the agent proposes a workflow and asks before
+starting it. Alt+W (`workflow_view`) opens, from the composer, the latest run that this
+Talaria window saw start after a Hivecode-routed prompt in the foreground session, and the
+run list otherwise.
+
+Enter on an agent in the run view opens that agent's session in the window. The line above the
+composer then names the key that goes back (Left by default, `workflow_agent_back`): with an
+empty draft and nothing else open, it returns to the session you were in and opens the run view
+again with that agent selected; Esc then closes the view as usual. Going back sends nothing to the
+agent, and its turn keeps running. The way back is forgotten once you reach a different session
+by any other route, after you use it, and when the session you came from cannot be opened. It is
+not offered when you came from a session that has no stored id of its own yet.
 
 ```sh
 talaria workflow run review.js --profile fixture --args '{"branch":"main"}'
@@ -38,7 +50,7 @@ Each run folder holds:
 | `journal.jsonl`, `run.lock` | Durable records and the journal's single-writer lock. |
 | `scripts/`, `blobs/`, `resolutions/` | Journal-owned content and parked-call answers. |
 | `launch.json` | Original script path and folder, absolute working folder, and saved-workflow folder. |
-| `outcome.json` | Latest completed execution's result, failure detail, or abort reason. |
+| `outcome.json` | Latest completed execution's result, failure detail, or abort reason; a `budget_exhausted` run keeps its result and the budget reason; a `completed_with_failures` run keeps its result and a `failed_agents` list, and any run with agents Hermes stopped at their step cap lists them in `cut_short_agents`. Both lists hold `label` and `reason` and come right after `outcome`. |
 | `runner.json` | Detached child's process id; discovery does not trust it as liveness evidence. |
 | `runner.log` | Detached child's appended human output. |
 | `control/` | Shared pause, stop, and next-resume restart requests. |
@@ -49,16 +61,34 @@ an interrupted run look active.
 
 ## Starting and detaching
 
-`run` accepts `--args <json>` or `--args-file <path>`, `--profile`, `--staffing`, `--cwd`,
-`--budget-tokens`, `--budget-usd`, `--on-unknown wait|fail`, `--record`, the location flags,
-`--json`, and `--detach`. Arguments are validated before the script; the script's literal
-metadata is parsed before staffing or gateway work. Token budgets must be positive integers;
+`run` accepts `--args <json>` or `--args-file <path>`, `--profile`, `--session-model` with
+`--session-provider`, `--staffing`, `--cwd`, `--budget-tokens`, `--budget-usd`,
+`--on-unknown wait|fail`, `--record`, the location flags, `--json`, and `--detach`. The session
+pair replaces the profile's configured model as the roster's current model, which a call
+naming no model or tier runs on; the manifest's roster snapshot records it with
+`"source":"session"`, and resume and a detached child keep it. Arguments are validated
+before the script; the script's literal metadata is parsed before staffing or gateway work. Token budgets must be positive integers;
 money budgets must be finite positive amounts in US dollars.
 
 Preflight loads staffing, applies command-line budget overrides, fetches the roster, reports
 all tier-check problems and warnings, and computes the cost estimate. A missing staffing file
 means an empty table. No run folder exists until preflight succeeds. Unpriced work has unknown
 cost, rather than a zero estimate.
+
+Preflight also reads each `agent()` call whose options object, written in the call itself,
+names both `model` and `provider` as plain strings, and checks that pair against the roster.
+A pair the roster cannot serve fails the run with exit 2 before any agent starts, one line per
+unknown pair with its script line and the nearest known spelling. Anything preflight cannot
+read for certain is checked when its agent starts instead: a call naming only a model, a name
+that is computed, options built elsewhere or changed by a later assignment, an object with a
+spread or computed key, and names beside a `profile` key. No script that would run is refused. When an agent's call settles, the runner leaves its Hermes session with
+`session.detach`, naming the subscription the create answer gave (or, after the connection
+came back, the one the resume gave) and the end reason `workflow_agent_done`, so Hermes ends
+the session once no other viewer holds it. The runner then stops following the session, so a
+later reconnect does not resume it and open it again. The session socket serves no
+`session.close`. A detach the gateway refuses or does not answer within 15
+seconds is noted as one journal log line and changes nothing else; Hermes then ends the
+session itself, after its orphan grace period, once the runner's connection closes.
 
 The manifest records the parsed workflow name, actual script hash, version, profile, input,
 roster, and the finite-only approval-policy intent. The deterministic seed hashes the original
@@ -81,13 +111,19 @@ the same recorder implementation. The resulting log keeps one header and increas
 
 `resume` accepts a run id or folder, an optional replacement `--script`, staffing and budget
 overrides, `--cwd`, location flags, `--record`, and `--json`. A locked run refuses a second
-runner. Use `resolve` to answer its parked calls while it remains alive.
+runner. Use `resolve` to answer its parked calls while it remains alive. A resume keeps the
+token and money budget recorded in the manifest's roster snapshot; `--budget-tokens` or
+`--budget-usd` replaces only the one it names.
 
-A completed execution replays its stored `outcome.json` result without connecting to the
-gateway or executing the script. If a completed run predates that file, the runner reports
+A completed execution, including one that completed with failures, replays its stored
+`outcome.json` result and its failed and cut short agent lists without connecting to the
+gateway or executing the script, and so does a budget-exhausted run resumed without a budget
+flag (exit 4, with a line saying a larger budget continues it). Neither changes any file in
+the run folder. If a completed run predates that file, the runner reports
 the missing result and the journal's finish summary; it never reruns paid work to recover a
-display value. Failed, aborted, and interrupted runs open a new execution. Their unchanged
-completed calls remain reusable through journal replay.
+display value. Failed, aborted and interrupted runs, and budget-exhausted runs given a new
+budget, open a new execution.
+Their unchanged completed calls remain reusable through journal replay.
 Before admitting new work, resume reattaches the unfinished sessions recorded in the
 journal. Their terminal results still come from receipts through the backend.
 An explicit pending restart of a failed key requests a new execution even when the previous
@@ -158,18 +194,33 @@ an explicit warning; unrelated folders are ignored. Unreadable top-level directo
 instead of appearing to be empty histories.
 
 The JSON array always includes `run_id`, `name`, `profile`, `started_at_ms`, `status`,
-`agents_finished`, `agents_total_known`, `parked`, `tokens_spent`, `money_spent_usd`, `run_dir`,
-and `warning` (including null). Token spend comes from settled usage. Money sums each
+`agents_finished`, `agents_total_known`, `parked`, `tokens_spent`, `cache_read_tokens`,
+`cache_unknown_turns`, `money_spent_usd`, `run_dir`, and `warning` (including null). Token spend
+comes from settled usage. `tokens_spent` leaves out cache reads, which `cache_read_tokens` gives
+on their own; `cache_unknown_turns` counts settled turns whose cache reads Hermes did not report,
+which are counted in full inside `tokens_spent` (every turn of a run journaled before cache
+reads were kept apart). `cache_read_tokens` is null when no turn reported tokens. See
+[Staffing and budgets](staffing.md#spend-and-budgets). Money sums each
 attempt's last settled session cost; any missing or unknown settled cost makes the total
 unknown. File-only discovery never reprices tokens.
 
 Foreground output names the run folder, shows phases, logs, agents, and scheduler events,
 then prints the result. `--json` emits compact JSON lines and one final `run_finished`
 object. That object has exactly one of `result`, `error`, or `reason`, together with token
-and money spend. Diagnostic and refusal lines go to standard error. Detached children
+and money spend (`spend.tokens` leaves out cache reads, with `spend.cache_read_tokens` and
+`spend.cache_unknown_turns` beside it); a `budget_exhausted` object has both `result` and `reason`, plus the
+journal's finish `summary` with its `refused` and `stopped` counts. A `completed_with_failures` object
+(the script returned, but at least one agent failed) has `reason`, then `failed_agents`, then
+`cut_short_agents` when any, then `result` and `summary`; a plain `completed` object lists
+`cut_short_agents` before `result` when Hermes stopped any agent at its step cap. Foreground
+text prints the same lists above the result. Agents the budget
+refused or stopped appear as `agent_finished` lines with state `refused` or `stopped`, and an
+agent stopped at its step cap with state `cut short`. Diagnostic and refusal lines go to standard error. Detached children
 always write human output to `runner.log`; the parent prints one detached-run object or line.
 
-Exit codes are 0 completed, 1 failed or unconfirmed, 2 usage or refusal, and 3 aborted.
+Exit codes are 0 completed, 1 failed or unconfirmed, 2 usage or refusal, 3 aborted, 4 budget exhausted (the script
+returned, but the budget refused or stopped at least one agent), and 5 completed with failures (the script returned
+and its result is printed, but at least one agent failed).
 
 ## Integration and verification
 

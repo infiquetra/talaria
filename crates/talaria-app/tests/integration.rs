@@ -58,6 +58,9 @@ mod voice_gateway;
 #[path = "integration/acp_wire.rs"]
 mod acp_wire;
 
+#[path = "integration/appearance_choice.rs"]
+mod appearance_choice;
+
 #[path = "integration/appearance_flow.rs"]
 mod appearance_flow;
 
@@ -249,6 +252,9 @@ mod memory_service;
 #[path = "integration/model_replay.rs"]
 mod model_replay;
 
+#[path = "integration/model_roles_flow.rs"]
+mod model_roles_flow;
+
 #[path = "integration/model_roles_service.rs"]
 mod model_roles_service;
 
@@ -392,6 +398,9 @@ mod secondary_ignore;
 #[path = "integration/status_effort.rs"]
 mod status_effort;
 
+#[path = "integration/effort_scale.rs"]
+mod effort_scale;
+
 #[path = "integration/subagent_replay.rs"]
 mod subagent_replay;
 
@@ -422,8 +431,11 @@ mod theme_file_parse;
 #[path = "integration/tool_replay.rs"]
 mod tool_replay;
 
-#[path = "integration/ultracode_app.rs"]
-mod ultracode_app;
+#[path = "integration/hivecode_app.rs"]
+mod hivecode_app;
+
+#[path = "integration/interrupt_confirm.rs"]
+mod interrupt_confirm;
 
 #[path = "integration/vim_routing.rs"]
 mod vim_routing;

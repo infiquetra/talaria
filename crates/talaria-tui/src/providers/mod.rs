@@ -267,6 +267,7 @@ fn draw_browse(view: &ProvidersView, area: Rect, buf: &mut Buffer, views: Option
             details,
             details_open: browse.is_some_and(|browse| browse.details_open),
             details_scroll: browse.map_or(0, |browse| browse.details_scroll),
+            current: None,
         }),
         title: &view.title,
         filter: &view.filter,

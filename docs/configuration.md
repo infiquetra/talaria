@@ -18,6 +18,7 @@ doctor_tab = ["tab"]
 doctor_left = ["left"]
 doctor_right = ["right"]
 voice_record = ["alt+r"]
+workflow_agent_back = ["left"]
 submit = ["enter"]
 newline = ["shift+enter", "alt+enter", "ctrl+j"]
 interrupt = ["esc"]
@@ -150,6 +151,7 @@ agents_bottom = ["shift+g", "end"]
 fleet_new = ["n"]
 fleet_new_worktree = ["w"]
 attention_next = ["alt+a"]
+workflow_view = ["alt+w"]
 fleet_review = ["v"]
 review_up = ["up", "k"]
 review_down = ["down", "j"]
@@ -197,8 +199,12 @@ profiles_filter = ["/"]
 profiles_refresh = ["r"]
 profiles_rescan = ["R"]
 profiles_new = ["n"]
+profiles_delete = ["d"]
+profiles_rename = ["N"]
 profiles_description = ["e"]
 profiles_soul = ["s"]
+profiles_models = ["m"]
+profiles_connect = ["c"]
 profiles_back = ["esc"]
 model_roles_section_main = ["1"]
 model_roles_section_fallbacks = ["2"]
@@ -376,6 +382,7 @@ colors = "auto"
 reduced_motion = false
 work_panel = false
 menu_bar = false
+reasoning = "collapsed"
 [fleet]
 enabled = true
 hot_poll_ms = 2000
@@ -410,7 +417,7 @@ render_mode = "strip"
 `[keys] <action>` takes a key or a list; `[]` leaves the action unbound. Ctrl+G edits the draft in
 `editor.command`, `$VISUAL`, `$EDITOR` or a fallback (graphical editors need a wait flag); Ctrl+R
 searches saved prompts; Ctrl+Z suspends to the shell until `fg`. History is kept owner-only in `~/.talaria/history.jsonl`; a leading space or over 100,000 characters
-keeps a prompt in memory only, and `[history] save = false` stops reading and writing it. Notification kinds are `needs_you`, `done` and `failed`; the bell and desktop
+keeps a prompt in memory only, and `[history] save = false` stops reading and writing it. A command picked from the slash palette is saved as the line that ran. A blank line or a bare `/` is never saved, a bare `/` already in the file is skipped, and a repeat of the previous prompt is not written to the file again. Notification kinds are `needs_you`, `done` and `failed`; the bell and desktop
 lists choose channels separately, and `done` waits for `done_after_seconds` (0 to 86400).
 `[herdr] report_state` (default true) sends `idle`, `working`, `blocked`, `done` and
 `error` to a Herdr terminal that answered the startup probe, and also sends
@@ -520,15 +527,87 @@ Mixture of Agents presets); see [Model roles](model-roles.md).
 
 The `settings_*` bindings above apply while browsing. `/` focuses the filter; Enter leaves
 it focused on the first matching setting. In an editor, arrows, Home, End, Backspace,
-Delete and Ctrl+U edit text; Enter accepts and Esc cancels. Option lists accept typing to
-filter. Ctrl+R reloads settings, `?` shows help, and Esc clears the filter before closing.
-Pending edits require confirmation before closing. Ctrl+Z suspends as usual.
+Delete and Ctrl+U edit text; Enter accepts and Esc cancels. Ctrl+R reloads settings, `?`
+shows help, and Esc clears the filter before closing.
+
+A setting with a known set of values opens a chooser instead of a text box. Each row names
+a value and says in one line what it does; `(current)` marks the value in force and
+`(default)` the profile's default, and the chooser opens on the current value. Typing
+filters by name or description, Up and Down move and wrap, PgUp and PgDn move ten rows,
+Home and End jump to the ends, Enter chooses and Esc cancels. The lists come from the
+gateway's schema plus a table built into Talaria for keys the schema types as plain text;
+that table also corrects schema lists that name values Hermes does not read, such as
+`terminal.modal_mode`. A value set outside the list shows as
+`<value> (current, not in the list)`, and Enter on it keeps it unchanged. A stored spelling
+Hermes reads as a listed value, such as `priority` for `fast` in `agent.service_tier`, marks
+that value's row as `fast (current, saved as priority)`, and Enter on it keeps the stored
+spelling. Where Hermes ignores case and spaces, as for `agent.service_tier`,
+`browser.engine`, `desktop.disable_gpu` and `display.personality`, so does the chooser; for
+`display.language` it also reads `_` as `-` and a regional code such as `de-BE` as its
+language, `de`. `display.language` lists the languages Hermes ships, such as `en`, `de` and
+`zh-hant`; a language pack's own code goes in `Type a value…`. Where Hermes also
+takes values outside the list, such as plugin names or voice names, a last row
+`Type a value…` opens a text box that starts with the filter text. The command form below
+accepts the same values, and its refusal names them: `Choose one of: auto, managed, direct.`
+
+A setting that takes several values, such as `display.status_bar.fields`,
+`display.runtime_footer.fields` or `discord.server_actions`, opens the same list with a tick
+box on each row: `[x]` is ticked and `[ ]` is not. Space ticks or unticks the row, Enter keeps
+the ticks as they stand, wherever the cursor is, and Esc drops them. Typing still filters.
+A first row such as `Default set (empty list)` clears every tick. A listed value that the
+list lacks, such as a field name a newer Hermes added, stays ticked as
+`<value> (not in the list)` until you untick it. Where the order is the order shown, as in
+the runtime footer, a new tick goes last, and `Edit as text…` opens the list as comma
+separated text to reorder it. `discord.server_actions` is a string in Hermes, so its ticks
+are saved as one comma separated string; the other keys save a list. `toolsets`,
+`agent.disabled_toolsets` and `skills.auto_load` tick the profile's own toolsets or skills,
+fetched like the lists below, and an `Own entries…` row opens the list as comma separated
+text for names the list lacks.
+
+A setting that takes one of a few words or something of your own lists the words and ends
+in a row that opens a text box. `agent.tool_use_enforcement`, `agent.execution_guidance` and
+`agent.intent_ack_continuation` take `auto`, `true`, `false` or an `Own list…` of model name
+parts, saved as a list; `true` and `false` are saved as booleans, not text.
+`agent.agent_cache.memory_high_mb` takes `auto`, `off` or a `Number of MB…`, and
+`approvals.approvers` takes `*`, `Requester and admins only` (an empty list) or an
+`Own list…` of user ids. A list or number already stored shows as `custom: … (current)`, and
+`Own list…` opens a text box that starts with it.
+
+A number whose range Hermes states, such as `compression.threshold` (0.0 to 1.0) or
+`compression.max_attempts` (1 to 10), shows `range … · step … · unit` above its text box.
+Up and Down change it by one step and stop at the ends. Enter refuses a value outside the
+range with a line such as `Enter a number from 0.0 to 1.0.`. A setting that Hermes leaves
+unset by default and whose blank value means "not set", such as `agent.run_budget_seconds`,
+takes a whole number or stays blank; blank is saved as `null`. A number with no stated range
+keeps the plain text box, and Talaria adds no range of its own.
+
+Some lists differ per machine or profile: skins, personalities, terminal backends, dashboard
+themes, context engines, toolsets, skills and the profile names the kanban keys take. Their choosers show the
+built-in names at once with a `Loading the list…` row and add the profile's own names when
+the gateway answers. Skins and personalities come from slash completion on the session
+connection; backends (with a setup status), themes and context engines come from the
+dashboard routes with the profile's own ticket, as do toolsets and skills; profile names are
+the ones the gateway serves. Keys that share a list, such as the two kanban keys, share its
+answer. If the list cannot be read, the row says
+`Could not load the list (<reason>). Showing built-in names. Ctrl+R retries.` and the
+chooser stays usable. These hints name the first key bound to `settings_reload` that a chooser takes, and leave
+it out when there is none: a plain or Shift character types into the filter instead. Until the list arrives, a current value that no built-in name matches
+shows as `<value> (current)`, and the cursor stays on the same value when the list merges. In a chooser, the `settings_reload` binding (Ctrl+R) asks for its list
+again instead of reloading every setting. A list is kept while settings stay open.
+The `/configure` helper checks each proposed setting against the same lists the chooser
+offers, including a list already fetched and the value held now. Pending edits require
+confirmation before closing. Ctrl+Z suspends as usual.
 
 Secrets are fully masked. R reveals a selected secret once for ten seconds or until the
 next key. While editing a secret, Alt+R reveals it once; plain R inserts text.
 Reviews and saved notices never reveal a secret. Environment references,
-values containing secrets, unsupported types, model roles and provider settings are read-only
-on this screen. Settings need a terminal at least 60 columns by 12 rows.
+values containing secrets, unsupported types, and the keys that the model roles and provider
+screens write (the main model and its fallbacks, the provider, model, endpoint, protocol and
+reasoning effort of the subagents and helper tasks, the Mixture of Agents presets) are
+read-only on this screen. The behaviour keys beside them, such as the subagent limits in
+`delegation.*` and the timeouts in `auxiliary.*`, are edited here. A save that holds
+`display.language` also asks Hermes to keep the language key, so choosing English is not
+dropped as a default. Settings need a terminal at least 60 columns by 12 rows.
 
 `/config display.compact=true display.skin="mono"` prepares multiple changes for review.
 Quoted values support escaped quotes and backslashes. Unknown keys or invalid values reject
@@ -539,12 +618,15 @@ commands containing a secret assignment are refused and excluded from prompt his
 presses within 2 seconds exit. The `completion_*` keys apply only while a list is open, and a tab
 inside pasted text is kept. `toggle_tasks` shows the task checklist; `attach_clipboard_image`
 attaches the clipboard's image. `attention_next` (Alt+A) jumps to the oldest background request
-that waits for an answer. The model picker keys are not in the block: `model_picker` Alt+P,
+that waits for an answer. `workflow_view` (Alt+W) opens the latest workflow run this window saw
+start after a Hivecode-routed prompt in the foreground session, or the run list when it saw none. The model picker keys are not in the block: `model_picker` Alt+P,
 `effort_down` and `effort_up` Left and Right, `model_scope` Ctrl+G (also new sessions),
 `model_favourite` Ctrl+F, `model_refresh` Ctrl+R, `model_chips_next` Tab,
 `model_chips_prev` Shift+Tab, and `model_details` F2 or Ctrl+E. The chips change the list view
-(All, Starred, Configured, Set up); Ctrl+G still changes whether a choice is saved for new sessions.
-These actions resolve before composer keys while the picker is open. Typing always filters,
+(All, Starred, Configured, Needs setup); Ctrl+G still changes whether a choice is saved for new sessions.
+These actions resolve before composer keys while the picker is open. The `/effort` selector
+uses the same `effort_down`, `effort_up` and `model_scope` keys, so a rebinding applies to both.
+Typing always filters,
 including letters and digits; Ctrl+U clears. Esc closes full details first, then clears the filter,
 then closes the picker. Full details only scroll and never confirm, star or save anything.
 macOS may reserve F2, so Ctrl+E is an equivalent, rebindable default. Conflicting bindings produce
@@ -641,7 +723,39 @@ The overlay refreshes when opened, on `r`, and after its own writes. `R` request
 after `y` confirms: serving new profiles can also start their messaging bots. `n` creates a
 profile after validation and review, `e` edits its description, and `s` opens its soul in the
 configured external editor. Soul edits are reviewed and checked against a fresh copy before
-saving. A concurrent change keeps the unsaved edit in memory for the next `s`. Model, skills, toolsets, and Model Context Protocol servers are shown here without edit controls.
+saving. A concurrent change keeps the unsaved edit in memory for the next `s`. Skills, toolsets, and Model Context Protocol servers are shown here without edit controls.
+
+`d` deletes the selected profile. The confirmation lists what Hermes removes (config, API keys,
+memories, sessions, skills and cron jobs), says that Hermes stops the profile's gateway first,
+and sends nothing until you type the profile's name, as `hermes profile delete` asks. `N`
+renames the selected profile; the new name passes the same checks as a created one. Both use
+Hermes's profile routes with a ticket for that one profile, which only the gateway's control
+socket on this machine gives, so they work only on a profile the gateway serves and only
+through a local gateway. Talaria refuses the default profile and the profile it is connected
+to, and Hermes refuses the profile its gateway was started from. When Hermes deletes the
+folder but has not finished clearing the profile's session identity, the notice shows the
+command Hermes gives to finish it.
+
+While Hermes works on a delete or rename, which can take up to a minute, the panel under the
+list shows one line such as `Deleting fixture: Hermes is stopping its gateway (12 s).` and the
+row reads `deleting` or `renaming`. Until Hermes answers, every key that acts on that row
+(models, connect, description, soul, rename, delete) answers with one line such as
+`fixture is being deleted. Wait until Hermes answers.` A deleted profile leaves the list at once,
+and a renamed one takes its new name and reads `starting` until the gateway serves it, reading the
+list again on its own as a create does; a profile that is already gone says so and the list is read
+again. In a terminal under 100 columns, the detail of a row still opens during the request and
+shows the same line at its top. The create notice drops its `Waiting for the gateway to serve it...` part as soon as the
+list shows the new profile served.
+
+Enter or `m` on a served profile opens its `/models` page: the main model, fallbacks, helper
+(auxiliary) models, subagents and mixture of agents of that profile, even when Talaria is
+connected to another one. Closing that page returns to `/profiles`, and a main model saved there
+shows in the list at once. `c` asks first, then starts
+a new session on the selected profile in the current folder; the previous session keeps running
+in Hermes and `/resume` returns to it. The connection lasts for this run; to start on a
+profile next time, launch with `talaria --profile` and the profile's name. Both keys refuse a profile the
+gateway does not serve, and `c` refuses the profile Talaria is already connected to. The detail
+panel lists these keys and marks the connected profile.
 
 These bindings apply only inside the profiles overlay. Text fields reserve ordinary editing
 keys, Tab, Shift+Tab, and Ctrl+U; Esc leaves the innermost panel before closing the overlay.
@@ -917,6 +1031,7 @@ answer the probe gets no in-band record.
 | `reduced_motion` | boolean | false | true or false | false |
 | `work_panel` | boolean | false | true or false | false |
 | `menu_bar` | boolean | false | true or false | false |
+| `reasoning` | string | collapsed | collapsed, full | full |
 
 `work_panel` enables the optional full-screen workspace at startup. Alt+D
 (`layout_panel`) and `/layout panel` change the current view without saving this
@@ -926,6 +1041,18 @@ setting controls the startup menu. Alt+I and `/layout bar` toggle it for this vi
 for the docking thresholds and scrollback tradeoff. Set `layout_panel = []` under
 `[keys]` to unbind the shortcut, or replace its chord. Conflicts with another
 effective binding produce a notice; `/layout panel` remains available.
+
+`reasoning` sets how the main screen and the optional full-screen workspace draw the model's
+thinking. `collapsed` draws each
+reasoning block as one dim line that names its length and the key that opens the transcript
+view, such as `∴ thinking (+34 lines, Ctrl+O to view)`, or
+`∴ thought for 12s (+34 lines, Ctrl+O to view)` when Talaria saw the block stream. `full` draws
+every line, as earlier versions did. A turn whose only output is its reasoning is drawn in full
+either way. `/thinking`, `/thinking collapsed` and `/thinking full` change the current view
+without saving this file; scrollback already written keeps its form, while the workspace redraws
+every block in the new form. Talaria never asks Hermes
+to stop sending reasoning, so the transcript view (Ctrl+O) always holds the full text. An
+invalid value produces one notice and uses `collapsed`.
 
 ### `fleet`
 

@@ -52,7 +52,7 @@ enum Action {
     },
 }
 fn get(name: &str) -> Result<&'static Builtin, (String, u8)> {
-    builtins::get(name).ok_or_else(|| (format!("no built-in workflow named '{name}'; built-ins: fix-failing-tests, research, review-branch, ultracode"),2))
+    builtins::get(name).ok_or_else(|| (format!("no built-in workflow named '{name}'; built-ins: fix-failing-tests, research, review-branch, hivecode"),2))
 }
 fn phases(builtin: &Builtin) -> Result<Vec<String>, (String, u8)> {
     parse_script(builtin.source)
@@ -129,9 +129,10 @@ fn install(dir: &Path, force: bool, json_output: bool) -> Result<(), (String, u8
                 report.backup.as_deref().unwrap_or(&report.path).display()
             ),
             InstallAction::KeptModified => {
-                let reason = match std::fs::symlink_metadata(&report.path) {
-                    Ok(m) if m.file_type().is_symlink() => "symbolic link; not replaced",
-                    Ok(m) if !m.is_file() => "not a regular file; not replaced",
+                let reason = match (&report.reason, std::fs::symlink_metadata(&report.path)) {
+                    (Some(reason), _) => reason.as_str(),
+                    (None, Ok(m)) if m.file_type().is_symlink() => "symbolic link; not replaced",
+                    (None, Ok(m)) if !m.is_file() => "not a regular file; not replaced",
                     _ => "modified; use --force to replace it",
                 };
                 println!("kept {} ({reason})", report.path.display());

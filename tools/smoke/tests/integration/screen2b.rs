@@ -68,7 +68,7 @@ fn picker_state_reads_the_open_picker() {
     );
     assert!(
         picker_state(
-            "Switch model · this session\nOllama Cloud\n>  ● minimax-m3.1-flash          effort ?\neffort: medium\n"
+            "Switch model · this session\nOllama Cloud\n>  ● minimax-m3.1-flash          current\neffort: medium\n"
         )
         .has_current,
         "the current model row is recognised with the leading selection cursor"

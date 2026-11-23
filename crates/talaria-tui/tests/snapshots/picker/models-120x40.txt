@@ -1,13 +1,13 @@
 ┌Switch model · this session───────────────────────────────────────────────────────────────────────────────────────────┐
 │> type to filter                                                                                                      │
-│[All] Starred Configured Set up                                                                                       │
-│2 models · 1 providers                                                                                                │
+│[All] Starred Configured Needs setup                                                                                  │
+│2 models · 1 providers · Current: Example provider / reasoner-large · high                                            │
 │Example provider                                                      │Details                                        │
-│> ★ ● reasoner-large                                          effort ?│Selected: Example provider / reasoner-large    │
-│  reasoner-small                                              effort ?│Requested: high                                │
-│                                                                      │Support: unverified for this route             │
-│                                                                      │Applied: unknown                               │
-│                                                                      │Context: unknown                               │
+│> ★ ● reasoner-large                                           current│Effort: high requested, sent as high           │
+│  reasoner-small                                                      │Context: 200K tokens                           │
+│                                                                      │Account: configured in Hermes (not checked)    │
+│                                                                      │                                               │
+│                                                                      │                                               │
 │                                                                      │                                               │
 │                                                                      │                                               │
 │                                                                      │                                               │

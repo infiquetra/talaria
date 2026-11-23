@@ -118,8 +118,8 @@ pub const BUILTINS: &[Builtin] = &[
         ],
     },
     Builtin {
-        name: "ultracode",
-        source: include_str!("../../workflows/ultracode.js"),
+        name: "hivecode",
+        source: include_str!("../../workflows/hivecode.js"),
         summary: "Understand the code, compare independent designs, implement the chosen one test-first in a worktree, then review it with review-branch.",
         max_agents_default: 23,
         roles: &[
@@ -244,7 +244,7 @@ fn slots(
     if builtin.name == "review-branch" {
         count = lenses(args, prefix)?;
     }
-    if builtin.name == "ultracode" {
+    if builtin.name == "hivecode" {
         count = designer_count(args)?;
     }
     if builtin.name == "research" {
@@ -294,7 +294,7 @@ fn slots(
         {
             continue;
         }
-        if builtin.name == "ultracode" && role.role == "chooser" && count < 2 {
+        if builtin.name == "hivecode" && role.role == "chooser" && count < 2 {
             continue;
         }
         let tiers = if let Some(value) = tier_overrides.and_then(|m| m.get(role.role)) {
@@ -338,14 +338,14 @@ pub fn tiers_for(builtin: &Builtin, args: Option<&Value>) -> Result<Vec<(String,
     let empty = Value::Object(Map::new());
     let compute = || {
         let args = object(args.unwrap_or(&empty), "args")?;
-        if builtin.name == "ultracode" {
+        if builtin.name == "hivecode" {
             designer_count(args)?;
         }
         // A review is checked in key order, before the outer tiers.
-        let child = if builtin.name == "ultracode" {
+        let child = if builtin.name == "hivecode" {
             let review = object(args.get("review").unwrap_or(&empty), "review")?;
             if review.contains_key("base") || review.contains_key("head") {
-                return Err("review.base and review.head are set by ultracode".into());
+                return Err("review.base and review.head are set by hivecode".into());
             }
             let allowed = ["focus", "lenses", "maxDiffChars", "maxFindings", "tiers"];
             for k in review.keys() {
@@ -400,7 +400,7 @@ mod tests {
             slots.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
             ["planner", "code-searcher", "code-reader", "synthesizer"]
         );
-        let slots = tiers_for(get("ultracode").unwrap(), Some(&json!({"designers":1,"review":{"lenses":["tests"],"tiers":{"reviewers":["custom"]}}}))).unwrap();
+        let slots = tiers_for(get("hivecode").unwrap(), Some(&json!({"designers":1,"review":{"lenses":["tests"],"tiers":{"reviewers":["custom"]}}}))).unwrap();
         assert!(!slots.iter().any(|(k, _)| k == "chooser"));
         assert!(slots.contains(&("review.reviewers[0]".into(), "custom".into())));
         assert!(!slots.iter().any(|(k, _)| k == "review.reviewers[1]"));
@@ -425,9 +425,9 @@ mod tests {
                 "research",
                 json!({"question":"q","code":false,"docs":false,"web":false}),
             ),
-            ("ultracode", json!({"task":"t","designers":0,"review":null})),
+            ("hivecode", json!({"task":"t","designers":0,"review":null})),
             (
-                "ultracode",
+                "hivecode",
                 json!({"task":"t","review":{"tiers":{"reviewers":[]}},"tiers":null}),
             ),
         ];

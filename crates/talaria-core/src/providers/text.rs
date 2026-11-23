@@ -55,7 +55,7 @@ pub(crate) fn failure(error: &Failure, route: &str) -> String {
             401 => "Hermes did not accept Talaria's ticket.".into(),
             403 => "Hermes refused a request for another profile.".into(),
             404 => format!(
-                "This Hermes has no {route}. It may be older or newer than Talaria expects."
+                "This Hermes has no {route}. It may differ from the Hermes this Talaria was tested against."
             ),
             400 | 409 => detail
                 .as_deref()

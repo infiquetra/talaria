@@ -7,7 +7,7 @@ use talaria_workflow::{
     runner,
     skill::{self, InstallRecords, SkillTarget},
     staffing::{
-        self, Clock, LinkRosterSource, RosterCache, RosterError, RosterReport, RunBudget,
+        self, Clock, LinkRosterSource, Roster, RosterCache, RosterError, RosterReport, RunBudget,
         StaffingTable, SystemClock,
     },
 };
@@ -21,6 +21,12 @@ pub struct RosterArgs {
     pub budget_tokens: Option<u64>,
     #[arg(long,value_parser=money)]
     pub budget_usd: Option<f64>,
+    /// The model the session runs on; it becomes the roster's current model.
+    #[arg(long, requires = "session_provider")]
+    pub session_model: Option<String>,
+    /// The provider of `--session-model`.
+    #[arg(long, requires = "session_model")]
+    pub session_provider: Option<String>,
     #[arg(long)]
     pub json: bool,
 }
@@ -68,6 +74,15 @@ pub fn local_parts(
         let (workflows, warnings) = roster_envelope::list_workflows(dir);
         local.workflows = workflows;
         local.warnings = warnings;
+        if talaria_workflow::builtins::BUILTINS.iter().all(|builtin| {
+            talaria_workflow::builtins::installed_state(dir, builtin)
+                == talaria_workflow::builtins::InstalledState::NotInstalled
+        }) {
+            local.warnings.push(
+                "no built-in workflows are installed, so the agent writes each workflow itself. Install them with: talaria workflow builtins install"
+                    .into(),
+            );
+        }
     }
     let _ = hermes_home;
     (local, error)
@@ -154,6 +169,12 @@ pub async fn envelope(args: &RosterArgs) -> (RosterEnvelope, i32) {
             };
             (kind, e.to_string())
         })?;
+        let roster = match (&args.session_model, &args.session_provider) {
+            (Some(model), Some(provider)) => {
+                Arc::new(Roster::clone(&roster).with_session_model(model, provider))
+            }
+            _ => roster,
+        };
         Ok(RosterReport::build(&table, &roster, &budget, clock.now()))
     }
     .await;

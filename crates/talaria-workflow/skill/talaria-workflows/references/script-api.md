@@ -5,15 +5,16 @@ Start with a pure literal header: `export const meta = {name:'name', description
 | Host | Meaning |
 |---|---|
 | `agent(prompt, opts?)` | Promise for final string or JSON; failed or skipped calls yield null. |
+| `cutShort()` | Array of `{label, steps, limit}` for each agent so far that Hermes stopped at its step cap, in the order their results arrived; empty when none. See below. |
 | `parallel(thunks)` | Invoke function thunks in order; return their results in input order, with null for failures. |
 | `pipeline(items, ...stages)` | Each item moves through function stages independently. A stage receives previous result, original item, index. |
 | `phase(title)` | Change the current instance's phase and narrate it. |
 | `log(message)` | Narration, cut at 4,000 characters. |
-| `workflow(nameOrRef, args?)` | Run a saved name or `{scriptPath:'relative.js'}` as a child. Children cannot create grandchildren. |
+| `workflow(nameOrRef, args?)` | Run a saved name or `{scriptPath:'relative.workflow'}` as a child. Children cannot create grandchildren. |
 | `now()` | Fixed run-start timestamp, restored on resume. |
 | `random(key)` | Deterministic number in [0,1) for a nonempty string key and stored seed. |
 | `args` | JSON input; undefined when omitted. |
-| `budget` | `.total`, `.spent()`, `.remaining()` in tokens. Missing total is null; remaining is Infinity. |
+| `budget` | `.total`, `.spent()`, `.remaining()` in tokens, including usage running agents have streamed. Tokens means every token except cache reads (cache writes count); a turn whose cache reads Hermes did not report counts whole. Missing total is null; remaining is Infinity. Once spend reaches the total, new agents and still-running agents reject with BudgetExhaustedError naming what was spent; catch it to return partial results. |
 | `budget.money` | Same accessors in US dollars. |
 
 Every execution option:
@@ -31,8 +32,10 @@ Every execution option:
 | `opts.toolsets` | Nonempty array of distinct toolset names. |
 | `opts.skills` | Nonempty array of distinct skill names. |
 | `opts.isolation` | Exactly 'worktree'. |
-| `opts.maxTurns` | Integer 1 through 10,000. Omitted uses the profile policy. |
+| `opts.maxTurns` | Integer 1 through 10,000. Omitted means the agent has no step cap; the profile's own `agent.max_turns` does not apply to workflow agents. |
 | `opts.stallMs` | Positive integer, accepted as a logged no-op. |
+
+An agent can end three ways. It finishes and its reply is returned. It fails and the call yields null; the run then ends `completed_with_failures` and names the failed agents first. Or Hermes stops it at its step cap (the exit reason `max_iterations_reached(N/M)` with `completed: false`): the agent is cut short. A cut short agent is not failed and is not sent another turn. Its reply is kept and returned exactly as for a finished agent, so a script that ignores the mark behaves as it always did. The mark is visible three ways: an object or array reply has a hidden `cutShort` property, `{steps, limit}`, that `Object.keys`, spread and `JSON.stringify` do not show; a text reply cannot carry one, so use `cutShort()`, which lists every cut short agent by label; and the journal's `call_finished` record, the `agent_finished` event, the run's final `cut_short_agents` list and the workflow view all say "cut short (60 of 60 steps)". With `opts.schema`, a cut short reply is checked once; if it does not fit, the call fails without a correction turn. A run whose only problem is cut short agents still ends `completed`. Cut short replies are kept when a run is resumed.
 
 There are no coding toolsets by default. Name toolsets explicitly: ["file"], ["file","terminal"], ["web"], or ["todo"]. A file or terminal agent needs a worktree; tell readers not to edit. The file toolset can write.
 

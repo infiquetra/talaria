@@ -108,6 +108,17 @@ proptest! {
 }
 
 #[test]
+fn create_without_max_turns_asks_for_no_step_cap() {
+    let mut launch = common::launch();
+    launch.max_turns = None;
+    let params = create_params(&launch, "req-1").unwrap();
+    assert_eq!(params.get("max_turns"), Some(&serde_json::json!(0)));
+    launch.max_turns = Some(7);
+    let params = create_params(&launch, "req-1").unwrap();
+    assert_eq!(params.get("max_turns"), Some(&serde_json::json!(7)));
+}
+
+#[test]
 fn effort_maps_to_reasoning() {
     for effort in [
         Effort::None,

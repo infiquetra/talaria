@@ -14,13 +14,13 @@ fn alt_d_default_and_rebinding() {
     );
     let (map, notices) = KeyMap::from_entries(&BTreeMap::from([(
         "layout_panel".into(),
-        vec!["alt+w".into()],
+        vec!["alt+z".into()],
     )]));
     assert!(notices.is_empty(), "{notices:?}");
     assert_eq!(map.resolve(&key, KeyContext::Composer), None);
     assert_eq!(
         map.resolve(
-            &KeyChord::parse("alt+w", KeyContext::Composer)
+            &KeyChord::parse("alt+z", KeyContext::Composer)
                 .unwrap()
                 .to_key(),
             KeyContext::Composer
@@ -74,13 +74,13 @@ fn alt_i_default_and_rebinding() {
     );
     let (map, notices) = KeyMap::from_entries(&BTreeMap::from([(
         "toggle_menu_bar".into(),
-        vec!["alt+w".into()],
+        vec!["alt+z".into()],
     )]));
     assert!(notices.is_empty(), "{notices:?}");
     assert_eq!(map.resolve(&key, KeyContext::Composer), None);
     assert_eq!(
         map.resolve(
-            &KeyChord::parse("alt+w", KeyContext::Composer)
+            &KeyChord::parse("alt+z", KeyContext::Composer)
                 .unwrap()
                 .to_key(),
             KeyContext::Composer

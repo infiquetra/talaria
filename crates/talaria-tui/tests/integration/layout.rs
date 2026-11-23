@@ -101,3 +101,31 @@ fn layout_asks_each_section_at_the_given_width() {
     let rects = view.layout(40, 22);
     assert_eq!(rects, vec![Rect::new(0, 0, 40, 3), Rect::new(0, 3, 40, 3)]);
 }
+
+#[test]
+fn rows_of_matches_the_layout_for_every_section() {
+    let cases: &[(&[u16], u16)] = &[
+        (&[500, 3, 1], 22),
+        (&[500, 5, 3, 1], 6),
+        (&[0, 1, 3, 1], 14),
+        (&[2, 1, 9, 3, 6, 1], 14),
+        (&[2, 1, 9, 3, 6, 1], 4),
+        (&[0, 0, 0], 0),
+        (&[4, 1], 30),
+    ];
+    for (heights, max) in cases {
+        let sections: Vec<Fixed> = heights.iter().map(|&height| Fixed(height)).collect();
+        let view = LiveView {
+            sections: sections.iter().map(|s| s as &dyn LiveSection).collect(),
+        };
+        let rects = view.layout(80, *max);
+        for (index, rect) in rects.iter().enumerate() {
+            assert_eq!(
+                view.rows_of(index, 80, *max),
+                rect.height,
+                "section {index} of {heights:?} under {max}"
+            );
+        }
+        assert_eq!(view.rows_of(heights.len(), 80, *max), 0, "past the end");
+    }
+}

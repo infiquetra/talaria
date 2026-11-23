@@ -46,6 +46,7 @@ use talaria_core::directory::state::{PickerAction, PickerInput, PickerMode, Pick
 use talaria_core::fleet::ProfileStatus;
 use talaria_core::fleet_attention::FleetAttentionConfig;
 use talaria_core::fleet_view::{FleetAction, FleetViewInput, FleetViewState, Focus as FleetFocus};
+use talaria_core::layout::ReasoningDisplay;
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
 use talaria_core::permissions::{ApprovalSegmentText, ApprovalTone};
@@ -56,9 +57,11 @@ use talaria_core::providers::{ProvidersEffect, ProvidersView};
 use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
 use talaria_core::review::{ReviewFocus, ReviewKey, ReviewView};
 use talaria_core::session::{
-    AssistantCell, Cell, CellId, PromptCell, PromptKind, ReasoningCell, TurnState as SessionTurn,
+    AssistantCell, Cell, CellId, PromptCell, PromptKind, ReasoningCell, SessionState,
+    TurnState as SessionTurn,
 };
 use talaria_core::subagents::{Clock as SubagentClock, FinishedBatch};
+use talaria_tui::activity::{ActivityClock, ActivityLine, ActivityStyle};
 use talaria_tui::automation::AutomationSection;
 use talaria_tui::background::{BackgroundSection, BackgroundTheme, ProcessesView};
 use talaria_tui::checklist::{
@@ -76,7 +79,7 @@ use talaria_tui::keys::{
     Action, CompletionAction, Key, KeyCode, KeyContext, KeyKind, KeyMap, ModelAction,
 };
 use talaria_tui::launch_dialog::{DialogAction, DialogDefaults, DialogMode, LaunchDialog};
-use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
+use talaria_tui::live::{LiveSection, LiveView, PlainTextSection, max_live_height};
 use talaria_tui::markdown::cells::MarkdownCellLines;
 use talaria_tui::markdown::section::MarkdownTailSection;
 use talaria_tui::markdown::{MarkdownOptions, MarkdownTheme};
@@ -86,7 +89,9 @@ use talaria_tui::pager::{
     ConnectionBanner, Details, Pager, PagerAction, PagerCellLines, PagerContext, SearchIndex,
     SearchInput,
 };
-use talaria_tui::palette::PaletteSection;
+use talaria_tui::palette::{
+    ChoiceSection, EffortScaleSection, PaletteSection, sample_lines, scale_key_labels,
+};
 use talaria_tui::profiles::{
     ProfilesRenderer, cursor_position as profiles_cursor, key_action as profiles_key,
 };
@@ -95,6 +100,7 @@ use talaria_tui::prompts::{
     PromptIntent, PromptStack,
 };
 use talaria_tui::queue::{composer_title, handle_selection_key, render_preview};
+use talaria_tui::reply_commit::{ReplyCommits, after_committed};
 use talaria_tui::review_view::draw_review_themed;
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
 use talaria_tui::session_picker::{PickerTheme, SessionPickerView};
@@ -111,7 +117,9 @@ use talaria_tui::terminal::{
     InlineTerminal, InputThread, TerminalError, TerminalGuard, probe_startup, spawn_input,
     terminal_size,
 };
-use talaria_tui::theme::cells::{ThemedCells, themed_cell_id};
+use talaria_tui::theme::cells::{
+    ReasoningClock, ThemedCells, reasoning_collapses, reasoning_summary_lines, themed_cell_id,
+};
 use talaria_tui::theme::detect::{self, EnvView};
 use talaria_tui::theme::{
     ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors, Theme,
@@ -211,6 +219,49 @@ fn subagent_style(theme: &Theme) -> SubagentStyle {
         SubagentStyle::default()
     } else {
         SubagentStyle::plain()
+    }
+}
+
+/// What finished rows are committed with: the theme in force. A `/theme` preview shows only in
+/// the live region and the selector's sample, because scrollback cannot be redrawn and Esc could
+/// not put a previewed row back.
+struct InForce {
+    theme: Arc<Theme>,
+    /// Markdown cells, with tool cells drawn as tool rows and diffs.
+    cells: ToolCellLines,
+    checklist: ChecklistStyle,
+}
+
+impl InForce {
+    fn new(theme: &Arc<Theme>, keymap: &KeyMap) -> Self {
+        Self {
+            theme: Arc::clone(theme),
+            cells: tool_cells(theme, keymap),
+            checklist: checklist_style(theme),
+        }
+    }
+
+    /// Take the theme now shown, unless it is a preview.
+    fn follow(&mut self, shown: &Arc<Theme>, previewing: bool, keymap: &KeyMap) {
+        if !previewing {
+            *self = Self::new(shown, keymap);
+        }
+    }
+
+    /// Committed cells: each assistant or reasoning cell in the theme it started under.
+    fn cells<'a>(
+        &'a self,
+        captured: &'a HashMap<CellId, Arc<Theme>>,
+        transcript_key: Option<&'a str>,
+    ) -> CapturedCells<'a> {
+        CapturedCells {
+            current: &self.theme,
+            captured,
+            tools: &self.cells,
+            transcript_key,
+            reasoning: ReasoningDisplay::Full,
+            reasoning_clock: None,
+        }
     }
 }
 
@@ -330,6 +381,17 @@ pub struct TuiScreen {
     cells: ToolCellLines,
     /// When each running tool cell was first seen, for its seconds counter.
     clock: ToolClock,
+    /// How long each reasoning block streamed, for its collapsed line.
+    reasoning_clock: ReasoningClock,
+    /// How the current view draws reasoning, copied from the view at each draw.
+    reasoning: ReasoningDisplay,
+    /// When the foreground turn started and whether its working row is on screen.
+    activity: ActivityClock,
+    /// When the building block's seconds next change, while the block is on screen.
+    authoring_wake: Option<Instant>,
+    /// When the Workflow line's spinner or seconds next change, while a running run's line is
+    /// on screen.
+    workflow_wake: Option<Instant>,
     tool_theme: ToolTheme,
     /// The settings and start-up decisions the theme is resolved from.
     look: Look,
@@ -340,6 +402,10 @@ pub struct TuiScreen {
     composer_border: BorderPreset,
     /// The theme each assistant or reasoning cell started under, until it is committed.
     captured: HashMap<CellId, Arc<Theme>>,
+    /// How much of the streaming reply is already in scrollback.
+    replies: ReplyCommits,
+    /// What finished rows are committed with.
+    in_force: InForce,
     /// The checklist's styles: the same choice of colour the Markdown renderer makes.
     checklist_style: ChecklistStyle,
     color: bool,
@@ -406,6 +472,7 @@ struct ModelOverlay {
     details: Vec<String>,
     details_open: bool,
     details_scroll: usize,
+    current: Option<String>,
 }
 
 impl ModelOverlay {
@@ -424,6 +491,7 @@ impl ModelOverlay {
             details: view.browse.map(|b| b.details.to_vec()).unwrap_or_default(),
             details_open: view.browse.is_some_and(|b| b.details_open),
             details_scroll: view.browse.map_or(0, |b| b.details_scroll),
+            current: view.browse.and_then(|b| b.current).map(String::from),
         }
     }
 
@@ -437,6 +505,7 @@ impl ModelOverlay {
                     details: &self.details,
                     details_open: self.details_open,
                     details_scroll: self.details_scroll,
+                    current: self.current.as_deref(),
                 }),
             title: &self.title,
             filter: &self.filter,
@@ -536,6 +605,81 @@ fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
         };
     }
     None
+}
+
+/// The open `/theme` or `/skin` selector's key: the completion list's bindings and the arrows
+/// move it, Enter applies, Esc or Ctrl+C cancels, and typed characters filter it.
+fn choice_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::commands::ChoiceKey> {
+    use talaria_core::commands::ChoiceKey;
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    match keymap.completion(&key) {
+        Some(CompletionAction::Next) => return Some(ChoiceKey::Next),
+        Some(CompletionAction::Prev) => return Some(ChoiceKey::Prev),
+        Some(CompletionAction::Close) => return Some(ChoiceKey::Cancel),
+        Some(CompletionAction::Accept) | None => {}
+    }
+    let mods = key.mods;
+    if mods.ctrl && !mods.alt && !mods.super_key && matches!(key.code, KeyCode::Char('c' | 'C')) {
+        return Some(ChoiceKey::Cancel);
+    }
+    if mods.ctrl || mods.alt || mods.super_key || mods.other {
+        return None;
+    }
+    match key.code {
+        KeyCode::Up => Some(ChoiceKey::Prev),
+        KeyCode::Down => Some(ChoiceKey::Next),
+        KeyCode::Enter if !mods.shift => Some(ChoiceKey::Apply),
+        KeyCode::Esc => Some(ChoiceKey::Cancel),
+        KeyCode::Backspace => Some(ChoiceKey::Erase),
+        KeyCode::Char(c) if !c.is_control() => Some(ChoiceKey::Type(c)),
+        _ => None,
+    }
+}
+
+/// A typed `/` starts a new command while the selector is open: the selector closes, as Esc
+/// closes it, and the composer takes the key. No theme or skin name holds a `/`.
+fn choice_hands_to_composer(keymap: &KeyMap, key: Key) -> bool {
+    choice_key(keymap, key) == Some(talaria_core::commands::ChoiceKey::Type('/'))
+}
+
+/// The open `/effort` scale's key: the `/model` picker's effort keys move it and its scope key
+/// stages saving for new sessions, so a rebinding applies to both. Tab stages Hivecode,
+/// Home and End jump to the ends, Enter applies and Esc or Ctrl+C cancels.
+fn scale_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::models::ScaleKey> {
+    use talaria_core::models::ScaleKey;
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    match keymap.resolve_model(KeyContext::ModelPicker, &key) {
+        Some(ModelAction::EffortDown) => return Some(ScaleKey::Lower),
+        Some(ModelAction::EffortUp) => return Some(ScaleKey::Higher),
+        Some(ModelAction::ModelScope) => return Some(ScaleKey::ToggleSave),
+        _ => {}
+    }
+    let mods = key.mods;
+    if mods.ctrl && !mods.alt && !mods.super_key && matches!(key.code, KeyCode::Char('c' | 'C')) {
+        return Some(ScaleKey::Cancel);
+    }
+    if mods.ctrl || mods.alt || mods.super_key || mods.other || mods.shift {
+        return None;
+    }
+    match key.code {
+        KeyCode::Home => Some(ScaleKey::Lowest),
+        KeyCode::End => Some(ScaleKey::Highest),
+        KeyCode::Tab => Some(ScaleKey::ToggleHivecode),
+        KeyCode::Enter => Some(ScaleKey::Apply),
+        KeyCode::Esc => Some(ScaleKey::Cancel),
+        _ => None,
+    }
+}
+
+/// A typed `/` starts a new command while the scale is open, as it does for the list.
+fn scale_hands_to_composer(key: Key) -> bool {
+    key.kind != KeyKind::Release
+        && key.code == KeyCode::Char('/')
+        && !(key.mods.ctrl || key.mods.alt || key.mods.super_key || key.mods.other)
 }
 
 /// Route only keys that the current immutable attachment view can consume.
@@ -956,6 +1100,26 @@ struct CapturedCells<'a> {
     captured: &'a HashMap<CellId, Arc<Theme>>,
     /// Draws tool cells; every other cell goes through the theme.
     tools: &'a ToolCellLines,
+    /// The label of the key that opens the transcript view, when one is bound.
+    transcript_key: Option<&'a str>,
+    /// How reasoning is drawn: one line per block, or in full.
+    reasoning: ReasoningDisplay,
+    /// How long each reasoning block streamed, as of the instant given.
+    reasoning_clock: Option<(&'a ReasoningClock, Instant)>,
+}
+
+impl<'a> CapturedCells<'a> {
+    /// Draw reasoning in `display`'s form, timed by `clock` as of `now`.
+    fn reasoning(
+        mut self,
+        display: ReasoningDisplay,
+        clock: &'a ReasoningClock,
+        now: Instant,
+    ) -> Self {
+        self.reasoning = display;
+        self.reasoning_clock = Some((clock, now));
+        self
+    }
 }
 
 impl CellLines for CapturedCells<'_> {
@@ -977,7 +1141,19 @@ impl CellLines for CapturedCells<'_> {
         let theme = themed_cell_id(cell)
             .and_then(|id| self.captured.get(&id))
             .map_or(self.current, |theme| theme.as_ref());
-        ThemedCells { theme }.lines(cell, width)
+        if let Cell::Reasoning(reasoning) = cell
+            && reasoning_collapses(reasoning, self.reasoning)
+        {
+            let took = self
+                .reasoning_clock
+                .and_then(|(clock, now)| clock.took(reasoning.id, now));
+            return reasoning_summary_lines(reasoning, theme, took, self.transcript_key, width);
+        }
+        ThemedCells {
+            theme,
+            transcript_key: self.transcript_key,
+        }
+        .lines(cell, width)
     }
 }
 
@@ -1037,6 +1213,58 @@ fn paste_actions(composer: &mut Composer, text: &str, now: Instant) -> Vec<UserA
     actions
 }
 
+/// What decides whether the key that goes back from a workflow agent's session is live.
+#[derive(Clone, Copy, Debug)]
+struct AgentBackGate {
+    /// The open session is an agent's, and a remembered origin exists for it.
+    origin: bool,
+    /// The draft is empty: with text in it the key moves the caret as it always did.
+    composer_empty: bool,
+    /// No overlay, menu, picker, prompt, list or other surface takes keys before the composer.
+    surfaces_free: bool,
+    /// Vim editing is off, or in a mode where an empty draft has nothing to move.
+    vim_allows: bool,
+}
+
+impl AgentBackGate {
+    fn live(self) -> bool {
+        self.origin && self.composer_empty && self.surfaces_free && self.vim_allows
+    }
+}
+
+/// The action for a key press, when the key goes back and the gate is open. At any other time
+/// the key is not claimed, so it reaches the composer unchanged.
+fn agent_back_action(keymap: &KeyMap, key: &Key, gate: AgentBackGate) -> Option<UserAction> {
+    (key.kind != KeyKind::Release
+        && gate.live()
+        && keymap.resolve_in(key, KeyContext::AgentSession) == Some(Action::WorkflowAgentBack))
+    .then_some(UserAction::WorkflowAgentBack)
+}
+
+/// A press of the key bound to the interrupt action reaches the application as
+/// [`UserAction::InterruptKey`], which asks for a second press while a turn runs. Every other
+/// route to an interrupt, Ctrl+C among them, keeps [`UserAction::Interrupt`] and acts at once.
+/// Plain Esc counts as the interrupt key even when the action is bound elsewhere, because vim
+/// normal mode interrupts on Esc whatever the binding is.
+///
+/// A repeat the terminal reports as a repeat is dropped here. A terminal that sends a held key as
+/// plain presses reaches the application's timer, which treats a further press within the settle
+/// time of the second as a held key and interrupts nothing.
+fn interrupt_key_actions(keymap: &KeyMap, key: &Key, actions: Vec<UserAction>) -> Vec<UserAction> {
+    let plain_esc = key.code == KeyCode::Esc && !key.mods.ctrl && !key.mods.alt;
+    if !plain_esc && keymap.resolve(key, KeyContext::Composer) != Some(Action::Interrupt) {
+        return actions;
+    }
+    actions
+        .into_iter()
+        .filter_map(|action| match action {
+            UserAction::Interrupt if key.kind == KeyKind::Repeat => None,
+            UserAction::Interrupt => Some(UserAction::InterruptKey),
+            other => Some(other),
+        })
+        .collect()
+}
+
 fn composer_key_actions(
     composer: &mut Composer,
     key: Key,
@@ -1089,8 +1317,65 @@ struct Transcript {
 /// Presentation-only commit order. Local output does not have a session cell, so
 /// the callback sequence, rather than a cell index, determines its position.
 enum WorkspaceCommit {
-    Cell(Box<Cell>),
+    /// A finished cell, with how long it streamed when it is a reasoning block the screen
+    /// timed. The time is kept here because a later session reuses the cell's id.
+    Cell(Box<Cell>, Option<Duration>),
     Lines(Vec<Line<'static>>),
+}
+
+/// The workspace's one row for each reasoning block that `display` collapses, by entry
+/// position: the committed entries, then the live cells after them. `None` leaves the entry to
+/// the transcript renderer. The workspace is redrawn every frame, so `/thinking` changes every
+/// block in it, not only the ones drawn afterwards.
+fn workspace_reasoning_rows(
+    history: &[WorkspaceCommit],
+    live: &[Cell],
+    display: ReasoningDisplay,
+    (clock, now): (&ReasoningClock, Instant),
+    theme: &Theme,
+    transcript_key: Option<&str>,
+    width: u16,
+) -> Vec<Option<Vec<Line<'static>>>> {
+    let row = |cell: &Cell, took: Option<Duration>| match cell {
+        Cell::Reasoning(block) if reasoning_collapses(block, display) => Some(
+            reasoning_summary_lines(block, theme, took, transcript_key, width),
+        ),
+        _ => None,
+    };
+    history
+        .iter()
+        .map(|entry| match entry {
+            WorkspaceCommit::Cell(cell, took) => row(cell, *took),
+            WorkspaceCommit::Lines(_) => None,
+        })
+        .chain(live.iter().map(|cell| {
+            let took = match cell {
+                Cell::Reasoning(block) => clock.took(block.id, now),
+                _ => None,
+            };
+            row(cell, took)
+        }))
+        .collect()
+}
+
+/// The workspace transcript's entries, with each collapsed reasoning block as its one row from
+/// [`workspace_reasoning_rows`].
+fn workspace_entries<'a>(
+    history: &'a [WorkspaceCommit],
+    live: &'a [Cell],
+    rows: &'a [Option<Vec<Line<'static>>>],
+) -> Vec<talaria_tui::pager::TranscriptEntry<'a>> {
+    use talaria_tui::pager::TranscriptEntry;
+    history
+        .iter()
+        .map(|entry| match entry {
+            WorkspaceCommit::Cell(cell, _) => TranscriptEntry::Cell(cell),
+            WorkspaceCommit::Lines(lines) => TranscriptEntry::Lines(lines),
+        })
+        .chain(live.iter().map(TranscriptEntry::Cell))
+        .zip(rows)
+        .map(|(entry, row)| row.as_deref().map_or(entry, TranscriptEntry::Lines))
+        .collect()
 }
 
 /// The key of one terminal event, in the form the application routes.
@@ -1230,6 +1515,12 @@ fn queue_view(view: &View<'_>) -> Option<QueueView> {
         .map(|state| state.queue.view(view.turn_running()))
 }
 
+/// A queued message is selected or being edited, so the queue takes its keys, Esc among them,
+/// before the composer.
+fn queue_takes_keys(view: &View<'_>) -> bool {
+    queue_view(view).is_some_and(|queue| queue.selected.is_some() || queue.editing.is_some())
+}
+
 fn queue_draft_intent(composer: &Composer, bound: Option<Action>) -> Option<QueueIntent> {
     let draft = composer.text().to_owned();
     let intent = match bound {
@@ -1302,7 +1593,12 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         warning_count: view.state.map_or(0, |state| {
             u32::try_from(state.notices().warning_count()).unwrap_or(u32::MAX)
         }),
-        ultracode: view.ultracode,
+        hivecode: view.hivecode,
+        profile: (view.profile != "default").then(|| view.profile.to_owned()),
+        workflow_run: view
+            .workflow_run
+            .map(|run| format!("{}/{} agents", run.agents_finished, run.agents_total_known))
+            .or_else(|| view.workflow_agent.map(|note| note.status_text())),
         connection: match view.link {
             LinkView::Connecting => Connection::Connecting,
             LinkView::Connected => Connection::Connected,
@@ -1436,6 +1732,73 @@ impl TuiScreen {
             && self.confirmation.is_some()
             && self.prompts.section().is_none()
             && self.composer.is_empty()
+    }
+
+    /// The open `/theme`, `/skin` or `/effort` selector takes every key before the composer,
+    /// unless history search or a prompt card has them.
+    fn selector_takes_keys(&self, view: &View<'_>) -> bool {
+        (view.choice.is_some() || view.effort_scale.is_some())
+            && self.search.is_none()
+            && self.prompts.section().is_none()
+    }
+
+    /// The `@` mention list is open: it takes the completion keys, Esc among them, while the
+    /// draft is not a slash command.
+    fn mention_list_open(&self) -> bool {
+        self.attachments.mention.is_some() && !self.composer.text().starts_with('/')
+    }
+
+    /// The focused menu bar (Alt+I) takes every key before the composer; Esc closes it.
+    fn menu_takes_keys(view: &View<'_>) -> bool {
+        view.layout.menu_focused
+    }
+
+    /// Whether the interrupt key reaches the running turn. Each surface checked here takes the
+    /// key first in [`Screen::handle_key`] through the same predicate: the focused menu bar,
+    /// the work panel overlay, the selector, history search, a prompt card, the model
+    /// confirmation, a queue selection or edit, the slash palette, the mention list, and a vim
+    /// mode other than normal. The working row offers the key only when this holds.
+    fn interrupt_reaches_turn(&self, view: &View<'_>) -> bool {
+        self.composer_gets_keys(view)
+            && self
+                .composer
+                .vim_mode()
+                .is_none_or(|mode| mode == VimMode::Normal)
+    }
+
+    /// No menu, panel, selector, search, card, confirmation, queue selection, list or overlay
+    /// takes the next key before the composer does.
+    fn composer_gets_keys(&self, view: &View<'_>) -> bool {
+        !Self::menu_takes_keys(view)
+            && view.layout.panel != talaria_core::layout::PanelVisibility::OverlayOpen
+            && !self.selector_takes_keys(view)
+            && self.search.is_none()
+            && self.prompts.section().is_none()
+            && !self.confirmation_takes_keys()
+            && !queue_takes_keys(view)
+            && !view.palette.open
+            && !self.mention_list_open()
+    }
+
+    /// The key that goes back from a workflow agent's session is live: the session was opened
+    /// from the run view, the draft is empty, and nothing else is open or taking keys.
+    fn agent_back_offered(&self, view: &View<'_>) -> bool {
+        self.agent_back_gate(view).live()
+    }
+
+    fn agent_back_gate(&self, view: &View<'_>) -> AgentBackGate {
+        AgentBackGate {
+            origin: view.agent_back,
+            composer_empty: self.composer.is_empty(),
+            surfaces_free: self.overlay == Overlay::Live
+                && view.rewind.is_none()
+                && !view.pager_open
+                && self.composer_gets_keys(view),
+            vim_allows: self
+                .composer
+                .vim_mode()
+                .is_none_or(|mode| matches!(mode, VimMode::Insert | VimMode::Normal)),
+        }
     }
 
     fn sync_confirmation_focus(&mut self, now: Instant) {
@@ -1980,7 +2343,7 @@ impl TuiScreen {
     }
 
     /// Take a newly resolved theme for the composer, the status line and later cells.
-    fn set_theme(&mut self, theme: Theme) {
+    fn set_theme(&mut self, theme: Theme, previewing: bool) {
         self.workspace_renderer.clear();
         if let Some(transcript) = self.transcript.as_mut() {
             transcript.pager.invalidate_rendering();
@@ -1995,6 +2358,7 @@ impl TuiScreen {
         self.cells = tool_cells(&theme, &self.keymap);
         self.tool_theme = theme.tool.clone();
         self.theme = Arc::new(theme);
+        self.in_force.follow(&self.theme, previewing, &self.keymap);
     }
 
     fn sync_prompts(&mut self, view: &View<'_>, now: Instant) {
@@ -2229,8 +2593,12 @@ impl TuiScreen {
             turn_running: view.turn_running(),
         };
         let mut actions = Vec::new();
-        for action in composer_key_actions(&mut self.composer, key, ctx, now) {
+        let produced = composer_key_actions(&mut self.composer, key, ctx, now);
+        for action in interrupt_key_actions(&self.keymap, &key, produced) {
             match action {
+                UserAction::Submit(text) if view.palette.open => {
+                    actions.push(palette_submit(&mut self.composer, text));
+                }
                 UserAction::Submit(text) => actions.extend(
                     self.composer_action(ComposerOutcome::Submit(text), view.state.is_some()),
                 ),
@@ -2700,7 +3068,7 @@ impl TuiScreen {
                     self.menu = talaria_tui::workspace::menu::MenuState::shown();
                     return vec![UserAction::ToggleMenuBar];
                 }
-                if view.layout.menu_focused {
+                if Self::menu_takes_keys(view) {
                     use talaria_tui::workspace::menu::{MenuBinding, MenuKey};
                     if key.kind == KeyKind::Release {
                         return Vec::new();
@@ -2790,6 +3158,10 @@ impl TuiScreen {
                 {
                     return vec![UserAction::ToggleAgents];
                 }
+                if action == Some(Action::WorkflowView) && !view.pager_open && view.rewind.is_none()
+                {
+                    return vec![UserAction::WorkflowView];
+                }
                 let focus = if self.search.is_some() {
                     talaria_tui::comfort_route::Focus::Search
                 } else if self.composer.is_empty() && self.prompts.section().is_some() {
@@ -2804,9 +3176,7 @@ impl TuiScreen {
                         && view.rewind.is_none()
                         && !self.confirmation_takes_keys()
                         && !view.palette.open
-                        && queue_view(view).is_none_or(|queue| {
-                            queue.selected.is_none() && queue.editing.is_none()
-                        }),
+                        && !queue_takes_keys(view),
                     matches!(
                         self.composer.vim_mode(),
                         Some(VimMode::Normal | VimMode::Visual | VimMode::VisualLine)
@@ -2834,6 +3204,34 @@ impl TuiScreen {
                 if self.overlay == Overlay::Models {
                     return picker_key(&self.keymap, key)
                         .map(UserAction::ModelPicker)
+                        .into_iter()
+                        .collect();
+                }
+                // An open `/theme` or `/skin` selector takes every key before the composer,
+                // unless a prompt card is waiting for an answer.
+                if self.selector_takes_keys(view) && view.effort_scale.is_some() {
+                    if scale_hands_to_composer(key) {
+                        let mut actions = vec![UserAction::EffortScale(
+                            talaria_core::models::ScaleKey::Cancel,
+                        )];
+                        actions.extend(self.composer_key(key, view, now));
+                        return actions;
+                    }
+                    return scale_key(&self.keymap, key)
+                        .map(UserAction::EffortScale)
+                        .into_iter()
+                        .collect();
+                }
+                if self.selector_takes_keys(view) {
+                    if choice_hands_to_composer(&self.keymap, key) {
+                        let mut actions = vec![UserAction::Choice(
+                            talaria_core::commands::ChoiceKey::Cancel,
+                        )];
+                        actions.extend(self.composer_key(key, view, now));
+                        return actions;
+                    }
+                    return choice_key(&self.keymap, key)
+                        .map(UserAction::Choice)
                         .into_iter()
                         .collect();
                 }
@@ -2897,6 +3295,13 @@ impl TuiScreen {
                     actions.push(UserAction::VoiceRecord);
                     return actions;
                 }
+                // Before vim takes the key: in normal mode the composer would swallow it, and the
+                // line above the composer offers it there too.
+                if let Some(action) =
+                    agent_back_action(&self.keymap, &key, self.agent_back_gate(view))
+                {
+                    return vec![action];
+                }
                 if self
                     .composer
                     .vim_mode()
@@ -2931,6 +3336,11 @@ impl TuiScreen {
                     let mut actions = flush_draft_actions(&mut self.composer, now);
                     actions.push(UserAction::OpenModels);
                     return actions;
+                }
+                if let Some(action) =
+                    agent_back_action(&self.keymap, &key, self.agent_back_gate(view))
+                {
+                    return vec![action];
                 }
                 let mut actions = Vec::new();
                 if attachment_key(
@@ -3498,16 +3908,29 @@ impl StatusHost for TuiScreen {
         });
     }
 
-    /// The status command's next run, or the next whole second of a running tool call. Nothing
-    /// is scheduled while no tool runs, so an idle screen draws nothing.
+    /// The status command's next run, the next whole second of a running tool call, or the
+    /// working row's next frame. Nothing is scheduled while no tool runs and no working row is
+    /// on screen, so an idle screen draws nothing.
     fn next_wake(&self, now: Instant) -> Option<Instant> {
         let status = self
             .status
             .as_ref()
             .and_then(|service| service.next_wake(now));
-        match (status, self.clock.next_tick(now)) {
+        let tick = match (status, self.clock.next_tick(now)) {
             (Some(status), Some(tick)) => Some(status.min(tick)),
             (status, tick) => status.or(tick),
+        };
+        let tick = match (tick, self.activity.next_wake(self.theme.motion, now)) {
+            (Some(tick), Some(frame)) => Some(tick.min(frame)),
+            (tick, frame) => tick.or(frame),
+        };
+        let tick = match (tick, self.authoring_wake) {
+            (Some(tick), Some(second)) => Some(tick.min(second)),
+            (tick, second) => tick.or(second),
+        };
+        match (tick, self.workflow_wake) {
+            (Some(tick), Some(wake)) => Some(tick.min(wake)),
+            (tick, wake) => tick.or(wake),
         }
     }
 
@@ -3531,6 +3954,9 @@ impl Screen for TuiScreen {
     fn menu_bar(&self) -> bool {
         self.config.ui.menu_bar
     }
+    fn reasoning_display(&self) -> ReasoningDisplay {
+        self.config.ui.reasoning
+    }
 
     fn sync_workspace_transcript(&mut self, source_epoch: u64, committed_cells: usize) {
         if self.workspace_source_epoch != source_epoch {
@@ -3538,6 +3964,22 @@ impl Screen for TuiScreen {
             // Only the render cache changes; local output must not disappear on refresh.
             self.workspace_renderer.clear();
             self.workspace_source_epoch = source_epoch;
+            // A reply partly in scrollback cannot finish in the state that replaced it.
+            let transcript_key = self.keymap.label(Action::TranscriptOpen);
+            let render = CapturedCells {
+                current: &self.theme,
+                captured: &self.captured,
+                tools: &self.cells,
+                transcript_key: transcript_key.as_deref(),
+                reasoning: self.reasoning,
+                reasoning_clock: Some((&self.reasoning_clock, Instant::now())),
+            };
+            let lines = self
+                .replies
+                .replaced(&render, self.terminal.viewport().width);
+            let _ = self.terminal.commit_lines(lines);
+            // The new source numbers its cells from the start again.
+            self.reasoning_clock.follow_source(source_epoch);
         }
         self.workspace_committed_cells = committed_cells;
     }
@@ -3726,6 +4168,15 @@ impl Screen for TuiScreen {
         });
     }
 
+    fn profiles_key_labels(&self) -> talaria_core::profiles::KeyLabels {
+        talaria_tui::profiles::key_labels(&self.keymap)
+    }
+
+    fn settings_reload_key(&self) -> Option<String> {
+        self.keymap
+            .settings_label(talaria_core::settings::SettingsAction::Reload)
+    }
+
     fn profiles_page_size(&self, view: &ProfilesView) -> usize {
         let (width, height) = self.pane_size();
         talaria_tui::profiles::list_page_size(view, ratatui::layout::Rect::new(0, 0, width, height))
@@ -3897,6 +4348,9 @@ impl Screen for TuiScreen {
         self.sync_prompts(view, now);
         self.sync_configure_prompts(view, now);
         self.sync_confirmation_focus(now);
+        // The `/effort` scale opened while a card was up: the card has the keys, so the scale
+        // closes as Esc would before the card takes this input.
+        let yield_scale = view.effort_scale.is_some() && self.prompts.section().is_some();
         let mut actions = match input {
             ScreenInput::ProfileEdited(result) => {
                 self.take_terminal();
@@ -3946,6 +4400,12 @@ impl Screen for TuiScreen {
             }
             ScreenInput::ComfortNotice(text) => vec![UserAction::Notice(text)],
         };
+        if yield_scale {
+            actions.insert(
+                0,
+                UserAction::EffortScale(talaria_core::models::ScaleKey::Cancel),
+            );
+        }
         self.sync_title();
         self.report_draft(&mut actions);
         self.draw(view);
@@ -3953,6 +4413,16 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        // Overlays return early, so the working row counts as hidden until it is pushed below.
+        self.activity.begin_frame();
+        self.authoring_wake = None;
+        self.workflow_wake = None;
+        let turn_running = view
+            .state
+            .is_some_and(|state| matches!(state.turn(), SessionTurn::Running));
+        let turn_elapsed = self
+            .activity
+            .turn(turn_running, view.now_ms, Instant::now());
         if view.layout.workspace_enabled() || view.layout.menu_transient {
             let _ = self.terminal.enter_workspace();
         } else {
@@ -4239,6 +4709,12 @@ impl Screen for TuiScreen {
             now,
         );
         self.cells.set_clock(&self.clock, now);
+        self.in_force.cells.set_clock(&self.clock, now);
+        self.reasoning_clock.observe(
+            view.state.map(|state| state.cells()).unwrap_or_default(),
+            now,
+        );
+        self.reasoning = view.layout.reasoning;
         self.sync_confirmation_focus(now);
         if let Some(rewind) = &view.rewind {
             self.transcript_overlay_open = false;
@@ -4285,19 +4761,44 @@ impl Screen for TuiScreen {
             return;
         }
         let width = self.terminal.viewport().width;
-        let mut tail: Vec<Line<'static>> = view
+        if let Some(state) = view.state {
+            self.commit_closed_blocks(state, view, width);
+        }
+        let tail = view
             .state
             .map(|state| {
                 let limit = usize::from(self.terminal.viewport().height)
                     .saturating_mul(2)
                     .max(PREVIEW_MIN_LINES);
                 let current = &self.theme;
+                // A cell keeps the theme in force when it started, never a preview, because
+                // that is the theme it is committed with.
+                let in_force = &self.in_force.theme;
                 let captured = &mut self.captured;
                 let tools = &self.cells;
-                state
+                let replies = &self.replies;
+                let cards = &self.prompts;
+                let (reasoning, reasoning_clock) = (self.reasoning, &self.reasoning_clock);
+                let transcript_key = self.keymap.label(Action::TranscriptOpen);
+                // A long open reply drawn from its last lines only: the cut marker's count is
+                // then a floor.
+                let mut shortened = false;
+                let lines: Vec<Line<'static>> = state
                     .live_tail()
                     .iter()
                     .flat_map(|cell| {
+                        // The card on top already shows its question, so the tail skips it.
+                        if let Cell::Prompt(prompt) = cell
+                            && cards.shows_prompt(&prompt.key)
+                        {
+                            return Vec::new();
+                        }
+                        // A reply partly in scrollback draws only its rest, after a blank row.
+                        let rest = replies.live_rest(cell);
+                        let (cell, separated) = match &rest {
+                            Some(rest) => (rest, true),
+                            None => (cell, false),
+                        };
                         if matches!(cell, Cell::Tool(_)) {
                             return match preview(cell, limit) {
                                 Some(trimmed) => tools.lines(&trimmed, width),
@@ -4306,23 +4807,62 @@ impl Screen for TuiScreen {
                         }
                         let theme = match themed_cell_id(cell) {
                             Some(id) => Arc::clone(
-                                captured.entry(id).or_insert_with(|| Arc::clone(current)),
+                                captured.entry(id).or_insert_with(|| Arc::clone(in_force)),
                             ),
                             None => Arc::clone(current),
                         };
-                        let cells = ThemedCells { theme: &theme };
-                        match preview(cell, limit) {
-                            Some(trimmed) => cells.lines(&trimmed, width),
+                        // A collapsed block is one line that updates in place as it streams.
+                        if let Cell::Reasoning(block) = cell
+                            && reasoning_collapses(block, reasoning)
+                        {
+                            return reasoning_summary_lines(
+                                block,
+                                &theme,
+                                reasoning_clock.took(block.id, now),
+                                transcript_key.as_deref(),
+                                width,
+                            );
+                        }
+                        let cells = ThemedCells {
+                            theme: &theme,
+                            transcript_key: transcript_key.as_deref(),
+                        };
+                        let lines = match preview(cell, limit) {
+                            Some(trimmed) => {
+                                shortened = true;
+                                cells.lines(&trimmed, width)
+                            }
                             None => cells.lines(cell, width),
+                        };
+                        if separated {
+                            after_committed(lines)
+                        } else {
+                            lines
                         }
                     })
-                    .collect()
+                    .collect();
+                // Rows cut from the top are not in scrollback yet; the first row drawn says so,
+                // whether the cap or the rows the layout gives the tail cut them.
+                let dim = Style::default().add_modifier(Modifier::DIM);
+                let style = if current.views.active() {
+                    current
+                        .views
+                        .inline(talaria_tui::theme::surfaces::tokens::TRANSCRIPT_NOTICE, dim)
+                } else {
+                    dim
+                };
+                MarkdownTailSection::cut_with(lines, MAX_TAIL_ROWS, move |hidden| {
+                    Line::styled(
+                        talaria_tui::live::tail_cut_text(
+                            hidden,
+                            shortened,
+                            transcript_key.as_deref(),
+                        ),
+                        style,
+                    )
+                })
             })
-            .unwrap_or_default();
-        if tail.len() > MAX_TAIL_ROWS {
-            tail.drain(..tail.len() - MAX_TAIL_ROWS);
-        }
-        let tail = MarkdownTailSection::new(tail);
+            .unwrap_or_else(|| MarkdownTailSection::new(Vec::new()));
         let drafting = DraftingLine {
             drafted: view.state.and_then(|state| state.drafting_tool()),
             theme: &self.tool_theme,
@@ -4332,6 +4872,15 @@ impl Screen for TuiScreen {
         let prompts = self.prompts.section();
         let palette =
             PaletteSection::new(view.palette, self.rows).with_theme(self.theme.views.clone());
+        // The selector draws in the palette's place, under a sample of the selected look:
+        // finished scrollback keeps its colours, so the sample is where a preview shows.
+        let choice = view
+            .choice
+            .map(|list| ChoiceSection::new(list, self.rows).with_theme(self.theme.views.clone()));
+        let effort_scale = view.effort_scale.map(|scale| {
+            EffortScaleSection::new(scale, scale_key_labels(&self.keymap), self.rows)
+                .with_theme(self.theme.views.clone())
+        });
         let confirmation = if prompts.is_none() {
             self.confirmation.as_ref().map(|card| {
                 let section =
@@ -4358,6 +4907,14 @@ impl Screen for TuiScreen {
                 work: state.background(),
                 width_hint: width,
                 theme: &background_theme,
+                // The Workflow line is drawn only when no search takes its place.
+                workflow_run: view
+                    .workflow_run
+                    .filter(|_| self.search.is_none())
+                    .map(|run| talaria_core::background::RunIdentity {
+                        run_id: &run.run_id,
+                        run_dir: &run.run_dir,
+                    }),
             },
             views: &self.theme.views,
         });
@@ -4365,13 +4922,20 @@ impl Screen for TuiScreen {
             .attachments
             .mention
             .as_ref()
-            .filter(|_| !self.composer.text().starts_with('/'))
+            .filter(|_| self.mention_list_open())
             .map(MentionSection::new);
         let queue = MarkdownTailSection::new(
             queue_view(view)
                 .map(|queue| render_preview(&queue, width, self.composer.is_empty()))
                 .unwrap_or_default(),
         );
+        // Measured before the composer section borrows the composer.
+        let interrupt_reaches_turn =
+            view.link == LinkView::Connected && self.interrupt_reaches_turn(view);
+        let back_hint = self
+            .agent_back_offered(view)
+            .then(|| self.keymap.label(Action::WorkflowAgentBack))
+            .flatten();
         let composer = ThemedComposer {
             section: self
                 .composer
@@ -4394,6 +4958,24 @@ impl Screen for TuiScreen {
             line: view.compacting_line,
             now_ms: view.now_ms,
         };
+        // The working row sits directly above the composer for the whole running turn, except
+        // while a prompt card or the compacting row says what the turn is doing. It offers the
+        // interrupt key only when the key would reach the turn: not while the link redials,
+        // and not while a list, a selector or a search takes the key first.
+        let activity_style = ActivityStyle::from_theme(&self.theme, self.look.terminal);
+        let interrupt_key = self
+            .keymap
+            .label(Action::Interrupt)
+            .filter(|_| interrupt_reaches_turn);
+        let activity = turn_elapsed
+            .filter(|_| prompts.is_none() && view.compacting_line.is_none())
+            .map(|elapsed_ms| ActivityLine {
+                activity: view.state.and_then(|state| state.activity()),
+                elapsed_ms,
+                interrupt: interrupt_key.as_deref(),
+                interrupt_armed: view.interrupt_armed,
+                style: &activity_style,
+            });
         // The task checklist sits above the composer, and is one row on a short screen.
         let max_rows = if self.rows < SHORT_TERMINAL_ROWS {
             1
@@ -4425,6 +5007,51 @@ impl Screen for TuiScreen {
                 self.rows,
             ))
         });
+        let workflow_hint = self.keymap.label(Action::WorkflowView);
+        // While a routed turn builds a workflow, the building block takes the dock's place.
+        let authoring = view.authoring.as_ref().map(|block| {
+            talaria_tui::workflow_view::AuthoringDock::new(
+                block,
+                if self.rows < SHORT_TERMINAL_ROWS {
+                    1
+                } else {
+                    2
+                },
+                subagent_style.header,
+                subagent_style.hint,
+            )
+        });
+        let agent_banner = view.workflow_agent.map(|note| note.banner());
+        let agent_dock = agent_banner.as_deref().map(|text| {
+            talaria_tui::workflow_view::WorkflowAgentDock::new(
+                text,
+                workflow_hint.as_deref(),
+                subagent_style.header,
+                subagent_style.hint,
+            )
+            .with_back_key(back_hint.as_deref())
+        });
+        let workflow_clock = view.workflow_run.and_then(|run| {
+            talaria_tui::workflow_view::RunClock::of_run(
+                run.status == talaria_workflow::runner::RunStatus::Running,
+                run.started_at_ms,
+                view.automation_now_ms,
+                view.now_ms,
+                self.theme.motion,
+            )
+        });
+        let workflow = view.workflow_run.map(|run| {
+            talaria_tui::workflow_view::WorkflowDock::new(
+                &run.name,
+                run.status.as_str(),
+                run.agents_finished,
+                run.agents_total_known,
+                workflow_hint.as_deref(),
+                subagent_style.header,
+                subagent_style.hint,
+            )
+            .with_clock(workflow_clock)
+        });
         let automation_theme = self.theme.views.automation_theme();
         let automation = ThemedAutomation {
             section: AutomationSection {
@@ -4434,6 +5061,48 @@ impl Screen for TuiScreen {
             },
             views: &self.theme.views,
         };
+        // The sample of the selected look shows only when it fits with every section that takes
+        // its rows before the working row and the composer: the working row itself, the
+        // composer, the voice partial line, the selector, the automation rows and the status
+        // bar. On a short screen the selector's own list still previews, and neither the
+        // composer nor the working row is pushed off.
+        let no_captures = HashMap::new();
+        let sample = choice
+            .as_ref()
+            .filter(|_| self.rows >= SHORT_TERMINAL_ROWS)
+            .map(|choice| {
+                let cells = CapturedCells {
+                    current: &self.theme,
+                    captured: &no_captures,
+                    tools: &self.cells,
+                    transcript_key: None,
+                    // The sample shows the reasoning colour, which one quiet line would not.
+                    reasoning: ReasoningDisplay::Full,
+                    reasoning_clock: None,
+                };
+                (
+                    choice,
+                    MarkdownTailSection::new(sample_lines(&cells, width)),
+                )
+            })
+            .filter(|(choice, sample)| {
+                let needed = [
+                    Some(&status as &dyn LiveSection),
+                    Some(*choice as &dyn LiveSection),
+                    Some(&composer as &dyn LiveSection),
+                    activity.as_ref().map(|row| row as &dyn LiveSection),
+                    partial.as_ref().map(|line| line as &dyn LiveSection),
+                    Some(&automation as &dyn LiveSection),
+                    Some(sample as &dyn LiveSection),
+                ]
+                .into_iter()
+                .flatten()
+                .fold(0u32, |rows, section| {
+                    rows + u32::from(section.height(width))
+                });
+                needed <= u32::from(max_live_height(self.rows))
+            })
+            .map(|(_, sample)| sample);
         let workspace_enabled = view.layout.workspace_enabled() || view.layout.menu_transient;
         let panel_visible = workspace_enabled
             && talaria_tui::workspace::geometry(
@@ -4472,6 +5141,9 @@ impl Screen for TuiScreen {
             if let Some(background) = &background {
                 sections.push(background);
             }
+            if let Some(activity) = &activity {
+                sections.push(activity);
+            }
             sections.push(search);
         } else {
             sections.push(&queue);
@@ -4488,22 +5160,103 @@ impl Screen for TuiScreen {
             {
                 sections.push(subagents);
             }
+            if let Some(authoring) = &authoring {
+                sections.push(authoring);
+            }
+            if let Some(workflow) = &workflow {
+                sections.push(workflow);
+            }
+            if let Some(agent_dock) = &agent_dock {
+                sections.push(agent_dock);
+            }
             if let Some(side) = &side {
                 sections.push(side);
             }
             if let Some(background) = &background {
                 sections.push(background);
             }
+            if let Some(activity) = &activity {
+                sections.push(activity);
+            }
             sections.push(&composer);
             if let Some(partial) = &partial {
                 sections.push(partial);
             }
-            if !composer_is_empty || prompts.is_none() {
+            if let Some(choice) = &choice {
+                if let Some(sample) = &sample {
+                    sections.push(sample);
+                }
+                sections.push(choice);
+            } else if let Some(scale) = &effort_scale {
+                // A question or approval card holds the keys and closes the scale; until it
+                // does, the scale is not drawn, so the card keeps its rows.
+                if prompts.is_none() {
+                    sections.push(scale);
+                }
+            } else if !composer_is_empty || prompts.is_none() {
                 sections.push(&palette);
             }
         }
         sections.push(&automation);
         sections.push(&status);
+        // The row's clock wakes the screen only while the row is really on screen: not while
+        // the transcript pager covers the live region, not while the terminal is handed to
+        // another program, and not when a short screen gives the row no rows.
+        if let Some(activity) = &activity
+            && self.transcript.is_none()
+            && !self.terminal.is_released()
+            && sections
+                .iter()
+                .position(|section| std::ptr::addr_eq(*section, activity))
+                .is_some_and(|index| {
+                    LiveView {
+                        sections: sections.clone(),
+                    }
+                    .rows_of(index, width, max_live_height(self.rows))
+                        > 0
+                })
+        {
+            self.activity.shown(Instant::now());
+        }
+        // The block counts its seconds, so the screen wakes on the next whole second while the
+        // block is on screen, and never otherwise.
+        if let (Some(section), Some(block)) = (&authoring, &view.authoring)
+            && self.transcript.is_none()
+            && !self.terminal.is_released()
+            && sections
+                .iter()
+                .position(|shown| std::ptr::addr_eq(*shown, section))
+                .is_some_and(|index| {
+                    LiveView {
+                        sections: sections.clone(),
+                    }
+                    .rows_of(index, width, max_live_height(self.rows))
+                        > 0
+                })
+        {
+            let wait = 1_000 - block.elapsed_ms % 1_000;
+            self.authoring_wake = Some(Instant::now() + Duration::from_millis(wait));
+        }
+        // A running run's line moves: a spinner frame under full motion, the seconds under reduced
+        // motion. The screen wakes for it only while that line is really on screen.
+        if let (Some(section), Some(wait)) = (
+            &workflow,
+            workflow_clock.and_then(|clock| clock.wake_after_ms()),
+        ) && self.transcript.is_none()
+            && !self.terminal.is_released()
+            && sections
+                .iter()
+                .position(|shown| std::ptr::addr_eq(*shown, section))
+                .is_some_and(|index| {
+                    LiveView {
+                        sections: sections.clone(),
+                    }
+                    .rows_of(index, width, max_live_height(self.rows))
+                        > 0
+                })
+        {
+            self.workflow_wake = Some(Instant::now() + Duration::from_millis(wait));
+        }
         if workspace_enabled {
             let empty_agents = talaria_core::subagents::SubagentTree::new();
             let agents = view
@@ -4553,23 +5306,21 @@ impl Screen for TuiScreen {
                 read_aloud: None,
                 voice_target: None,
             };
-            let mut entries = self
-                .workspace_history
-                .iter()
-                .map(|entry| match entry {
-                    WorkspaceCommit::Cell(cell) => talaria_tui::pager::TranscriptEntry::Cell(cell),
-                    WorkspaceCommit::Lines(lines) => {
-                        talaria_tui::pager::TranscriptEntry::Lines(lines)
-                    }
-                })
-                .collect::<Vec<_>>();
             let cells = view.state.map_or(&[][..], |state| state.cells());
-            entries.extend(
-                cells
-                    .iter()
-                    .skip(self.workspace_committed_cells)
-                    .map(talaria_tui::pager::TranscriptEntry::Cell),
+            let live = cells
+                .get(self.workspace_committed_cells..)
+                .unwrap_or_default();
+            let body_width = view.layout.plan(width, self.rows).transcript_columns;
+            let reasoning_rows = workspace_reasoning_rows(
+                &self.workspace_history,
+                live,
+                self.reasoning,
+                (&self.reasoning_clock, now),
+                &self.theme,
+                self.keymap.label(Action::TranscriptOpen).as_deref(),
+                body_width,
             );
+            let entries = workspace_entries(&self.workspace_history, live, &reasoning_rows);
             let footer = LiveView { sections };
             let workspace = talaria_tui::workspace::WorkspaceView {
                 entries: &entries,
@@ -4593,7 +5344,6 @@ impl Screen for TuiScreen {
                 footer: &footer,
                 work: Some(&work),
             };
-            let body_width = view.layout.plan(width, self.rows).transcript_columns;
             let renderer = transcript_tool_renderer(
                 talaria_tui::pager::Details::Expanded,
                 body_width,
@@ -4641,12 +5391,22 @@ impl Screen for TuiScreen {
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
-        self.commit_workspace_lines(lines.into_iter().map(Line::from).collect());
+        if lines.is_empty() {
+            return;
+        }
+        // The workspace view wraps at its own width, so it keeps the lines unwrapped; scrollback
+        // gets them word-wrapped at the terminal's width.
+        self.workspace_history.push(WorkspaceCommit::Lines(
+            lines.iter().cloned().map(Line::from).collect(),
+        ));
+        let width = self.terminal.viewport().width;
+        let rows = talaria_tui::history::committed_text_rows(lines, width);
+        let _ = self.terminal.commit_lines(rows);
     }
 
     fn commit_context(&mut self, block: &ContextBlock) {
         let width = self.terminal.viewport().width;
-        let style = self.theme.views.context_style();
+        let style = self.in_force.theme.views.context_style();
         let lines = match block {
             ContextBlock::Breakdown { typed, breakdown } => {
                 context_block(typed, breakdown, width, &style)
@@ -4666,6 +5426,7 @@ impl Screen for TuiScreen {
             ContextBlock::Notice(notice) => notice_block(notice, width, &style),
         };
         let lines = self
+            .in_force
             .theme
             .views
             .inline_lines(lines, talaria_tui::theme::surfaces::tokens::CONTEXT_TEXT);
@@ -4674,30 +5435,34 @@ impl Screen for TuiScreen {
 
     fn commit_checklist(&mut self, commit: &ChecklistCommit) {
         let width = self.terminal.viewport().width;
-        let lines = committed_block_lines(commit, width, &self.checklist_style);
+        let lines = committed_block_lines(commit, width, &self.in_force.checklist);
         self.commit_workspace_lines(lines);
     }
 
     fn commit_subagent_batch(&mut self, batch: &FinishedBatch) {
-        let style = subagent_style(&self.theme);
+        let style = subagent_style(&self.in_force.theme);
         let lines = batch_block_lines(batch, self.terminal.viewport().width, &style);
         self.commit_workspace_lines(lines);
     }
 
     fn commit_cells(&mut self, cells: &[Cell]) {
-        self.workspace_history.extend(
-            cells
-                .iter()
-                .cloned()
-                .map(Box::new)
-                .map(WorkspaceCommit::Cell),
-        );
-        let render = CapturedCells {
-            current: &self.theme,
-            captured: &self.captured,
-            tools: &self.cells,
-        };
-        let _ = self.terminal.commit(cells, &render);
+        let now = Instant::now();
+        self.workspace_history.extend(cells.iter().map(|cell| {
+            let took = match cell {
+                Cell::Reasoning(block) => self.reasoning_clock.took(block.id, now),
+                _ => None,
+            };
+            WorkspaceCommit::Cell(Box::new(cell.clone()), took)
+        }));
+        let transcript_key = self.keymap.label(Action::TranscriptOpen);
+        let render = self
+            .in_force
+            .cells(&self.captured, transcript_key.as_deref())
+            .reasoning(self.reasoning, &self.reasoning_clock, now);
+        let lines = self
+            .replies
+            .final_lines(cells, &render, self.terminal.viewport().width);
+        let _ = self.terminal.commit_lines(lines);
         for id in cells.iter().filter_map(themed_cell_id) {
             self.captured.remove(&id);
         }
@@ -4705,6 +5470,10 @@ impl Screen for TuiScreen {
 
     fn unrecord_submit(&mut self, text: &str) {
         self.composer.forget_newest_history(text);
+    }
+
+    fn record_submit(&mut self, text: &str, has_session: bool) -> Option<String> {
+        record_ran_line(&mut self.composer, &mut self.history, text, has_session)
     }
 
     fn offer_draft(&mut self, text: &str) {
@@ -4785,7 +5554,7 @@ impl Screen for TuiScreen {
         let resolved = self.look.resolve(view);
         self.composer_border = resolved.border;
         self.theme_file_report = resolved.report;
-        self.set_theme(resolved.theme);
+        self.set_theme(resolved.theme, view.previewing);
     }
 
     fn startup_theme_files(&self) -> Option<ThemeFileSession> {
@@ -4827,6 +5596,10 @@ impl Screen for TuiScreen {
             .map(|label| label.to_ascii_lowercase())
     }
 
+    fn workflow_key_label(&self) -> Option<String> {
+        self.keymap.label(Action::WorkflowView)
+    }
+
     fn alert(&mut self, alert: &Alert) {
         let tmux = std::env::var_os("TMUX").is_some_and(|s| !s.is_empty());
         let bytes =
@@ -4853,6 +5626,36 @@ impl Screen for TuiScreen {
 }
 
 impl TuiScreen {
+    /// Commit the streaming reply's closed Markdown blocks, so a reply taller than the live
+    /// region scrolls up into scrollback instead of under the region. Only while the inline
+    /// screen shows scrollback and every final cell before the reply is committed.
+    fn commit_closed_blocks(&mut self, state: &SessionState, view: &View<'_>, width: u16) {
+        let allowed = !(view.layout.workspace_enabled() || view.layout.menu_transient)
+            && state.commit_cursor() >= state.final_prefix_len();
+        // The committed rows use the theme in force when the reply started, as its later rows
+        // do, and never a `/theme` preview.
+        if let Some(id) = state.live_tail().first().and_then(themed_cell_id) {
+            self.captured
+                .entry(id)
+                .or_insert_with(|| Arc::clone(&self.in_force.theme));
+        }
+        let transcript_key = self.keymap.label(Action::TranscriptOpen);
+        let render = self
+            .in_force
+            .cells(&self.captured, transcript_key.as_deref())
+            .reasoning(self.reasoning, &self.reasoning_clock, Instant::now());
+        let lines = self.replies.before_frame(
+            state.cells(),
+            state.final_prefix_len(),
+            allowed,
+            &render,
+            width,
+        );
+        if !lines.is_empty() {
+            let _ = self.terminal.commit_lines(lines);
+        }
+    }
+
     fn release_terminal(&mut self) -> io::Result<()> {
         if let Some(input) = &self.input {
             input.pause()?;
@@ -5033,25 +5836,25 @@ fn print_outcome(outcome: &Outcome) {
 }
 
 pub fn run(launch: Launch) -> ExitCode {
-    run_with_ultracode(launch, false)
+    run_with_hivecode(launch, false)
 }
 
-pub fn run_with_ultracode(launch: Launch, ultracode: bool) -> ExitCode {
-    run_selected(launch, ultracode, None)
+pub fn run_with_hivecode(launch: Launch, hivecode: bool) -> ExitCode {
+    run_selected(launch, hivecode, None)
 }
 
 pub fn run_remote(
     launch: Launch,
-    ultracode: bool,
+    hivecode: bool,
     cfg: hermes_client::remote::RemoteConfig,
     store: hermes_client::remote::TokenStore,
 ) -> ExitCode {
-    run_selected(launch, ultracode, Some((cfg, store)))
+    run_selected(launch, hivecode, Some((cfg, store)))
 }
 
 fn run_selected(
     mut launch: Launch,
-    ultracode: bool,
+    hivecode: bool,
     remote: Option<(
         hermes_client::remote::RemoteConfig,
         hermes_client::remote::TokenStore,
@@ -5080,7 +5883,7 @@ fn run_selected(
     let env = EnvView::from_process();
     notices.extend(detect::env_notices(&env));
     let settings = ThemeSettings {
-        ultracode,
+        hivecode,
         mode: loaded.config.theme.mode,
         look: Look {
             follow_hermes_skin: loaded.config.theme.follow_hermes_skin,
@@ -5196,7 +5999,7 @@ fn run_selected(
 
 /// The theme settings read before the terminal is set up.
 struct ThemeSettings {
-    ultracode: bool,
+    hivecode: bool,
     env: EnvView,
     mode: ThemeMode,
     look: Look,
@@ -5249,8 +6052,9 @@ fn session(
         polarity: look.polarity,
         file: theme_files.as_ref().and_then(ThemeFileSession::file),
         file_id: theme_files.as_ref().and_then(ThemeFileSession::active_id),
+        previewing: false,
     });
-    let theme = resolved.theme;
+    let theme = Arc::new(resolved.theme);
     let size = terminal_size().map_err(TerminalError::Io)?;
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
@@ -5280,11 +6084,14 @@ fn session(
     );
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     composer.set_style(theme.composer);
+    // A resume can commit history before the first draw copies the view's choice.
+    let reasoning = config.ui.reasoning;
     let mut screen = TuiScreen {
         workspace_history: Vec::new(),
         menu: talaria_tui::workspace::menu::MenuState::hidden(),
         workspace_source_epoch: 0,
         workspace_committed_cells: 0,
+        replies: ReplyCommits::new(),
         workspace_renderer: talaria_tui::workspace::Workspace::default(),
         providers: crate::providers_wiring::ProvidersWiring::new(),
         providers_view: None,
@@ -5328,12 +6135,18 @@ fn session(
         palette: theme.status,
         cells: tool_cells(&theme, &keymap),
         clock: ToolClock::new(),
+        reasoning_clock: ReasoningClock::new(),
+        reasoning,
+        activity: ActivityClock::default(),
+        authoring_wake: None,
+        workflow_wake: None,
         tool_theme: theme.tool.clone(),
         look,
         startup_theme_files: theme_files,
         theme_file_report: resolved.report,
         composer_border: resolved.border,
-        theme: Arc::new(theme),
+        in_force: InForce::new(&theme, &keymap),
+        theme,
         captured: HashMap::new(),
         checklist_style,
         color,
@@ -5394,7 +6207,7 @@ fn session(
         setup,
         &mut screen,
         receiver,
-        settings.ultracode,
+        settings.hivecode,
         remote_audio,
     ));
     screen.restore();
@@ -5429,6 +6242,29 @@ fn sync_reported_draft(
     );
 }
 
+/// Enter on an open slash list only asks the list to choose. The composer's own record of the
+/// typed draft comes back out; the app records the line that runs, if one does.
+fn palette_submit(composer: &mut Composer, text: String) -> UserAction {
+    composer.forget_submitted(&text);
+    UserAction::Submit(text)
+}
+
+/// Save a line the slash list ran: to Up-arrow recall, and to the file by the same rule as a
+/// typed submit. A notice comes back when the file could not be written.
+fn record_ran_line(
+    composer: &mut Composer,
+    history: &mut PromptHistory,
+    text: &str,
+    has_session: bool,
+) -> Option<String> {
+    composer.remember(text);
+    if should_record_submission(text, has_session) {
+        talaria_app::settings::append_history(history, text)
+    } else {
+        None
+    }
+}
+
 fn should_record_submission(text: &str, has_session: bool) -> bool {
     use talaria_core::side::{Submission, btw_command, classify};
 
@@ -5458,8 +6294,9 @@ fn unix_millis() -> u64 {
 mod tests {
     use super::{
         CellLines, TuiScreen, attachment_key, composer_key_actions, confirmation_key,
-        paste_actions, picker_key, preview_text, recall_draft, reported_snapshot,
-        should_record_submission, status_inputs, sync_reported_draft, tool_cells,
+        palette_submit, paste_actions, picker_key, preview_text, recall_draft, record_ran_line,
+        reported_snapshot, should_record_submission, status_inputs, sync_reported_draft,
+        tool_cells,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use serde_json::json;
@@ -5664,6 +6501,27 @@ mod tests {
     }
 
     #[test]
+    fn status_names_the_workflow_agent_when_its_session_is_open() {
+        use talaria_workflow::progress::agent_session::{AgentPhase, AgentSessionNote, Tracking};
+        let note = AgentSessionNote {
+            run_id: "01JB2X9Q4M8Z7K3T5V6W8Y0A1C".into(),
+            run_name: Some("review-branch".into()),
+            label: Some("review:gameplay".into()),
+            phase: Some(AgentPhase::Failed),
+            tracking: Tracking::NotFollowed,
+            pending: false,
+        };
+        let state = AppState::new("agent-status");
+        let mut view = state.view();
+        assert_eq!(status_inputs(&view, None).workflow_run, None);
+        view.workflow_agent = Some(&note);
+        assert_eq!(
+            status_inputs(&view, None).workflow_run.as_deref(),
+            Some("agent review:gameplay failed (untracked)")
+        );
+    }
+
+    #[test]
     fn rejected_side_submissions_stay_out_of_persistent_history() {
         for (text, has_session) in [
             ("! ", true),
@@ -5740,6 +6598,181 @@ mod tests {
         assert_eq!(preview_text(&fenced, 80), None);
         let table = format!("| a | b |\n|---|---|\n{}", "| 1 | 2 |\n".repeat(200));
         assert_eq!(preview_text(&table, 80), None);
+    }
+
+    #[test]
+    fn model_overlay_keeps_the_current_route_for_the_count_line() {
+        let details = vec!["Context: 200K tokens".to_owned()];
+        let view = talaria_core::models::PickerView {
+            title: "Switch model · this session",
+            filter: "",
+            effort: "effort: high",
+            hints: "",
+            refreshing: false,
+            rows: &[],
+            selected: None,
+            banner: None,
+            browse: Some(talaria_core::models::BrowseView {
+                scope: talaria_core::models::ListScope::All,
+                counts: talaria_core::models::BrowseCounts::default(),
+                details: &details,
+                details_open: false,
+                details_scroll: 0,
+                current: Some("Example provider / example-model · high"),
+            }),
+        };
+        let overlay = super::ModelOverlay::from_view(view);
+        let browse = overlay
+            .view()
+            .browse
+            .expect("browse facts survive the copy");
+        assert_eq!(
+            browse.current,
+            Some("Example provider / example-model · high")
+        );
+        assert_eq!(browse.details, details.as_slice());
+    }
+
+    #[test]
+    fn open_selector_takes_arrows_enter_escape_and_typed_keys_before_the_composer() {
+        use super::choice_key;
+        use talaria_core::commands::ChoiceKey;
+        let defaults = KeyMap::defaults();
+        let key = |code, mods| Key::from(KeyEvent::new(code, mods));
+        for (code, mods, expected) in [
+            (KeyCode::Up, KeyModifiers::NONE, ChoiceKey::Prev),
+            (KeyCode::Down, KeyModifiers::NONE, ChoiceKey::Next),
+            (KeyCode::Enter, KeyModifiers::NONE, ChoiceKey::Apply),
+            (KeyCode::Esc, KeyModifiers::NONE, ChoiceKey::Cancel),
+            (KeyCode::Backspace, KeyModifiers::NONE, ChoiceKey::Erase),
+            (KeyCode::Char('e'), KeyModifiers::NONE, ChoiceKey::Type('e')),
+            (
+                KeyCode::Char('E'),
+                KeyModifiers::SHIFT,
+                ChoiceKey::Type('E'),
+            ),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL, ChoiceKey::Cancel),
+        ] {
+            assert_eq!(
+                choice_key(&defaults, key(code, mods)),
+                Some(expected),
+                "{code:?}"
+            );
+        }
+        // The completion list's own bindings move the selector too.
+        assert_eq!(
+            choice_key(&defaults, key(KeyCode::Char('n'), KeyModifiers::CONTROL)),
+            Some(ChoiceKey::Next)
+        );
+        assert_eq!(
+            choice_key(&defaults, key(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+            Some(ChoiceKey::Prev)
+        );
+        // Other keys go nowhere: none of them reaches the composer while the list is open.
+        for (code, mods) in [
+            (KeyCode::Char('x'), KeyModifiers::ALT),
+            (KeyCode::F(5), KeyModifiers::NONE),
+            (KeyCode::PageDown, KeyModifiers::NONE),
+        ] {
+            assert_eq!(choice_key(&defaults, key(code, mods)), None, "{code:?}");
+        }
+        let mut release = key(KeyCode::Down, KeyModifiers::NONE);
+        release.kind = talaria_tui::keys::KeyKind::Release;
+        assert_eq!(choice_key(&defaults, release), None);
+    }
+
+    #[test]
+    fn typed_slash_closes_selector_and_reaches_the_composer() {
+        use super::choice_hands_to_composer;
+        let defaults = KeyMap::defaults();
+        let key = |code, mods| Key::from(KeyEvent::new(code, mods));
+        // A typed command after a bare /theme or /skin reaches the composer.
+        assert!(choice_hands_to_composer(
+            &defaults,
+            key(KeyCode::Char('/'), KeyModifiers::NONE)
+        ));
+        for (code, mods) in [
+            (KeyCode::Char('q'), KeyModifiers::NONE),
+            (KeyCode::Char('/'), KeyModifiers::CONTROL),
+            (KeyCode::Char('/'), KeyModifiers::ALT),
+            (KeyCode::Esc, KeyModifiers::NONE),
+        ] {
+            assert!(
+                !choice_hands_to_composer(&defaults, key(code, mods)),
+                "{code:?} {mods:?}"
+            );
+        }
+        let mut release = key(KeyCode::Char('/'), KeyModifiers::NONE);
+        release.kind = talaria_tui::keys::KeyKind::Release;
+        assert!(!choice_hands_to_composer(&defaults, release));
+    }
+
+    #[test]
+    fn open_effort_scale_takes_the_model_picker_effort_keys_tab_enter_and_escape() {
+        use super::{scale_hands_to_composer, scale_key};
+        use talaria_core::models::ScaleKey;
+        let defaults = KeyMap::defaults();
+        let key = |code, mods| Key::from(KeyEvent::new(code, mods));
+        for (code, mods, expected) in [
+            (KeyCode::Left, KeyModifiers::NONE, ScaleKey::Lower),
+            (KeyCode::Right, KeyModifiers::NONE, ScaleKey::Higher),
+            (KeyCode::Home, KeyModifiers::NONE, ScaleKey::Lowest),
+            (KeyCode::End, KeyModifiers::NONE, ScaleKey::Highest),
+            // Tab stages Hivecode here; it does not accept a completion.
+            (KeyCode::Tab, KeyModifiers::NONE, ScaleKey::ToggleHivecode),
+            (
+                KeyCode::Char('g'),
+                KeyModifiers::CONTROL,
+                ScaleKey::ToggleSave,
+            ),
+            (KeyCode::Enter, KeyModifiers::NONE, ScaleKey::Apply),
+            (KeyCode::Esc, KeyModifiers::NONE, ScaleKey::Cancel),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL, ScaleKey::Cancel),
+        ] {
+            assert_eq!(
+                scale_key(&defaults, key(code, mods)),
+                Some(expected),
+                "{code:?} {mods:?}"
+            );
+        }
+        for (code, mods) in [
+            (KeyCode::Enter, KeyModifiers::SHIFT),
+            (KeyCode::Char('x'), KeyModifiers::NONE),
+            (KeyCode::Up, KeyModifiers::NONE),
+            (KeyCode::F(5), KeyModifiers::NONE),
+        ] {
+            assert_eq!(scale_key(&defaults, key(code, mods)), None, "{code:?}");
+        }
+        let mut release = key(KeyCode::Right, KeyModifiers::NONE);
+        release.kind = talaria_tui::keys::KeyKind::Release;
+        assert_eq!(scale_key(&defaults, release), None);
+        // A rebinding of the picker's effort keys moves the scale too.
+        let entries = [("effort_down", "alt+h"), ("effort_up", "alt+l")]
+            .into_iter()
+            .map(|(name, chord)| (name.to_owned(), vec![chord.to_owned()]))
+            .collect();
+        let (rebound, notices) = KeyMap::from_entries(&entries);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert_eq!(
+            scale_key(&rebound, key(KeyCode::Char('l'), KeyModifiers::ALT)),
+            Some(ScaleKey::Higher)
+        );
+        assert_eq!(
+            scale_key(&rebound, key(KeyCode::Right, KeyModifiers::NONE)),
+            None
+        );
+        // A typed `/` closes the scale and starts a command in the composer.
+        assert!(scale_hands_to_composer(key(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE
+        )));
+        assert!(!scale_hands_to_composer(key(
+            KeyCode::Char('/'),
+            KeyModifiers::ALT
+        )));
+        let mut release = key(KeyCode::Char('/'), KeyModifiers::NONE);
+        release.kind = talaria_tui::keys::KeyKind::Release;
+        assert!(!scale_hands_to_composer(release));
     }
 
     #[test]
@@ -5930,6 +6963,148 @@ mod tests {
     }
 
     #[test]
+    fn only_the_interrupt_key_asks_for_a_second_press() {
+        use crossterm::event::{KeyEventKind, KeyEventState};
+        use talaria_app::app::UserAction;
+        use talaria_tui::keys::Action;
+        let running = ComposerContext { turn_running: true };
+        let routed = |map: &KeyMap, event: KeyEvent, text: &str| {
+            let mut composer = Composer::new(map.clone());
+            composer.load(text.to_string());
+            let key = Key::from(event);
+            let produced = composer_key_actions(&mut composer, key, running, Instant::now());
+            super::interrupt_key_actions(map, &key, produced)
+        };
+        let count = |actions: &[UserAction], wanted: fn(&UserAction) -> bool| {
+            actions.iter().filter(|action| wanted(action)).count()
+        };
+        let is_key = |action: &UserAction| matches!(action, UserAction::InterruptKey);
+        let is_now = |action: &UserAction| matches!(action, UserAction::Interrupt);
+        let map = KeyMap::defaults();
+
+        // Esc reaches the application as the key that wants a second press.
+        let esc = routed(&map, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), "");
+        assert_eq!((count(&esc, is_key), count(&esc, is_now)), (1, 0));
+        // Ctrl+C is the cancel action, not the interrupt action: it acts at once.
+        let ctrl_c = routed(
+            &map,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            "",
+        );
+        assert_eq!((count(&ctrl_c, is_key), count(&ctrl_c, is_now)), (0, 1));
+        // A held key's repeats are not presses.
+        let mut repeat = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        repeat.kind = KeyEventKind::Repeat;
+        repeat.state = KeyEventState::NONE;
+        let held = routed(&map, repeat, "");
+        assert_eq!((count(&held, is_key), count(&held, is_now)), (0, 0));
+
+        // The rule follows whatever key is bound to the interrupt action.
+        let entries = BTreeMap::from([("interrupt".to_owned(), vec!["f8".to_owned()])]);
+        let (rebound, notices) = KeyMap::from_entries(&entries);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert_eq!(rebound.label(Action::Interrupt).as_deref(), Some("F8"));
+        let f8 = routed(
+            &rebound,
+            KeyEvent::new(KeyCode::F(8), KeyModifiers::NONE),
+            "",
+        );
+        assert_eq!((count(&f8, is_key), count(&f8, is_now)), (1, 0));
+        // Vim normal mode interrupts on Esc whatever key the action is bound to, so plain Esc
+        // still asks for a second press there.
+        let vim_esc = super::interrupt_key_actions(
+            &rebound,
+            &Key::from(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            vec![UserAction::Interrupt],
+        );
+        assert_eq!((count(&vim_esc, is_key), count(&vim_esc, is_now)), (1, 0));
+        let old = routed(
+            &rebound,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            "",
+        );
+        assert_eq!((count(&old, is_key), count(&old, is_now)), (0, 0));
+    }
+
+    #[test]
+    fn the_key_that_goes_back_is_live_only_under_every_condition() {
+        use super::{AgentBackGate, agent_back_action};
+        use talaria_app::app::UserAction;
+        let open = AgentBackGate {
+            origin: true,
+            composer_empty: true,
+            surfaces_free: true,
+            vim_allows: true,
+        };
+        let left = Key::from(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        let map = KeyMap::defaults();
+        let offered = |gate: AgentBackGate| {
+            matches!(
+                agent_back_action(&map, &left, gate),
+                Some(UserAction::WorkflowAgentBack)
+            )
+        };
+        assert!(offered(open));
+        // Each condition alone closes it.
+        assert!(!offered(AgentBackGate {
+            origin: false,
+            ..open
+        }));
+        assert!(!offered(AgentBackGate {
+            composer_empty: false,
+            ..open
+        }));
+        assert!(!offered(AgentBackGate {
+            surfaces_free: false,
+            ..open
+        }));
+        assert!(!offered(AgentBackGate {
+            vim_allows: false,
+            ..open
+        }));
+        // Other keys are never claimed, and a release is not a press.
+        for other in [
+            KeyCode::Right,
+            KeyCode::Up,
+            KeyCode::Esc,
+            KeyCode::Char('b'),
+        ] {
+            let key = Key::from(KeyEvent::new(other, KeyModifiers::NONE));
+            assert!(agent_back_action(&map, &key, open).is_none(), "{other:?}");
+        }
+        let mut release = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+        release.kind = crossterm::event::KeyEventKind::Release;
+        assert!(agent_back_action(&map, &Key::from(release), open).is_none());
+
+        // The key follows a rebind: the new key goes back and Left does not.
+        let entries = BTreeMap::from([("workflow_agent_back".to_owned(), vec!["f6".to_owned()])]);
+        let (rebound, notices) = KeyMap::from_entries(&entries);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert!(agent_back_action(&rebound, &left, open).is_none());
+        let f6 = Key::from(KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE));
+        assert!(agent_back_action(&rebound, &f6, open).is_some());
+
+        // When the gate is closed by text in the draft, Left moves the caret as before.
+        let mut composer = Composer::new(map.clone());
+        composer.load("draft".into());
+        let before = composer.caret();
+        let actions = composer_key_actions(
+            &mut composer,
+            left,
+            ComposerContext {
+                turn_running: false,
+            },
+            Instant::now(),
+        );
+        assert!(composer.caret() < before, "the caret moved left");
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, UserAction::WorkflowAgentBack))
+        );
+    }
+
+    #[test]
     fn composer_escape_preserves_rewind_eligibility() {
         use talaria_app::app::UserAction;
         for (text, running, modifiers, count) in [
@@ -6031,6 +7206,50 @@ mod tests {
     }
 
     #[test]
+    fn rows_committed_during_a_theme_preview_keep_the_theme_in_force() {
+        // Two built-in theme files that colour a tool row differently.
+        let theme = |id| {
+            let file = talaria_app::theme_file::builtin(id).expect("a built-in theme");
+            std::sync::Arc::new(
+                talaria_tui::theme::resolve_with_theme_file(
+                    &ThemeInputs {
+                        skin: None,
+                        skipped: &[],
+                        follow_hermes_skin: false,
+                        polarity: (Polarity::Dark, PolaritySource::Config),
+                        depth: (ColorDepth::TrueColor, DepthSource::Config),
+                        motion: (Motion::Full, MotionSource::Default),
+                        terminal: TerminalColors::default(),
+                    },
+                    Some(&file),
+                )
+                .theme,
+            )
+        };
+        let (dark, light) = (theme("ember"), theme("paper"));
+        let keymap = KeyMap::defaults();
+        let none = std::collections::HashMap::new();
+        let committed =
+            |in_force: &super::InForce| in_force.cells(&none, None).lines(&ten_line_tool(), 100);
+        let as_dark = committed(&super::InForce::new(&dark, &keymap));
+        let as_light = committed(&super::InForce::new(&light, &keymap));
+        assert_ne!(
+            as_dark, as_light,
+            "ember and paper draw the row differently"
+        );
+
+        let mut in_force = super::InForce::new(&dark, &keymap);
+        in_force.follow(&light, true, &keymap);
+        assert_eq!(
+            committed(&in_force),
+            as_dark,
+            "a row committed while paper is previewed keeps ember"
+        );
+        in_force.follow(&light, false, &keymap);
+        assert_eq!(committed(&in_force), as_light, "a chosen theme is in force");
+    }
+
+    #[test]
     fn scrollback_tool_cells_name_the_transcript_key() {
         let theme = talaria_tui::theme::resolve(&ThemeInputs {
             skin: None,
@@ -6052,6 +7271,188 @@ mod tests {
         let entries = BTreeMap::from([("transcript_open".to_string(), vec!["ctrl+t".to_string()])]);
         let (rebound, _) = KeyMap::from_entries(&entries);
         assert_eq!(last_row(&rebound), "     … +7 lines (Ctrl+T to view)");
+    }
+
+    /// A reasoning block of `lines` source lines.
+    fn reasoning_block(
+        lines: usize,
+        sealed: bool,
+        no_reply: bool,
+    ) -> talaria_core::session::ReasoningCell {
+        talaria_core::session::ReasoningCell {
+            id: CellId::new(2),
+            text: (1..=lines)
+                .map(|line| format!("weighing option {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            sealed,
+            latest_step: false,
+            no_reply,
+        }
+    }
+
+    #[test]
+    fn scrollback_reasoning_is_one_row_unless_full_or_the_only_output() {
+        use talaria_core::layout::ReasoningDisplay;
+        use talaria_tui::theme::cells::ReasoningClock;
+        let theme = std::sync::Arc::new(talaria_tui::theme::resolve(&ThemeInputs {
+            skin: None,
+            skipped: &[],
+            follow_hermes_skin: false,
+            polarity: (Polarity::Dark, PolaritySource::Config),
+            depth: (ColorDepth::None, DepthSource::Config),
+            motion: (Motion::Full, MotionSource::Default),
+            terminal: TerminalColors::default(),
+        }));
+        let keymap = KeyMap::defaults();
+        let in_force = super::InForce::new(&theme, &keymap);
+        let none = std::collections::HashMap::new();
+        let clock = ReasoningClock::new();
+        let now = Instant::now();
+        let rows = |display: ReasoningDisplay, key: Option<&str>, cell: &Cell| -> Vec<String> {
+            in_force
+                .cells(&none, key)
+                .reasoning(display, &clock, now)
+                .lines(cell, 100)
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        };
+        let answered = Cell::Reasoning(reasoning_block(34, true, false));
+        assert_eq!(
+            rows(ReasoningDisplay::Collapsed, Some("Ctrl+O"), &answered),
+            vec!["∴ thinking (+34 lines, Ctrl+O to view)"]
+        );
+        let entries = BTreeMap::from([("transcript_open".to_string(), vec!["ctrl+t".to_string()])]);
+        let (rebound, _) = KeyMap::from_entries(&entries);
+        let label = rebound.label(talaria_tui::keys::Action::TranscriptOpen);
+        assert_eq!(
+            rows(ReasoningDisplay::Collapsed, label.as_deref(), &answered),
+            vec!["∴ thinking (+34 lines, Ctrl+T to view)"]
+        );
+        let full = rows(ReasoningDisplay::Full, Some("Ctrl+O"), &answered);
+        assert_eq!(full.len(), 35, "the heading and every line, as before");
+        assert_eq!(full[0], "∴ thinking");
+        assert_eq!(
+            in_force.cells(&none, Some("Ctrl+O")).lines(&answered, 100),
+            in_force
+                .cells(&none, Some("Ctrl+O"))
+                .reasoning(ReasoningDisplay::Full, &clock, now)
+                .lines(&answered, 100),
+            "full draws exactly what the themed renderer draws"
+        );
+        let only_output = Cell::Reasoning(reasoning_block(34, true, true));
+        assert_eq!(
+            rows(ReasoningDisplay::Collapsed, Some("Ctrl+O"), &only_output).len(),
+            35,
+            "a turn whose only output is reasoning shows it in full"
+        );
+    }
+
+    #[test]
+    fn scrollback_reasoning_the_screen_saw_stream_says_how_long_it_took() {
+        use talaria_core::layout::ReasoningDisplay;
+        use talaria_tui::theme::cells::ReasoningClock;
+        let theme = std::sync::Arc::new(talaria_tui::theme::resolve(&ThemeInputs {
+            skin: None,
+            skipped: &[],
+            follow_hermes_skin: false,
+            polarity: (Polarity::Dark, PolaritySource::Config),
+            depth: (ColorDepth::None, DepthSource::Config),
+            motion: (Motion::Full, MotionSource::Default),
+            terminal: TerminalColors::default(),
+        }));
+        let keymap = KeyMap::defaults();
+        let in_force = super::InForce::new(&theme, &keymap);
+        let none = std::collections::HashMap::new();
+        let start = Instant::now();
+        let mut clock = ReasoningClock::new();
+        clock.observe(&[Cell::Reasoning(reasoning_block(3, false, false))], start);
+        let sealed = Cell::Reasoning(reasoning_block(34, true, false));
+        let rows: Vec<String> = in_force
+            .cells(&none, Some("Ctrl+O"))
+            .reasoning(
+                ReasoningDisplay::Collapsed,
+                &clock,
+                start + Duration::from_secs(12),
+            )
+            .lines(&sealed, 100)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(rows, vec!["∴ thought for 12s (+34 lines, Ctrl+O to view)"]);
+    }
+
+    #[test]
+    fn workspace_reasoning_follows_the_view_setting() {
+        use talaria_core::layout::ReasoningDisplay;
+        use talaria_tui::pager::TranscriptEntry;
+        use talaria_tui::theme::cells::ReasoningClock;
+        let theme = talaria_tui::theme::resolve(&ThemeInputs {
+            skin: None,
+            skipped: &[],
+            follow_hermes_skin: false,
+            polarity: (Polarity::Dark, PolaritySource::Config),
+            depth: (ColorDepth::None, DepthSource::Config),
+            motion: (Motion::Full, MotionSource::Default),
+            terminal: TerminalColors::default(),
+        });
+        // Committed: a block timed in an earlier session, a local line and a turn's only
+        // output. Live: a block of the current session still streaming, with the same id.
+        let history = vec![
+            super::WorkspaceCommit::Cell(
+                Box::new(Cell::Reasoning(reasoning_block(34, true, false))),
+                Some(Duration::from_secs(8)),
+            ),
+            super::WorkspaceCommit::Lines(vec![super::Line::from("local output")]),
+            super::WorkspaceCommit::Cell(
+                Box::new(Cell::Reasoning(reasoning_block(5, true, true))),
+                None,
+            ),
+        ];
+        let live = vec![Cell::Reasoning(reasoning_block(3, false, false))];
+        let start = Instant::now();
+        let mut clock = ReasoningClock::new();
+        clock.follow_source(1);
+        clock.observe(&live, start);
+        let shown = |display: ReasoningDisplay| -> Vec<String> {
+            let rows = super::workspace_reasoning_rows(
+                &history,
+                &live,
+                display,
+                (&clock, start + Duration::from_secs(2)),
+                &theme,
+                Some("Ctrl+O"),
+                100,
+            );
+            super::workspace_entries(&history, &live, &rows)
+                .iter()
+                .map(|entry| match entry {
+                    TranscriptEntry::Cell(_) => "cell".to_owned(),
+                    TranscriptEntry::Lines(lines) => lines
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                })
+                .collect()
+        };
+        assert_eq!(
+            shown(ReasoningDisplay::Collapsed),
+            vec![
+                "∴ thought for 8s (+34 lines, Ctrl+O to view)",
+                "local output",
+                "cell",
+                "∴ thinking… (+3 lines, Ctrl+O to view)",
+            ],
+            "each block is one row, a committed one keeps its own session's time, and a turn's \
+             only output is drawn in full"
+        );
+        assert_eq!(
+            shown(ReasoningDisplay::Full),
+            vec!["cell", "local output", "cell", "cell"],
+            "full leaves every block to the transcript renderer, as before"
+        );
     }
 
     #[test]
@@ -6113,6 +7514,93 @@ mod tests {
             assert_eq!(state.draft, "/help");
             assert!(!state.palette.open);
         }
+    }
+
+    /// Press one key in the composer and hand its actions to the app as the terminal does.
+    /// Keys are a second apart, so none of them is taken for a paste.
+    fn press_into(
+        composer: &mut Composer,
+        state: &mut AppState,
+        code: KeyCode,
+        clock: &mut Instant,
+    ) -> Vec<talaria_app::app::AppEffect> {
+        *clock += Duration::from_secs(1);
+        let now = *clock;
+        let palette_open = state.palette.open;
+        let actions = composer_key_actions(
+            composer,
+            Key::from(KeyEvent::new(code, KeyModifiers::NONE)),
+            ComposerContext {
+                turn_running: false,
+            },
+            now,
+        );
+        let mut effects = Vec::new();
+        for action in actions {
+            let action = match action {
+                UserAction::Submit(text) if palette_open => palette_submit(composer, text),
+                other => other,
+            };
+            effects.extend(update(state, AppMessage::ForegroundKey(action)));
+        }
+        effects
+    }
+
+    #[test]
+    fn up_arrow_walks_through_recalled_slash_commands() {
+        let mut composer = Composer::with_history(
+            KeyMap::defaults(),
+            vec!["first prompt".into(), "/theme".into()],
+        );
+        let mut state = AppState::new("history-walk");
+        let mut clock = Instant::now();
+        let _ = press_into(&mut composer, &mut state, KeyCode::Up, &mut clock);
+        assert_eq!(composer.text(), "/theme");
+        assert_eq!(state.draft, "/theme");
+        assert!(
+            !state.palette.open,
+            "the slash list stays shut, so the next Up reaches history"
+        );
+        let _ = press_into(&mut composer, &mut state, KeyCode::Up, &mut clock);
+        assert_eq!(composer.text(), "first prompt");
+        let _ = press_into(&mut composer, &mut state, KeyCode::Down, &mut clock);
+        assert_eq!(composer.text(), "/theme");
+        assert!(!state.palette.open);
+    }
+
+    #[test]
+    fn a_command_picked_from_the_slash_list_is_saved_as_it_ran() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut history, _) = talaria_app::comforts::prompt_history::PromptHistory::open(
+            home.path(),
+            true,
+            "history-pick",
+        );
+        let mut composer = Composer::new(KeyMap::defaults());
+        let mut state = AppState::new("history-pick");
+        let mut clock = Instant::now();
+        for character in "/profi".chars() {
+            let _ = press_into(
+                &mut composer,
+                &mut state,
+                KeyCode::Char(character),
+                &mut clock,
+            );
+        }
+        assert!(state.palette.open);
+        let effects = press_into(&mut composer, &mut state, KeyCode::Enter, &mut clock);
+        for effect in effects {
+            if let talaria_app::app::AppEffect::RecordSubmit(text) = effect {
+                let _ = record_ran_line(&mut composer, &mut history, &text, false);
+            }
+        }
+        assert_eq!(composer.history(), ["/profiles".to_string()]);
+        assert_eq!(history.composer_seed(), ["/profiles".to_string()]);
+
+        composer.clear();
+        let _ = press_into(&mut composer, &mut state, KeyCode::Up, &mut clock);
+        assert_eq!(composer.text(), "/profiles");
+        assert!(!state.palette.open);
     }
 
     #[test]

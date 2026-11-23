@@ -62,7 +62,7 @@ pub const DOCTOR_FIX_NO_GATEWAY: &str =
 pub const DOCTOR_UNKNOWN_PROFILE_FMT: &str = "the gateway never discovered a profile named ";
 // Doctor: version and result labels.
 pub const DOCTOR_RUNNING: &str = "running: ";
-pub const DOCTOR_BUILT_FOR: &str = "built for: ";
+pub const DOCTOR_TESTED_AGAINST: &str = "tested against: ";
 pub const DOCTOR_RESULT: &str = "Result:";
 pub const DOCTOR_HINT: &str =
     "↑↓ select · Enter details · r check again · R restart gateway · Esc close";

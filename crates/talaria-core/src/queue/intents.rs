@@ -144,7 +144,7 @@ fn begin_edit(state: &mut SessionState) -> Vec<Effect> {
         .map_or(1, |place| place + 1);
     state.queue.edit = Some(EditState {
         admission_id: row.admission_id,
-        original_text: row.text,
+        original_text: crate::hivecode::shown_text(&row.text).to_owned(),
         index,
     });
     Vec::new()
@@ -191,6 +191,8 @@ fn save_edit(state: &mut SessionState, text: &str, ids: &mut dyn IdSource) -> Ve
         return Vec::new();
     }
 
+    // An edited routed prompt keeps the model-facing part the person never saw.
+    let text = &crate::hivecode::retyped(&row.text, text);
     // The new admission lands at the back. The old id stands for it in the target order, so
     // the restore plan puts the rows that were behind the old row after it again.
     let queued = state.queue.queued_ids();

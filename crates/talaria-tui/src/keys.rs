@@ -246,6 +246,8 @@ static CONFIGURE_BINDINGS: [(ConfigureKey, &str, &[&str]); 14] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
     WorkflowProgress,
+    /// A workflow agent's session opened from the run view: the key that goes back.
+    AgentSession,
     Menu,
     /// The draft box at the bottom of the screen.
     Composer,
@@ -843,6 +845,8 @@ pub enum Action {
     FleetProfilePrev,
     /// Open the subagent panel from the composer, or close it. Issue #242.
     AgentsPanel,
+    /// Open the foreground session's workflow run, or the run list when it has none.
+    WorkflowView,
     /// Move the panel selection one row up.
     AgentsUp,
     /// Move the panel selection one row down.
@@ -943,10 +947,18 @@ pub enum Action {
     ProfilesRescan,
     /// Open the create form. Issue #253.
     ProfilesNew,
+    /// Delete the selected profile, after its name is typed.
+    ProfilesDelete,
+    /// Rename the selected profile.
+    ProfilesRename,
     /// Edit the selected profile's description. Issue #253.
     ProfilesDescription,
     /// Edit the selected profile's soul. Issue #253.
     ProfilesSoul,
+    /// Open the selected profile's model roles page.
+    ProfilesModels,
+    /// Start a session on the selected profile, after a confirmation.
+    ProfilesConnect,
     /// Undo the innermost open thing, or close the overlay. Issue #253.
     ProfilesBack,
     ProvidersNextTab,
@@ -974,6 +986,9 @@ pub enum Action {
     McpCopy,
     McpPasteRedirect,
     VoiceRecord,
+    /// In a workflow agent's session opened from the run view, go back to the session the
+    /// person came from and open the run view again.
+    WorkflowAgentBack,
     /// Turn vim editing on or off. No default chord.
     ToggleVim,
 }
@@ -1007,7 +1022,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 206] = [
+    pub const ALL: [Self; 212] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1135,6 +1150,7 @@ impl Action {
         Self::FleetProfileNext,
         Self::FleetProfilePrev,
         Self::AgentsPanel,
+        Self::WorkflowView,
         Self::AgentsUp,
         Self::AgentsDown,
         Self::AgentsTail,
@@ -1185,8 +1201,12 @@ impl Action {
         Self::ProfilesRefresh,
         Self::ProfilesRescan,
         Self::ProfilesNew,
+        Self::ProfilesDelete,
+        Self::ProfilesRename,
         Self::ProfilesDescription,
         Self::ProfilesSoul,
+        Self::ProfilesModels,
+        Self::ProfilesConnect,
         Self::ProfilesBack,
         Self::ProvidersNextTab,
         Self::ProvidersPrevTab,
@@ -1213,6 +1233,7 @@ impl Action {
         Self::McpCopy,
         Self::McpPasteRedirect,
         Self::VoiceRecord,
+        Self::WorkflowAgentBack,
         Self::ToggleVim,
     ];
 
@@ -1348,6 +1369,7 @@ impl Action {
             Self::FleetProfileNext => "fleet_profile_next",
             Self::FleetProfilePrev => "fleet_profile_prev",
             Self::AgentsPanel => "agents_panel",
+            Self::WorkflowView => "workflow_view",
             Self::AgentsUp => "agents_up",
             Self::AgentsDown => "agents_down",
             Self::AgentsTail => "agents_tail",
@@ -1398,8 +1420,12 @@ impl Action {
             Self::ProfilesRefresh => "profiles_refresh",
             Self::ProfilesRescan => "profiles_rescan",
             Self::ProfilesNew => "profiles_new",
+            Self::ProfilesDelete => "profiles_delete",
+            Self::ProfilesRename => "profiles_rename",
             Self::ProfilesDescription => "profiles_description",
             Self::ProfilesSoul => "profiles_soul",
+            Self::ProfilesModels => "profiles_models",
+            Self::ProfilesConnect => "profiles_connect",
             Self::ProfilesBack => "profiles_back",
             Self::ProvidersNextTab => "providers_next_tab",
             Self::ProvidersPrevTab => "providers_prev_tab",
@@ -1427,6 +1453,7 @@ impl Action {
             Self::McpPasteRedirect => "mcp_paste_redirect",
             Self::ToggleVim => "toggle_vim",
             Self::VoiceRecord => "voice_record",
+            Self::WorkflowAgentBack => "workflow_agent_back",
         }
     }
 
@@ -1464,6 +1491,7 @@ impl Action {
             | Self::CycleFilter
             | Self::CloseView
             | Self::ProgressConfirm => KeyContext::WorkflowProgress,
+            Self::WorkflowAgentBack => KeyContext::AgentSession,
             Self::CompletionNext
             | Self::CompletionPrev
             | Self::CompletionAccept
@@ -1505,6 +1533,7 @@ impl Action {
             | Self::ComposerSendNow
             | Self::ComposerSteer
             | Self::AgentsPanel
+            | Self::WorkflowView
             | Self::ToggleVim
             | Self::VoiceRecord => KeyContext::Composer,
             Self::AttentionNext => KeyContext::Composer,
@@ -1620,8 +1649,12 @@ impl Action {
             | Self::ProfilesRefresh
             | Self::ProfilesRescan
             | Self::ProfilesNew
+            | Self::ProfilesDelete
+            | Self::ProfilesRename
             | Self::ProfilesDescription
             | Self::ProfilesSoul
+            | Self::ProfilesModels
+            | Self::ProfilesConnect
             | Self::ProfilesBack => KeyContext::Profiles,
             Self::ProvidersNextTab
             | Self::ProvidersPrevTab
@@ -1788,6 +1821,7 @@ impl Action {
             Self::FleetProfileNext => &["tab"],
             Self::FleetProfilePrev => &["shift+tab"],
             Self::AgentsPanel => &["alt+s"],
+            Self::WorkflowView => &["alt+w"],
             Self::AgentsUp => &["up", "k"],
             Self::AgentsDown => &["down", "j"],
             Self::AgentsTail => &["enter"],
@@ -1838,8 +1872,12 @@ impl Action {
             Self::ProfilesRefresh => &["r"],
             Self::ProfilesRescan => &["shift+r"],
             Self::ProfilesNew => &["n"],
+            Self::ProfilesDelete => &["d"],
+            Self::ProfilesRename => &["shift+n"],
             Self::ProfilesDescription => &["e"],
             Self::ProfilesSoul => &["s"],
+            Self::ProfilesModels => &["m"],
+            Self::ProfilesConnect => &["c"],
             Self::ProfilesBack => &["esc"],
             Self::ProvidersNextTab => &["tab"],
             Self::ProvidersPrevTab => &["shift+tab"],
@@ -1867,6 +1905,7 @@ impl Action {
             Self::McpPasteRedirect => &["p"],
             Self::ToggleVim => &[],
             Self::VoiceRecord => &["alt+r"],
+            Self::WorkflowAgentBack => &["left"],
         }
     }
 }
@@ -2190,6 +2229,14 @@ impl KeyChord {
         parts.join("+")
     }
 
+    /// True when a settings chooser takes this chord as an action instead of typing it into its
+    /// filter: any key but a character, or a character with Ctrl or Alt held. `route_settings`
+    /// applies the same test to a pressed key.
+    #[must_use]
+    pub fn reaches_a_chooser(&self) -> bool {
+        !matches!(self.code, KeyCode::Char(_)) || self.ctrl || self.alt
+    }
+
     /// True when a terminal can send this chord only with keyboard enhancement.
     #[must_use]
     pub fn needs_enhancement(&self) -> bool {
@@ -2355,6 +2402,21 @@ impl KeyMap {
                 )
             })
             .collect()
+    }
+
+    /// The label of the first key bound to a settings action that a chooser takes, for a chooser
+    /// hint; `None` when no bound key reaches a chooser.
+    #[must_use]
+    pub fn settings_label(&self, action: SettingsAction) -> Option<String> {
+        SETTINGS_BINDINGS
+            .iter()
+            .position(|(held, _, _)| *held == action)
+            .and_then(|index| {
+                self.chords[Binding::Settings(index).index()]
+                    .iter()
+                    .find(|chord| chord.reaches_a_chooser())
+            })
+            .map(KeyChord::label)
     }
 
     /// Resolve a key in the settings screen.
@@ -2898,7 +2960,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 206);
+        assert_eq!(Action::ALL.len(), 212);
         for (index, action) in Action::ALL.iter().enumerate() {
             assert_eq!(action.index(), index, "{}", action.config_name());
         }
@@ -2926,6 +2988,7 @@ mod tests {
                 | Action::CycleFilter
                 | Action::CloseView
                 | Action::ProgressConfirm => KeyContext::WorkflowProgress,
+                Action::WorkflowAgentBack => KeyContext::AgentSession,
                 Action::CompletionNext
                 | Action::CompletionPrev
                 | Action::CompletionAccept
@@ -3018,8 +3081,12 @@ mod tests {
                 | Action::ProfilesRefresh
                 | Action::ProfilesRescan
                 | Action::ProfilesNew
+                | Action::ProfilesDelete
+                | Action::ProfilesRename
                 | Action::ProfilesDescription
                 | Action::ProfilesSoul
+                | Action::ProfilesModels
+                | Action::ProfilesConnect
                 | Action::ProfilesBack => KeyContext::Profiles,
                 Action::ProvidersNextTab
                 | Action::ProvidersPrevTab
@@ -3100,6 +3167,7 @@ mod tests {
                 | Action::CycleFilter
                 | Action::CloseView
                 | Action::ProgressConfirm => KeyContext::WorkflowProgress,
+                Action::WorkflowAgentBack => KeyContext::AgentSession,
                 Action::CompletionNext
                 | Action::CompletionPrev
                 | Action::CompletionAccept
@@ -3192,8 +3260,12 @@ mod tests {
                 | Action::ProfilesRefresh
                 | Action::ProfilesRescan
                 | Action::ProfilesNew
+                | Action::ProfilesDelete
+                | Action::ProfilesRename
                 | Action::ProfilesDescription
                 | Action::ProfilesSoul
+                | Action::ProfilesModels
+                | Action::ProfilesConnect
                 | Action::ProfilesBack => KeyContext::Profiles,
                 Action::ProvidersNextTab
                 | Action::ProvidersPrevTab
@@ -3335,6 +3407,7 @@ mod tests {
             (Action::PickerFormatHtml, vec!["H"]),
             (Action::PickerToggleRedact, vec!["X"]),
             (Action::AgentsPanel, vec!["Alt+S"]),
+            (Action::WorkflowView, vec!["Alt+W"]),
             (Action::AgentsUp, vec!["Up", "K"]),
             (Action::AgentsDown, vec!["Down", "J"]),
             (Action::AgentsTail, vec!["Enter"]),
@@ -3505,7 +3578,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 206);
+        assert_eq!(Action::ALL.len(), 212);
     }
 
     #[test]

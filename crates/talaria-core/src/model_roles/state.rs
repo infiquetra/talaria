@@ -79,7 +79,8 @@ impl<T> Load<T> {
 pub(super) enum CatalogState {
     Pending,
     Ready(RouteCatalog),
-    Failed,
+    /// The line the picker shows for the failure.
+    Failed(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -160,6 +161,8 @@ pub(super) struct PickerMode {
     pub refreshing: bool,
     /// Leaving the picker sets the subagent chain to "no fallback".
     pub escape_disables_chain: bool,
+    /// Leaving the picker removes the reference slot it was opened to fill.
+    pub escape_removes_slot: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -256,6 +259,8 @@ impl Run {
 
 pub struct ModelRolesState {
     pub(super) profile: String,
+    /// The page's profile is not the one Talaria is connected to.
+    pub(super) other_profile: bool,
     pub(super) link: Link,
     pub(super) section: Section,
     pub(super) info: Load<RolesInfo>,
@@ -273,6 +278,8 @@ pub struct ModelRolesState {
     pub(super) notice: Vec<String>,
     pub(super) help: bool,
     pub(super) run: Option<Run>,
+    /// The last main route Hermes saved on this page, as (provider, model).
+    pub(super) main_saved: Option<(String, String)>,
     pub(super) saved_default: Option<(String, String)>,
 }
 
@@ -280,6 +287,7 @@ impl ModelRolesState {
     pub fn new(profile: String) -> (Self, Vec<RolesEffect>) {
         let state = Self {
             profile,
+            other_profile: false,
             link: Link::Connected,
             section: Section::Main,
             info: Load::Pending,
@@ -297,6 +305,7 @@ impl ModelRolesState {
             notice: Vec::new(),
             help: false,
             run: None,
+            main_saved: None,
             saved_default: None,
         };
         (state, super::flow::load_effects())
@@ -333,8 +342,8 @@ impl ModelRolesState {
                 self.saved_default = saved;
                 Vec::new()
             }
-            RolesInput::CatalogFailed { .. } => {
-                self.catalog = CatalogState::Failed;
+            RolesInput::CatalogFailed { error } => {
+                self.catalog = CatalogState::Failed(super::errors::catalog_line(&error));
                 if let Mode::Picker(picker) = &mut self.mode {
                     picker.refreshing = false;
                 }
@@ -356,6 +365,18 @@ impl ModelRolesState {
 
     pub fn view(&self) -> RolesView {
         self.build_view()
+    }
+
+    /// The main model Hermes saved while the page was open, as (provider, model), so the
+    /// profile list can show it at once.
+    pub fn saved_main_route(&self) -> Option<(String, String)> {
+        self.main_saved.clone()
+    }
+
+    /// Names the profile Talaria is connected to, so the page can tell the user where a
+    /// provider of another profile is set up.
+    pub fn set_connection_profile(&mut self, connection: &str) {
+        self.other_profile = connection != self.profile;
     }
 
     fn on_loaded(&mut self, loaded: Loaded) {

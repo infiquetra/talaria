@@ -56,8 +56,9 @@ in the tightest live window produces a warning.
 
 A call naming a model and provider uses them. A model alone needs exactly one
 signed-in provider offering it. A provider without a model is an error. Otherwise
-the named tier, the default tier, or the profile's current model is used, in that
-order. A call's effort overrides its tier's effort. Explicit models ignore an
+the named tier, the default tier, or the roster's current model is used, in that
+order. The current model is the profile's configured one unless the run was started with
+`--session-model` and `--session-provider`. A call's effort overrides its tier's effort. Explicit models ignore an
 accompanying tier, with one warning per tier per execution. Model-only and
 profile-default resolution for a sibling profile require an explicit model and
 provider or a tier, since that sibling's roster was not frozen at run start.
@@ -102,8 +103,29 @@ spend for the progress view. These APIs contain no terminal presentation state.
 ## Spend and budgets
 
 The scheduler folds the journal at start, on each permit release and on budget
-reads at least 250 milliseconds apart. Total tokens use `total_tokens`, otherwise
+reads at least 250 milliseconds apart. A turn's tokens use `total_tokens`, otherwise
 input plus output when both are known. Missing token counts remain visible.
+
+Cache reads are counted apart from the other tokens, and the token budget does not count
+them. Hermes folds a turn's cache reads into the turn's token total, so a run that re-reads a
+long context can be mostly cache reads, which cost a fraction of other tokens. Cache writes are
+billed at or above the input rate and stay in the counted tokens. Hermes gives a settled turn's
+tokens for that turn but its cache reads as the session's running total (`cache_read_tokens` in
+the settled result), so Talaria journals that running total with each turn
+(`session_cache_read_tokens` in the turn's usage) and takes the difference from the same
+attempt's previous turn. A running total that went down started again, as after a gateway
+restart, and counts as that turn's own. A turn's cache reads never exceed its tokens. Because
+the journal holds what the split needs, a resumed run, `workflow list` and a replayed result
+give the split the live run showed.
+
+When a settled turn reports no cache read figure, the whole turn is counted toward the budget
+and the output says so: "cache reads unknown for N turns, counted in full". Journals written
+before cache reads were kept apart have no such figure, so every turn in them is unknown.
+Spend therefore has these numbers: `tokens` (everything except cache reads, the budget's
+measure), `cache_read_tokens` and `cache_unknown_turns`. In the `run_finished` JSON object,
+`spend.tokens` used to include cache reads and no longer does; `cache_read_tokens` and
+`cache_unknown_turns` are new beside it. `workflow list --json` rows carry the same three
+numbers as `tokens_spent`, `cache_read_tokens` and `cache_unknown_turns`.
 
 Hermes reports session cost cumulatively. Known `actual`, `estimated` and
 `included` readings contribute only their increase within the attempt; a lower
@@ -120,9 +142,45 @@ Hermes version. A money budget warns about that accounting gap without refusing
 the provider. Estimates with token budgets show the cheapest-to-dearest known
 range plus any unpriced tiers; an all-unpriced roster is `unknown`.
 
-Budgets stop new admissions and retries; running work finishes. Queued calls are
-skipped when a budget is reached. Resume restores spend, frozen prices and width
-reductions silently, without restoring billing pauses or cooldowns.
+Token spend also counts work in progress. Hermes streams a `session.usage` event
+with each agent session's cumulative token count after every model call, with its cache
+reads (`cache_read_tokens`) beside the total; the reading counts without them. An event
+that does not give cache reads counts whole. The
+runner adds each session's latest reading beyond what that session has already
+settled, so a settled turn replaces its live share instead of adding to it, and a
+lower reading never takes spend back. Money is counted only when a turn settles.
+
+When counted spend reaches a budget:
+
+- No new agent starts. The engine refuses the `agent()` call and journals an
+  `agent_refused` engine event with the label, phase and reason; calls waiting at
+  the admission gate end as stopped without reaching Hermes.
+- Running agents are stopped through the same interrupt the operator's stop uses.
+  A stop the gateway does not confirm is sent again on the runner's next check
+  for as long as the turn is still running. Their turns settle, so their usage is still journaled, and each call finishes
+  with a `stopped` outcome whose reason names what was spent. A turn that had
+  already finished with an answer keeps it, and no agent starts a correction turn.
+- The runner journals one log line when the budget is reached, and the run ends
+  as `budget_exhausted` with refused and stopped counts in its summary when the
+  script returns.
+
+What the budget guarantees: no agent starts once counted spend reaches it, and
+every agent still running is told to stop as soon as the runner counts it. What it
+cannot guarantee: a hard ceiling. Spend can pass the budget by the model calls
+already in flight when it is reached: Hermes reports a session's usage only after
+each model call returns, and the runner cannot take back a call already running. A provider that streams
+no usage leaves its agents counted only when their turns settle; the runner
+journals `streamed no token usage` once for each such agent while a token budget
+is set, and that agent is held only by the check made before it starts. After a
+gateway restart a session's counter can start again from zero, so its live share
+is counted again only once it passes what has settled. The money budget is
+checked from settled turns only.
+
+Retries stop when a budget is reached. Resume restores spend, frozen prices and
+width reductions silently, without restoring billing pauses or cooldowns. Resuming
+a `budget_exhausted` run with a larger budget reruns its stopped and refused
+agents and reuses the completed ones. A resume without a budget flag keeps the
+run's own budget, so a `budget_exhausted` run then only replays its stored result.
 
 Snapshots omit provider endpoint URLs, environment-key names, warnings and account
 identities or labels. Reports replace controls and bidirectional formatting

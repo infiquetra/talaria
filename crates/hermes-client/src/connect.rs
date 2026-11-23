@@ -20,6 +20,7 @@ use tokio_tungstenite::tungstenite::{
 
 use crate::discovery::{Endpoint, ProfileId};
 use crate::record::Recorder;
+use crate::rpc::parse_frame;
 use crate::ticket::Ticket;
 use hermes_contract::schemas::{
     ClientCapabilitiesResult, GatewayReadyPayload, RuntimeDescribeResult,
@@ -626,7 +627,7 @@ async fn read_frame(conn: &mut Connection) -> Result<(String, Value), HandshakeE
         .next_text()
         .await?
         .ok_or(HandshakeError::Closed(Closed::Dropped))?;
-    let value: Value = serde_json::from_str(&raw).map_err(|_| HandshakeError::BadFrame)?;
+    let value = parse_frame(raw.as_bytes()).ok_or(HandshakeError::BadFrame)?;
     if !value.is_object() {
         return Err(HandshakeError::BadFrame);
     }

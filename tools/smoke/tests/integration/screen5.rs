@@ -55,32 +55,32 @@ fn workflows_empty() {
 }
 
 #[test]
-fn ultracode_status() {
+fn hivecode_status() {
     assert_eq!(
-        ULTRACODE_STATUS,
-        "Ultracode is off for this session. Skill: not found in profile fixture."
+        HIVECODE_STATUS,
+        "Hivecode is off for this session. Skill: not found in profile fixture."
     );
-    assert!(smoke::screen5::ultracode_status(&screen(
-        "ultracode-status.txt"
+    assert!(smoke::screen5::hivecode_status(&screen(
+        "hivecode-status.txt"
     )));
     for origin in ["builtin", "profile", "shared (built-in)"] {
-        assert!(smoke::screen5::ultracode_status(&format!(
-            "notice\nUltracode is off for this session. Skill: installed ({origin}).\n> "
+        assert!(smoke::screen5::hivecode_status(&format!(
+            "notice\nHivecode is off for this session. Skill: installed ({origin}).\n> "
         )));
     }
     for invalid in [
-        "Ultracode is on for this session. Skill: installed (builtin).",
-        "Ultracode is off for this session. Skill: installed ().",
-        "Ultracode is off for this session. Skill: installed (   ).",
-        "Ultracode is off for this session. Skill: installed (builtin)",
-        "Ultracode is off for this session. Skill: installed (\nbuiltin).",
-        "Ultracode is off for this session. Skill: unknown",
+        "Hivecode is on for this session. Skill: installed (builtin).",
+        "Hivecode is off for this session. Skill: installed ().",
+        "Hivecode is off for this session. Skill: installed (   ).",
+        "Hivecode is off for this session. Skill: installed (builtin)",
+        "Hivecode is off for this session. Skill: installed (\nbuiltin).",
+        "Hivecode is off for this session. Skill: unknown",
     ] {
-        assert!(!smoke::screen5::ultracode_status(invalid), "{invalid}");
+        assert!(!smoke::screen5::hivecode_status(invalid), "{invalid}");
     }
-    assert!(!smoke::screen5::ultracode_status(&screen("idle.txt")));
-    assert!(!smoke::screen5::ultracode_status(
-        "Ultracode is on for this session. Skill: not found in profile fixture."
+    assert!(!smoke::screen5::hivecode_status(&screen("idle.txt")));
+    assert!(!smoke::screen5::hivecode_status(
+        "Hivecode is on for this session. Skill: not found in profile fixture."
     ));
 }
 
@@ -138,7 +138,7 @@ fn empty_list() {
 #[test]
 fn idle_screen() {
     assert!(smoke::screen5::idle_screen(&screen("idle.txt")));
-    assert!(smoke::screen5::idle_screen(&screen("ultracode-status.txt")));
+    assert!(smoke::screen5::idle_screen(&screen("hivecode-status.txt")));
     assert!(!smoke::screen5::idle_screen(&screen("workflows-empty.txt")));
     assert!(!smoke::screen5::idle_screen(&screen("busy.txt")));
     assert!(!smoke::screen5::idle_screen(

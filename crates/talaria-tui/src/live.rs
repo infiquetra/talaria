@@ -56,6 +56,28 @@ impl LiveView<'_> {
             })
             .collect()
     }
+
+    /// How many rows [`Self::layout`] gives the section at `index`. Past the first section it
+    /// measures only that section and the ones after it, which take their rows first.
+    pub fn rows_of(&self, index: usize, width: u16, max_height: u16) -> u16 {
+        if index == 0 {
+            return self
+                .layout(width, max_height)
+                .first()
+                .map_or(0, |rect| rect.height);
+        }
+        let Some(section) = self.sections.get(index) else {
+            return 0;
+        };
+        let after: u32 = self.sections[index + 1..]
+            .iter()
+            .map(|later| u32::from(later.height(width)))
+            .sum();
+        let room = u32::from(max_height).saturating_sub(after);
+        section
+            .height(width)
+            .min(u16::try_from(room).unwrap_or(u16::MAX))
+    }
 }
 
 /// The mention list above the composer. A short screen keeps the composer first.
@@ -72,6 +94,34 @@ pub fn mention_then_composer<'a>(
 /// `rows - 2`, and 0 below three rows.
 pub fn max_live_height(rows: u16) -> u16 {
     rows.saturating_sub(2)
+}
+
+/// How many of `len` rows a live tail cut to its last `max` rows does not draw: the first row
+/// kept gives way to the cut marker, so its row counts too. `None` when they all fit, or when no
+/// row is left to hold the marker.
+pub(crate) fn tail_hidden(len: usize, max: usize) -> Option<usize> {
+    (max > 0 && len > max).then(|| len - max + 1)
+}
+
+/// The text of a cut tail's first row: how many earlier rows are not in scrollback yet and the
+/// key that shows them now, or the transcript view when no key opens it. `more` says the count
+/// is a floor, because a long reply was already shortened before the cut.
+pub fn tail_cut_text(hidden: usize, more: bool, transcript_key: Option<&str>) -> String {
+    let (noun, verb, them) = if hidden == 1 && !more {
+        ("row", "is", "it")
+    } else {
+        ("rows", "are", "them")
+    };
+    let count = if more {
+        format!("more than {hidden}")
+    } else {
+        hidden.to_string()
+    };
+    let shows = match transcript_key {
+        Some(key) => format!("{key} shows {them} now"),
+        None => format!("the transcript view shows {them}"),
+    };
+    format!("\u{2191} {count} earlier {noun} {verb} not in scrollback yet \u{b7} {shows}")
 }
 
 /// Plain text split on newlines and wrapped to the width.

@@ -22,7 +22,7 @@ const REVIEW_SPEC = {base: 'ref', focus: 'focus', head: 'ref', lenses: 'lenses',
 function checkArgs(spec, value, path = 'args') {
   if (value === undefined) value = {};
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail("'" + path + "' must be an object, got " + shown(value));
-  if (path === 'review' && ('base' in value || 'head' in value)) fail('review.base and review.head are set by ultracode');
+  if (path === 'review' && ('base' in value || 'head' in value)) fail('review.base and review.head are set by hivecode');
   const prefix = path === 'args' ? '' : path + '.';
   const keys = Object.keys(spec).sort();
   for (const k of Object.keys(value)) if (!keys.includes(k)) fail("unknown argument '" + prefix + k + "'; allowed: " + keys.join(', '));
@@ -60,6 +60,13 @@ function options(tier, label, schema, toolsets) {
   if (toolsets.includes('file') || toolsets.includes('terminal')) opts.isolation = 'worktree';
   return opts;
 }
+// The budget refusing or stopping an agent leaves its call null and ends the run early with
+// what it has; any other error still fails the run.
+let budgetStop = null;
+async function call(prompt, opts) {
+  try { return await agent(prompt, opts); }
+  catch (e) { if (e?.name !== 'BudgetExhaustedError') throw e; budgetStop = e.message; return null; }
+}
 const a = checkArgs(REVIEW_SPEC, args);
 const tiers = {...DEFAULT_TIERS, ...a.tiers};
 const lenses = a.lenses || LENSES.slice(0, 3);
@@ -73,8 +80,10 @@ const reviewerSchema = obj({findings: arr(findingSchema, 10)});
 const verifierSchema = obj({verdict: {enum: ['confirmed', 'refuted', 'uncertain']}, reason: str(1500), evidence: arr(str(300), 5)}, ['verdict', 'reason']);
 const synthSchema = obj({summary: str(3000), ranked: arr(str(100), 40), themes: arr(str(200), 5)});
 phase('Collect');
-const collected = await agent(`You are collecting a diff for a code review. Do not modify any file, commit, branch or remote. ${SAFETY}
+const collected = await call(`You are collecting a diff for a code review. Do not modify any file, commit, branch or remote. ${SAFETY}
 Resolve the base: ${a.base ? 'use ' + a.base : "use origin/HEAD's target, else main, else master"}. Resolve head ${a.head || 'HEAD'}. Run git rev-parse on both and git merge-base. Report files with git diff --name-status and git diff --numstat between merge base and head, and the full unified git diff <merge base>..<head>. Return at most ${maxDiffChars} characters of diff and set truncated when cut. Report git rev-parse HEAD of your own folder as checkout_commit. If checkout_commit differs from head_commit, return context for each changed file that exists at head_commit with git show <head commit>:<path>, in file-list order, each cut to 12000 characters, with at most ${maxDiffChars} total context characters. Otherwise context is [].`, options(tiers.collector, 'collect', collectorSchema, ['file', 'terminal']));
+if (budgetStop) return {status: 'budget-exhausted', base_ref: null, merge_base: null, head_commit: null, checkout_commit: null, files_reviewed: 0, truncated: false, lenses,
+  confirmed: [], uncertain: [], refuted: [], not_verified: [], reviewers_failed: [], summary: null, ranked: [], themes: []};
 if (!collected || ![collected.merge_base, collected.head_commit, collected.checkout_commit].every(s => typeof s === 'string' && COMMIT.test(s))) fail('could not collect the diff (the collector agent failed); see its session in the progress view');
 const result = {status: 'nothing-to-review', base_ref: collected.base_ref, merge_base: collected.merge_base, head_commit: collected.head_commit, checkout_commit: collected.checkout_commit, files_reviewed: 0, truncated: false, lenses,
   confirmed: [], uncertain: [], refuted: [], not_verified: [], reviewers_failed: [], summary: null, ranked: [], themes: []};
@@ -105,7 +114,7 @@ const lensText = {
 const refs = `Merge base ${collected.merge_base}; reviewed head ${collected.head_commit}.`;
 const fileList = collected.files.map(f => `${f.status} ${f.path}` + (f.additions !== undefined && f.deletions !== undefined ? ` (+${f.additions} -${f.deletions})` : '')).join('\n');
 phase('Review');
-const reviews = await parallel(lenses.map((lens, i) => () => agent(`${lensText[lens]} ${a.focus || ''}\n${refs}\n${material(fileList, 20000)}\n${material(diff, maxDiffChars)}\n${atHead ? '' : contexts.map(c => material(c.path + '\n' + c.text, maxDiffChars + 500)).join('\n')}\n${revision}\n${!atHead && missing.length ? 'No file text is available for: ' + missing.join(', ') + '.' : ''}\n${notice}\n${SAFETY} Do not edit, create or delete files. Report at most 10 findings. Only report problems you can point to in the diff or the code it touches. If you find nothing, return an empty list.`, options(tiers.reviewers[i % tiers.reviewers.length], 'review: ' + lens, reviewerSchema, ['file']))));
+const reviews = await parallel(lenses.map((lens, i) => () => call(`${lensText[lens]} ${a.focus || ''}\n${refs}\n${material(fileList, 20000)}\n${material(diff, maxDiffChars)}\n${atHead ? '' : contexts.map(c => material(c.path + '\n' + c.text, maxDiffChars + 500)).join('\n')}\n${revision}\n${!atHead && missing.length ? 'No file text is available for: ' + missing.join(', ') + '.' : ''}\n${notice}\n${SAFETY} Do not edit, create or delete files. Report at most 10 findings. Only report problems you can point to in the diff or the code it touches. If you find nothing, return an empty list.`, options(tiers.reviewers[i % tiers.reviewers.length], 'review: ' + lens, reviewerSchema, ['file']))));
 const findings = [], severity = {high: 0, medium: 1, low: 2};
 reviews.forEach((review, i) => {
   if (!review) { result.reviewers_failed.push(lenses[i]); return; }
@@ -118,10 +127,11 @@ reviews.forEach((review, i) => {
     findings.push({id: lenses[i] + '-' + number, lens: lenses[i], file: f.file, line: f.line ?? null, severity: f.severity, title: f.title, detail: f.detail, suggestion: f.suggestion ?? null});
   }
 });
-if (result.reviewers_failed.length === lenses.length) fail('every reviewer failed; nothing was reviewed');
+if (result.reviewers_failed.length === lenses.length && !budgetStop) fail('every reviewer failed; nothing was reviewed');
 findings.sort((a, b) => severity[a.severity] - severity[b.severity] || lenses.indexOf(a.lens) - lenses.indexOf(b.lens) || Number(a.id.split('-').pop()) - Number(b.id.split('-').pop()));
 const selected = findings.slice(0, maxFindings);
 result.not_verified = findings.slice(maxFindings);
+if (budgetStop) { result.status = 'budget-exhausted'; result.not_verified = findings; return result; }
 function diffBlock(file) {
   const blocks = diff.split(/(?=^diff --git )/m);
   return (blocks.find(b => b.split('\n').some(l => { l = l.endsWith('\r') ? l.slice(0, -1) : l; return l === '+++ b/' + file || l === '--- a/' + file; })) || diff).slice(0, 8000);
@@ -129,19 +139,27 @@ function diffBlock(file) {
 if (selected.length) phase('Verify');
 const verified = await pipeline(selected, async finding => {
   const context = contexts.find(c => c.path === finding.file);
-  const verdict = await agent(`Try to prove this finding wrong. Read the code. A finding is confirmed only if you can point to the lines that show the problem; otherwise it is refuted or uncertain.\n${material(finding)}\n${refs}\n${material(diffBlock(finding.file), 8000)}\n${atHead ? '' : context ? material(context.text, 12000) : 'No file text is available for: ' + finding.file + '.'}\n${revision}\n${SAFETY} Do not edit, create or delete files.`, options(tiers.verifier, 'verify: ' + finding.id, verifierSchema, ['file']));
+  const verdict = await call(`Try to prove this finding wrong. Read the code. A finding is confirmed only if you can point to the lines that show the problem; otherwise it is refuted or uncertain.\n${material(finding)}\n${refs}\n${material(diffBlock(finding.file), 8000)}\n${atHead ? '' : context ? material(context.text, 12000) : 'No file text is available for: ' + finding.file + '.'}\n${revision}\n${SAFETY} Do not edit, create or delete files.`, options(tiers.verifier, 'verify: ' + finding.id, verifierSchema, ['file']));
+  if (!verdict && budgetStop) return null;
   return {...finding, verdict: verdict?.verdict || 'uncertain', reason: verdict?.reason ?? 'verifier failed', evidence: verdict?.evidence || []};
 });
+if (budgetStop) {
+  result.status = 'budget-exhausted';
+  for (const v of verified) if (v) result[v.verdict].push(v);
+  result.not_verified = [...selected.filter((_, i) => !verified[i]), ...result.not_verified];
+  result.ranked = verified.filter(v => v && v.verdict !== 'refuted').map(f => f.id);
+  return result;
+}
 verified.forEach((v, i) => { const item = v || {...selected[i], verdict: 'uncertain', reason: 'verifier failed', evidence: []}; result[item.verdict].push(item); });
 const survivors = verified.map((v, i) => v || {...selected[i], verdict: 'uncertain', reason: 'verifier failed', evidence: []}).filter(v => v.verdict !== 'refuted');
 result.ranked = survivors.map(f => f.id);
 if (survivors.length) {
   phase('Synthesize');
-  const summary = await agent('Synthesize a ranked report of these confirmed and uncertain findings. Only rank their ids.\n' + survivors.map(f => material(f)).join('\n'), options(tiers.synthesizer, 'synthesize', synthSchema, ['todo']));
+  const summary = await call('Synthesize a ranked report of these confirmed and uncertain findings. Only rank their ids.\n' + survivors.map(f => material(f)).join('\n'), options(tiers.synthesizer, 'synthesize', synthSchema, ['todo']));
   if (summary) {
     result.summary = summary.summary; result.themes = summary.themes;
     result.ranked = [...new Set(summary.ranked.filter(id => survivors.some(f => f.id === id)))];
     for (const f of survivors) if (!result.ranked.includes(f.id)) result.ranked.push(f.id);
-  }
+  } else if (budgetStop) result.status = 'budget-exhausted';
 }
 return result;

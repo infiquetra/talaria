@@ -94,21 +94,24 @@ fn snapshot_user_rows_are_folded() {
     }))
     .expect("the hand-built snapshot deserializes");
     let state = SessionState::from_snapshot(snapshot);
-    let users: Vec<&str> = state
+    // The person typed `/plan`, so it stays a prompt. Hermes wrote the goal continuation and the
+    // loop wakeup, so they are notices.
+    let shown: Vec<String> = state
         .cells()
         .iter()
         .filter_map(|cell| match cell {
-            Cell::User(user) => Some(user.text.as_str()),
+            Cell::User(user) => Some(format!("> {}", user.text)),
+            Cell::Notice(notice) => Some(format!("· {}", notice.text)),
             _ => None,
         })
         .collect();
     assert_eq!(
-        users,
+        shown,
         [
-            "/plan write a haiku about rain",
-            "↻ goal continues: ship it",
-            "↻ loop run #3: check the build",
-            "hello",
+            "> /plan write a haiku about rain",
+            "· ↻ goal continues: ship it",
+            "· ↻ loop run #3: check the build",
+            "> hello",
         ]
     );
 }

@@ -14,10 +14,12 @@ use crate::connectors::{ConnectorsOpen, ConnectorsTab};
 pub enum LocalAction {
     /// Change client-owned layout preferences for the current view.
     Layout,
+    /// Draw reasoning as one line per block or in full, for the current view.
+    Thinking,
     /// View a journaled workflow run.
     Workflows,
-    /// Route substantive prompts through the workflow skill.
-    Ultracode,
+    /// Send plain prompts to the talaria-workflows skill.
+    Hivecode,
     /// Open the gateway health check.
     Doctor,
     Providers(crate::providers::OpenTarget),
@@ -272,8 +274,8 @@ const BUILTIN: &[LocalCommand] = &[
     LocalCommand {
         name: "branch",
         aliases: &[],
-        summary: "Branch the current session and switch into the child",
-        args_hint: "[<title>]",
+        summary: "Copy this conversation into a new session and switch to it; the original stays as it was",
+        args_hint: "[<name for the new session>]",
         takes_argument: true,
         action: LocalAction::Branch,
         tag: "talaria",
@@ -434,12 +436,12 @@ const BUILTIN: &[LocalCommand] = &[
         tag: "talaria",
     },
     LocalCommand {
-        name: "ultracode",
+        name: "hivecode",
         aliases: &[],
-        summary: "Route substantive prompts through workflow agents",
-        args_hint: "[on|off|status]",
+        summary: "Handle plain prompts as multi-agent workflows",
+        args_hint: "[on|off|status|reinstall]",
         takes_argument: true,
-        action: LocalAction::Ultracode,
+        action: LocalAction::Hivecode,
         tag: "talaria",
     },
     LocalCommand {
@@ -467,6 +469,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "panel|bar|menu",
         takes_argument: true,
         action: LocalAction::Layout,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "thinking",
+        aliases: &[],
+        summary: "Show reasoning as one line per block or in full in this view",
+        args_hint: "collapsed|full",
+        takes_argument: true,
+        action: LocalAction::Thinking,
         tag: "talaria",
     },
     LocalCommand {

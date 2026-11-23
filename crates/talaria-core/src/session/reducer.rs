@@ -154,9 +154,10 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
                 state.user(display.clone());
             }
             crate::queue::flow::note_submit(state, text, submission_id, placed);
+            // A waiting submit draws its cell later from this text: what the person typed.
             state.submissions.push_back(super::state::Submission {
                 id: submission_id.clone(),
-                text: text.clone(),
+                text: display.clone(),
                 attachments: Vec::new(),
                 placed,
             });
@@ -394,15 +395,24 @@ fn session(
             state.execution_generation = generation;
             state.interrupted = false;
             state.activity = None;
-            if let Some(text) = nonblank(payload, "display_text") {
-                let kind = if payload["notification_category"].as_str() == Some("diagnostic") {
-                    NoticeKind::Diagnostic
-                } else {
-                    NoticeKind::Automation
-                };
-                state.notice(kind, text.to_owned(), None);
-            }
-            crate::queue::flow::start_cell(state, admission);
+            // Hermes marks a turn it started itself with a display kind and text. That turn draws
+            // one notice that keeps what Hermes handed the agent, and never a prompt cell.
+            let injected = match crate::session::injected::classify_user_row(
+                nonblank(payload, "display_kind"),
+                nonblank(payload, "display_text"),
+                payload["text"].as_str().unwrap_or_default(),
+            ) {
+                crate::session::injected::UserRow::Injected { label, body } => {
+                    let kind = crate::session::injected::notice_kind(
+                        payload["notification_category"].as_str(),
+                    );
+                    state.notice_with_body(kind, label, body);
+                    true
+                }
+                crate::session::injected::UserRow::Skip => true,
+                crate::session::injected::UserRow::Typed(_) => false,
+            };
+            crate::queue::flow::start_cell(state, admission, injected);
         }
         "message.delta" => match payload.get("text") {
             Some(Value::Null) => state.seal_assistant(),
@@ -480,6 +490,8 @@ fn session(
                         id: state.next_id(),
                         text: text.to_owned(),
                         sealed: false,
+                        latest_step: false,
+                        no_reply: false,
                     }));
                 }
             }
@@ -592,6 +604,12 @@ fn session(
         }
         "session.usage" => super::usage::merge_usage(&mut state.usage, payload, true),
         "approval.request" | "clarify.request" | "approval.settled" | "clarify.settled" => {
+            if name.ends_with(".request") {
+                // The turn stops to ask. What it wrote so far is final, so it reaches scrollback
+                // and can be read while the card waits; text after the answer starts a new cell.
+                state.seal_assistant();
+                state.seal_reasoning();
+            }
             super::prompts::session(state, name, payload)
         }
         "approval.cancelled" => super::prompts::cancel_approvals(state, payload),
@@ -607,6 +625,11 @@ fn session(
                 .filter(|text| !text.is_empty())
             {
                 state.notice(NoticeKind::System, text.to_owned(), None);
+                if is_interrupt_line(text) {
+                    // The gateway already said where the turn stopped; the generic line would
+                    // repeat it.
+                    state.interrupt_notice = true;
+                }
             }
         }
         "review.summary" => {
@@ -618,12 +641,7 @@ fn session(
                 state.notice(NoticeKind::System, text.to_owned(), None);
             }
         }
-        _ if !unknown
-            || name.starts_with("subagent.")
-            || matches!(
-                name,
-                "agent.step" | "session.updated" | "session.tools_changed" | "request.cancel"
-            ) => {}
+        _ if !unknown || hermes_contract::events::is_known_undrawn(name) => {}
         _ => {
             let safe = if !name.is_empty()
                 && name.len() <= 64
@@ -684,16 +702,33 @@ fn complete(state: &mut SessionState, payload: &Value) {
     state.seal_reasoning();
     if !state.had_reasoning
         && let Some(text) = nonblank(payload, "reasoning")
+            .map(|text| unseen_reasoning(state, text))
+            .filter(|text| !text.is_empty())
     {
-        state.cells.push(Cell::Reasoning(ReasoningCell {
+        // Reasoning comes before the reply it led to. A reply that streamed is still open
+        // here, so the block goes in front of it; otherwise it goes last, before
+        // `complete_text` adds the reply. Hermes sends only the latest step's reasoning, so in
+        // a turn that ran tools the block is marked as that late recap.
+        let at = state
+            .assistant
+            .filter(|index| *index >= state.final_prefix)
+            .unwrap_or(state.cells.len());
+        let cell = Cell::Reasoning(ReasoningCell {
             id: state.next_id(),
-            text: text.to_owned(),
+            text,
             sealed: true,
-        }));
+            latest_step: !state.tools.is_empty() || resumed_turn_ran_tools(state),
+            no_reply: false,
+        });
+        state.insert_cell_at(at, cell);
         state.had_reasoning = true;
     }
     match outcome {
-        TurnOutcome::Completed => complete_text(state, payload),
+        TurnOutcome::Completed => {
+            complete_text(state, payload);
+            let start = state.turn_start.min(state.cells.len());
+            super::cell::mark_unanswered_reasoning(&mut state.cells[start..]);
+        }
         TurnOutcome::Interrupted => interrupted_notice(state),
         TurnOutcome::Failed => {
             let text = if unknown {
@@ -719,6 +754,48 @@ fn complete(state: &mut SessionState, payload: &Value) {
     state.seal_all();
     state.turn = TurnState::Finished(outcome);
     state.activity = None;
+}
+
+/// Whether a turn that a snapshot showed already running had run tools before the snapshot: a
+/// tool cell after the cell that started the turn. The live tool map starts empty after a
+/// snapshot, so it cannot say.
+fn resumed_turn_ran_tools(state: &SessionState) -> bool {
+    state.resumed_running
+        && state.cells[..state.turn_start.min(state.cells.len())]
+            .iter()
+            .rev()
+            .take_while(|cell| !cell.starts_turn())
+            .any(|cell| matches!(cell, Cell::Tool(_)))
+}
+
+/// The end-of-turn reasoning without the paragraphs this turn has already shown as reply text.
+/// Some models report the commentary they wrote before their last tool call as part of the
+/// turn's reasoning; drawing it again under a thinking heading would only repeat a line the
+/// reader has just seen. Empty when nothing new is left.
+fn unseen_reasoning(state: &SessionState, text: &str) -> String {
+    let start = state.turn_start.min(state.cells.len());
+    let shown: Vec<&str> = state.cells[start..]
+        .iter()
+        .filter_map(|cell| match cell {
+            Cell::Assistant(reply) => Some(reply.text.trim()),
+            _ => None,
+        })
+        .filter(|reply| !reply.is_empty())
+        .collect();
+    text.replace("\r\n", "\n")
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|paragraph| !paragraph.is_empty())
+        .filter(|paragraph| !shown.iter().any(|reply| reply.contains(paragraph)))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Whether a gateway print announces an interruption. Hermes prints these lines from its agent
+/// loop (`agent/turn_api_call.py`, `agent/tool_executor.py`), for example
+/// "\u{26a1} Interrupted during API call.", with an optional log prefix in front.
+fn is_interrupt_line(text: &str) -> bool {
+    text.contains('\u{26a1}') && text.to_lowercase().contains("interrupt")
 }
 
 fn interrupted_notice(state: &mut SessionState) {

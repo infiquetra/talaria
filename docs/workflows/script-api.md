@@ -33,7 +33,15 @@ syntax errors.
 ## Agents
 
 `agent(prompt, opts?)` returns a promise for the backend's final string or JSON object. A failed
-or skipped agent returns `null`. The prompt must be a non-blank string. Options may be absent,
+or skipped agent returns `null`; a run whose script returns while an agent has failed ends
+`completed_with_failures`, naming the failed agents first. An agent Hermes stops at its step
+cap (exit reason `max_iterations_reached(N/M)` with `completed: false`) is cut short: it is
+not failed and is not sent another turn, and its reply is returned as for a finished agent,
+so a script that ignores the mark behaves as before. An object or array reply carries a hidden
+`cutShort` property, `{steps, limit}`, that keys, spread and `JSON.stringify` do not show, and
+`cutShort()` returns `{label, steps, limit}` for every cut short agent so far, in the order
+their results arrived. A cut short reply for `opts.schema` that does not fit fails the call
+without a correction turn. The prompt must be a non-blank string. Options may be absent,
 `undefined`, `null`, or a plain object. Unknown keys and null option values are errors;
 undefined option values are absent. Non-blank strings retain their original whitespace.
 
@@ -86,11 +94,21 @@ with `…`. Use `log()` for narration; `console` is absent.
 
 ## Budgets
 
-`budget.total`, `budget.spent()` and `budget.remaining()` read token usage from the backend.
+`budget.total`, `budget.spent()` and `budget.remaining()` read token usage from the backend. The
+count leaves out cache reads, which Hermes folds into its token totals but which cost a fraction
+of other tokens; cache writes still count. A turn whose cache reads Hermes did not report counts
+whole.
 The total is a number or `null`; remaining is clamped at zero or `Infinity` without a total.
 `budget.money.total`, `.spent()` and `.remaining()` work the same way in US dollars.
 
 Once either configured total is reached, new live agents reject with `BudgetExhaustedError`.
+Under the runner, agents that are still running when the total is reached are stopped, and
+their calls reject with the same error. The message names what was spent, for example
+`token budget exhausted (spent 1000 of 500)`. Catch the error to return partial results; the
+run then ends as `budget_exhausted` rather than completed. A script that does not catch it
+also ends as `budget_exhausted`, with no result. `budget.spent()` includes the token
+usage running agents have streamed so far, so it can grow while an agent is still working.
+[Staffing and budgets](staffing.md#spend-and-budgets) says what the budget guarantees.
 Already paid replayed calls bypass this check. The engine does no accounting itself. Negative
 or non-finite money snapshots fail the run as backend defects. Reading live usage to control a
 loop can change its number of iterations after resume.

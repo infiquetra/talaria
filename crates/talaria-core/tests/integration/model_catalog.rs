@@ -102,7 +102,7 @@ fn model_row_badges_and_prices() {
     };
     assert_eq!(row("speedy").badges, ["fast".to_string()]);
     assert_eq!(row("speedy").price.as_deref(), Some("free"));
-    assert_eq!(row("plain").badges, ["no effort".to_string()]);
+    assert_eq!(row("plain").badges, ["effort not offered".to_string()]);
     assert_eq!(row("plain").price.as_deref(), Some("$0.60 in · $2.20 out"));
     assert!(row("gone").dim);
     assert!(

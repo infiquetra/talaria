@@ -28,8 +28,8 @@ impl ReadError {
     pub fn row(&self, command: &str, method: &str, sid: &str) -> String {
         let text = match self {
             ReadError::MethodMissing => format!(
-                "This Hermes gateway does not serve {method}. Check that Hermes is at least the \
-                 release Talaria is built for."
+                "This Hermes gateway does not serve {method}. It may differ from the \
+                 Hermes release Talaria was tested against."
             ),
             ReadError::NotFound => format!(
                 "Hermes does not have this session loaded. Resume it with talaria --resume {sid}."

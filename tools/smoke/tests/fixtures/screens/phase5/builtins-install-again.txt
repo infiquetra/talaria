@@ -2,5 +2,5 @@
 unchanged <workflows>/fix-failing-tests.js
 unchanged <workflows>/research.js
 unchanged <workflows>/review-branch.js
-unchanged <workflows>/ultracode.js
+unchanged <workflows>/hivecode.js
 exit=0

@@ -26,12 +26,18 @@ mod cli_sanitizers;
 mod configure_cmd;
 #[path = "integration/doctor_cli.rs"]
 mod doctor_cli;
+#[path = "integration/effort_scale_card.rs"]
+mod effort_scale_card;
 #[path = "integration/fleet_cmd.rs"]
 mod fleet_cmd;
 #[path = "integration/fleet_external_format.rs"]
 mod fleet_external_format;
 #[path = "integration/herdr_cmd.rs"]
 mod herdr_cmd;
+#[path = "integration/hivecode_launch.rs"]
+mod hivecode_launch;
+#[path = "integration/idle_after_close.rs"]
+mod idle_after_close;
 #[path = "integration/live_acp.rs"]
 mod live_acp;
 #[path = "integration/live_attach_cmd.rs"]
@@ -78,14 +84,20 @@ mod print_process;
 mod profiles_cmd;
 #[path = "integration/remote_cli.rs"]
 mod remote_cli;
+#[path = "integration/reply_scrollback.rs"]
+mod reply_scrollback;
 #[path = "integration/stream_args.rs"]
 mod stream_args;
 #[path = "integration/stream_process.rs"]
 mod stream_process;
 #[path = "integration/voice_vim.rs"]
 mod voice_vim;
+#[path = "integration/workflow_authoring.rs"]
+mod workflow_authoring;
 #[path = "integration/workflow_builtins_live.rs"]
 mod workflow_builtins_live;
+#[path = "integration/workflow_check_cli.rs"]
+mod workflow_check_cli;
 #[path = "integration/workflow_cli.rs"]
 mod workflow_cli;
 #[path = "integration/workflow_compile_cli.rs"]
@@ -96,3 +108,5 @@ mod workflow_compile_empty;
 mod workflow_live;
 #[path = "integration/workflow_skill_cli.rs"]
 mod workflow_skill_cli;
+#[path = "integration/working_row.rs"]
+mod working_row;

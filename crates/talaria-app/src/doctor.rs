@@ -13,6 +13,7 @@ use hermes_client::{
 };
 use hermes_contract::pinned;
 use serde_json::Value;
+use talaria_core::config_check::ConfigFacts;
 use talaria_core::doctor::{
     AttachFacts, DoctorFacts, GatewayFacts, IdentityFacts, Pin, PostResult, ProbeResult,
     StatusFacts, StatusPage, WorkSummary, scrub_text,
@@ -69,6 +70,7 @@ impl DoctorService {
             identity: None,
             attach: AttachFacts::NotTried,
             status: StatusFacts::NotTried,
+            config: ConfigFacts::NotTried,
         };
         let result = match control_query(&self.home, ReadVerb::Identify, &self.options).await {
             Ok(result) => result,
@@ -114,13 +116,30 @@ impl DoctorService {
             },
         };
         let endpoint = Arc::new(endpoint);
-        let (attach, status) = tokio::join!(
+        let (attach, status, config) = tokio::join!(
             self.attach(&endpoint, profile, identify_ms),
             self.status(endpoint.clone(), profile),
+            self.config(endpoint.clone(), profile),
         );
         facts.attach = attach;
         facts.status = status;
+        facts.config = config;
         facts
+    }
+
+    /// The profile's harmful Hermes settings, read with the settings screens' own request path.
+    /// A profile the gateway does not serve is the attach row's finding, so it adds nothing here.
+    async fn config(&self, endpoint: Arc<Endpoint>, profile: &str) -> ConfigFacts {
+        if endpoint.resolve_profile(profile).is_err() {
+            return ConfigFacts::NotTried;
+        }
+        let service = crate::settings::service_for(self.home.clone(), endpoint);
+        match crate::settings::config_facts(&service, profile).await {
+            ConfigFacts::Unknown { reason } => ConfigFacts::Unknown {
+                reason: self.scrub(&reason),
+            },
+            other => other,
+        }
     }
 
     fn identity(&self, result: &Value, endpoint: Option<&Endpoint>) -> IdentityFacts {
