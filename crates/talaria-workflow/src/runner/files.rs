@@ -110,6 +110,9 @@ pub(crate) struct OutcomeFile {
 pub struct AgentNote {
     pub label: String,
     pub reason: String,
+    /// The branch the agent's uncommitted worktree changes were saved to, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_branch: Option<String>,
 }
 fn present_value<'de, D: serde::Deserializer<'de>>(
     deserializer: D,

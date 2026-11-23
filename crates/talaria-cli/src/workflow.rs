@@ -235,14 +235,39 @@ fn leftovers_text(untracked: &Value, leftover: &Value) -> String {
             text.push_str(&format!("  {}\n", safe(note.as_str().unwrap_or_default())));
         }
     }
-    if let Some(list) = leftover.as_array().filter(|list| !list.is_empty()) {
+    let list = leftover.as_array().map(Vec::as_slice).unwrap_or_default();
+    let (in_place, worktrees): (Vec<&Value>, Vec<&Value>) =
+        list.iter().partition(|folder| folder["in_place"] == true);
+    if !worktrees.is_empty() {
         text.push_str("Uncommitted changes left in agent working folders:\n");
-        for folder in list {
+        for folder in worktrees {
             let count = folder["changed_files"].as_u64().unwrap_or(0);
+            let saved = folder["saved_branch"]
+                .as_str()
+                .map(|b| format!("; a copy is saved on branch {}", safe(b)))
+                .unwrap_or_default();
             text.push_str(&format!(
-                "  {}: {count} changed file{}\n",
+                "  {}: {count} changed file{}{saved}\n",
                 safe(folder["path"].as_str().unwrap_or("unknown folder")),
                 if count == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    if !in_place.is_empty() {
+        text.push_str("Folders agents edited directly, without worktree isolation (their edits are already there; nothing was saved or lost):\n");
+        for folder in in_place {
+            let agents: Vec<String> = folder["agents"]
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_str).map(safe).collect())
+                .unwrap_or_default();
+            text.push_str(&format!(
+                "  {}: {}\n",
+                safe(folder["path"].as_str().unwrap_or("unknown folder")),
+                if agents.is_empty() {
+                    "agents".to_owned()
+                } else {
+                    agents.join(", ")
+                }
             ));
         }
     }
@@ -1095,5 +1120,26 @@ mod leftover_text_tests {
             text,
             "Untracked work found on agent routes:\n  agent a, session s, working folder /w: moved\nUncommitted changes left in agent working folders:\n  /w/one: 1 changed file\n  /w/two: 3 changed files\n"
         );
+    }
+
+    #[test]
+    fn leftovers_name_the_saved_branch_and_say_plainly_when_nothing_is_missing() {
+        let text = leftovers_text(
+            &Value::Null,
+            &json!([
+                {"path": "/w/one", "changed_files": 2, "saved_branch": "talaria/wf/r/c-0-saved"},
+                {"path": "/project", "changed_files": 0, "in_place": true,
+                 "agents": ["writer", "checker"]}
+            ]),
+        );
+        assert!(
+            text.contains("  /w/one: 2 changed files; a copy is saved on branch talaria/wf/r/c-0-saved\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("their edits are already there; nothing was saved or lost):\n  /project: writer, checker\n"),
+            "{text}"
+        );
+        assert!(!text.contains("/project: 0 changed"), "{text}");
     }
 }

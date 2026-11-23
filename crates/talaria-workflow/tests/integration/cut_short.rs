@@ -17,12 +17,20 @@ impl AgentBackend for Capped {
         let cut_short = CutShort {
             steps: Some(60),
             limit: Some(60),
+            saved_branch: None,
         };
         Box::pin(async move {
             match request.prompt.as_str() {
                 "text" => AgentOutcome::CutShort {
                     value: json!("partial"),
                     cut_short,
+                },
+                "saved" => AgentOutcome::CutShort {
+                    value: json!({"verdict": "half"}),
+                    cut_short: CutShort {
+                        saved_branch: Some("talaria/wf/run/call-0-saved".into()),
+                        ..cut_short
+                    },
                 },
                 "object" => AgentOutcome::CutShort {
                     value: json!({"verdict": "maybe"}),
@@ -92,7 +100,8 @@ async fn a_script_sees_the_mark_and_ignoring_it_changes_nothing() {
                 EngineEvent::AgentFinished {
                     outcome: OutcomeKind::CutShort {
                         steps: Some(60),
-                        limit: Some(60)
+                        limit: Some(60),
+                        saved_branch: None,
                     },
                     ..
                 }
@@ -100,6 +109,31 @@ async fn a_script_sees_the_mark_and_ignoring_it_changes_nothing() {
         })
         .count();
     assert_eq!(marked, 2);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn the_mark_names_the_branch_that_holds_saved_work() {
+    let (value, events) = run_script(
+        "const s = await agent('saved', {label: 'builder'});
+         return {s, keys: Object.keys(s), mark: s.cutShort, listed: cutShort()};",
+    )
+    .await;
+    assert_eq!(value["s"], json!({"verdict": "half"}));
+    assert_eq!(value["keys"], json!(["verdict"]));
+    let mark = json!({"steps": 60, "limit": 60, "savedBranch": "talaria/wf/run/call-0-saved"});
+    assert_eq!(value["mark"], mark);
+    assert_eq!(
+        value["listed"],
+        json!([{"label": "builder", "steps": 60, "limit": 60,
+                "savedBranch": "talaria/wf/run/call-0-saved"}])
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        EngineEvent::AgentFinished {
+            outcome: OutcomeKind::CutShort { saved_branch: Some(b), .. },
+            ..
+        } if b == "talaria/wf/run/call-0-saved"
+    )));
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]

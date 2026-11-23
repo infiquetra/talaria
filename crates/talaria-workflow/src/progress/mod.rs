@@ -368,6 +368,7 @@ impl RunProgress {
                         limit: record["outcome"]["cut_short"]["limit"]
                             .as_u64()
                             .and_then(|n| u32::try_from(n).ok()),
+                        saved_branch: None,
                     }
                     .describe()
                 });

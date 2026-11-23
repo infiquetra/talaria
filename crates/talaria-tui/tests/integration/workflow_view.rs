@@ -388,6 +388,7 @@ fn mixed_lines(run: RunOutcomeKind) -> Vec<RecordLine> {
             completed(Some(talaria_workflow::engine::CutShort {
                 steps: Some(60),
                 limit: Some(60),
+                saved_branch: None,
             })),
         ),
         Record::RunFinished {

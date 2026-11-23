@@ -1122,7 +1122,7 @@ async fn execute_inner(
                         }
                         EngineEvent::AgentFinished{call_id,outcome,..}=>{
                             let label=labels.remove(&call_id).unwrap_or_default();
-                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::CutShort{steps,limit}=>{let reason=CutShort{steps,limit}.describe();output.diagnostic(format!("agent {label}: {reason}; its reply was kept"));cut_short_agents.push(AgentNote{label:label.clone(),reason:reason.clone()});"cut short"},OutcomeKind::Failed{reason}=>{output.diagnostic(reason.clone());failed_agents.push(AgentNote{label:label.clone(),reason});"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
+                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::CutShort{steps,limit,saved_branch}=>{let reason=CutShort{steps,limit,saved_branch:None}.describe();let kept=saved_branch.as_ref().map(|b|format!("; its uncommitted work was saved to branch {b}")).unwrap_or_default();output.diagnostic(format!("agent {label}: {reason}; its reply was kept{kept}"));cut_short_agents.push(AgentNote{label:label.clone(),reason:reason.clone(),saved_branch});"cut short"},OutcomeKind::Failed{reason}=>{output.diagnostic(reason.clone());let saved_branch=crate::worktree::saved_branch_in(&reason);failed_agents.push(AgentNote{label:label.clone(),reason,saved_branch});"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
                             (output.out)(&RunnerEvent::AgentFinished{label,state:state.into()});
                         }
                         _=>{},
@@ -1310,14 +1310,18 @@ async fn execute_inner(
     // result file. Nothing is deleted.
     let records = control::read_records(dir.path()).map_err(|e| e.to_string())?;
     file.untracked_work = super::leftover::untracked_work(&records);
-    let worktrees = dir.path().join("worktrees");
-    file.leftover_edits = tokio::task::spawn_blocking(move || {
-        super::leftover::leftover_folders(&records, &worktrees)
+    let (run_path, run_id) = (dir.path().to_owned(), dir.run_id().as_str().to_owned());
+    let (leftover_edits, save_problems) = tokio::task::spawn_blocking(move || {
+        super::leftover::leftover_folders(&records, &run_path, &run_id)
     })
     .await
     .map_err(|e| e.to_string())?;
-    for folder in &file.leftover_edits {
-        let message = super::leftover::describe(folder);
+    file.leftover_edits = leftover_edits;
+    let messages = save_problems
+        .into_iter()
+        .chain(file.leftover_edits.iter().map(super::leftover::describe))
+        .collect::<Vec<_>>();
+    for message in messages {
         journal
             .record_engine_event(&EngineEvent::Log {
                 message: message.clone(),
