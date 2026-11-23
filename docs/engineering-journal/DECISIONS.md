@@ -2,6 +2,78 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-23 — Worktrees a run keeps are removed by a command, never automatically
+
+**Decision.** `talaria workflow worktrees list` and `remove <run>` are the whole feature. Without
+`--force`, `remove` acts only on a run that has reached a final state and only on worktrees that
+hold nothing: no changed files, no ignored files that removal would delete, no commits the source
+checkout lacks. It deletes their branches with git's own merged check. Everything else is kept and
+listed with the reason. With `--force` the run's worktrees and branches go, and the output says
+what was discarded and each branch's last commit. The command works only from the run's own
+records, inside the run's own worktrees folder and branch prefix, and refuses a run whose runner
+holds its lock.
+
+**Rationale.** Runs left dozens of worktrees and branches behind because nothing in the product
+acted as their owner. A finished run's folders can hold work nobody has integrated, and an
+interrupted run's agents may still be working at the gateway, so removal has to be a deliberate
+act that says what it would lose.
+
+**Rejected.** Removing clean worktrees when a run completes. Changing the existing `remove` so it
+deletes branches. Trusting git's worktree list in place of the run's records.
+
+**Revisit when.** Automatic removal is wanted, or branches with no record in the run folder turn
+up.
+
+## 2026-11-23 — A workflow agent's session is named in the window, and the first prompt into it warns
+
+**Decision.** When the open session belongs to a workflow agent, a line above the composer names
+the agent, its state from the run journal, whether the run follows this conversation, and the run.
+A session is recognised by its working folder under a run's worktrees folder, or by a session id a
+loaded run recorded. The first prompt into such a session returns to the composer with one line of
+warning; a second submit sends it. The existing workflow key opens that agent's run.
+
+**Rationale.** An agent's session looked like any other. A person reading a failed, untracked
+conversation could be invited to commit work the run never asked for, with nothing on screen to
+say so.
+
+**Rejected.** A confirmation on every prompt. Carrying "came from the workflow view" along with
+the session, which misses a session reached any other way. Guessing a state when the journal
+cannot be read; the line says that it cannot tell.
+
+**Revisit when.** People want `/steer` gated too, or a key that returns to the previous session
+exists.
+
+## 2026-11-23 — `workflow check` runs the script against stand-in agents
+
+**Decision.** `talaria workflow check <script>` reads the header and imports, compiles the body
+without calling it, then runs the script in the engine against agents that answer at once with
+made-up values. It contacts no gateway, starts no agent, writes no run folder. Findings that
+cannot depend on an agent's answer are errors; anything else the probe trips on is a warning.
+
+**Rationale.** A lead model built its own syntax checker because Talaria offered none. A syntax
+check alone misses what the engine refuses at run time: an unknown option, a tier that is not in
+the staffing table, a clock or random call. The probe finds those before any token is spent.
+
+**Rejected.** The mock backend already in the crate (behind a feature, and it needs a rules file).
+A scan of the source text (it cannot see options built while the script runs).
+
+**Revisit when.** Scripts appear whose agent calls can only be reached with real answers.
+
+## 2026-11-23 — The skill's size budget is measured on the template
+
+**Decision.** Each skill file is measured as written, with each command placeholder counted as 64
+bytes and each profile placeholder as 24. The budgets stay 8192 bytes for `SKILL.md`, 24576 for a
+reference and 65536 in total. The rendered text has only a generous upper bound, and passing it
+fails with a message that names the Hermes folder path as the cause.
+
+**Rationale.** The limit was checked after the command placeholder had been replaced with a
+command that carries the user's Hermes folder path. Whether the skill installed depended on how
+long that path was.
+
+**Rejected.** Raising the budget (it is a cost in the lead model's context, not a gateway limit).
+
+**Revisit when.** `SKILL.md` needs to grow: it has about 130 bytes left.
+
 ## 2026-11-22 — Talaria does not pin Hermes; it records what it was tested against
 
 **Decision.** Talaria states which Hermes release its contract was generated from and tested

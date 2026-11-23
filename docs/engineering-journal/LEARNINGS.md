@@ -2,6 +2,69 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — "Not running" is not "finished": a free lock says only that no runner is alive
+
+**Evidence.** The first version of `workflow worktrees remove` refused a run only while a process
+held the run's lock file. An interrupted run and a parked run both have a free lock, and their
+agents may still be working at the gateway, so a clean folder with no commits yet would have been
+deleted under a live agent (`crates/talaria-workflow/src/runner/worktrees.rs`). Review caught it
+before it was installed. The command now needs a final run state unless forced.
+
+**Mechanism.** One fact (no runner process) was read as another (no work in progress). The work is
+done by gateway sessions that outlive the runner.
+
+**Generalizable rule.** Before deleting what a run owns, ask the journal whether the run ended,
+not the lock whether a process is alive.
+
+## 2026-11-23 — A folder git calls clean can still hold files that removing it deletes
+
+**Evidence.** `git status --porcelain` does not list ignored files, and `git worktree remove`
+deletes them. A worktree counted as clean could lose a local settings file or notes without a word
+(`crates/talaria-workflow/src/worktree/git/manage.rs`).
+
+**Mechanism.** "Nothing to commit" was taken to mean "nothing to lose".
+
+**Generalizable rule.** Judge what a deletion loses with the same breadth as the deletion: count
+ignored files, and check every ref that can hold the work, the folder's own HEAD included.
+
+## 2026-11-23 — A gateway's completion notice shows the end of the output, cut back to a whole line
+
+**Evidence.** The notice the gateway sends when a background command ends keeps the last 2,000
+characters and then cuts back to the first line break. `talaria workflow run --json` ended with
+one line of some 36,000 characters, so the notice carried nothing. The command now prints one
+short plain line after the result: the run, the outcome, the spend and how to read the result
+again (`crates/talaria-cli/src/workflow.rs`).
+
+**Mechanism.** Output written for a parser was also read through a window that only fits short
+lines.
+
+**Generalizable rule.** Anything a notice reader will see must end with a short line that stands
+on its own.
+
+## 2026-11-23 — A token total folds in cache reads on one path and splits them on another
+
+**Evidence.** In a recorded session the live usage event reports input tokens without cache reads
+(1,567) beside cache reads (1,601); the settled turn's usage reports input tokens of 3,168, the
+sum, with no breakdown. Run and agent totals, and the token budget, come from the settled figure
+and the live total, so both include cache reads. Text output now says "including cache reads".
+
+**Mechanism.** Two reports of the same turn use one field name for two quantities.
+
+**Generalizable rule.** Say what a total includes wherever a person reads it, and check which path
+a number came from before comparing two of them.
+
+## 2026-11-23 — Compiling a script without running it means never calling the wrapper
+
+**Evidence.** The syntax stage of `workflow check` evaluates the body as a function expression and
+does not call it. A body that closes the wrapper early runs at top level all the same, and with no
+time limit the check hung; it now uses the engine's own time slice
+(`crates/talaria-workflow/src/engine/syntax.rs`).
+
+**Mechanism.** The wrapper is text around user text, so user text can end it.
+
+**Generalizable rule.** Give every evaluation of user code the limits a real run has, even one
+meant only to compile.
+
 ## 2026-11-22 — A failure that repeats identically is a rule, not bad luck: trace it upstream
 
 **Evidence.** A workflow agent's conversation was compressed three times and each attempt was

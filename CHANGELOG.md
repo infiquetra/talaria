@@ -32,6 +32,19 @@ with the usual caveat that a `0.x` line may break anything between releases.
 - Each running agent's row in the workflow view shows its current step.
 - `talaria workflow run` warns when its working folder is not inside a git repository, and an
   isolated agent's first message names its working folder.
+- `talaria workflow check <script>` checks a workflow script before a run: its header, its syntax
+  with line and column, and what the engine would refuse, by running it against stand-in agents.
+  It contacts no gateway and spends nothing.
+- `talaria workflow worktrees list` shows the worktrees and branches runs have kept, and `talaria
+  workflow worktrees remove <run>` removes them. Without `--force` it removes only what holds
+  nothing and only for a run that has finished; `--dry-run` shows what would happen.
+- When the open session belongs to a workflow agent, a line above the composer names the agent,
+  its state and its run, and the first prompt into it asks for a second submit.
+- `talaria workflow run --json` ends with one short plain line after the result: the run, the
+  outcome, the spend and the command that prints the result again.
+- Every `talaria workflow` subcommand has a description in `--help`.
+- `/hivecode reinstall` and the first-time install also install any built-in workflow that is
+  missing, and `talaria workflow roster` warns when none is installed.
 
 ### Changed
 
@@ -50,12 +63,21 @@ with the usual caveat that a `0.x` line may break anything between releases.
   agent's own working folder, waiting once on a run, the commands Hermes refuses in unattended
   agents, basing a cost estimate on past runs, and reporting failed agents. An installed copy
   reads as changed until `/hivecode reinstall`.
+- File tool headers keep the file name: a long path is shortened in the middle, and the line
+  counts say "partial" when Hermes cut the preview.
+- Token totals in text output say that they include cache reads, and a run's status reads
+  "completed with failures" in words there.
+- The notice about locking the installed skill also shows the command to type in a session.
 
 ### Fixed
 
 - A failed workflow agent now shows the reason Hermes gave. Before, the reason was dropped and the
   run said "no reason given".
 - The workflow view no longer logs Hermes's `agent.step` event as an unknown event type.
+- The staffing report no longer prints an empty price list when a script names its models
+  directly.
+- The workflow skill installs whatever the length of the Hermes folder path; its size limit is
+  measured on the skill text itself.
 
 ## [0.9.1] — 2026-11-21
 
