@@ -177,3 +177,39 @@ fn a_tier_the_staffing_table_lacks_fails_the_check() {
         "{text}"
     );
 }
+
+#[test]
+fn cwd_lets_check_find_a_nested_script_like_run_does() {
+    let t = tempfile::tempdir().unwrap();
+    let work = t.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(
+        work.join("child.js"),
+        "export const meta = { name: 'child', description: 'x' };\nreturn 1;\n",
+    )
+    .unwrap();
+    let script = t.path().join("parent.workflow");
+    fs::write(
+        &script,
+        "export const meta = { name: 'parent', description: 'x' };\nawait workflow({ scriptPath: 'child.js' });\n",
+    )
+    .unwrap();
+    let without = talaria(&["workflow", "check", script.to_str().unwrap()], t.path());
+    assert_eq!(without.status.code(), Some(2));
+    let with = talaria(
+        &[
+            "workflow",
+            "check",
+            script.to_str().unwrap(),
+            "--cwd",
+            work.to_str().unwrap(),
+        ],
+        t.path(),
+    );
+    assert_eq!(
+        with.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&with.stdout)
+    );
+}

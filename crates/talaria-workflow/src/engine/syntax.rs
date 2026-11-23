@@ -1,8 +1,16 @@
 //! Compile a workflow body without running it, so a syntax error is found before a run starts.
 
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
+
 use rquickjs::{AsyncContext, AsyncRuntime, context::EvalOptions};
 
-use super::{ParsedScript, runtime::ROOT_PREFIX};
+use super::{EngineConfig, ParsedScript, runtime::ROOT_PREFIX};
 
 /// A problem the JavaScript compiler found in a script body.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,6 +36,21 @@ pub async fn check_syntax(parsed: &ParsedScript) -> Result<(), SyntaxIssue> {
     };
     let runtime = AsyncRuntime::new().map_err(|e| issue(e.to_string()))?;
     runtime.set_memory_limit(256 * 1024 * 1024).await;
+    // A body that closes the wrapper early runs at top level while it is evaluated, so the
+    // evaluation gets the same time slice a run gives a script's synchronous turns.
+    let slice = EngineConfig::new("check", 0, 0).max_sync_slice;
+    let started = Instant::now();
+    let expired = Arc::new(AtomicBool::new(false));
+    let flag = expired.clone();
+    runtime
+        .set_interrupt_handler(Some(Box::new(move || {
+            let over = started.elapsed() > slice;
+            if over {
+                flag.store(true, Ordering::Relaxed);
+            }
+            over
+        })))
+        .await;
     let context = AsyncContext::full(&runtime)
         .await
         .map_err(|e| issue(e.to_string()))?;
@@ -38,6 +61,10 @@ pub async fn check_syntax(parsed: &ParsedScript) -> Result<(), SyntaxIssue> {
             options.filename = Some(name);
             match ctx.eval_with_options::<rquickjs::Value, _>(source, options) {
                 Ok(_) => Ok(()),
+                Err(_) if expired.load(Ordering::Relaxed) => Err(issue(format!(
+                    "the script body ran code for more than {} s while it was being compiled; a `}})` that closes the wrapper early makes the rest run at the top level",
+                    slice.as_secs_f64()
+                ))),
                 Err(error) => {
                     if !error.is_exception() {
                         return Err(issue(error.to_string()));

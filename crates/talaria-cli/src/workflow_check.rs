@@ -29,6 +29,10 @@ pub struct CheckArgs {
     /// The staffing table to check tier names against; defaults to the one `run` reads.
     #[arg(long, value_parser = required_path)]
     pub staffing: Option<PathBuf>,
+    /// The run's working folder: `workflow({scriptPath})` falls back to it, as it does for `run
+    /// --cwd`. Defaults to the current folder.
+    #[arg(long, value_parser = required_path)]
+    pub cwd: Option<PathBuf>,
     /// Where named workflows are found; defaults to the one `run` reads.
     #[arg(long, value_parser = required_path)]
     pub workflows_dir: Option<PathBuf>,
@@ -124,6 +128,12 @@ fn prepare(args: &CheckArgs) -> Result<(String, CheckOptions), String> {
         )
     });
     let table = StaffingTable::load(&table_path).map_err(|e| e.to_string())?;
+    let cwd = args
+        .cwd
+        .clone()
+        .map_or_else(std::env::current_dir, Ok)
+        .and_then(fs::canonicalize)
+        .map_err(|e| format!("cannot use the working folder: {e}"))?;
     let absolute = std::path::absolute(&path).unwrap_or(path);
     let script_dir = absolute.parent().map(PathBuf::from).unwrap_or_default();
     Ok((
@@ -132,7 +142,7 @@ fn prepare(args: &CheckArgs) -> Result<(String, CheckOptions), String> {
             args: input,
             workflows_dir: std::path::absolute(&workflows_dir).unwrap_or(workflows_dir),
             script_dir,
-            cwd: std::env::current_dir().unwrap_or_default(),
+            cwd,
             staffing: table,
         },
     ))
