@@ -14607,10 +14607,10 @@ fn apply<S: Screen>(
                             .map_err(|error| error.to_string())
                             .and_then(|result| result);
                             let builtins_note = match builtins {
-                                Ok(names) if names.is_empty() => None,
-                                Ok(names) => {
-                                    Some(talaria_core::hivecode::notice::builtins_installed(&names))
-                                }
+                                Ok(done) => talaria_core::hivecode::notice::builtins_outcome(
+                                    &done.created,
+                                    &done.unreadable,
+                                ),
                                 Err(reason) => {
                                     Some(talaria_core::hivecode::notice::builtins_failed(&reason))
                                 }
