@@ -1,11 +1,12 @@
-//! The interrupt key asks for a second press while a turn runs; Ctrl+C does not.
+//! The interrupt key asks for a second press while a turn runs, and a held key never interrupts;
+//! Ctrl+C interrupts at once.
 
 use hermes_contract::events::EventFrame;
 use hermes_contract::schemas::CanonicalSnapshot;
 use serde_json::json;
 use talaria_app::app::{AppEffect, AppMessage, AppState, UserAction, update};
 use talaria_app::sessions::OpenedSession;
-use talaria_core::rewind::INTERRUPT_CONFIRM_WINDOW_MS;
+use talaria_core::rewind::{INTERRUPT_CONFIRM_WINDOW_MS, INTERRUPT_SETTLE_MS};
 use talaria_core::session::{Event, SessionId};
 
 const SESSION: &str = "local-session-1";
@@ -31,8 +32,9 @@ fn running_state() -> AppState {
     state
 }
 
-fn at(state: &mut AppState, now_ms: u64) {
-    let _ = update(state, AppMessage::Tick { now_ms });
+/// Move the clock to `now_ms` and return what the tick did.
+fn at(state: &mut AppState, now_ms: u64) -> Vec<AppEffect> {
+    update(state, AppMessage::Tick { now_ms })
 }
 
 fn press(state: &mut AppState) -> Vec<AppEffect> {
@@ -57,13 +59,93 @@ fn first_press_arms_and_sends_no_interrupt() {
 }
 
 #[test]
-fn second_press_inside_the_window_sends_exactly_one_interrupt() {
+fn second_press_inside_the_window_interrupts_once_when_it_settles() {
     let mut state = running_state();
     at(&mut state, 1_000);
     assert_eq!(interrupts(&press(&mut state)), 0);
-    at(&mut state, 1_000 + INTERRUPT_CONFIRM_WINDOW_MS - 1);
-    assert_eq!(interrupts(&press(&mut state)), 1);
-    assert!(!state.view().interrupt_armed, "a confirmed press disarms");
+    let second = 1_000 + INTERRUPT_CONFIRM_WINDOW_MS - 1;
+    at(&mut state, second);
+    assert_eq!(
+        interrupts(&press(&mut state)),
+        0,
+        "the press itself sends nothing"
+    );
+    assert!(
+        state.view().interrupt_armed,
+        "the working row still says again"
+    );
+    assert_eq!(
+        interrupts(&at(&mut state, second + INTERRUPT_SETTLE_MS - 1)),
+        0
+    );
+    assert_eq!(
+        interrupts(&at(&mut state, second + INTERRUPT_SETTLE_MS)),
+        1,
+        "the settle time ends in one interrupt"
+    );
+    assert_eq!(
+        interrupts(&at(&mut state, second + 2 * INTERRUPT_SETTLE_MS)),
+        0,
+        "and in no second one"
+    );
+    assert!(!state.view().interrupt_armed, "a settled press disarms");
+}
+
+#[test]
+fn a_late_tick_with_the_key_press_first_still_interrupts_once() {
+    let mut state = running_state();
+    at(&mut state, 1_000);
+    let _ = press(&mut state);
+    at(&mut state, 1_300);
+    let _ = press(&mut state);
+    // The settle time passed with no tick; the next key press settles it first.
+    let _ = update(
+        &mut state,
+        AppMessage::Tick {
+            now_ms: 1_300 + INTERRUPT_SETTLE_MS - 1,
+        },
+    );
+    state.now_ms = 1_300 + INTERRUPT_SETTLE_MS + 5;
+    assert_eq!(
+        interrupts(&press(&mut state)),
+        1,
+        "the settled press interrupts"
+    );
+}
+
+#[test]
+fn a_held_key_sends_no_interrupt_and_the_next_taps_still_work() {
+    let mut state = running_state();
+    let mut now = 1_000;
+    at(&mut state, now);
+    assert_eq!(interrupts(&press(&mut state)), 0);
+    // The operating system starts repeating after a gap, then every 40 ms.
+    now += 400;
+    let mut total = 0;
+    for _ in 0..40 {
+        total += interrupts(&at(&mut state, now));
+        total += interrupts(&press(&mut state));
+        now += 40;
+    }
+    assert_eq!(total, 0, "a held key never interrupts");
+    assert!(
+        !state.view().interrupt_armed,
+        "a held key shows the normal hint"
+    );
+    let end = now - 40 + INTERRUPT_SETTLE_MS;
+    assert_eq!(
+        interrupts(&at(&mut state, end)),
+        0,
+        "the held state just ends"
+    );
+    // Tap, tap now interrupts.
+    now = end + 500;
+    at(&mut state, now);
+    assert_eq!(interrupts(&press(&mut state)), 0);
+    now += 300;
+    at(&mut state, now);
+    assert_eq!(interrupts(&press(&mut state)), 0);
+    assert_eq!(interrupts(&at(&mut state, now + INTERRUPT_SETTLE_MS)), 1);
 }
 
 #[test]
@@ -75,7 +157,9 @@ fn hint_returns_to_normal_after_the_window_and_the_next_press_arms_again() {
     assert!(!state.view().interrupt_armed, "the hint reverted on time");
     assert_eq!(interrupts(&press(&mut state)), 0, "a late press arms again");
     assert!(state.view().interrupt_armed);
-    assert_eq!(interrupts(&press(&mut state)), 1);
+    assert_eq!(interrupts(&press(&mut state)), 0, "the second press waits");
+    let settled = 1_000 + INTERRUPT_CONFIRM_WINDOW_MS + INTERRUPT_SETTLE_MS;
+    assert_eq!(interrupts(&at(&mut state, settled)), 1);
 }
 
 #[test]
@@ -160,4 +244,61 @@ fn an_armed_press_does_not_carry_into_another_session() {
         0,
         "the first press there arms"
     );
+}
+
+#[test]
+fn a_turn_that_ends_while_a_press_is_pending_interrupts_nothing() {
+    let mut state = running_state();
+    at(&mut state, 1_000);
+    let _ = press(&mut state);
+    at(&mut state, 1_300);
+    assert_eq!(interrupts(&press(&mut state)), 0);
+    let params = json!({
+        "type": "message.complete",
+        "session_id": SESSION,
+        "payload": {"text": "done", "status": "complete"},
+    });
+    let frame = EventFrame::from_params(&params).expect("contract-shaped event");
+    let _ = update(
+        &mut state,
+        AppMessage::PromptDone {
+            events: vec![Event::Session {
+                session_id: SessionId::new(SESSION),
+                frame,
+                raw: params,
+            }],
+            notices: Vec::new(),
+            masked: None,
+        },
+    );
+    assert!(!state.view().turn_running(), "the turn ended");
+    let effects = at(&mut state, 1_300 + INTERRUPT_SETTLE_MS);
+    assert_eq!(interrupts(&effects), 0, "nothing is left to interrupt");
+}
+
+#[test]
+fn a_session_change_while_a_press_is_pending_interrupts_nothing() {
+    let mut state = running_state();
+    at(&mut state, 1_000);
+    let _ = press(&mut state);
+    at(&mut state, 1_300);
+    assert_eq!(interrupts(&press(&mut state)), 0);
+    let _ = update(
+        &mut state,
+        AppMessage::Opened {
+            opened: snapshot("local-session-2", true),
+            notice: None,
+        },
+    );
+    assert!(
+        state.view().turn_running(),
+        "the other session is running too"
+    );
+    let effects = at(&mut state, 1_300 + INTERRUPT_SETTLE_MS);
+    assert_eq!(
+        interrupts(&effects),
+        0,
+        "the other session is not interrupted"
+    );
+    assert!(!state.view().interrupt_armed);
 }

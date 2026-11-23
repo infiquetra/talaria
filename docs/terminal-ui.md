@@ -15,8 +15,10 @@ or the compacting row takes its place while one is shown. Under full motion a so
 across the row and back; under reduced motion the row is static and only its seconds change.
 Interrupting takes two presses of the bound interrupt key, so a stray press does not stop a long
 turn. The first press interrupts nothing and changes the hint to `Esc again to interrupt` for two
-seconds; a second press inside that time interrupts, and after it the hint reads normally again and
-the next press starts over. Ctrl+C interrupts on one press. Closing a menu, list, selector or
+seconds; a second press inside that time interrupts about a tenth of a second later, unless another
+press follows at once. A held key sends a stream of presses, so holding the key never interrupts.
+After the two seconds the hint reads normally again and the next press starts over. A keyboard
+repeat rate slower than a tenth of a second is not covered. Ctrl+C interrupts on one press. Closing a menu, list, selector or
 view with Esc, and the idle double Esc that opens rewind, work as before.
 A narrow terminal drops the interrupt hint first, then shortens the activity text (an armed hint
 shrinks to `Esc again` before it goes). The hint is
