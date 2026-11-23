@@ -23,6 +23,7 @@ fn facts(gateway: GatewayFacts) -> DoctorFacts {
         }),
         attach: AttachFacts::NotTried,
         status: StatusFacts::NotTried,
+        config: talaria_core::config_check::ConfigFacts::NotTried,
     }
 }
 fn ready() -> DoctorFacts {

@@ -151,6 +151,20 @@ impl SettingsService {
             .collect())
     }
 
+    /// The effective configuration of `profile`, read with that profile's own ticket. It never
+    /// replaces the connection the settings screens use, so a background check cannot disturb them.
+    pub async fn effective_config(&self, profile: &str) -> Result<Value, FailReason> {
+        let origin = self.api_origin.as_deref().ok_or(FailReason::NotConnected)?;
+        if !self.served_profiles.iter().any(|name| name == profile) {
+            return Err(FailReason::ProfileNotServed);
+        }
+        let rest = RestClient::new(origin, (self.make_minter)(profile), RestOptions::default())
+            .map_err(read_failure)?;
+        config_api::config_read(&rest, true)
+            .await
+            .map_err(read_failure)
+    }
+
     fn active(&self) -> Result<Arc<RestClient>, FailReason> {
         self.client
             .lock()
@@ -290,7 +304,6 @@ pub async fn slash_choices(
 
 /// Resolve the current control endpoint without starting or changing the gateway.
 pub(crate) async fn discover_service(home: std::path::PathBuf) -> Option<Arc<SettingsService>> {
-    use hermes_client::rest::NativeHttpMinter;
     use hermes_client::{DiscoverOptions, EnsurePolicy, discover_with};
     let endpoint = Arc::new(
         discover_with(
@@ -303,6 +316,15 @@ pub(crate) async fn discover_service(home: std::path::PathBuf) -> Option<Arc<Set
         .await
         .ok()?,
     );
+    Some(service_for(home, endpoint))
+}
+
+/// The settings service for an endpoint that is already known.
+pub(crate) fn service_for(
+    home: std::path::PathBuf,
+    endpoint: Arc<hermes_client::Endpoint>,
+) -> Arc<SettingsService> {
+    use hermes_client::rest::NativeHttpMinter;
     let origin = endpoint.api_origin().to_owned();
     let profiles = endpoint
         .profiles()
@@ -319,11 +341,21 @@ pub(crate) async fn discover_service(home: std::path::PathBuf) -> Option<Arc<Set
             profile,
         ))
     });
-    Some(Arc::new(SettingsService::new(
-        Some(origin),
-        profiles,
-        factory,
-    )))
+    Arc::new(SettingsService::new(Some(origin), profiles, factory))
+}
+
+/// The harmful Hermes settings on `profile`, or why they could not be read.
+pub(crate) async fn config_facts(
+    service: &SettingsService,
+    profile: &str,
+) -> talaria_core::config_check::ConfigFacts {
+    use talaria_core::config_check::{ConfigFacts, findings};
+    match service.effective_config(profile).await {
+        Ok(effective) => ConfigFacts::Read(findings(&effective)),
+        Err(reason) => ConfigFacts::Unknown {
+            reason: reason.text(),
+        },
+    }
 }
 
 /// Preserve the transport schema's field order without a dependency from the core to HTTP.

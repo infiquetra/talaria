@@ -858,6 +858,9 @@ pub struct AppState {
     settings: talaria_core::settings::SettingsState,
     settings_service: Option<Arc<crate::settings::SettingsService>>,
     settings_generation: u64,
+    /// Profiles whose harmful Hermes settings were already looked up in this run, so each profile
+    /// is announced once.
+    config_checked: BTreeSet<String>,
     /// The doctor overlay, while it is open.
     pub doctor: Option<DoctorView>,
     /// A restart continues after its overlay closes.
@@ -1181,6 +1184,7 @@ impl AppState {
             ),
             settings_service: None,
             settings_generation: 0,
+            config_checked: BTreeSet::new(),
             doctor: None,
             doctor_restart: RestartState::Idle,
             profiles: ProfilesState::new("default"),
@@ -1865,6 +1869,11 @@ pub enum AppMessage {
     HivecodeNotice {
         text: String,
     },
+    /// The harmful Hermes settings found on a profile, possibly none.
+    ConfigFindings {
+        profile: String,
+        findings: Vec<talaria_core::config_check::Finding>,
+    },
     /// What a read of the local workflow setup found for a session.
     HivecodeSetup {
         session: SessionId,
@@ -2280,6 +2289,11 @@ pub enum AppEffect {
         list: talaria_core::settings::RuntimeList,
         client: Option<hermes_client::Client>,
         session: Option<String>,
+    },
+    /// Read the profile's effective Hermes settings once and say which harmful ones are set.
+    ConfigCheck {
+        profile: String,
+        home: PathBuf,
     },
     DoctorGather,
     DoctorActiveWork,
@@ -3583,7 +3597,7 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 view.report = Some(diagnose(&facts));
                 view.facts = Some(facts);
                 view.running = false;
-                view.selected = view.selected.min(6);
+                view.selected = view.selected.min(view.last_row());
                 vec![AppEffect::Redraw]
             } else {
                 Vec::new()
@@ -4354,6 +4368,15 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
         }
         AppMessage::HivecodeNotice { text } => vec![notice_lines(&text)],
+        AppMessage::ConfigFindings { profile, findings } => {
+            if profile != state.profile {
+                return Vec::new();
+            }
+            findings
+                .iter()
+                .map(|finding| notice_lines(&finding.notice(&profile)))
+                .collect()
+        }
         AppMessage::HivecodeSetup {
             session,
             profile,
@@ -7718,6 +7741,20 @@ fn hivecode_note_conversation(state: &mut AppState, session: &SessionId) {
     }
 }
 
+/// The one-time look at a profile's Hermes settings, asked the first time a session of the
+/// profile opens in this run. Nothing is asked without a Hermes home to find the gateway from.
+fn config_check_effect(state: &mut AppState) -> Option<AppEffect> {
+    if state.hermes_home.as_os_str().is_empty()
+        || !state.config_checked.insert(state.profile.clone())
+    {
+        return None;
+    }
+    Some(AppEffect::ConfigCheck {
+        profile: state.profile.clone(),
+        home: state.hermes_home.clone(),
+    })
+}
+
 /// Apply workflow routing through the existing session events and effects.
 fn hivecode_actions(state: &mut AppState, actions: Vec<crate::hivecode::Action>) -> Vec<AppEffect> {
     apply_hivecode(state, actions, true)
@@ -10623,6 +10660,7 @@ fn opened_session(
         state,
         CommandsInput::ForegroundSession(Some(session_id.clone())),
     ));
+    effects.extend(config_check_effect(state));
     state.source_epoch += 1;
     if state.pager_open {
         effects.push(AppEffect::Transcript(TranscriptAction::Changed));
@@ -13471,6 +13509,22 @@ fn apply<S: Screen>(
                     input,
                 }
             }),
+            AppEffect::ConfigCheck { profile, home } => {
+                executor.send_later(async move {
+                    use talaria_core::config_check::ConfigFacts;
+                    // A configuration that cannot be read adds no notice.
+                    let findings = match crate::settings::discover_service(home).await {
+                        Some(service) => {
+                            match crate::settings::config_facts(&service, &profile).await {
+                                ConfigFacts::Read(findings) => findings,
+                                ConfigFacts::NotTried | ConfigFacts::Unknown { .. } => Vec::new(),
+                            }
+                        }
+                        None => Vec::new(),
+                    };
+                    AppMessage::ConfigFindings { profile, findings }
+                });
+            }
             AppEffect::DoctorGather => {
                 let service = crate::doctor::DoctorService::new(state.hermes_home.clone());
                 let profile = state.profile.clone();
@@ -17366,6 +17420,7 @@ mod doctor_loop_tests {
             }),
             attach: AttachFacts::NotTried,
             status: StatusFacts::NotTried,
+            config: talaria_core::config_check::ConfigFacts::NotTried,
         }
     }
 
@@ -21074,6 +21129,72 @@ mod hivecode_visibility_tests {
                 "\u{b7} Hivecode built the workflow in 0s and started the run. {}",
                 notice::REMOTE_RUN_TAIL
             )]
+        );
+    }
+
+    #[test]
+    fn a_profiles_harmful_settings_are_looked_up_once_per_run() {
+        let mut state = opened("session");
+        state.profile = "fixture".into();
+        state.config_checked.clear();
+        state.hermes_home = PathBuf::new();
+        assert!(
+            config_check_effect(&mut state).is_none(),
+            "no home, no lookup"
+        );
+        state.hermes_home = PathBuf::from("hermes-home");
+        assert!(matches!(
+            config_check_effect(&mut state),
+            Some(AppEffect::ConfigCheck { profile, .. }) if profile == "fixture"
+        ));
+        assert!(
+            config_check_effect(&mut state).is_none(),
+            "the same profile is not asked twice"
+        );
+        state.profile = "other".into();
+        assert!(
+            config_check_effect(&mut state).is_some(),
+            "another profile is asked once"
+        );
+    }
+
+    #[test]
+    fn each_harmful_setting_shows_one_short_notice() {
+        use talaria_core::config_check::Finding;
+        let mut state = opened("session");
+        state.profile = "fixture".into();
+        let findings = vec![
+            Finding::CompressionNotInPlace,
+            Finding::StepCap { turns: 60 },
+        ];
+        let shown = lines(&update(
+            &mut state,
+            AppMessage::ConfigFindings {
+                profile: "fixture".into(),
+                findings: findings.clone(),
+            },
+        ));
+        assert_eq!(shown.len(), 2, "{shown:?}");
+        assert!(shown[0].contains("compression.in_place") && shown[0].contains("context overflow"));
+        assert!(shown[1].contains("agent.max_turns") && shown[1].contains("60 steps"));
+        let none = update(
+            &mut state,
+            AppMessage::ConfigFindings {
+                profile: "fixture".into(),
+                findings: Vec::new(),
+            },
+        );
+        assert!(lines(&none).is_empty());
+        let stale = update(
+            &mut state,
+            AppMessage::ConfigFindings {
+                profile: "elsewhere".into(),
+                findings,
+            },
+        );
+        assert!(
+            lines(&stale).is_empty(),
+            "a reply for another profile is dropped"
         );
     }
 

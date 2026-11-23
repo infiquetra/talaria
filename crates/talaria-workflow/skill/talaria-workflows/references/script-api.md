@@ -32,7 +32,7 @@ Every execution option:
 | `opts.toolsets` | Nonempty array of distinct toolset names. |
 | `opts.skills` | Nonempty array of distinct skill names. |
 | `opts.isolation` | Exactly 'worktree'. |
-| `opts.maxTurns` | Integer 1 through 10,000. Omitted uses the profile policy. |
+| `opts.maxTurns` | Integer 1 through 10,000. Omitted means the agent has no step cap; the profile's own `agent.max_turns` does not apply to workflow agents. |
 | `opts.stallMs` | Positive integer, accepted as a logged no-op. |
 
 An agent can end three ways. It finishes and its reply is returned. It fails and the call yields null; the run then ends `completed_with_failures` and names the failed agents first. Or Hermes stops it at its step cap (the exit reason `max_iterations_reached(N/M)` with `completed: false`): the agent is cut short. A cut short agent is not failed and is not sent another turn. Its reply is kept and returned exactly as for a finished agent, so a script that ignores the mark behaves as it always did. The mark is visible three ways: an object or array reply has a hidden `cutShort` property, `{steps, limit}`, that `Object.keys`, spread and `JSON.stringify` do not show; a text reply cannot carry one, so use `cutShort()`, which lists every cut short agent by label; and the journal's `call_finished` record, the `agent_finished` event, the run's final `cut_short_agents` list and the workflow view all say "cut short (60 of 60 steps)". With `opts.schema`, a cut short reply is checked once; if it does not fit, the call fails without a correction turn. A run whose only problem is cut short agents still ends `completed`. Cut short replies are kept when a run is resumed.

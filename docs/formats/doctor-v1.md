@@ -8,6 +8,14 @@
 `profiles`, `attach`, and `runtime_health`. Each has `id`, `severity` (`ok`, `warn`, `fail`,
 `skip`, or `info`), `summary`, an array of `details`, and a nullable `fix`.
 
+When the gateway is ready and the selected profile is served, Talaria also reads that profile's
+Hermes settings and may append rows after those seven. `compression` (warning) appears when
+`compression.in_place` is `false`: workflow agents cannot compress their conversations and a
+long-running one fails with a context overflow. `step_cap` (warning) appears when
+`agent.max_turns` is a finite number: sessions on the profile stop after that many steps.
+`settings` (`info`) appears instead when the settings could not be read. A profile whose settings
+are fine adds no row.
+
 `restart` is null unless a restart was requested. Otherwise it contains `outcome`, `seconds`,
 `http_status`, and `text`. Outcomes are `restarted`, `refused`, `changed`, `did_not_restart`,
 `not_back`, `not_ready`, `declined`, and `needs_confirmation`. `seconds` is numeric only for

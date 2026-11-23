@@ -512,7 +512,9 @@ fn doctor_cli(run: &mut Run<'_>, notes: &mut Vec<(&'static str, String)>) -> Res
     )?;
     if marker_exit(&json) != Some(0)
         || !json.lines().any(|line| {
-            crate::screen4a::doctor_json(line.trim()) == Some(("talaria-doctor-v1".to_owned(), 7))
+            // Seven fixed rows, plus a row for each harmful Hermes setting the profile has.
+            crate::screen4a::doctor_json(line.trim())
+                .is_some_and(|(format, rows)| format == "talaria-doctor-v1" && rows >= 7)
         })
     {
         return fail("doctor --json format is not talaria-doctor-v1 with 7 checks");

@@ -21,6 +21,7 @@ use talaria_workflow::{
         live::{ProgressInput, ProgressKey, ProgressState, update},
     },
     runner::{
+        ConfigSource,
         control::{StopExit, answer_parked, request_stop},
         execute::{
             ResumeRequest, RunExit, RunRequest, RunnerEvent, RunnerServices, run_new_with_services,
@@ -686,6 +687,75 @@ fn preflight_refuses_before_creating_a_run() {
     assert!(events.iter().any(
         |e| e["event"] == "diagnostic" && e["text"].as_str().unwrap().contains("has no price")
     ));
+}
+
+struct FixedConfig(Result<Value, String>);
+impl ConfigSource for FixedConfig {
+    fn effective(&self, _profile: &str) -> BoxFuture<'static, Result<Value, String>> {
+        let answer = self.0.clone();
+        Box::pin(async move { answer })
+    }
+}
+fn diagnostics_of(events: &[Value]) -> Vec<String> {
+    events
+        .iter()
+        .filter(|e| e["event"] == "diagnostic")
+        .map(|e| e["text"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_profile_that_cannot_compress_in_place_warns_before_the_run_and_still_runs() {
+    let h = Harness::new("return 'ok';");
+    let config = json!({"compression":{"in_place":false},"agent":{"max_turns":60}});
+    let services = services(&h.wire, true).with_config(Arc::new(FixedConfig(Ok(config))));
+    let (exit, events) = Worker::start(Start::New(h.request()), services).finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let warnings: Vec<_> = diagnostics_of(&events)
+        .into_iter()
+        .filter(|text| text.contains("compression.in_place"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].starts_with("warning:") && warnings[0].contains("context overflow"));
+    assert!(warnings[0].contains("The run starts anyway"));
+    assert!(
+        diagnostics_of(&events)
+            .iter()
+            .all(|t| !t.contains("agent.max_turns")),
+        "workflow agents are not capped by the profile, so that setting is not warned about here"
+    );
+    let started = events
+        .iter()
+        .position(|e| e["event"] == "run_started")
+        .expect("the run started");
+    let warned = events
+        .iter()
+        .position(|e| {
+            e["event"] == "diagnostic"
+                && e["text"].as_str().unwrap().contains("compression.in_place")
+        })
+        .expect("the warning was printed");
+    assert!(warned < started, "the warning comes before the run starts");
+}
+
+#[test]
+fn a_profile_with_default_or_unreadable_settings_adds_no_warning() {
+    for config in [
+        Ok(json!({"compression":{"in_place":true},"agent":{"max_turns":null}})),
+        Err("gateway unreachable".to_owned()),
+    ] {
+        let h = Harness::new("return 'ok';");
+        let services = services(&h.wire, true).with_config(Arc::new(FixedConfig(config)));
+        let (exit, events) = Worker::start(Start::New(h.request()), services).finish();
+        assert_eq!(exit.code, 0, "{:?}", exit.problems);
+        assert!(
+            diagnostics_of(&events)
+                .iter()
+                .all(|t| !t.contains("compression.in_place")),
+            "{:?}",
+            diagnostics_of(&events)
+        );
+    }
 }
 
 #[test]

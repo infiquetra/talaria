@@ -5,6 +5,8 @@ use std::{collections::BTreeSet, time::Duration};
 use serde::Serialize;
 use serde_json::json;
 
+use crate::config_check::{ConfigFacts, Finding};
+
 pub const RESTART_DEADLINE: Duration = Duration::from_secs(90);
 pub const PROBE_INTERVAL: Duration = Duration::from_secs(1);
 pub const FOOTER: &str = "For provider keys, tools and dependencies, run hermes doctor.";
@@ -29,6 +31,9 @@ pub enum CheckId {
     Profiles,
     Attach,
     RuntimeHealth,
+    Compression,
+    StepCap,
+    Settings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -160,6 +165,8 @@ pub struct DoctorFacts {
     pub identity: Option<IdentityFacts>,
     pub attach: AttachFacts,
     pub status: StatusFacts,
+    /// The profile's harmful Hermes settings; `NotTried` adds no row.
+    pub config: ConfigFacts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -890,6 +897,35 @@ mod scrub_tests {
     }
 }
 
+/// Rows for the harmful Hermes settings: one warning per finding, one "unknown" row when the
+/// configuration could not be read, and nothing when it was read and is fine or was not tried.
+fn config_checks(config: &ConfigFacts, profile: &str) -> Vec<Check> {
+    match config {
+        ConfigFacts::NotTried => Vec::new(),
+        ConfigFacts::Unknown { reason } => vec![check(
+            CheckId::Settings,
+            Severity::Info,
+            format!("unknown: Talaria could not read this profile's Hermes settings ({reason})"),
+            None,
+        )],
+        ConfigFacts::Read(findings) => findings
+            .iter()
+            .map(|finding| {
+                let fix = finding.fix(profile.trim());
+                check(
+                    match finding {
+                        Finding::CompressionNotInPlace => CheckId::Compression,
+                        Finding::StepCap { .. } => CheckId::StepCap,
+                    },
+                    Severity::Warn,
+                    finding.summary(),
+                    Some(fix.as_str()),
+                )
+            })
+            .collect(),
+    }
+}
+
 fn scrub_check(mut check: Check) -> Check {
     check.summary = output_text(&check.summary);
     check.details = check.details.iter().map(|s| output_text(s)).collect();
@@ -898,7 +934,7 @@ fn scrub_check(mut check: Check) -> Check {
 }
 
 pub fn diagnose(facts: &DoctorFacts) -> Report {
-    let checks = vec![
+    let mut checks = vec![
         check(
             CheckId::Talaria,
             Severity::Ok,
@@ -917,6 +953,7 @@ pub fn diagnose(facts: &DoctorFacts) -> Report {
         attach_check(facts),
         runtime_check(&facts.status),
     ];
+    checks.extend(config_checks(&facts.config, &facts.profile));
     Report {
         profile: output_text(facts.profile.trim()),
         checks: checks.into_iter().map(scrub_check).collect(),
@@ -932,6 +969,9 @@ pub fn check_name(id: CheckId) -> &'static str {
         CheckId::Profiles => "Profiles",
         CheckId::Attach => "Attach",
         CheckId::RuntimeHealth => "Runtime health",
+        CheckId::Compression => "Compression",
+        CheckId::StepCap => "Step cap",
+        CheckId::Settings => "Settings",
     }
 }
 pub fn severity_text(severity: Severity) -> &'static str {
@@ -1398,6 +1438,14 @@ impl DoctorView {
         }
     }
 }
+impl DoctorView {
+    /// The index of the last row of the report, or 0 before a report exists.
+    pub fn last_row(&self) -> usize {
+        self.report
+            .as_ref()
+            .map_or(0, |report| report.checks.len().saturating_sub(1))
+    }
+}
 impl Default for DoctorView {
     fn default() -> Self {
         Self::new()
@@ -1464,7 +1512,9 @@ pub fn doctor_view_update(
         RestartState::Idle | RestartState::Done(_) => {
             match key {
                 DoctorKey::Up => view.selected = view.selected.saturating_sub(1),
-                DoctorKey::Down => view.selected = view.selected.saturating_add(1).min(6),
+                DoctorKey::Down => {
+                    view.selected = view.selected.saturating_add(1).min(view.last_row().max(6));
+                }
                 DoctorKey::Toggle => {
                     if let Some(row) = view
                         .report
