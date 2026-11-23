@@ -72,8 +72,9 @@ enum Phase {
 }
 
 /// Memory of the last presses of the interrupt key. Pure: the caller gives the time and wakes at
-/// [`InterruptConfirm::next_deadline`] to call [`InterruptConfirm::tick`]. A caller that gets a
-/// press before the wake ticks first, so a settled interrupt is never lost.
+/// [`InterruptConfirm::next_deadline`] to call [`InterruptConfirm::tick`]. A caller that has
+/// presses waiting to be read hands them over before it ticks, so a held key whose presses were
+/// read late is still seen as held.
 #[derive(Debug, Default)]
 pub struct InterruptConfirm {
     phase: Phase,
@@ -87,9 +88,10 @@ impl InterruptConfirm {
             Phase::Armed(at) if now_ms.saturating_sub(at) < INTERRUPT_CONFIRM_WINDOW_MS => {
                 (Phase::Pending(now_ms), InterruptPress::Pending)
             }
-            Phase::Pending(at) if now_ms.saturating_sub(at) < INTERRUPT_SETTLE_MS => {
-                (Phase::Held(now_ms), InterruptPress::Held)
-            }
+            // Any press while one is pending cancels it, even one handled after the settle time:
+            // a busy application reads queued presses late, and a late press is still a press
+            // that came before the interrupt was sent.
+            Phase::Pending(_) => (Phase::Held(now_ms), InterruptPress::Held),
             Phase::Held(at) if now_ms.saturating_sub(at) < INTERRUPT_SETTLE_MS => {
                 (Phase::Held(now_ms), InterruptPress::Ignored)
             }

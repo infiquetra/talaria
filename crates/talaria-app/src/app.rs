@@ -1025,6 +1025,8 @@ pub struct AppState {
     double_esc: DoubleEsc,
     /// The first press of the interrupt key while a turn runs waits here for a second one.
     interrupt_confirm: InterruptConfirm,
+    /// Set by the loop around a tick while input is waiting to be read.
+    keys_waiting: bool,
     /// Retry submissions still waiting for their outcome, keyed by submission id.
     retry: BTreeMap<String, (RowKey, String)>,
     /// Failed retries waiting to return to their original session's composer.
@@ -1338,6 +1340,7 @@ impl AppState {
             rewind_owner: None,
             double_esc: DoubleEsc::default(),
             interrupt_confirm: InterruptConfirm::default(),
+            keys_waiting: false,
             retry: BTreeMap::new(),
             retry_returns: BTreeMap::new(),
             context: ContextTracker::new(),
@@ -1427,6 +1430,12 @@ impl AppState {
     /// The view the screen draws from.
     #[inline(never)]
     #[must_use]
+    /// Tell the application that input is waiting to be read, so a tick does not settle the
+    /// interrupt key before that input is seen. The loop sets this around each tick.
+    pub fn set_keys_waiting(&mut self, waiting: bool) {
+        self.keys_waiting = waiting;
+    }
+
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {
@@ -7397,8 +7406,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             // The voice cutoff and an interrupt already in flight take the key as they always did.
             let voice_cutoff =
                 state.uses_client_voice() && state.client_voice.active() && state.opened.is_some();
-            // A second press whose settle time has passed is interrupted before this press counts.
-            let mut effects = settled_interrupt(state);
+            let mut effects = Vec::new();
             if turn_running(state) && !state.interrupting && !voice_cutoff {
                 // Only the settle tick interrupts: a second press waits to see whether the key
                 // is held.
@@ -7683,6 +7691,11 @@ fn paste(state: &mut AppState, text: String, draft: String, caret: usize) -> Vec
 /// turn ends or the open session changes, so a press whose turn or session is gone is dropped
 /// here and nothing else is interrupted.
 fn settled_interrupt(state: &mut AppState) -> Vec<AppEffect> {
+    // Keys that are waiting to be read decide first: one of them may be the press that shows
+    // the key is held. The timer keeps its deadline, so the loop comes straight back.
+    if state.keys_waiting {
+        return Vec::new();
+    }
     if state.interrupt_confirm.tick(state.now_ms) && turn_running(state) && !state.interrupting {
         user_action(state, UserAction::Interrupt)
     } else {
@@ -17024,10 +17037,12 @@ async fn run_inner<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
+                state.keys_waiting = !inputs.is_empty();
                 if voice_due.is_some_and(|due| due <= now) || interrupt_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || notice_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || queue_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
                     redraw |= apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
+                state.keys_waiting = false;
                 if let Some((text, caret)) = screen.draft_snapshot()
                     && (text != state.draft || caret != state.caret) {
                         let _ = apply(&mut state, AppMessage::User(UserAction::DraftEdited {

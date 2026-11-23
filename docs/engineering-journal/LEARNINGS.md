@@ -2,6 +2,20 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — A held key reaches a terminal program as ordinary presses
+
+**Evidence.** Talaria asks the terminal only for the basic keyboard mode
+(`crates/talaria-tui/src/terminal.rs`), so auto-repeat events are not marked as repeats. The first
+two-press rule for the interrupt key dropped events marked as repeats, and its test built such an
+event by hand; a real terminal never sent one, so holding Esc interrupted the turn. A reviewer
+found it by reading which keyboard mode is switched on.
+
+**Mechanism.** The guard and its test agreed with each other and not with the terminal.
+
+**Generalizable rule.** When a rule depends on the kind of a key event, check that the terminal
+mode in use can produce that kind before relying on it, and tell a held key from separate taps by
+timing when it cannot.
+
 ## 2026-11-23 — A rule for one key action is routed by the resolved action, not by the outcome
 
 **Evidence.** The composer returned the same outcome for the interrupt key and for Ctrl+C, so a

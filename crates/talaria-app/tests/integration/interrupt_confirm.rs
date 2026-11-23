@@ -92,24 +92,38 @@ fn second_press_inside_the_window_interrupts_once_when_it_settles() {
 }
 
 #[test]
-fn a_late_tick_with_the_key_press_first_still_interrupts_once() {
+fn a_press_read_before_a_late_tick_counts_as_a_held_key() {
     let mut state = running_state();
     at(&mut state, 1_000);
     let _ = press(&mut state);
     at(&mut state, 1_300);
     let _ = press(&mut state);
-    // The settle time passed with no tick; the next key press settles it first.
-    let _ = update(
-        &mut state,
-        AppMessage::Tick {
-            now_ms: 1_300 + INTERRUPT_SETTLE_MS - 1,
-        },
-    );
+    // The application was busy: the settle time passed with no tick, and the next press of a
+    // held key is read only now. It still came before any interrupt was sent, so it cancels.
     state.now_ms = 1_300 + INTERRUPT_SETTLE_MS + 5;
+    assert_eq!(interrupts(&press(&mut state)), 0);
     assert_eq!(
-        interrupts(&press(&mut state)),
-        1,
-        "the settled press interrupts"
+        interrupts(&at(&mut state, 1_300 + 3 * INTERRUPT_SETTLE_MS)),
+        0,
+        "the cancelled press never interrupts"
+    );
+}
+
+#[test]
+fn a_tick_does_not_settle_the_press_while_keys_wait_to_be_read() {
+    let mut state = running_state();
+    at(&mut state, 1_000);
+    let _ = press(&mut state);
+    at(&mut state, 1_300);
+    let _ = press(&mut state);
+    // The settle time is over, but a key is waiting: the tick leaves the press pending.
+    state.set_keys_waiting(true);
+    assert_eq!(interrupts(&at(&mut state, 1_300 + INTERRUPT_SETTLE_MS)), 0);
+    // The waiting key was not the interrupt key after all: the next tick interrupts once.
+    state.set_keys_waiting(false);
+    assert_eq!(
+        interrupts(&at(&mut state, 1_300 + INTERRUPT_SETTLE_MS + 1)),
+        1
     );
 }
 

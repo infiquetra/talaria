@@ -2293,6 +2293,20 @@ fn interrupt_confirm_second_press_inside_the_window_is_pending_until_it_settles(
 }
 
 #[test]
+fn interrupt_confirm_a_press_read_late_while_one_is_pending_still_cancels_it() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    assert_eq!(confirm.press(400), InterruptPress::Pending);
+    // No tick ran at the settle time; the next press of a held key is read late.
+    assert_eq!(
+        confirm.press(400 + INTERRUPT_SETTLE_MS + 50),
+        InterruptPress::Held
+    );
+    assert!(!confirm.tick(400 + 3 * INTERRUPT_SETTLE_MS));
+    assert_eq!(confirm.next_deadline(), None);
+}
+
+#[test]
 fn interrupt_confirm_second_press_outside_the_window_arms_again() {
     let mut confirm = InterruptConfirm::default();
     assert_eq!(confirm.press(0), InterruptPress::Armed);

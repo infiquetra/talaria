@@ -79,7 +79,8 @@ with the usual caveat that a `0.x` line may break anything between releases.
   what it is; a folder that only has the name keeps the worktree, with the reason.
 - The notice about locking the installed skill also shows the command to type in a session.
 - The interrupt key (Esc) must be pressed twice within 2 seconds to interrupt a running turn; the
-  working row says so. Ctrl+C still interrupts at once.
+  working row says so. Holding the key does not count as a second press. Ctrl+C still interrupts
+  at once.
 - The background process line for a workflow run is not drawn when the Workflow line already shows
   that run; otherwise it is named after the workflow command and shows a readable event instead of
   raw JSON.

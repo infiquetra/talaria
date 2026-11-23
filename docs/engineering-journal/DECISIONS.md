@@ -2,6 +2,27 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-23 — The second press of the interrupt key waits 110 ms
+
+**Decision.** A second press of the interrupt key inside the 2 second window does not interrupt at
+once. It waits a settle time of 110 ms. With no further press of the key in that time, the turn is
+interrupted by a timer. A further press, read at any time before the interrupt is sent, means the
+key is held: the pending interrupt is cancelled and presses are ignored until they stop for the
+settle time. The timer does not settle while input is still waiting to be read. Ctrl+C interrupts
+at once.
+
+**Rationale.** A terminal sends a held key as a stream of ordinary presses, so holding Esc for
+half a second armed on the first and confirmed on the second. A stream from auto-repeat is fast
+and regular; two deliberate taps are not followed by a third within a tenth of a second.
+
+**Rejected.** Asking the terminal to mark repeats (not every terminal can, and it changes every
+key event the application reads). A longer settle time (it delays every interrupt). Treating a
+late press as a third tap (a busy application reads queued presses late, and that would let a held
+key through).
+
+**Revisit when.** People with a slow key repeat rate, more than 110 ms between repeats, report
+that holding the key interrupts; or the delay before an interrupt is noticed.
+
 ## 2026-11-23 — The interrupt key must be pressed twice
 
 **Decision.** While a turn runs, the first press of the key bound to `interrupt` (Esc by default)
