@@ -5,7 +5,7 @@ Start with a pure literal header: `export const meta = {name:'name', description
 | Host | Meaning |
 |---|---|
 | `agent(prompt, opts?)` | Promise for final string or JSON; failed or skipped calls yield null. |
-| `cutShort()` | Array of `{label, steps, limit}` for each agent so far that Hermes stopped at its step cap, in the order their results arrived; empty when none. See below. |
+| `cutShort()` | Array of `{label, steps, limit}` (plus `savedBranch` when uncommitted work was saved) for each agent so far that Hermes stopped at its step cap, in the order their results arrived; empty when none. See below. |
 | `parallel(thunks)` | Invoke function thunks in order; return their results in input order, with null for failures. |
 | `pipeline(items, ...stages)` | Each item moves through function stages independently. A stage receives previous result, original item, index. |
 | `phase(title)` | Change the current instance's phase and narrate it. |
@@ -55,7 +55,7 @@ Talaria checks every reply against `opts.schema` with a full JSON Schema validat
 
 ## Reading a failed agent
 
-A failure reason that says the agent was interrupted or stopped (for example "stopped in Hermes (outcome 'interrupted')") means a person or Talaria stopped it, for instance a keypress in the workflow view. It is not a provider limit or a timeout. Report it, ask the developer what happened, and do not reroute models because of it.
+A stop that ends an agent's turn gives a reason starting "agent stopped: ", which names who asked for the stop when Talaria knows (for example "agent stopped: it was stopped with the stop-agent key in the Talaria workflow view; Hermes ended the turn as 'interrupted'"). When Talaria did not send the stop, it may have been a person or Hermes itself. It is not a provider limit or a timeout. Such a call no longer fails: it parks with cause `stopped` and waits for the developer's answer, unless the runner sent the stop because the run was being stopped (or so that the workflow view could restart the agent); only then does the agent fail with that reason. Report it, ask the developer what happened, and do not reroute models because of it.
 
 ## Worktree and new project rules
 

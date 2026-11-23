@@ -103,7 +103,7 @@ fn statements_s1_to_s12_present() {
         "session_id=",
         "--detach",
         "\"event\":\"run_finished\"",
-        "workflow resume --json",
+        "workflow result --json",
         "workflow resolve",
         "never choose",
         "workflow stop",
@@ -322,7 +322,7 @@ fn the_lead_plans_and_never_builds_the_deliverable_itself() {
         "Never write the deliverable in this session",
         "first phase",
         "after a background completion",
-        "workflow resume --json <run-id>",
+        "workflow result --json <run-id>",
     ] {
         assert!(s.contains(marker), "missing {marker}");
     }
@@ -363,7 +363,99 @@ fn waiting_follows_the_hermes_wait_cap_and_never_loops() {
     }
     let s = file(&all, "SKILL.md");
     assert!(s.contains("timeout=180"));
-    assert!(s.contains("the completion notice resumes you"));
+    assert!(s.contains("Wait at most once"));
+    assert!(s.contains("do not wait again, the completion notice resumes you"));
+}
+#[test]
+fn reading_a_result_never_spends() {
+    // `resume` on a run with a pending restart request opens a paid execution, so every place
+    // that reads a finished run's result names `workflow result`, and resume is kept for
+    // continuing a run.
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    assert!(
+        !s.contains("workflow resume --json"),
+        "SKILL.md reads a result with resume"
+    );
+    for marker in [
+        "read its result with `workflow result`",
+        "which never spends",
+        "Read a finished run's result with:",
+        "Resume only to continue an interrupted run or after restart with the developer's yes",
+        "with a restart request pending, resume runs agents and costs money",
+    ] {
+        assert!(s.contains(marker), "missing {marker}");
+    }
+    let commands = file(&all, "references/commands.md");
+    for marker in [
+        "workflow result --json <run-id>\n",
+        "never opens an execution, never spends, and ignores pending restart requests",
+        "On a run with a pending restart request it runs agents again and costs money",
+        "never with resume",
+    ] {
+        assert!(commands.contains(marker), "missing {marker} in commands.md");
+    }
+}
+#[test]
+fn the_skill_describes_the_json_parked_event() {
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    for marker in [
+        "{\"event\":\"parked\",...}",
+        "`answer` is the `workflow resolve` command",
+        "replace `<choice>` with that choice",
+        "never choose one yourself",
+    ] {
+        assert!(s.contains(marker), "missing {marker}");
+    }
+    assert!(
+        !s.contains("needs operator"),
+        "the skill runs --json, which prints no such line"
+    );
+    let commands = file(&all, "references/commands.md");
+    for marker in [
+        "cause (unknown, lost, identity_conflict or stopped)",
+        "waiting_for \"operator\", choices, answer",
+        "use_reply",
+        "ending in a literal `<choice>`",
+        "instead of its bare `talaria`",
+        "--resolution <choice>",
+    ] {
+        assert!(commands.contains(marker), "missing {marker} in commands.md");
+    }
+}
+#[test]
+fn reporting_keeps_worker_commits_and_separates_attention_from_facts() {
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    for marker in [
+        "Workers commit on their own branches; report their commits for integration.",
+        "Report the closing line's `Attention:` items as problems",
+        "phases not started as facts",
+        "whether the script skips it on purpose",
+        "stopped by a person, Talaria or Hermes, not by a provider limit",
+    ] {
+        assert!(s.contains(marker), "missing {marker}");
+    }
+    assert!(!s.contains("by a person or by Talaria"));
+    let reference = file(&all, "references/script-api.md");
+    assert!(reference.contains("\"agent stopped: "));
+    assert!(reference.contains("parks with cause `stopped`"));
+    assert!(!reference.contains("stopped in Hermes (outcome"));
+}
+#[test]
+fn the_skill_never_claims_to_be_locked_or_names_private_machines() {
+    for (name, text) in files() {
+        for forbidden in ["is locked", "owner's machines", "beside the workflows"] {
+            assert!(!text.contains(forbidden), "{name}: {forbidden}");
+        }
+    }
+    let all = files();
+    let commands = file(&all, "references/commands.md");
+    assert!(commands.contains("Do not edit this skill; record lessons with this command instead."));
+    assert!(commands.contains("the developer may edit or prune it by hand"));
+    let source = include_str!("../../../talaria-cli/src/workflow_lessons.rs");
+    assert!(!source.contains("locked") && !source.contains("owner's machines"));
 }
 #[test]
 fn the_new_project_and_worker_folder_rules_are_stated() {
