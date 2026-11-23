@@ -442,7 +442,14 @@ async fn a_run_stop_noted_before_a_crash_is_still_the_runs_stop_in_the_next_exec
         harness.gateway.release("hold");
         // The next execution is not stopping the run, yet the stop stays the runner's.
         let run = harness.run(&script).await;
-        assert_eq!(result(run.outcome), json!(null));
+        match (source, &run.outcome) {
+            // The script sees the budget's error, as in the execution that sent the stop.
+            (StopSource::Budget, RunOutcome::Failed { error }) => {
+                assert_eq!(error.name, "BudgetExhaustedError");
+            }
+            (StopSource::Budget, other) => panic!("expected the budget's error: {other:?}"),
+            _ => assert_eq!(result(run.outcome.clone()), json!(null)),
+        }
         assert!(
             !run.notices
                 .iter()
@@ -451,6 +458,21 @@ async fn a_run_stop_noted_before_a_crash_is_still_the_runs_stop_in_the_next_exec
         );
         assert_eq!(settled_source(&harness).as_deref(), Some(stopped_by));
         assert!(harness.dir.agent_stop(&key_of(&harness)).is_none());
+        // A budget stop ends the call stopped, as in the execution that sent it, so the next
+        // resume with a larger budget runs it again; the run's stop fails it.
+        let finished = harness
+            .records()
+            .iter()
+            .rev()
+            .find_map(|line| match &line.record {
+                Record::CallFinished { outcome, .. } => Some(outcome.kind()),
+                _ => None,
+            });
+        let expected = match source {
+            StopSource::Budget => "stopped",
+            _ => "failed",
+        };
+        assert_eq!(finished, Some(expected), "{stopped_by}");
     }
 }
 

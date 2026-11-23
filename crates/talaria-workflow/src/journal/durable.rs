@@ -993,6 +993,25 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                             )
                             .await;
                     }
+                    // A turn the budget stopped ends stopped, whichever execution reads its
+                    // settlement, so the next resume with a larger budget runs it again.
+                    if let NextStep::Finish(AgentOutcome::Failed { reason }) = &next
+                        && let Some(last) = turns.last()
+                        && stopped_outcome(&last.outcome)
+                        && StopSource::from_meta(&last.result_meta) == Some(StopSource::Budget)
+                    {
+                        drop(permit.take());
+                        return self
+                            .finish_call(
+                                &key,
+                                attempt,
+                                turns.len() as u32,
+                                AgentOutcome::Stopped {
+                                    reason: reason.clone(),
+                                },
+                            )
+                            .await;
+                    }
                     // A stop that was not part of stopping the run, of its budget or of a
                     // restart parks the call for the operator instead of failing it; the
                     // parked call waits until answered.
