@@ -8,7 +8,9 @@ use std::{
 };
 
 mod manage;
+mod save;
 pub use manage::{CleanupAction, CleanupEntry, IgnoredEntry, IgnoredKind, WorktreeReport};
+pub use save::{SAVED_SUFFIX, save_uncommitted};
 
 /// One provider owns a run's provenance and serialises its local Git operations.
 pub struct GitWorktrees {
@@ -37,6 +39,11 @@ pub struct WorktreeInfo {
 /// name programs (`core.fsmonitor`), so the options that could run one are switched off and no
 /// optional locks are taken, as the leftover-edits check in the runner does.
 fn run(repo: &Path, args: &[&OsStr]) -> Result<Output, String> {
+    run_with(repo, args, &[])
+}
+
+/// `run` with extra environment variables for this one command.
+fn run_with(repo: &Path, args: &[&OsStr], env: &[(&str, &OsStr)]) -> Result<Output, String> {
     Command::new("git")
         .args([
             "-c",
@@ -48,6 +55,7 @@ fn run(repo: &Path, args: &[&OsStr]) -> Result<Output, String> {
         .arg(repo)
         .args(args)
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .envs(env.iter().copied())
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {

@@ -76,9 +76,31 @@ pub struct NewManifest {
     pub profile: String,
     pub on_unknown: OnUnknown,
     pub talaria_version: String,
+    /// Which source the Talaria build came from.
+    #[serde(flatten)]
+    pub build: BuildStamp,
     pub hermes: Value,
     pub roster: Value,
     pub approval_policy: Value,
+}
+/// The commit a Talaria build was made from and whether its tree had uncommitted changes to
+/// tracked files. Both read `unknown` for a build made without git and in manifests written
+/// before they were recorded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BuildStamp {
+    /// Short commit hash, or `unknown`.
+    pub talaria_commit: String,
+    /// `clean`, `modified` or `unknown`.
+    pub talaria_tree: String,
+}
+impl Default for BuildStamp {
+    fn default() -> Self {
+        Self {
+            talaria_commit: "unknown".into(),
+            talaria_tree: "unknown".into(),
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowManifest {
@@ -97,6 +119,8 @@ pub struct Manifest {
     pub profile: String,
     pub on_unknown: OnUnknown,
     pub talaria_version: String,
+    #[serde(flatten)]
+    pub build: BuildStamp,
     pub hermes: Value,
     pub roster: Value,
     pub approval_policy: Value,
@@ -145,6 +169,7 @@ impl RunDir {
             profile: new.profile,
             on_unknown: new.on_unknown,
             talaria_version: new.talaria_version,
+            build: new.build,
             hermes: new.hermes,
             roster: new.roster,
             approval_policy: new.approval_policy,
@@ -361,4 +386,38 @@ pub(crate) fn atomic_replace(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         sync_dir(folder)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn old_manifest() -> Value {
+        serde_json::json!({"v":1,"run_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","created_at_ms":1,
+            "workflow":{"name":"fixture","script_sha256":"b".repeat(64)},"args":null,
+            "started_at_ms":1,"seed":7,"profile":"fixture","on_unknown":"wait",
+            "talaria_version":"0.9.0","hermes":{},"roster":{},
+            "approval_policy":{"mode":"finite-only","source":"an older free-text note"}})
+    }
+
+    #[test]
+    fn a_manifest_written_before_the_build_was_recorded_still_reads() {
+        let manifest: Manifest = serde_json::from_value(old_manifest()).unwrap();
+        assert_eq!(manifest.build, BuildStamp::default());
+        assert_eq!(manifest.build.talaria_commit, "unknown");
+        assert_eq!(manifest.approval_policy["mode"], "finite-only");
+    }
+
+    #[test]
+    fn the_build_is_written_beside_the_version() {
+        let mut value = old_manifest();
+        value["talaria_commit"] = "0123456789ab".into();
+        value["talaria_tree"] = "modified".into();
+        let manifest: Manifest = serde_json::from_value(value).unwrap();
+        let written = serde_json::to_value(&manifest).unwrap();
+        assert_eq!(written["talaria_version"], "0.9.0");
+        assert_eq!(written["talaria_commit"], "0123456789ab");
+        assert_eq!(written["talaria_tree"], "modified");
+        assert!(written.get("build").is_none(), "{written}");
+    }
 }

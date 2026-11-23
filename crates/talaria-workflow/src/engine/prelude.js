@@ -236,6 +236,8 @@
       else {
         if (value.cut_short) {
           const mark = {steps: value.cut_short.steps ?? null, limit: value.cut_short.limit ?? null};
+          // Named only when the agent's uncommitted worktree changes were saved to a branch.
+          if (typeof value.cut_short.saved_branch === "string") mark.savedBranch = value.cut_short.saved_branch;
           stoppedAtCap.push({label: entry.label, ...mark});
           // Hidden from keys, spread and JSON, so a script that ignores the mark sees the value as before.
           const v = value.value;

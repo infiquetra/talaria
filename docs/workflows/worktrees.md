@@ -59,6 +59,49 @@ It does not delete a live folder or branch. If both folder and branch are missin
 provenance remains, the call is reported lost; no fresh tree conceals the data loss.
 Moving a run's data folder is unsupported because stored launches use absolute paths.
 
+## Saving work an agent left uncommitted
+
+When a call that ran with `isolation: 'worktree'` ends badly (Hermes cut it short at its step
+cap, it failed, or it was stopped) and its worktree holds uncommitted changes, the runner saves
+them to a new branch before it records how the call ended. Tracked changes, staged or not, and
+new files are saved; files the repository ignores are not. The worktree is not disturbed: its
+branch, its index and its files stay exactly as they were, and nothing is stashed. The snapshot
+is built in a temporary index file under the worktree's own Git folder (`GIT_INDEX_FILE`, then
+`git add --all`, `git write-tree`, `git commit-tree` with the worktree's `HEAD` as parent and
+`git update-ref` that refuses to overwrite an existing branch), and the temporary index is
+deleted afterwards.
+
+The branch is the worktree's own branch with `-saved` added:
+`talaria/wf/<run-id>/<full-digest>-0-saved`. If that name already holds exactly the same work on
+the same `HEAD`, it is named again and nothing new is made; if it holds other work, the next
+free name (`-saved-2`, `-saved-3` and so on) is used. The commit takes the repository's
+configured identity. When none is configured, it is written as `Talaria workflow
+<talaria-workflow@localhost.invalid>` through the environment of that one command; the
+repository's configuration is never changed. No hook runs (`core.hooksPath` points nowhere for
+these commands) and no signing program starts.
+
+The branch name is carried everywhere the call's end is reported: in the journal's
+`call_finished` record (as `saved_branch` in the `cut_short` mark of a call cut short, or at the
+end of the reason of a failed or stopped call, as "(uncommitted work saved to branch ...)"), in
+the mark the script reads (`savedBranch` in the hidden `cutShort` property and in the entries of
+`cutShort()`), in the run's `failed_agents` and `cut_short_agents` entries (`saved_branch`), and
+in a journal note that is also printed live. A call that completed in full is not saved.
+
+When the run ends, every agent worktree that still holds uncommitted changes is listed in
+`leftover_edits`. For an agent that ended badly, including one that never finished because the
+run was aborted, the save is made then if it was not made already, and the entry's
+`saved_branch` names the branch. The worktree itself keeps its changes either way.
+
+Saving never fails the call or the run. When it cannot be done (the folder is gone, Git
+refuses, the folder is not one of the run's worktrees), the journal and the run's output say
+why, and the run carries on. Only a folder inside the run's own `worktrees` folder is saved.
+
+An agent without worktree isolation, including every agent of a run whose folder is not a Git
+repository, edits the run's folder directly. Its edits are already where the run's caller looks,
+so nothing is saved and nothing is missing. When such an agent ends badly, `leftover_edits`
+lists that folder once with `"in_place": true` and the agents' labels, and the text output says
+so in a separate list; no Git command runs in that folder.
+
 ## Listing, diffing and explicit removal
 
 `list()` returns sidecar-backed `WorktreeInfo` rows sorted by full call name, including
@@ -130,8 +173,23 @@ manifest are deleted with it.
 `--json` adds `ignored_unverified` and an `ignored_details` list whose entries carry a
 `path`, a `kind` (`build_output`, `unverified_build_output` or `other`) and, for an
 unverified entry, the `reason`. Every worktree
-with uncommitted changes or unmerged commits is kept and listed with the reason, and so is a
-folder that no longer sits on its recorded branch. With `--force` it removes everything for
+with uncommitted changes or unmerged commits is kept and listed with the reason.
+
+An agent may switch its folder to a branch of its own (`git switch -c`) or to no branch. Such
+a folder is judged by what it has checked out: when it is clean by the same check and its
+checked-out commit is contained in the source checkout's `HEAD`, the folder is removed. Each
+branch is then judged on its own. The run's recorded branch is deleted with `git branch -d`
+only when `HEAD` contains it; otherwise it is kept with its sidecar, so it is still listed, and
+the output says how many commits it holds. The agent's branch is deleted the same way, and only
+when its reflog shows it was created no earlier than the run's own branch; a branch that existed
+before the run is never deleted. Nothing unmerged is ever force-deleted without `--force`.
+`list --json` shows the agent's branch as `folder_branch`, and `remove --json` names the branches
+in `deleted_branches` and `kept_branches`. The closing sentence of `remove` names only the
+reasons the kept worktrees actually have (uncommitted changes, commits the source checkout
+lacks, ignored files that are not verified build output, a folder that could not be examined,
+or a folder or branch Talaria does not own), and mentions `--force` only when it would help.
+
+With `--force` it removes everything for
 that run and prints what was discarded: the changed-file count, the ignored entries, the
 unmerged commit count, and always the branch tip (and the folder's own commit when it is
 not the branch tip), which `git branch <name> <tip>` can restore until Git collects it. If

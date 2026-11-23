@@ -259,6 +259,7 @@ fn the_run_list_reads_token_counts_in_thousands_and_millions() {
         money_spent_usd: None,
         run_dir: "/runs/example".into(),
         warning: None,
+        attention: Default::default(),
     };
     for (tokens, cache, unknown, shown) in [
         (Some(5_812_345), Some(0), 0, "5.8M tokens + 0 cache reads"),
@@ -300,6 +301,7 @@ fn the_run_list_words_a_status_with_underscores_as_plain_words() {
         money_spent_usd: None,
         run_dir: "/runs/example".into(),
         warning: None,
+        attention: Default::default(),
     };
     let text = talaria_tui::workflow_view::picker_row(&row);
     assert!(
@@ -388,6 +390,7 @@ fn mixed_lines(run: RunOutcomeKind) -> Vec<RecordLine> {
             completed(Some(talaria_workflow::engine::CutShort {
                 steps: Some(60),
                 limit: Some(60),
+                saved_branch: None,
             })),
         ),
         Record::RunFinished {

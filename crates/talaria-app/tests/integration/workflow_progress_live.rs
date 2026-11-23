@@ -612,6 +612,7 @@ async fn steer_stop_and_open_against_gateway() {
             profile: profile_name(),
             on_unknown: OnUnknown::Wait,
             talaria_version: "dev".into(),
+            build: Default::default(),
             hermes: json!({}),
             roster: json!({}),
             approval_policy: json!({}),

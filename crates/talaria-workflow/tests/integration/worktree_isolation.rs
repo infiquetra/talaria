@@ -570,6 +570,7 @@ async fn live_worktree_agent_edits_only_the_worktree() {
             profile: hermes_contract::pinned::live_profile(),
             on_unknown: OnUnknown::Wait,
             talaria_version: "test".into(),
+            build: Default::default(),
             hermes: json!({}),
             roster: json!({}),
             approval_policy: json!({}),

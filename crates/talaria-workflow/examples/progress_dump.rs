@@ -73,6 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 profile: "fixture".into(),
                 on_unknown: OnUnknown::Wait,
                 talaria_version: env!("CARGO_PKG_VERSION").into(),
+                build: Default::default(),
                 hermes: json!({}),
                 roster: json!({}),
                 approval_policy: json!({"mode":"finite-only"}),

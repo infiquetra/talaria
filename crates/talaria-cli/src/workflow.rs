@@ -237,14 +237,39 @@ fn leftovers_text(untracked: &Value, leftover: &Value) -> String {
             text.push_str(&format!("  {}\n", safe(note.as_str().unwrap_or_default())));
         }
     }
-    if let Some(list) = leftover.as_array().filter(|list| !list.is_empty()) {
+    let list = leftover.as_array().map(Vec::as_slice).unwrap_or_default();
+    let (in_place, worktrees): (Vec<&Value>, Vec<&Value>) =
+        list.iter().partition(|folder| folder["in_place"] == true);
+    if !worktrees.is_empty() {
         text.push_str("Uncommitted changes left in agent working folders:\n");
-        for folder in list {
+        for folder in worktrees {
             let count = folder["changed_files"].as_u64().unwrap_or(0);
+            let saved = folder["saved_branch"]
+                .as_str()
+                .map(|b| format!("; a copy is saved on branch {}", safe(b)))
+                .unwrap_or_default();
             text.push_str(&format!(
-                "  {}: {count} changed file{}\n",
+                "  {}: {count} changed file{}{saved}\n",
                 safe(folder["path"].as_str().unwrap_or("unknown folder")),
                 if count == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    if !in_place.is_empty() {
+        text.push_str("Folders agents edited directly, without worktree isolation (their edits are already there; nothing was saved or lost):\n");
+        for folder in in_place {
+            let agents: Vec<String> = folder["agents"]
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_str).map(safe).collect())
+                .unwrap_or_default();
+            text.push_str(&format!(
+                "  {}: {}\n",
+                safe(folder["path"].as_str().unwrap_or("unknown folder")),
+                if agents.is_empty() {
+                    "agents".to_owned()
+                } else {
+                    agents.join(", ")
+                }
             ));
         }
     }
@@ -326,13 +351,14 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
                 })
                 .unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
         text.push_str(&format!(
-            "{}  {}  {}  agents {}/{}{}  {}  money {}  {}  {}\n",
+            "{}  {}  {}  agents {}/{}{}{}  {}  money {}  {}  {}\n",
             safe(&run.run_id),
             safe(&run.name),
             run.status.label(),
             run.agents_finished,
             run.agents_total_known,
             parked,
+            attention_marks(&run.attention),
             tokens,
             money,
             timestamp,
@@ -699,9 +725,14 @@ impl Renderer {
         }
         if self.json {
             let runs_dir = self.dir.as_deref().and_then(std::path::Path::parent);
+            let attention = self
+                .dir
+                .as_deref()
+                .map(runner::run_attention)
+                .unwrap_or_default();
             self.text(&format!(
                 "{}\n",
-                closing_line(run_id, outcome, spend, runs_dir)
+                closing_line(run_id, outcome, spend, runs_dir, &attention)
             ));
         }
     }
@@ -760,13 +791,14 @@ fn closing_line(
     outcome: &str,
     spend: &SpendView,
     runs_dir: Option<&std::path::Path>,
+    attention: &runner::RunAttention,
 ) -> String {
     let money = match spend.money_usd {
         Some(usd) => format!("${usd:.4} ({})", safe(&spend.money_source)),
         None => unknown_money_text(spend),
     };
     format!(
-        "run {} {}: {}, money {}. Full result: talaria workflow resume --json{} {}",
+        "run {} {}: {}, money {}.{} Full result: talaria workflow resume --json{} {}",
         safe(run_id),
         safe(outcome),
         tokens_text(
@@ -776,9 +808,84 @@ fn closing_line(
             |n| n.to_string()
         ),
         money,
+        attention_sentence(attention),
         custom_runs_dir_flag(runs_dir),
         safe(run_id)
     )
+}
+/// The script's own `status` word, made safe and short for one line.
+fn script_status(status: &str) -> String {
+    let status = safe(status);
+    if status.chars().count() > 40 {
+        format!("{}...", status.chars().take(40).collect::<String>())
+    } else {
+        status
+    }
+}
+/// The problems a finished run left, as one short sentence for the closing line, or nothing.
+/// The most important come last, nearest the end a reader that keeps only the tail still sees.
+fn attention_sentence(attention: &runner::RunAttention) -> String {
+    let agents = |n: u32| format!("{n} agent{}", if n == 1 { "" } else { "s" });
+    let mut parts = Vec::new();
+    if let Some(status) = &attention.script_status {
+        parts.push(format!("script's own status \"{}\"", script_status(status)));
+    }
+    if attention.phases_not_started > 0 {
+        let n = attention.phases_not_started;
+        parts.push(format!(
+            "{n} declared phase{} never started",
+            if n == 1 { "" } else { "s" }
+        ));
+    }
+    let saved = match attention.saved_branches {
+        0 => String::new(),
+        n => format!(" ({n} saved to a branch)"),
+    };
+    if attention.uncommitted_edits > 0 {
+        parts.push(format!(
+            "{} left uncommitted edits{saved}",
+            agents(attention.uncommitted_edits)
+        ));
+    } else if !saved.is_empty() {
+        parts.push(format!("uncommitted work{saved}"));
+    }
+    if attention.cut_short_agents > 0 {
+        parts.push(format!("{} cut short", agents(attention.cut_short_agents)));
+    }
+    if attention.failed_agents > 0 {
+        parts.push(format!("{} failed", agents(attention.failed_agents)));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" Attention: {}.", parts.join("; "))
+    }
+}
+/// Compact marks for a `workflow list` text row, or nothing when the run left no problems.
+fn attention_marks(attention: &runner::RunAttention) -> String {
+    let mut marks = String::new();
+    for (count, word) in [
+        (attention.failed_agents, "failed"),
+        (attention.cut_short_agents, "cut short"),
+        (attention.uncommitted_edits, "uncommitted edits"),
+        (attention.saved_branches, "saved branches"),
+        (attention.phases_not_started, "phases not started"),
+    ] {
+        if count > 0 {
+            marks.push_str(&format!("  {word} {count}"));
+        }
+    }
+    if let Some(status) = &attention.script_status {
+        marks.push_str(&format!("  script status \"{}\"", script_status(status)));
+    }
+    marks
+}
+/// The commit and tree state this binary was built from, as the build script recorded them.
+fn build_stamp() -> talaria_workflow::journal::BuildStamp {
+    talaria_workflow::journal::BuildStamp {
+        talaria_commit: env!("TALARIA_BUILD_COMMIT").into(),
+        talaria_tree: env!("TALARIA_BUILD_TREE").into(),
+    }
 }
 /// ` --runs-dir <path>` when `runs_dir` is not the default runs folder, else nothing.
 fn custom_runs_dir_flag(runs_dir: Option<&std::path::Path>) -> String {
@@ -1003,6 +1110,7 @@ async fn run_command(args: RunArgs) -> u8 {
         runs_dir,
         workflows_dir,
         talaria_version: env!("CARGO_PKG_VERSION").into(),
+        build: build_stamp(),
         json: args.json,
         record: args.record,
         settle_bound: Duration::from_secs(30),
@@ -1105,6 +1213,21 @@ mod leftover_text_tests {
     use serde_json::json;
 
     #[test]
+    fn the_build_stamp_comes_from_the_build_script() {
+        let stamp = build_stamp();
+        assert!(!stamp.talaria_commit.is_empty());
+        assert!(
+            ["clean", "modified", "unknown"].contains(&stamp.talaria_tree.as_str()),
+            "{stamp:?}"
+        );
+        // A commit is known exactly when the tree state is.
+        assert_eq!(
+            stamp.talaria_commit == "unknown",
+            stamp.talaria_tree == "unknown"
+        );
+    }
+
+    #[test]
     fn leftovers_are_plain_lines_and_absent_when_empty() {
         assert_eq!(leftovers_text(&json!([]), &Value::Null), "");
         let text = leftovers_text(
@@ -1118,5 +1241,76 @@ mod leftover_text_tests {
             text,
             "Untracked work found on agent routes:\n  agent a, session s, working folder /w: moved\nUncommitted changes left in agent working folders:\n  /w/one: 1 changed file\n  /w/two: 3 changed files\n"
         );
+    }
+
+    #[test]
+    fn the_closing_line_puts_problems_before_the_hint_and_adds_nothing_without_them() {
+        let spend = SpendView {
+            tokens: 10,
+            cache_read_tokens: 0,
+            cache_unknown_turns: 0,
+            money_usd: None,
+            money_source: "unknown".into(),
+        };
+        let quiet = closing_line("r1", "completed", &spend, None, &Default::default());
+        assert!(!quiet.contains("Attention"), "{quiet}");
+        let attention = runner::RunAttention {
+            failed_agents: 2,
+            cut_short_agents: 1,
+            uncommitted_edits: 1,
+            saved_branches: 1,
+            phases_not_started: 2,
+            script_status: Some("partial".into()),
+        };
+        let line = closing_line("r1", "completed", &spend, None, &attention);
+        let hint = line.find(" Full result: ").unwrap();
+        let tail = &line[..hint];
+        assert!(
+            tail.ends_with(
+                " Attention: script's own status \"partial\"; 2 declared phases never started; 1 agent left uncommitted edits (1 saved to a branch); 1 agent cut short; 2 agents failed."
+            ),
+            "{line}"
+        );
+        // The outcome word itself is unchanged.
+        assert!(line.starts_with("run r1 completed: "), "{line}");
+        // What a caller keeping only the last 170 characters still sees.
+        let end: String = line
+            .chars()
+            .rev()
+            .take(170)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        assert!(end.contains("2 agents failed"), "{end}");
+        let marks = attention_marks(&attention);
+        assert_eq!(
+            marks,
+            "  failed 2  cut short 1  uncommitted edits 1  saved branches 1  phases not started 2  script status \"partial\""
+        );
+        assert_eq!(attention_marks(&Default::default()), "");
+    }
+
+    #[test]
+    fn leftovers_name_the_saved_branch_and_say_plainly_when_nothing_is_missing() {
+        let text = leftovers_text(
+            &Value::Null,
+            &json!([
+                {"path": "/w/one", "changed_files": 2, "saved_branch": "talaria/wf/r/c-0-saved"},
+                {"path": "/project", "changed_files": 0, "in_place": true,
+                 "agents": ["writer", "checker"]}
+            ]),
+        );
+        assert!(
+            text.contains(
+                "  /w/one: 2 changed files; a copy is saved on branch talaria/wf/r/c-0-saved\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("their edits are already there; nothing was saved or lost):\n  /project: writer, checker\n"),
+            "{text}"
+        );
+        assert!(!text.contains("/project: 0 changed"), "{text}");
     }
 }

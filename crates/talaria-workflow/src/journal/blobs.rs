@@ -121,7 +121,7 @@ pub(crate) fn outcome(
             Ok(match cut_short {
                 Some(cut_short) => AgentOutcome::CutShort {
                     value,
-                    cut_short: *cut_short,
+                    cut_short: cut_short.clone(),
                 },
                 None => AgentOutcome::Completed(value),
             })
@@ -161,14 +161,17 @@ mod tests {
         let cut_short = CutShort {
             steps: Some(60),
             limit: Some(60),
+            saved_branch: Some("talaria/wf/run/call-0-saved".into()),
         };
         let stored = CallOutcome::from_agent(AgentOutcome::CutShort {
             value: json!("partial"),
-            cut_short,
+            cut_short: cut_short.clone(),
         });
+        // The call_finished record names the branch that holds the agent's saved work.
         assert_eq!(
             serde_json::to_value(&stored).unwrap(),
-            json!({"kind": "completed", "value": "partial", "cut_short": {"steps": 60, "limit": 60}})
+            json!({"kind": "completed", "value": "partial", "cut_short": {"steps": 60, "limit": 60,
+                "saved_branch": "talaria/wf/run/call-0-saved"}})
         );
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(

@@ -463,6 +463,7 @@ impl Harness {
             runs_dir: self.runs.clone(),
             workflows_dir: self.workflows.clone(),
             talaria_version: "test-version".into(),
+            build: Default::default(),
             json: true,
             record: None,
             settle_bound: Duration::from_millis(600),
@@ -1205,6 +1206,87 @@ fn a_worktree_with_uncommitted_edits_is_listed_when_the_run_ends() {
 }
 
 #[test]
+fn a_failed_isolated_agent_has_its_uncommitted_work_saved_to_a_branch() {
+    let h = Harness::new(
+        "return await agent('hold review overflow sweepfails', {label:'review', tier:'first', toolsets:['file'], isolation:'worktree'});",
+    );
+    let repo = h.root.join("source-repo");
+    init_repository(&repo);
+    let mut request = h.request();
+    request.cwd = repo.canonicalize().unwrap();
+    let worker = Worker::start(Start::New(request), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| h.wire.frames().iter().any(|f| f.method == "session.create"));
+    let worktree = PathBuf::from(
+        h.wire
+            .frames()
+            .iter()
+            .find(|f| f.method == "session.create")
+            .unwrap()
+            .params["cwd"]
+            .as_str()
+            .unwrap(),
+    );
+    fs::write(worktree.join("half.txt"), "half done").unwrap();
+    h.wire.release("hold review overflow sweepfails");
+    let (_exit, events) = worker.finish();
+    let outcome: Value =
+        serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
+    let note = &outcome["failed_agents"][0];
+    let branch = note["saved_branch"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{outcome}"));
+    assert!(
+        branch.starts_with("talaria/wf/") && branch.ends_with("-0-saved"),
+        "{branch}"
+    );
+    let reason = note["reason"].as_str().unwrap();
+    assert!(
+        reason.ends_with(&format!("(uncommitted work saved to branch {branch})")),
+        "{reason}"
+    );
+    // The journal's record of the call's end names the branch, and so does the leftover list.
+    let finish = records(&folder)
+        .into_iter()
+        .rfind(|r| r["t"] == "call_finished" && r["retry"].is_null())
+        .unwrap();
+    assert!(
+        finish["outcome"]["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains(branch)),
+        "{finish}"
+    );
+    assert_eq!(
+        outcome["leftover_edits"][0]["saved_branch"], branch,
+        "{outcome}"
+    );
+    assert!(events.iter().any(|e| {
+        e["event"] == "log"
+            && e["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("saved the uncommitted work of agent review"))
+    }));
+    // The branch holds the work; the worktree still has it uncommitted, on its own branch.
+    let git = |dir: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    assert_eq!(
+        git(&repo, &["show", &format!("{branch}:half.txt")]),
+        "half done"
+    );
+    assert_eq!(git(&worktree, &["status", "--porcelain"]), "?? half.txt");
+    assert!(git(&worktree, &["branch", "--show-current"]).starts_with("talaria/wf/"));
+    assert!(!git(&worktree, &["branch", "--show-current"]).ends_with("-saved"));
+}
+
+#[test]
 fn an_agent_session_is_ended_after_the_connection_comes_back() {
     let h = Harness::new(
         "await agent('first', {label:'one', tier:'first'});\nreturn await agent('second', {label:'two', tier:'first'});",
@@ -1273,6 +1355,13 @@ fn run_completes_and_journals() {
     assert_eq!(manifest["profile"], "fixture");
     assert_eq!(manifest["hermes"]["describe"]["instance_id"], "instance");
     assert_eq!(manifest["approval_policy"]["mode"], "finite-only");
+    // The policy is described in plain words, with no issue number or planning code.
+    let source = manifest["approval_policy"]["source"].as_str().unwrap();
+    assert!(source.contains("finite turns"), "{source}");
+    assert!(!source.contains('#') && !source.contains("PH5"), "{source}");
+    // The build that wrote the run sits beside its version; this request names none.
+    assert_eq!(manifest["talaria_commit"], "unknown");
+    assert_eq!(manifest["talaria_tree"], "unknown");
     assert!(
         records(&folder)
             .iter()

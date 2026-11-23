@@ -19925,6 +19925,7 @@ mod hivecode_visibility_tests {
             money_spent_usd: None,
             run_dir: "fixture-runs/run-0001".into(),
             warning: None,
+            attention: Default::default(),
         }
     }
 

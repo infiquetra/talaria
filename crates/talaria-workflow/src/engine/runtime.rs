@@ -412,6 +412,7 @@ impl<'a> State<'a> {
                 OutcomeKind::CutShort {
                     steps: cut_short.steps,
                     limit: cut_short.limit,
+                    saved_branch: cut_short.saved_branch,
                 },
                 value,
             ),
@@ -424,8 +425,12 @@ impl<'a> State<'a> {
             OutcomeKind::Stopped { reason } => {
                 json!({"id":pending.id,"error":{"name":"BudgetExhaustedError","message":reason}})
             }
-            OutcomeKind::CutShort { steps, limit } => {
-                json!({"id":pending.id,"value":value,"cut_short":{"steps":steps,"limit":limit}})
+            OutcomeKind::CutShort {
+                steps,
+                limit,
+                saved_branch,
+            } => {
+                json!({"id":pending.id,"value":value,"cut_short":{"steps":steps,"limit":limit,"saved_branch":saved_branch}})
             }
             _ => json!({"id":pending.id,"value":value}),
         };

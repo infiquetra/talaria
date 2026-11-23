@@ -147,12 +147,16 @@ impl std::fmt::Display for CallId {
 ///
 /// The counts come from Hermes's exit reason, `max_iterations_reached(60/60)`; a reason that
 /// does not carry them still marks the agent as cut short.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CutShort {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steps: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// The branch the agent's uncommitted worktree changes were saved to, when it ran with
+    /// worktree isolation and left any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_branch: Option<String>,
 }
 impl CutShort {
     /// The mark for Hermes's `turn_exit_reason`, if it names the step cap.
@@ -164,6 +168,7 @@ impl CutShort {
         Some(Self {
             steps: number(steps),
             limit: number(limit),
+            saved_branch: None,
         })
     }
     /// The plain words every view uses, such as "cut short (60 of 60 steps)".
@@ -343,6 +348,8 @@ pub enum OutcomeKind {
         steps: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        saved_branch: Option<String>,
     },
     Failed {
         reason: String,

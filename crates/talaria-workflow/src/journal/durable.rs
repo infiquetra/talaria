@@ -161,6 +161,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         if matches!(outcome, AgentOutcome::Abort { .. }) {
             return Ok(outcome);
         }
+        let outcome = self.save_work(key, outcome).await;
         let record = Record::CallFinished {
             key: key.into(),
             attempt,
@@ -194,6 +195,84 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             self.detach_session(key).await;
         }
         finished
+    }
+    /// When a call that ran in its own worktree ends badly (cut short, failed or stopped) and
+    /// leaves uncommitted changes there, save them to a new branch before the outcome is
+    /// recorded, and name the branch in the outcome. The worktree itself is not changed.
+    /// Saving never fails the call: a save that cannot be made is noted in the journal and
+    /// shown live, as a save that was made is.
+    async fn save_work(&self, key: &str, outcome: AgentOutcome) -> AgentOutcome {
+        let state = match &outcome {
+            AgentOutcome::CutShort { .. } => "was cut short at its step limit",
+            AgentOutcome::Failed { .. } => "failed",
+            AgentOutcome::Stopped { .. } => "was stopped",
+            _ => return outcome,
+        };
+        let Ok(history) = self.journal.history(key) else {
+            return outcome;
+        };
+        let Some((call_id, launch, _, label)) = history.intent() else {
+            return outcome;
+        };
+        if launch.isolation != Some(crate::engine::Isolation::Worktree) {
+            return outcome;
+        }
+        let Some(folder) = launch.cwd.clone() else {
+            return outcome;
+        };
+        let label = label.to_owned();
+        let run_id = self.journal.dir().run_id().as_str().to_owned();
+        let branch =
+            crate::worktree::saved_branch_name(&run_id, &call_id.digest, call_id.occurrence);
+        let message = format!(
+            "Save uncommitted work of workflow agent '{label}'\n\nTalaria saved this when the agent {state} in run {run_id}. The agent's worktree was left as it was."
+        );
+        let run_dir = self.journal.dir().path().to_owned();
+        let saved = tokio::task::spawn_blocking(move || {
+            crate::worktree::save_agent_worktree(
+                &run_dir,
+                std::path::Path::new(&folder),
+                &branch,
+                &message,
+            )
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("the save stopped unexpectedly: {e}")));
+        let branch = match saved {
+            Ok(Some(branch)) => branch,
+            Ok(None) => return outcome,
+            Err(error) => {
+                self.note_route(format!(
+                    "runner: could not save the uncommitted work of agent {label} to a branch: {error}"
+                ))
+                .await;
+                return outcome;
+            }
+        };
+        self.note_route(format!(
+            "runner: saved the uncommitted work of agent {label} to branch {branch}"
+        ))
+        .await;
+        // Leave room for the branch, so the length cap on recorded reasons never cuts it off.
+        let attach = |reason: String| {
+            crate::worktree::with_saved_branch(&super::cut(&reason, 3800), &branch)
+        };
+        match outcome {
+            AgentOutcome::CutShort {
+                value,
+                mut cut_short,
+            } => {
+                cut_short.saved_branch = Some(branch);
+                AgentOutcome::CutShort { value, cut_short }
+            }
+            AgentOutcome::Failed { reason } => AgentOutcome::Failed {
+                reason: attach(reason),
+            },
+            AgentOutcome::Stopped { reason } => AgentOutcome::Stopped {
+                reason: attach(reason),
+            },
+            other => other,
+        }
     }
     /// Look at the call's route and say why it is not quiet, or `None` when nothing the run
     /// does not follow is still running there. A check that could not be made counts as not

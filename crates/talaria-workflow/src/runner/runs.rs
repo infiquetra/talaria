@@ -112,6 +112,96 @@ pub struct RunSummary {
     pub money_spent_usd: Option<f64>,
     pub run_dir: String,
     pub warning: Option<String>,
+    /// What a finished run left for its reader to look at.
+    #[serde(flatten)]
+    pub attention: RunAttention,
+}
+
+/// The problems a finished run's reader should not miss, as counts. All zero (and no status)
+/// for a run that has not finished.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct RunAttention {
+    pub failed_agents: u32,
+    pub cut_short_agents: u32,
+    /// Agent worktrees that still held uncommitted changes when the run ended.
+    pub uncommitted_edits: u32,
+    /// Distinct branches Talaria saved uncommitted agent work to.
+    pub saved_branches: u32,
+    /// Phases the script's `meta.phases` declares that never started.
+    pub phases_not_started: u32,
+    /// The `status` string at the top of the script's own result object, when it has one. It
+    /// is the script's word, not Talaria's outcome.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_status: Option<String>,
+}
+impl RunAttention {
+    /// Count what the run folder's `outcome.json` and journal say. A missing or unreadable
+    /// outcome file gives no counts.
+    pub(crate) fn read(path: &Path, records: &[RecordLine], latest_script: Option<&str>) -> Self {
+        let Ok(outcome) = fs::read(path.join("outcome.json"))
+            .map_err(|e| e.to_string())
+            .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| e.to_string()))
+        else {
+            return Self::default();
+        };
+        let list = |name: &str| outcome[name].as_array().cloned().unwrap_or_default();
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        let leftovers = list("leftover_edits");
+        let mut saved = BTreeSet::new();
+        for entry in list("failed_agents")
+            .iter()
+            .chain(&list("cut_short_agents"))
+            .chain(&leftovers)
+        {
+            if let Some(branch) = entry["saved_branch"].as_str() {
+                saved.insert(branch.to_owned());
+            }
+        }
+        let declared = latest_script
+            .and_then(|sha| fs::read_to_string(path.join("scripts").join(format!("{sha}.js"))).ok())
+            .and_then(|source| crate::engine::parse_script(&source).ok())
+            .map(|parsed| parsed.meta.phases)
+            .unwrap_or_default();
+        let started: BTreeSet<&str> = records
+            .iter()
+            .filter_map(|line| match &line.record {
+                crate::journal::Record::Engine {
+                    event: Some(crate::engine::EngineEvent::Phase { title, .. }),
+                    ..
+                } => Some(title.as_str()),
+                _ => None,
+            })
+            .collect();
+        Self {
+            failed_agents: count(list("failed_agents").len()),
+            cut_short_agents: count(list("cut_short_agents").len()),
+            uncommitted_edits: count(
+                leftovers
+                    .iter()
+                    .filter(|entry| entry["in_place"] != true)
+                    .count(),
+            ),
+            saved_branches: count(saved.len()),
+            phases_not_started: count(
+                declared
+                    .iter()
+                    .filter(|phase| !started.contains(phase.title.as_str()))
+                    .count(),
+            ),
+            script_status: outcome["result"]["status"].as_str().map(str::to_owned),
+        }
+    }
+}
+
+/// The attention counts of one finished run folder, read from its outcome file and journal.
+pub fn run_attention(path: &Path) -> RunAttention {
+    let Ok((records, _)) = JournalReader::read_from(&path.join("journal.jsonl"), 0) else {
+        return RunAttention::default();
+    };
+    let latest = Fold::records(&records)
+        .ok()
+        .and_then(|fold| fold.latest_script);
+    RunAttention::read(path, &records, latest.as_deref())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -337,6 +427,7 @@ fn unreadable(path: &Path, id: &str, warning: String) -> RunSummary {
         money_spent_usd: None,
         run_dir: path.to_string_lossy().into_owned(),
         warning: Some(warning),
+        attention: RunAttention::default(),
     }
 }
 fn summarize(path: &Path, id: &str) -> RunSummary {
@@ -409,6 +500,11 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
         money_spent_usd: fold.money,
         run_dir: path.to_string_lossy().into_owned(),
         warning: None,
+        attention: if status.is_finished() {
+            RunAttention::read(path, &records, fold.latest_script.as_deref())
+        } else {
+            RunAttention::default()
+        },
     }
 }
 /// One run folder's summary, derived exactly as `workflow list` derives it.
@@ -474,4 +570,76 @@ pub fn discover_runs_since(runs_dir: &Path, since_ms: i64) -> Vec<RunSummary> {
             .then_with(|| a.run_id.cmp(&b.run_id))
     });
     runs
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::*;
+    use crate::engine::EngineEvent;
+    use crate::journal::Record;
+
+    fn phase(title: &str) -> RecordLine {
+        RecordLine {
+            v: 1,
+            seq: 1,
+            at_ms: 0,
+            record: Record::Engine {
+                event: Some(EngineEvent::Phase {
+                    title: title.into(),
+                    workflow_path: vec![],
+                }),
+                event_ref: None,
+            },
+        }
+    }
+
+    #[test]
+    fn counts_come_from_the_outcome_file_and_the_declared_phases() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        fs::create_dir(dir.join("scripts")).unwrap();
+        let source = "export const meta = {name: 'x', description: 'd', phases: [{title: 'Plan'}, {title: 'Build'}, {title: 'Check'}]};\nreturn 1;";
+        fs::write(dir.join("scripts").join("abc.js"), source).unwrap();
+        fs::write(
+            dir.join("outcome.json"),
+            serde_json::json!({
+                "outcome": "completed",
+                "failed_agents": [{"label": "a", "reason": "r", "saved_branch": "b1"}],
+                "cut_short_agents": [{"label": "c", "reason": "r", "saved_branch": "b2"}],
+                "leftover_edits": [
+                    {"path": "/w/a", "changed_files": 1, "saved_branch": "b1"},
+                    {"path": "/w/c", "changed_files": 2, "saved_branch": "b2"},
+                    {"path": "/w/d", "changed_files": 1},
+                    {"path": "/project", "changed_files": 0, "in_place": true, "agents": ["e"]}
+                ],
+                "result": {"status": "partial", "items": []}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let counts = RunAttention::read(dir, &[phase("Plan")], Some("abc"));
+        assert_eq!(
+            counts,
+            RunAttention {
+                failed_agents: 1,
+                cut_short_agents: 1,
+                uncommitted_edits: 3,
+                saved_branches: 2,
+                phases_not_started: 2,
+                script_status: Some("partial".into()),
+            }
+        );
+        // A result without a top-level status string, and no outcome file at all.
+        fs::write(
+            dir.join("outcome.json"),
+            r#"{"outcome":"completed","result":"done"}"#,
+        )
+        .unwrap();
+        assert_eq!(RunAttention::read(dir, &[], None).script_status, None);
+        fs::remove_file(dir.join("outcome.json")).unwrap();
+        assert_eq!(
+            RunAttention::read(dir, &[], Some("abc")),
+            RunAttention::default()
+        );
+    }
 }
