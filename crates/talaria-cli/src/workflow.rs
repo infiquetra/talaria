@@ -56,6 +56,8 @@ pub enum WorkflowCommand {
     Check(crate::workflow_check::CheckArgs),
     /// List or remove the git worktrees and branches that runs keep for review.
     Worktrees(crate::workflow_worktrees::WorktreesArgs),
+    /// Show the lessons earlier agents recorded about workflow runs, or record one.
+    Lessons(crate::workflow_lessons::LessonsArgs),
 }
 #[derive(Clone, Debug, Args)]
 pub struct CompileArgs {
@@ -872,6 +874,7 @@ pub async fn run(args: WorkflowArgs) -> u8 {
         WorkflowCommand::Compile(args) => compile_command::execute(args).await,
         WorkflowCommand::Check(args) => crate::workflow_check::execute(args).await,
         WorkflowCommand::Worktrees(args) => crate::workflow_worktrees::execute(args),
+        WorkflowCommand::Lessons(args) => crate::workflow_lessons::execute(args),
     }
 }
 async fn run_command(args: RunArgs) -> u8 {
