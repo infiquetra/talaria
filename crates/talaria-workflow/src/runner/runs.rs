@@ -168,10 +168,15 @@ impl RunAttention {
         let started: BTreeSet<&str> = records
             .iter()
             .filter_map(|line| match &line.record {
+                // A nested workflow's phases are its own, even under the parent's titles.
                 crate::journal::Record::Engine {
-                    event: Some(crate::engine::EngineEvent::Phase { title, .. }),
+                    event:
+                        Some(crate::engine::EngineEvent::Phase {
+                            title,
+                            workflow_path,
+                        }),
                     ..
-                } => Some(title.as_str()),
+                } if workflow_path.is_empty() => Some(title.as_str()),
                 _ => None,
             })
             .collect();
@@ -601,6 +606,36 @@ mod attention_tests {
                 event_ref: None,
             },
         }
+    }
+
+    #[test]
+    fn a_nested_workflows_phase_does_not_start_the_parents_phase_of_the_same_title() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        fs::create_dir(dir.join("scripts")).unwrap();
+        let source = "export const meta = {name: 'x', description: 'd', phases: [{title: 'Review'}, {title: 'Report'}]};\nreturn 1;";
+        fs::write(dir.join("scripts").join("abc.js"), source).unwrap();
+        fs::write(dir.join("outcome.json"), r#"{"outcome":"completed"}"#).unwrap();
+        // The parent awaited a nested workflow whose own phase is called Review, then returned
+        // before its own Review phase.
+        let nested = RecordLine {
+            v: 1,
+            seq: 1,
+            at_ms: 0,
+            record: Record::Engine {
+                event: Some(EngineEvent::Phase {
+                    title: "Review".into(),
+                    workflow_path: vec!["review-branch".into()],
+                }),
+                event_ref: None,
+            },
+        };
+        let counts = RunAttention::read(dir, &[nested], Some("abc"));
+        assert_eq!(
+            counts.phases_not_started_names,
+            ["Review".to_owned(), "Report".to_owned()]
+        );
+        assert_eq!(counts.phases_not_started, 2);
     }
 
     #[test]
