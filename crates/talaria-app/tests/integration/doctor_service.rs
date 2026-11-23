@@ -38,8 +38,16 @@ async fn gather_ready_gateway() {
         .gather("fixture")
         .await;
     let report = diagnose(&facts);
-    assert_eq!(report.checks.len(), 7);
-    assert!(report.checks.iter().all(|row| row.severity == Severity::Ok));
+    // Seven fixed rows, all ok. This mock serves no configuration route, so the settings check
+    // is unknown and adds one info row instead of a warning.
+    assert_eq!(report.checks.len(), 8);
+    assert!(
+        report.checks[..7]
+            .iter()
+            .all(|row| row.severity == Severity::Ok)
+    );
+    assert_eq!(report.checks[7].id, CheckId::Settings);
+    assert_eq!(report.checks[7].severity, Severity::Info);
     assert!(matches!(facts.status, StatusFacts::Read(_)));
     let control = server.control_requests();
     assert_eq!(control.iter().filter(|r| r.verb == "identify").count(), 1);
@@ -48,12 +56,19 @@ async fn gather_ready_gateway() {
             .iter()
             .filter(|r| r.verb == "session-ticket")
             .count(),
-        1
+        2
     );
     let tickets = server.ticket_records();
-    assert_eq!(tickets.len(), 1);
-    assert_eq!(tickets[0].purpose, "interactive");
-    assert_eq!(server.websocket_connections(), 1);
+    let mut purposes: Vec<_> = tickets.iter().map(|t| t.purpose.as_str()).collect();
+    purposes.sort_unstable();
+    assert_eq!(
+        purposes,
+        ["interactive", "native-http"],
+        "the attach and the settings read"
+    );
+    // This mock counts any request that is not the status page as a connection; the second is
+    // the settings read, which it cannot answer.
+    assert_eq!(server.websocket_connections(), 2);
     let http = server.doctor_http_requests();
     assert_eq!(http.len(), 1);
     assert_eq!(http[0].method, "GET");

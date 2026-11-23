@@ -228,7 +228,14 @@ async fn other_profile_switch_opens_a_new_link_first() {
         })
         .await;
 
-    let tickets = rig.gateway.ticket_records();
+    // The background look at each profile's Hermes settings mints its own REST ticket; this test
+    // counts the session links only.
+    let tickets: Vec<_> = rig
+        .gateway
+        .ticket_records()
+        .into_iter()
+        .filter(|ticket| ticket.purpose != "native-http")
+        .collect();
     assert_eq!(tickets.len(), 3, "launch, side, and the new profile link");
     assert_eq!(tickets[2].scope, "profile");
     // Quitting detaches the new session afterwards; the old one is let go once, by the switch.
@@ -305,7 +312,14 @@ async fn profile_start_opens_a_new_session_on_a_new_link_first() {
         })
         .await;
 
-    let tickets = rig.gateway.ticket_records();
+    // The background look at each profile's Hermes settings mints its own REST ticket; this test
+    // counts the session links only.
+    let tickets: Vec<_> = rig
+        .gateway
+        .ticket_records()
+        .into_iter()
+        .filter(|ticket| ticket.purpose != "native-http")
+        .collect();
     assert_eq!(tickets.len(), 2, "the launch link and the new profile link");
     assert_ne!(
         tickets[1].profile_id, tickets[0].profile_id,
