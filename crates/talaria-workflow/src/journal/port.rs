@@ -144,6 +144,26 @@ pub trait GatewayPort: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<RouteSweep, PortError>> {
         Box::pin(async { Ok(RouteSweep::default()) })
     }
+    /// Wait for the next turn on the session that the run did not submit, for example one a
+    /// person started by typing into the session from another window, and return its settled
+    /// receipt with its result. `known` holds every admission the run already made there; a
+    /// turn that settled before the call is returned at once. There is no time limit: the
+    /// wait ends when such a turn settles or the caller drops it. A port that cannot see other
+    /// clients' turns refuses with `unsupported`.
+    fn next_reply(
+        &self,
+        _profile: String,
+        _session_id: String,
+        _known: Vec<String>,
+    ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+        Box::pin(async {
+            Err(PortError::Refused {
+                reason: "unsupported".into(),
+                field: None,
+                detail: Some("this gateway port cannot follow turns other clients start".into()),
+            })
+        })
+    }
 }
 /// What `GatewayPort::sweep_route` found on a call's route after the call ended.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -170,6 +190,37 @@ impl RouteSweep {
 pub trait TurnPolicy: Send + Sync + 'static {
     fn first_turn(&self, request: &AgentRequest, launch: &ResolvedLaunch) -> String;
     fn after_turn(&self, request: &AgentRequest, turns: &[SettledTurn]) -> NextStep;
+}
+/// Who sent a stop that Talaria knows about. It is kept in a settled turn's `result_meta`
+/// under [`STOPPED_BY`]; a stop Talaria did not send leaves the key out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopSource {
+    /// The runner stopped the turn because the run was being stopped.
+    RunStop,
+    /// Someone pressed the stop-agent key in the Talaria workflow view.
+    WorkflowView,
+    /// The Talaria workflow view stopped the turn so that the agent can be restarted.
+    WorkflowViewRestart,
+}
+/// The `result_meta` key that names a [`StopSource`].
+pub const STOPPED_BY: &str = "stopped_by";
+impl StopSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RunStop => "run_stop",
+            Self::WorkflowView => "workflow_view",
+            Self::WorkflowViewRestart => "workflow_view_restart",
+        }
+    }
+    /// The source a settled turn's kept metadata names, if any.
+    pub fn from_meta(meta: &Value) -> Option<Self> {
+        serde_json::from_value(meta.get(STOPPED_BY)?.clone()).ok()
+    }
+}
+/// Whether Hermes ended a turn because a stop was requested.
+pub fn stopped_outcome(outcome: &str) -> bool {
+    matches!(outcome, "interrupted" | "cancelled")
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SettledTurn {
@@ -226,6 +277,11 @@ pub trait AdmissionGate: Send + Sync + 'static {
     /// Count a session's tokens that the run did not start: work found on a route after an
     /// agent call ended. `id` names it; `reading` is the cumulative reading Hermes reported.
     fn count_untracked_usage(&self, _id: &str, _reading: crate::tokens::Reading) {}
+    /// Whether the run itself is being stopped, so a turn that ends stopped is part of that
+    /// stop rather than one to recover.
+    fn run_stopping(&self) -> bool {
+        false
+    }
 }
 /// How often an agent that ran out of context is started again in a fresh session.
 pub const MAX_OVERFLOW_RESTARTS: u32 = 3;

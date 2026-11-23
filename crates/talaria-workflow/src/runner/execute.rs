@@ -140,6 +140,12 @@ pub enum RunnerEvent {
         key: String,
         attempt: u32,
         episode: u32,
+        /// Why the call is parked: `unknown`, `lost`, `identity_conflict` or `stopped`.
+        cause: String,
+        /// The reason in plain words.
+        reason: String,
+        /// The answers `talaria workflow resolve --resolution` accepts for it.
+        choices: Vec<String>,
     },
     Finished {
         run_id: String,
@@ -1130,7 +1136,7 @@ async fn execute_inner(
                     }
                     (output.out)(&RunnerEvent::Scheduler(event));
                 }
-                Some(Input::Notice(JournalNotice::NeedsOperator{key,label,attempt,episode,..}))=>(output.out)(&RunnerEvent::Parked{run_id:dir.run_id().as_str().into(),label,key,attempt,episode}),
+                Some(Input::Notice(JournalNotice::NeedsOperator{key,label,attempt,episode,cause,detail,..}))=>(output.out)(&RunnerEvent::Parked{run_id:dir.run_id().as_str().into(),label,key,attempt,episode,cause:cause.as_str().into(),reason:detail,choices:cause.choices().iter().map(|c|(*c).to_owned()).collect()}),
                 Some(Input::Notice(JournalNotice::Warning(warning)))=>output.diagnostic(format!("journal warning: {warning:?}")),
                 Some(Input::Notice(JournalNotice::RouteNote{message}))=>(output.out)(&RunnerEvent::Log{message}),
                 Some(Input::Notice(_))=>{},
@@ -1489,7 +1495,7 @@ async fn settle_stop(
             match result {
                 Ok(Ok(receipt)) if receipt.status == AdmissionState::Terminal => {
                     let _ = journal
-                        .append(crate::journal::settled_record(
+                        .append(run_stop_settlement(
                             &target.key,
                             target.attempt,
                             target.turn,
@@ -1507,6 +1513,30 @@ async fn settle_stop(
     }
     uncertain.extend(pending.into_iter().map(|t| t.session_id));
     uncertain
+}
+/// A turn the run's stop settled, marked as stopped by the runner when it ended stopped, so a
+/// later resume fails it as part of the stop instead of parking it for the operator.
+fn run_stop_settlement(
+    key: &str,
+    attempt: u32,
+    turn: u32,
+    receipt: crate::journal::Receipt,
+) -> crate::journal::Record {
+    let mut record = crate::journal::settled_record(key, attempt, turn, receipt);
+    if let crate::journal::Record::TurnSettled {
+        outcome,
+        result_meta,
+        ..
+    } = &mut record
+        && crate::journal::stopped_outcome(outcome)
+        && let Some(meta) = result_meta.as_object_mut()
+    {
+        meta.insert(
+            crate::journal::STOPPED_BY.into(),
+            crate::journal::StopSource::RunStop.as_str().into(),
+        );
+    }
+    record
 }
 fn signal_task(sender: mpsc::UnboundedSender<Input>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {

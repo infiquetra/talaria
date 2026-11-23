@@ -137,6 +137,12 @@ impl FakeGateway {
         }
         self
     }
+    /// Replace the rules that later submissions match.
+    pub fn set_rules(&self, rules: Vec<ScriptRule>) {
+        if let Ok(mut s) = self.state.lock() {
+            s.rules = rules;
+        }
+    }
     pub fn autosave(self, path: PathBuf) -> Self {
         if let Ok(mut s) = self.state.lock() {
             s.autosave = Some(path);
@@ -223,6 +229,40 @@ impl FakeGateway {
             s.fail_count = n;
             s.fail_error = Some(error);
         }
+    }
+    /// Start a turn on `session` the way another client would, for example a person typing
+    /// "continue" into the agent's session from a Talaria window. Returns its admission id.
+    pub fn continue_session(&self, session: &str, rule: ScriptRule) -> Option<String> {
+        let mut s = self.state.lock().ok()?;
+        let id = format!("admission-{}", s.stats.admissions + 1);
+        let epoch = s.epoch;
+        let stored = s.sessions.get_mut(session).filter(|s| !s.deleted)?;
+        let submission = format!("other-client-{}", stored.admissions.len());
+        stored.admissions.push(Admission {
+            id: id.clone(),
+            submission_id: submission,
+            text: "continue".into(),
+            status: AdmissionState::Queued,
+            generation: None,
+            epoch,
+            outcome: None,
+            result: None,
+            usage: None,
+            remaining_ms: rule.duration.as_millis() as u64,
+            rule,
+            captured: false,
+            resolved: false,
+            deadline: None,
+        });
+        s.stats.admissions += 1;
+        s.stats
+            .admissions_by_session
+            .entry(session.into())
+            .or_default()
+            .push(id.clone());
+        refresh(&mut s);
+        let _ = save(&mut s);
+        Some(id)
     }
     /// The sessions closed so far, in the order they were closed.
     pub fn closed_sessions(&self) -> Vec<String> {
@@ -579,6 +619,38 @@ impl GatewayPort for FakeGateway {
             refresh(&mut s);
             save(&mut s)?;
             Ok(r)
+        })
+    }
+    fn next_reply(
+        &self,
+        _profile: String,
+        session: String,
+        known: Vec<String>,
+    ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+        let this = self.clone();
+        Box::pin(async move {
+            loop {
+                {
+                    let mut s = this.access("next_reply")?;
+                    let stored = s
+                        .sessions
+                        .get(&session)
+                        .filter(|s| !s.deleted)
+                        .ok_or_else(|| PortError::refused("not_found"))?;
+                    let next = stored
+                        .admissions
+                        .iter()
+                        .find(|a| !known.contains(&a.id))
+                        .filter(|a| a.status == AdmissionState::Terminal)
+                        .map(|a| receipt(&session, a, true));
+                    if let Some(receipt) = next {
+                        s.stats.receipts += 1;
+                        save(&mut s)?;
+                        return Ok(receipt);
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
         })
     }
     fn close_session(

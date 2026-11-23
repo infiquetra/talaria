@@ -66,6 +66,9 @@ pub enum Resolution {
     Fail,
     Rerun,
     Abort,
+    /// Take the next turn that settles on the stopped agent's Hermes session as the call's
+    /// result. Only a call parked because it was stopped accepts it.
+    UseReply,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NewManifest {
@@ -244,6 +247,67 @@ impl RunDir {
             Err(e) => Err(e.into()),
         }
     }
+    /// Leave a note that the workflow view is about to stop `key`'s running turn, so the runner
+    /// can say who stopped it when the turn settles. `restart` marks a stop sent to restart the
+    /// agent. A newer note replaces an older one.
+    pub fn note_agent_stop(
+        &self,
+        key: &str,
+        restart: bool,
+        at_ms: i64,
+    ) -> Result<(), JournalError> {
+        if !valid_key(key) {
+            return Err(JournalError::Manifest("invalid agent key".into()));
+        }
+        let folder = self.path.join("control");
+        fs::create_dir_all(&folder)?;
+        let note = AgentStopNote {
+            v: 1,
+            kind: if restart {
+                "agent_restart"
+            } else {
+                "agent_stop"
+            }
+            .into(),
+            key: key.into(),
+            at_ms,
+        };
+        let bytes = serde_json::to_vec(&note).map_err(super::io_error)?;
+        let tmp = folder.join(format!(".tmp-agent-stop-{key}.{}", random_hex()?));
+        let mut file = private_file(&tmp, true)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        fs::rename(&tmp, folder.join(agent_stop_name(key)))?;
+        sync_dir(&folder).map_err(Into::into)
+    }
+    /// Who the workflow view's note says stopped `key`, if a readable note is there.
+    pub fn agent_stop(&self, key: &str) -> Option<super::StopSource> {
+        let bytes = fs::read(self.path.join("control").join(agent_stop_name(key))).ok()?;
+        let note: AgentStopNote = serde_json::from_slice(&bytes).ok()?;
+        match (note.v, note.kind.as_str()) {
+            (1, "agent_stop") if note.key == key => Some(super::StopSource::WorkflowView),
+            (1, "agent_restart") if note.key == key => Some(super::StopSource::WorkflowViewRestart),
+            _ => None,
+        }
+    }
+    /// Remove `key`'s stop note once the turn it named has settled.
+    pub fn clear_agent_stop(&self, key: &str) -> std::io::Result<()> {
+        match fs::remove_file(self.path.join("control").join(agent_stop_name(key))) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+}
+/// The control file that holds the workflow view's note about stopping `key`.
+pub fn agent_stop_name(key: &str) -> String {
+    format!("agent-stop-{key}.json")
+}
+#[derive(Serialize, Deserialize)]
+struct AgentStopNote {
+    v: u32,
+    kind: String,
+    key: String,
+    at_ms: i64,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -66,6 +66,9 @@ pub enum AgentPhase {
     Running,
     Stopping,
     NeedsYou,
+    /// A stop ended the agent's turn and the run waits for the operator to answer its parked
+    /// call; a reply in its session counts once the operator answers `use-reply`.
+    Stopped,
     Completed,
     /// Hermes stopped the agent at its step cap and the run kept its reply.
     CutShort,
@@ -76,6 +79,9 @@ pub enum AgentPhase {
 
 impl AgentPhase {
     fn of(agent: &AgentNode) -> Self {
+        if agent.attention.as_deref() == Some("stopped") {
+            return Self::Stopped;
+        }
         match agent.state {
             AgentState::Queued => Self::Queued,
             AgentState::Running => Self::Running,
@@ -96,6 +102,7 @@ impl AgentPhase {
             Self::Running => "running",
             Self::Stopping => "stopping",
             Self::NeedsYou => "waiting for you",
+            Self::Stopped => "stopped, waiting for you",
             Self::Completed => "completed",
             Self::CutShort => "cut short",
             Self::Failed => "failed",
@@ -245,6 +252,10 @@ impl AgentSessionNote {
             _ => self.run_text(),
         };
         let consequence = match (self.tracking, self.phase) {
+            (Tracking::Followed, Some(AgentPhase::Stopped)) => {
+                "this agent was stopped and the run is waiting for an answer; for its reply to count as the agent's result, answer the parked call with use-reply (talaria workflow resolve … --resolution use-reply, as the runner printed it)"
+                    .to_owned()
+            }
             (Tracking::Followed, Some(phase)) if !phase.finished() => {
                 "your message goes to the agent mid-run and can change its work".to_owned()
             }

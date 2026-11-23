@@ -104,6 +104,7 @@ async fn operator_answers() {
                 assert_eq!(result(resumed.outcome), json!("ok"));
                 assert_eq!(harness.gateway.stats().sessions, 2);
             }
+            Resolution::UseReply => unreachable!("not among the answers tried"),
         }
     }
     let harness = interrupted(&script, OnUnknown::Fail).await;
@@ -427,4 +428,42 @@ async fn resolution_files_are_validated() {
             .count(),
         1
     );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn use_reply_is_refused_for_a_call_that_was_not_stopped() {
+    let script = source("return await agent('slow',{label:'slow'});");
+    let harness = interrupted(&script, OnUnknown::Wait).await;
+    let runs = harness.temp.path().to_owned();
+    let run_id = harness.dir.run_id().as_str().to_owned();
+    let (run, _) = harness
+        .run_parked_then(&script, Duration::ZERO, |notice| {
+            let JournalNotice::NeedsOperator {
+                key,
+                attempt,
+                episode,
+                ..
+            } = notice
+            else {
+                unreachable!()
+            };
+            let refused = talaria_workflow::runner::answer_parked(
+                &runs,
+                &run_id,
+                key,
+                *attempt,
+                *episode,
+                Resolution::UseReply,
+            );
+            assert!(
+                matches!(
+                    refused,
+                    Err(talaria_workflow::runner::AnswerError::NotStopped { .. })
+                ),
+                "{refused:?}"
+            );
+            Some(Resolution::Fail)
+        })
+        .await;
+    assert_eq!(result(run.outcome), json!(null));
 }

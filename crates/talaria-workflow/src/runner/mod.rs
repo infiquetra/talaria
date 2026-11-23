@@ -1,5 +1,6 @@
 //! Headless workflow lifecycle, discovery, and durable run controls.
 
+pub mod agents;
 pub mod control;
 pub mod execute;
 mod files;

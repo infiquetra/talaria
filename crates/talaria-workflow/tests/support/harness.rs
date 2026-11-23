@@ -598,6 +598,18 @@ impl Harness {
         answer: Option<talaria_workflow::journal::Resolution>,
         wait: Duration,
     ) -> (RunData, talaria_workflow::journal::JournalNotice) {
+        self.run_parked_then(script, wait, |_| answer).await
+    }
+    /// Run until a call parks, wait `wait` (the call must stay parked), then let `then` act
+    /// on the gateway and choose the answer.
+    pub async fn run_parked_then(
+        &self,
+        script: &str,
+        wait: Duration,
+        then: impl FnOnce(
+            &talaria_workflow::journal::JournalNotice,
+        ) -> Option<talaria_workflow::journal::Resolution>,
+    ) -> (RunData, talaria_workflow::journal::JournalNotice) {
         use talaria_workflow::journal::JournalNotice;
         let (journal, _, _) = RunJournal::open(self.dir.clone(), script).await.unwrap();
         let journal = Arc::new(journal);
@@ -640,7 +652,7 @@ impl Harness {
             tokio::select! {out=&mut execution=>panic!("parked call ended: {out:?}"),_= &mut timer=>{}}
             assert_eq!(self.gateway.stats().admissions, before);
         }
-        if let Some(resolution) = answer
+        if let Some(resolution) = then(&notice)
             && let JournalNotice::NeedsOperator {
                 key,
                 attempt,

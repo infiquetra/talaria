@@ -825,6 +825,33 @@ impl GatewayPort for HermesPort {
         let port = self.clone();
         Box::pin(async move { port.sweep(&profile, &session_id, &stored_session_id).await })
     }
+    /// The port follows the session's events, whose envelopes name the admission that produced
+    /// them, and its snapshots, which list queued and started admissions. Hermes serves a
+    /// receipt for any admission on the session to a caller with the same owner, so a turn a
+    /// person started from another window can be read and waited on like the run's own.
+    fn next_reply(
+        &self,
+        profile: String,
+        session_id: String,
+        known: Vec<String>,
+    ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+        let port = self.clone();
+        Box::pin(async move {
+            let key = (profile.clone(), session_id.clone());
+            loop {
+                let mut woken = port.inner.subscribe(key.clone());
+                let seen = port
+                    .request(|reply| Command::Lookup(key.clone(), reply))
+                    .await?
+                    .map(|session| session.admissions)
+                    .unwrap_or_default();
+                if let Some(next) = seen.into_iter().find(|id| !known.contains(id)) {
+                    return GatewayPort::wait_settled(&port, profile, session_id, next).await;
+                }
+                woken.changed().await.map_err(|_| transport())?;
+            }
+        })
+    }
 }
 /// How many times a sweep reads the route again while something there is still stopping.
 const SWEEP_ROUNDS: u32 = 20;

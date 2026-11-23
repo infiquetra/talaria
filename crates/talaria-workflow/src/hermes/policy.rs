@@ -65,7 +65,11 @@ impl TurnPolicy for SchemaTurnPolicy {
         match turn.outcome.as_str() {
             "completed" => {}
             "interrupted" | "cancelled" => {
-                return failed(format!("stopped in Hermes (outcome '{}')", turn.outcome));
+                return failed(super::failure::stop_reason(
+                    &turn.outcome,
+                    &turn.result_meta,
+                    turn.final_text.as_deref(),
+                ));
             }
             other => return failed(format!("unexpected outcome '{other}'")),
         }

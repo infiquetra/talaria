@@ -100,6 +100,9 @@ pub struct GatewayFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingStage {
     Ready,
+    /// Writing the note that tells the runner the view is about to stop the agent; the stop
+    /// is sent once the note is written.
+    Noting,
     Refreshing,
     Calling,
     Settling,
@@ -116,10 +119,18 @@ struct PendingAgent {
     receipt_at_ms: i64,
     receipt_in_flight: bool,
 }
+/// What the view says once an agent it stopped has ended its turn: the runner parks the call
+/// until someone answers it.
+pub const STOPPED_PARKED: &str = "stopped — the run waits for an answer: fail, rerun, abort or use-reply (talaria workflow resolve)";
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Confirmation {
     Restart(String),
     StopRun,
+    /// Stop the agent with this key; the prompt names it.
+    StopAgent {
+        key: String,
+        prompt: String,
+    },
 }
 
 pub struct ProgressState {
@@ -220,10 +231,11 @@ impl ProgressState {
             _ => None,
         }
     }
-    pub fn confirmation_text(&self) -> Option<&'static str> {
+    pub fn confirmation_text(&self) -> Option<&str> {
         self.confirmation.as_ref().map(|(c, _)| match c {
             Confirmation::Restart(_) => "restart? r or y confirms · esc cancels",
             Confirmation::StopRun => "stop run? shift+x or y confirms · esc cancels",
+            Confirmation::StopAgent { prompt, .. } => prompt.as_str(),
         })
     }
     fn matches(&self, a: &super::AgentNode) -> bool {
@@ -582,10 +594,11 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                     .pending_agents
                     .keys()
                     .filter(|key| {
+                        // A stopped agent's call parks for the operator: that settles a stop.
                         state
                             .progress
                             .agent(key)
-                            .is_some_and(|a| a.state.terminal())
+                            .is_some_and(|a| a.state.terminal() || a.attention.is_some())
                     })
                     .cloned()
                     .collect();
@@ -601,8 +614,14 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                                 a.state == AgentState::Done
                                     || a.last_outcome.as_deref() == Some("completed")
                             });
+                            let parked = state
+                                .progress
+                                .agent(&key)
+                                .is_some_and(|a| a.attention.is_some());
                             state.refuse(if completed {
                                 "finished before stop"
+                            } else if parked {
+                                STOPPED_PARKED
                             } else {
                                 "stopped — restart (r) runs it again"
                             });
@@ -734,7 +753,11 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                     )
                 }) {
                     state.pending_agents.remove(&key);
-                    if let Some(a) = state.progress.agent_mut(&key) {
+                    if let Some(a) = state.progress.agent_mut(&key)
+                        && a.attention.is_none()
+                    {
+                        // Until the journal says more, the stopped turn shows as ended here;
+                        // the runner parks the call and the journal then shows it as waiting.
                         a.stopped = outcome != "completed";
                         a.last_outcome =
                             Some(if a.stopped { "failed" } else { "completed" }.into());
@@ -747,7 +770,7 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                     state.refuse(if outcome == "completed" {
                         "finished before stop"
                     } else {
-                        "stopped — restart (r) runs it again"
+                        STOPPED_PARKED
                     });
                 }
             }
@@ -845,6 +868,13 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
         }
         ProgressInput::ControlDone(id, outcome) => {
             if let Some((request, at_ms)) = state.pending_files.remove(&id) {
+                // The note only names who stopped the agent: the stop goes out either way.
+                if let (ControlRequest::AgentStop { key, .. }, false) =
+                    (&request, matches!(outcome, ControlOutcome::Published))
+                {
+                    let key = key.clone();
+                    effects.extend(noted(state, &key));
+                }
                 match outcome {
                     ControlOutcome::Published => {
                         state.refuse("requested");
@@ -872,6 +902,9 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                                     a.restart_requested = true;
                                     state.refuse("restart requested — runs again on resume");
                                 }
+                            }
+                            ControlRequest::AgentStop { key, .. } => {
+                                effects.extend(noted(state, &key));
                             }
                             ControlRequest::Resume => {}
                         }
@@ -1332,12 +1365,16 @@ fn key_input(s: &mut ProgressState, key: ProgressKey) -> Vec<ProgressEffect> {
                 (&confirmation, &key),
                 (Confirmation::Restart(_), ProgressKey::RestartAgent)
                     | (Confirmation::StopRun, ProgressKey::StopRun)
+                    | (Confirmation::StopAgent { .. }, ProgressKey::StopAgent)
             );
         s.revision += 1;
         if accepted {
             return match confirmation {
                 Confirmation::StopRun => vec![s.write(ControlRequest::Stop)],
                 Confirmation::Restart(key) => restart(s, &key),
+                Confirmation::StopAgent { key, .. } => {
+                    start_agent(s, &key, GatewayAction::Interrupt, None)
+                }
             };
         }
         return vec![];
@@ -1494,11 +1531,42 @@ fn key_input(s: &mut ProgressState, key: ProgressKey) -> Vec<ProgressEffect> {
                 }
                 return vec![];
             }
-            return start_agent(s, &agent, GatewayAction::Interrupt, None);
+            // A stop ends the agent's turn and parks the call until someone answers it, so it
+            // is confirmed first, like restart and stop-run. A subagent's stop is not.
+            if matches!(s.selection, NodeKey::Subagent { .. }) {
+                return start_agent(s, &agent, GatewayAction::Interrupt, None);
+            }
+            if can_agent(s, &agent, GatewayAction::Interrupt) {
+                let label = s
+                    .progress
+                    .agent(&agent)
+                    .map_or_else(|| agent.clone(), |a| a.label.clone());
+                let prompt = format!(
+                    "stop agent {}? x or y confirms · esc cancels",
+                    talaria_core::text::sanitize_with_options(
+                        &label,
+                        talaria_core::text::SanitizeOptions::CLI,
+                        talaria_core::text::Replacement::Char('?'),
+                    )
+                );
+                s.confirmation = Some((Confirmation::StopAgent { key: agent, prompt }, s.now_ms));
+                s.revision += 1;
+            }
+            return vec![];
         }
         _ => {}
     }
     vec![]
+}
+/// The note about a stop is written (or could not be): send the stop it announced.
+fn noted(s: &mut ProgressState, key: &str) -> Vec<ProgressEffect> {
+    match s.pending_agents.get_mut(key) {
+        Some(p) if p.stage == PendingStage::Noting => {
+            p.stage = PendingStage::Ready;
+            send_pending(s, key)
+        }
+        _ => vec![],
+    }
 }
 fn can_agent(s: &mut ProgressState, key: &str, action: GatewayAction) -> bool {
     if !s.connected {
@@ -1570,6 +1638,12 @@ fn start_agent(
     } else {
         action
     };
+    // The runner can only say who stopped an agent if the view says so before the stop is
+    // sent: the note is written first, and the stop goes out when it is done.
+    let note = matches!(
+        action,
+        GatewayAction::Interrupt | GatewayAction::Cancel | GatewayAction::Restart
+    );
     s.pending_agents.insert(
         key.into(),
         PendingAgent {
@@ -1578,12 +1652,22 @@ fn start_agent(
             subagent,
             at_ms: s.now_ms,
             refreshed: false,
-            stage: PendingStage::Ready,
+            stage: if note {
+                PendingStage::Noting
+            } else {
+                PendingStage::Ready
+            },
             attempt: a.attempt,
             receipt_at_ms: s.now_ms,
             receipt_in_flight: false,
         },
     );
+    if note {
+        return vec![s.write(ControlRequest::AgentStop {
+            key: key.into(),
+            restart: action == GatewayAction::Restart,
+        })];
+    }
     send_pending(s, key)
 }
 fn send_pending(s: &mut ProgressState, key: &str) -> Vec<ProgressEffect> {

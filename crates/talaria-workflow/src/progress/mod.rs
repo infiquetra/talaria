@@ -348,6 +348,9 @@ impl RunProgress {
             }
             "call_attention" => {
                 a.attention = Some(string(&record, "cause"));
+                // A parked call has not ended, even when its stopped turn read as failed.
+                a.last_outcome = None;
+                a.finished_at_ms = None;
                 hold_generation(a, record["execution_generation"].as_i64());
             }
             "call_resolved" => {

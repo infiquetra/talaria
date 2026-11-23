@@ -704,14 +704,18 @@ async fn steer_stop_and_open_against_gateway() {
     // The queued sentence is only the acknowledgement. Delivery is later output.
     wait_for_delivery(&mut gateway, &session, &admission).await;
 
-    let stop = live::update(&mut state, ProgressInput::Key(ProgressKey::StopAgent));
+    // The stop is confirmed first, then noted in the run folder, then sent.
+    assert!(live::update(&mut state, ProgressInput::Key(ProgressKey::StopAgent)).is_empty());
+    let stop = live::update(&mut state, ProgressInput::Key(ProgressKey::Confirm));
     assert!(
-        matches!(stop.as_slice(), [ProgressEffect::Interrupt { .. }]),
-        "stop did not emit an interrupt"
-    );
-    assert_eq!(
-        state.progress.agent(KEY_RUNNING).map(|agent| agent.state),
-        Some(AgentState::Stopping)
+        matches!(
+            stop.as_slice(),
+            [ProgressEffect::WriteControl(
+                _,
+                talaria_workflow::progress::ControlRequest::AgentStop { .. }
+            )]
+        ),
+        "stop did not note the stop first"
     );
     settle(&mut service, &mut state, &mut rx, stop).await;
     assert_eq!(state.footer.as_deref(), Some("stopping"));
