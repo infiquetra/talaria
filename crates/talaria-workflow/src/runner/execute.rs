@@ -1113,6 +1113,7 @@ async fn execute_inner(
                     }
                     if (signal||pending.stop.is_some()) && !stop_requested {
                         stop_requested = true;
+                        gate.set_stopping();
                         gate.set_paused(true);
                         cancel.cancel();
                     }

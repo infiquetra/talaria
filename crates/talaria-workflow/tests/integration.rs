@@ -124,6 +124,8 @@ mod mock;
 mod nesting;
 #[path = "integration/outcome.rs"]
 mod outcome;
+#[path = "integration/overflow_restart.rs"]
+mod overflow_restart;
 #[path = "integration/price.rs"]
 mod price;
 #[path = "integration/privacy_scan.rs"]

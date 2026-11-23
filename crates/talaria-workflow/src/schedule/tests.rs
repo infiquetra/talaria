@@ -605,6 +605,87 @@ async fn budget_skips_queued_and_resumed_fresh_calls_but_reattach_proceeds() {
     };
     assert!(!s.retry_after_failure(&request(4), &l, &last, 0));
 }
+fn overflow() -> Value {
+    json!({"failure_reason":"context_overflow"})
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn the_restart_count_is_read_from_the_journal_and_ignores_other_retries() {
+    let c = Context::new(data(), 10).await;
+    let (q, l) = (request(0), launch("fixture", "alpha"));
+    let key = journal_key(&q.call_id, &l);
+    let rate = json!({"failure_reason":"rate_limit"});
+    // A rate-limit retry, two overflow restarts, then an overflow nobody restarted.
+    c.record(&q, &l, 0, vec![(cost(0.0, "included"), rate)], true)
+        .await;
+    assert_eq!(c.journal.history(&key).unwrap().overflow_restarts(), 0);
+    for attempt in 1..3 {
+        c.record(
+            &q,
+            &l,
+            attempt,
+            vec![(cost(0.0, "included"), overflow())],
+            true,
+        )
+        .await;
+    }
+    c.record(&q, &l, 3, vec![(cost(0.0, "included"), overflow())], false)
+        .await;
+    // A fresh history reads the same numbers: a resumed run starts from the journal.
+    let h = c.journal.history(&key).unwrap();
+    assert_eq!(h.overflow_restarts(), 2);
+    assert_eq!(h.overflowed(), 3);
+    assert!(h.follows_overflow_restart());
+    // An attempt after a rate-limit retry is not a restart after an overflow.
+    c.record(
+        &q,
+        &l,
+        4,
+        vec![(
+            cost(0.0, "included"),
+            json!({"failure_reason":"rate_limit"}),
+        )],
+        true,
+    )
+    .await;
+    c.record(&q, &l, 5, vec![(cost(0.0, "included"), json!({}))], false)
+        .await;
+    let h = c.journal.history(&key).unwrap();
+    assert_eq!(h.overflow_restarts(), 2);
+    assert!(!h.follows_overflow_restart());
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn the_scheduler_authorises_a_restart_only_while_the_budget_has_room() {
+    let mut c = Context::new(data(), 10).await;
+    c.table.budget.money_usd = Some(0.02);
+    let (s, mut events) = c.start().await;
+    let (q, l) = (request(0), launch("fixture", "alpha"));
+    let last = SettledTurn {
+        turn: 0,
+        outcome: "failed".into(),
+        final_text: None,
+        result_meta: overflow(),
+        usage: None,
+    };
+    assert!(s.authorise_restart(&q, &l, &last, 0, 1, 3));
+    assert!(matches!(
+        events.0.try_recv().unwrap().event,
+        SchedulerEvent::AgentRestarted { restart: 1, max: 3, attempt: 1, ref reason, .. } if reason == "context_overflow"
+    ));
+    // The restart's own turns spend: once the budget is reached, no further restart is allowed.
+    c.record(
+        &request(1),
+        &l,
+        0,
+        vec![(cost(0.025, "actual"), json!({}))],
+        false,
+    )
+    .await;
+    assert!(!s.authorise_restart(&q, &l, &last, 1, 2, 3));
+    assert!(
+        !std::iter::from_fn(|| events.0.try_recv().ok())
+            .any(|e| matches!(e.event, SchedulerEvent::AgentRestarted { .. }))
+    );
+}
 async fn bind(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, session: &str) {
     let key = journal_key(&q.call_id, l);
     let dir = c.journal.dir();
@@ -1103,6 +1184,226 @@ mod composed {
                 std::iter::from_fn(|| events.0.try_recv().ok())
                     .any(|e| matches!(e.event, SchedulerEvent::RetryAuthorised { .. }))
             );
+        }
+    }
+    /// A port whose first `failing` attempts settle with a context overflow.
+    #[derive(Clone)]
+    struct Overflow {
+        fake: FakeGateway,
+        sessions: Arc<Mutex<BTreeMap<String, bool>>>,
+        failing: u32,
+    }
+    impl Overflow {
+        fn decorate(&self, mut r: Receipt) -> Receipt {
+            if r.status == AdmissionState::Terminal
+                && self.sessions.lock().unwrap().get(&r.session_id) == Some(&true)
+            {
+                r.outcome = Some("failed".into());
+                r.result = Some(
+                    json!({"failed":true,"failure_reason":"context_overflow","final_response":""}),
+                );
+            }
+            r
+        }
+    }
+    impl GatewayPort for Overflow {
+        fn create_session(
+            &self,
+            r: CreateSession,
+        ) -> BoxFuture<'static, Result<SessionBound, PortError>> {
+            let this = self.clone();
+            Box::pin(async move {
+                // Attempt zero has a bare request id; later attempts end in `:a<number>`.
+                let attempt: u32 = r
+                    .request_id
+                    .rsplit(':')
+                    .next()
+                    .filter(|tail| tail.len() <= 4)
+                    .and_then(|tail| tail.strip_prefix('a')?.parse().ok())
+                    .unwrap_or(0);
+                let bound = this.fake.create_session(r).await?;
+                this.sessions
+                    .lock()
+                    .unwrap()
+                    .insert(bound.session_id.clone(), attempt < this.failing);
+                Ok(bound)
+            })
+        }
+        fn attach(&self, p: String, s: String) -> BoxFuture<'static, Result<(), PortError>> {
+            self.fake.attach(p, s)
+        }
+        fn submit(&self, r: SubmitTurn) -> BoxFuture<'static, Result<Receipt, PortError>> {
+            self.fake.submit(r)
+        }
+        fn receipt(
+            &self,
+            p: String,
+            s: String,
+            a: String,
+        ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+            let this = self.clone();
+            Box::pin(async move {
+                let r = this.fake.receipt(p, s, a).await?;
+                Ok(this.decorate(r))
+            })
+        }
+        fn wait_settled(
+            &self,
+            p: String,
+            s: String,
+            a: String,
+        ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+            let this = self.clone();
+            Box::pin(async move {
+                let r = this.fake.wait_settled(p, s, a).await?;
+                Ok(this.decorate(r))
+            })
+        }
+        fn resolve_unknown(
+            &self,
+            p: String,
+            s: String,
+            a: String,
+            g: i64,
+        ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+            self.fake.resolve_unknown(p, s, a, g)
+        }
+    }
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_context_overflow_restarts_the_agent_at_most_three_times() {
+        for failing in [2u32, 9] {
+            let c = Context::new(data(), 10).await;
+            let (s, mut events) = c.start().await;
+            let fake = FakeGateway::new().with_script(vec![ScriptRule {
+                duration: Duration::from_millis(1),
+                usage: cost(0.0, "included"),
+                ..Default::default()
+            }]);
+            let port = Overflow {
+                fake: fake.clone(),
+                sessions: Default::default(),
+                failing,
+            };
+            let result=run(&c,s.clone(),port,"export const meta={name:'overflow',description:'test',phases:[]}; return await agent('one',{model:'m',provider:'alpha'});").await;
+            let value = match result {
+                RunOutcome::Completed { result } => result,
+                v => panic!("{v:?}"),
+            };
+            let exhausted = failing > MAX_OVERFLOW_RESTARTS;
+            let restarts = if exhausted { 3 } else { failing };
+            assert_eq!(value, if exhausted { Value::Null } else { json!("ok") });
+            // Never more than the first attempt and three restarts.
+            assert_eq!(fake.stats().sessions, restarts + 1);
+            let (lines, _) = JournalReader::read_from(c.journal.dir().path(), 0).unwrap();
+            let retries = lines
+                .iter()
+                .filter(|l| matches!(l.record, Record::CallRetryFinished { .. }))
+                .count();
+            assert_eq!(retries as u32, restarts);
+            assert!(
+                !lines
+                    .iter()
+                    .any(|l| l.record.identity().is_some_and(|(_, a)| a > 3))
+            );
+            // Each restart's first prompt starts with the note; the first attempt's does not.
+            let prompts: Vec<(u32, String)> = lines
+                .iter()
+                .filter_map(|l| match &l.record {
+                    Record::TurnIntent {
+                        attempt,
+                        turn: 0,
+                        text: Some(text),
+                        ..
+                    } => Some((*attempt, text.clone())),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(prompts.len() as u32, restarts + 1);
+            for (attempt, text) in &prompts {
+                assert_eq!(
+                    text.starts_with("Note: an earlier attempt at this task ran out of context"),
+                    *attempt > 0,
+                    "attempt {attempt}: {text}"
+                );
+                if *attempt > 0 {
+                    for part in [
+                        "stopped",
+                        "working folder still holds whatever it wrote or committed",
+                        "continue from it rather than starting over",
+                        "notes in files rather than in the conversation",
+                    ] {
+                        assert!(text.contains(part), "{part} missing: {text}");
+                    }
+                }
+            }
+            // Each restart is announced in the scheduler stream and written to the journal.
+            let announced: Vec<(u32, u32)> = std::iter::from_fn(|| events.0.try_recv().ok())
+                .filter_map(|e| match e.event {
+                    SchedulerEvent::AgentRestarted {
+                        restart,
+                        max,
+                        attempt,
+                        ..
+                    } => {
+                        assert_eq!((max, attempt), (3, restart));
+                        Some((restart, max))
+                    }
+                    SchedulerEvent::RetryAuthorised { .. } => panic!("not a rate limit"),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                announced,
+                (1..=restarts).map(|n| (n, 3)).collect::<Vec<_>>()
+            );
+            let logged: Vec<String> = lines
+                .iter()
+                .filter_map(|l| match &l.record {
+                    Record::Engine {
+                        event: Some(crate::engine::EngineEvent::Log { message, .. }),
+                        ..
+                    } => Some(message.clone()),
+                    _ => None,
+                })
+                .filter(|m| m.contains("after a context overflow"))
+                .collect();
+            assert_eq!(
+                logged,
+                (1..=restarts)
+                    .map(|n| format!("agent call-0: restarted {n} of 3 after a context overflow"))
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(|m| m.replace("call-0", "one"))
+                    .collect::<Vec<_>>()
+            );
+            if exhausted {
+                let reason = lines
+                    .iter()
+                    .rev()
+                    .find_map(|l| match &l.record {
+                        Record::CallFinished {
+                            outcome: CallOutcome::Failed { reason },
+                            ..
+                        } => Some(reason.clone()),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(reason.contains("ran out of context 4 times"), "{reason}");
+            }
+            // The workflow view row says how many restarts there were.
+            let progress =
+                crate::progress::RunProgress::from_records(c.journal.dir().manifest(), &lines);
+            let agent = &progress.agents()[0];
+            assert_eq!(agent.overflow_restarts, restarts);
+            let row = crate::progress::text::agent_line(agent, 0);
+            if restarts > 0 {
+                assert!(
+                    row.contains(&format!(
+                        "restarted {restarts} of 3 after a context overflow"
+                    )),
+                    "{row}"
+                );
+            }
         }
     }
     #[tokio::test(flavor = "current_thread", start_paused = true)]

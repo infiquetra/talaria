@@ -127,6 +127,14 @@ impl CallHistory {
             _ => None,
         })
     }
+    pub fn stored_session(&self) -> Option<String> {
+        self.current().find_map(|r| match &r.record {
+            Record::SessionBound {
+                stored_session_id, ..
+            } => Some(stored_session_id.clone()),
+            _ => None,
+        })
+    }
     pub fn attention(&self) -> Option<ParkedCall> {
         self.current().rev().find_map(|r| match &r.record {
             Record::CallAttention {
@@ -151,6 +159,50 @@ impl CallHistory {
             }),
             _ => None,
         })
+    }
+    /// The attempts whose last settled turn failed with a context overflow.
+    fn overflowed_attempts(&self) -> BTreeSet<u32> {
+        let mut last = BTreeMap::new();
+        for r in &self.records {
+            if let Record::TurnSettled {
+                attempt,
+                result_meta,
+                ..
+            } = &r.record
+            {
+                last.insert(*attempt, result_meta["failure_reason"] == CONTEXT_OVERFLOW);
+            }
+        }
+        last.into_iter()
+            .filter_map(|(attempt, overflowed)| overflowed.then_some(attempt))
+            .collect()
+    }
+    /// How many times this call was started again after its agent ran out of context, across
+    /// every attempt and every execution of the run. A restart is an attempt that ended with a
+    /// retry finish after a context overflow, so the count survives a resume.
+    pub fn overflow_restarts(&self) -> u32 {
+        let overflowed = self.overflowed_attempts();
+        self.records
+            .iter()
+            .filter(|r| {
+                matches!(&r.record, Record::CallRetryFinished { attempt, .. } if overflowed.contains(attempt))
+            })
+            .count() as u32
+    }
+    /// How many attempts of this call ended because the agent ran out of context.
+    pub fn overflowed(&self) -> u32 {
+        self.overflowed_attempts().len() as u32
+    }
+    /// Whether the current attempt follows a restart after a context overflow, so its first
+    /// prompt carries the note about the earlier attempt.
+    pub fn follows_overflow_restart(&self) -> bool {
+        let Some(previous) = self.attempt().checked_sub(1) else {
+            return false;
+        };
+        self.overflowed_attempts().contains(&previous)
+            && self.records.iter().any(|r| {
+                matches!(&r.record, Record::CallRetryFinished { attempt, .. } if *attempt == previous)
+            })
     }
     pub fn turns(&self, dir: &Path) -> Result<Vec<SettledTurn>, JournalError> {
         self.current()

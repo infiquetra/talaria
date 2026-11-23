@@ -130,6 +130,40 @@ pub trait GatewayPort: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<(), PortError>> {
         Box::pin(async { Ok(()) })
     }
+    /// Make sure nothing on the call's route keeps running once the call has ended. Hermes can
+    /// reset a conversation on its own (a context overflow) and start the next queued input on
+    /// the route's fresh stored session, which the run does not follow. The port reads the live
+    /// session, cancels any admission this run did not make, and reports what it found.
+    /// `stored_session_id` is the stored session the call was bound to. A port with no such
+    /// call finds nothing.
+    fn sweep_route(
+        &self,
+        _profile: String,
+        _session_id: String,
+        _stored_session_id: String,
+    ) -> BoxFuture<'static, Result<RouteSweep, PortError>> {
+        Box::pin(async { Ok(RouteSweep::default()) })
+    }
+}
+/// What `GatewayPort::sweep_route` found on a call's route after the call ended.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RouteSweep {
+    /// The stored session now on the route, when Hermes moved it off the one the call used.
+    pub moved_to: Option<String>,
+    /// Admissions the run never made that were queued or running; each was cancelled.
+    pub cancelled: u32,
+    /// Tokens Hermes reports for the moved session, when it reports any.
+    pub moved_tokens: Option<u64>,
+    /// Something is still running or queued on the route and could not be stopped.
+    pub still_active: bool,
+    /// Calls that failed while sweeping, in plain words.
+    pub problems: Vec<String>,
+}
+impl RouteSweep {
+    /// Whether the sweep found anything the run was not tracking.
+    pub fn found_untracked(&self) -> bool {
+        self.moved_to.is_some() || self.cancelled > 0 || self.still_active
+    }
 }
 pub trait TurnPolicy: Send + Sync + 'static {
     fn first_turn(&self, request: &AgentRequest, launch: &ResolvedLaunch) -> String;
@@ -173,7 +207,29 @@ pub trait AdmissionGate: Send + Sync + 'static {
     ) -> bool {
         false
     }
+    /// Whether an agent whose turn ran out of context may be restarted in a fresh session.
+    /// `restart` counts from 1 and never exceeds `max`; the caller has already ruled out
+    /// further restarts beyond `max`. The default allows a restart while the budget has room.
+    fn authorise_restart(
+        &self,
+        _request: &AgentRequest,
+        _launch: &ResolvedLaunch,
+        _last: &SettledTurn,
+        _attempt: u32,
+        _restart: u32,
+        _max: u32,
+    ) -> bool {
+        self.budget_stop().is_none()
+    }
+    /// Count a session's tokens that the run did not start: work found on a route after an
+    /// agent call ended. `id` names it; `tokens` is the cumulative reading Hermes reported.
+    fn count_untracked_usage(&self, _id: &str, _tokens: u64) {}
 }
+/// How often an agent that ran out of context is started again in a fresh session.
+pub const MAX_OVERFLOW_RESTARTS: u32 = 3;
+/// The `failure_reason` Hermes settles a turn with when the model refused its conversation as
+/// too long.
+pub const CONTEXT_OVERFLOW: &str = "context_overflow";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GateReason {
     Fresh,
@@ -269,5 +325,13 @@ impl<P: GatewayPort> GatewayPort for Arc<P> {
     }
     fn close_session(&self, p: String, s: String) -> BoxFuture<'static, Result<(), PortError>> {
         (**self).close_session(p, s)
+    }
+    fn sweep_route(
+        &self,
+        p: String,
+        s: String,
+        stored: String,
+    ) -> BoxFuture<'static, Result<RouteSweep, PortError>> {
+        (**self).sweep_route(p, s, stored)
     }
 }

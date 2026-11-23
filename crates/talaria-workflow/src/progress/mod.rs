@@ -251,6 +251,7 @@ impl RunProgress {
             a.last_tool = None;
             a.subagents = talaria_core::subagents::SubagentTree::new();
             a.restart_requested = false;
+            a.failure_reason = None;
         }
         match kind.as_str() {
             "call_intent" => {
@@ -307,6 +308,9 @@ impl RunProgress {
                     }
                     a.money = settled_money(&record["usage"]);
                 }
+                a.failure_reason = record["result_meta"]["failure_reason"]
+                    .as_str()
+                    .map(str::to_owned);
                 a.stopped = record["outcome"].as_str() == Some("interrupted");
                 if a.stopped {
                     a.last_outcome = Some("failed".into());
@@ -333,6 +337,12 @@ impl RunProgress {
                     .or_else(|| record["outcome"]["kind"].as_str())
                     .unwrap_or("failed");
                 a.last_outcome = Some(outcome.into());
+                // A retry finish after a context overflow is Talaria starting the agent again.
+                if record["retry"].as_bool() == Some(true)
+                    && a.failure_reason.as_deref() == Some(crate::journal::CONTEXT_OVERFLOW)
+                {
+                    a.overflow_restarts = a.overflow_restarts.saturating_add(1);
+                }
                 a.finished_at_ms = Some(line.at_ms);
                 a.stopping = false;
                 a.stopped |= outcome == "stopped";
