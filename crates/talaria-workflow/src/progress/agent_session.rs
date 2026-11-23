@@ -7,8 +7,8 @@
 //! that session id to an agent. This module reads both and says, in plain words, what the run
 //! knows about the conversation.
 
-use super::{AgentNode, AgentState, RunProgress};
-use crate::journal::{JournalReader, RunDir};
+use super::{AgentNode, AgentState, RunProgress, RunState};
+use crate::journal::{JournalReader, Manifest, RecordLine, RunDir};
 use std::path::{Component, Path, PathBuf};
 
 /// The longest label or run name the texts quote.
@@ -134,6 +134,8 @@ pub struct AgentSessionNote {
     pub label: Option<String>,
     pub phase: Option<AgentPhase>,
     pub tracking: Tracking,
+    /// The journal has not been read yet, so nothing above is known.
+    pub pending: bool,
 }
 
 fn quote(text: &str) -> String {
@@ -199,6 +201,9 @@ impl AgentSessionNote {
             Tracking::NotFollowed => {
                 parts.push("this conversation is not tracked by the run".to_owned());
             }
+            Tracking::Unknown if self.pending => {
+                parts.push("reading the run's journal".to_owned());
+            }
             Tracking::Unknown if self.run_name.is_some() => {
                 parts.push("not found in the run's journal".to_owned());
             }
@@ -222,6 +227,7 @@ impl AgentSessionNote {
         match self.tracking {
             Tracking::Followed => {}
             Tracking::NotFollowed => text.push_str(" (untracked)"),
+            Tracking::Unknown if self.pending => text.push_str(" (reading)"),
             Tracking::Unknown => text.push_str(" (state unknown)"),
         }
         text
@@ -256,6 +262,10 @@ impl AgentSessionNote {
                 "the run does not track this conversation, so what you do here, including edits and commits, will not reach the run"
                     .to_owned()
             }
+            _ if self.pending => {
+                "Talaria is still reading the run's journal, so it cannot yet say whether the run follows this conversation"
+                    .to_owned()
+            }
             _ if self.run_name.is_some() => {
                 "the run's journal does not name this agent, so Talaria cannot say whether the run follows this conversation"
                     .to_owned()
@@ -267,7 +277,44 @@ impl AgentSessionNote {
     }
 }
 
-/// A run's journal, followed for one open session.
+/// What one read of a run's journal brought back. Reading is the only part that touches the
+/// disk, so it is a plain function a caller can run on a worker thread; the watch only applies
+/// the result.
+pub struct AgentSessionRead {
+    /// The run's manifest, present when the read started at the beginning of the journal.
+    manifest: Option<Manifest>,
+    lines: Vec<RecordLine>,
+    offset: u64,
+    /// Whether a runner holds the run lock, when the lock could be tested.
+    runner_alive: Option<bool>,
+}
+
+/// Read the run's journal from `offset` (0 for the first read, which also opens the manifest).
+///
+/// # Errors
+/// The reason the run folder or its journal could not be read.
+pub fn read_agent_journal(run_dir: &Path, offset: u64) -> Result<AgentSessionRead, String> {
+    let manifest = if offset == 0 {
+        Some(
+            RunDir::open(run_dir)
+                .map_err(|e| e.to_string())?
+                .manifest()
+                .clone(),
+        )
+    } else {
+        None
+    };
+    let runner_alive = crate::runner::runs::runner_alive(run_dir).ok();
+    let (lines, offset) = JournalReader::read_from(run_dir, offset).map_err(|e| e.to_string())?;
+    Ok(AgentSessionRead {
+        manifest,
+        lines,
+        offset,
+        runner_alive,
+    })
+}
+
+/// A run's journal, followed for one open session. It holds what was read; it never reads.
 pub struct AgentSessionWatch {
     run_dir: PathBuf,
     run_id: String,
@@ -276,14 +323,17 @@ pub struct AgentSessionWatch {
     runtime_id: String,
     progress: Option<RunProgress>,
     offset: u64,
+    runner_alive: Option<bool>,
+    /// A read failed: nothing more will be learned from this run folder.
+    failed: bool,
 }
 
 impl AgentSessionWatch {
     /// Start following the run in `run_dir` for the session that has these ids. `call` is the
-    /// worktree's call when the working folder named one. A journal that cannot be read leaves
-    /// the watch with nothing to say beyond the run id.
+    /// worktree's call when the working folder named one. Nothing is read yet: until the first
+    /// [`apply`](Self::apply) the note says it is still reading.
     #[must_use]
-    pub fn open(
+    pub fn new(
         run_dir: PathBuf,
         call: Option<(String, u32)>,
         stored_id: &str,
@@ -294,7 +344,7 @@ impl AgentSessionWatch {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_owned();
-        let mut watch = Self {
+        Self {
             run_dir,
             run_id,
             call,
@@ -302,49 +352,59 @@ impl AgentSessionWatch {
             runtime_id: runtime_id.to_owned(),
             progress: None,
             offset: 0,
-        };
-        watch.load();
-        watch
+            runner_alive: None,
+            failed: false,
+        }
     }
 
-    fn load(&mut self) {
-        let Ok(dir) = RunDir::open(&self.run_dir) else {
-            return;
-        };
-        let Ok((lines, offset)) = JournalReader::read_from(&self.run_dir, 0) else {
-            return;
-        };
-        self.progress = Some(RunProgress::from_records(dir.manifest(), &lines));
-        self.offset = offset;
-    }
-
-    /// The run's folder, for opening its view.
+    /// The run's folder, for opening its view and for reading it.
     #[must_use]
     pub fn run_dir(&self) -> &Path {
         &self.run_dir
     }
 
-    /// Whether another [`refresh`](Self::refresh) can change the note: the journal was read
-    /// and the agent has not stopped for good.
+    /// Where the next read starts.
     #[must_use]
-    pub fn wants_refresh(&self) -> bool {
-        self.progress.is_some() && !self.note().finished()
+    pub fn offset(&self) -> u64 {
+        self.offset
     }
 
-    /// Read what the run journaled since the last read. Returns whether the note changed. A
-    /// journal that stops being readable keeps what was last read.
-    pub fn refresh(&mut self) -> bool {
-        if self.progress.is_none() {
-            return false;
-        }
-        let before = self.note();
-        let Ok((lines, offset)) = JournalReader::read_from(&self.run_dir, self.offset) else {
+    /// Whether a later read can change the note: the journal was read, the run is still
+    /// running with a runner alive, the journal names the agent, and the agent has not
+    /// stopped for good.
+    #[must_use]
+    pub fn wants_refresh(&self) -> bool {
+        let Some(progress) = &self.progress else {
             return false;
         };
-        if let Some(progress) = self.progress.as_mut() {
-            progress.apply_all(&lines);
+        !self.failed
+            && progress.run().state == RunState::Running
+            && self.runner_alive != Some(false)
+            && self.note().phase.is_some_and(|phase| !phase.finished())
+    }
+
+    /// Take the result of a read. Returns whether the note changed. A failed read keeps what
+    /// was last read and stops further reads.
+    pub fn apply(&mut self, read: Result<AgentSessionRead, String>) -> bool {
+        let before = self.note();
+        match read {
+            Ok(read) => {
+                self.runner_alive = read.runner_alive;
+                match (&mut self.progress, read.manifest) {
+                    (None, Some(manifest)) => {
+                        self.progress = Some(RunProgress::from_records(&manifest, &read.lines));
+                    }
+                    (Some(progress), None) => progress.apply_all(&read.lines),
+                    // A repeat of the first read, or a continuation with nothing to continue.
+                    _ => {
+                        self.failed = self.progress.is_none();
+                        return before != self.note();
+                    }
+                }
+                self.offset = read.offset;
+            }
+            Err(_) => self.failed = true,
         }
-        self.offset = offset;
         before != self.note()
     }
 
@@ -357,6 +417,7 @@ impl AgentSessionWatch {
             label: None,
             phase: None,
             tracking: Tracking::Unknown,
+            pending: self.progress.is_none() && !self.failed,
         };
         let Some(progress) = &self.progress else {
             return unknown;

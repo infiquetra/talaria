@@ -6364,6 +6364,7 @@ mod tests {
             label: Some("review:gameplay".into()),
             phase: Some(AgentPhase::Failed),
             tracking: Tracking::NotFollowed,
+            pending: false,
         };
         let state = AppState::new("agent-status");
         let mut view = state.view();
