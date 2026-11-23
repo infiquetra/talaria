@@ -341,7 +341,12 @@ impl Fold {
                 "call_attention" => {
                     parked.insert(key.to_owned());
                 }
-                "call_resolved" => {
+                // A use-reply answer leaves the call waiting for a reply someone has to give,
+                // so it still waits for the operator until that reply settles its turn.
+                "call_resolved" if record["resolution"] != "use_reply" => {
+                    parked.remove(key);
+                }
+                "call_intent" => {
                     parked.remove(key);
                 }
                 "call_finished" => {
@@ -355,6 +360,7 @@ impl Fold {
                     );
                 }
                 "turn_settled" => {
+                    parked.remove(key);
                     settled = true;
                     let usage = &record["usage"];
                     let attempt = record["attempt"].as_u64().unwrap_or_default();
@@ -658,5 +664,77 @@ mod attention_tests {
             RunAttention::read(dir, &[], Some("abc")),
             RunAttention::default()
         );
+    }
+
+    fn line(seq: u64, record: Record) -> RecordLine {
+        RecordLine {
+            v: 1,
+            seq,
+            at_ms: 0,
+            record,
+        }
+    }
+
+    #[test]
+    fn a_call_waiting_for_its_reply_after_use_reply_still_waits_for_the_operator() {
+        use crate::journal::{AttentionCause, Resolution, ResolutionSource};
+        let key = "a".repeat(32);
+        let mut records = vec![
+            line(
+                1,
+                Record::CallAttention {
+                    key: key.clone(),
+                    attempt: 0,
+                    episode: 0,
+                    cause: AttentionCause::Stopped,
+                    turn: Some(0),
+                    admission_id: Some("admission-1".into()),
+                    execution_generation: None,
+                    detail: "stopped".into(),
+                    seen_admissions: Vec::new(),
+                },
+            ),
+            line(
+                2,
+                Record::CallResolved {
+                    key: key.clone(),
+                    attempt: 0,
+                    episode: 0,
+                    resolution: Resolution::UseReply,
+                    source: ResolutionSource::Operator,
+                },
+            ),
+        ];
+        // Answered with use-reply, the call waits for a reply someone has to give.
+        assert_eq!(Fold::records(&records).unwrap().parked, 1);
+        records.push(line(
+            3,
+            Record::TurnSettled {
+                key: key.clone(),
+                attempt: 0,
+                turn: 0,
+                admission_id: "admission-2".into(),
+                outcome: "completed".into(),
+                final_text: Some("done".into()),
+                final_text_ref: None,
+                result_meta: serde_json::json!({}),
+                usage: None,
+            },
+        ));
+        // The reply settled the turn: nothing waits any more.
+        assert_eq!(Fold::records(&records).unwrap().parked, 0);
+        // Any other answer ends the wait at once.
+        let mut rerun = records[..1].to_vec();
+        rerun.push(line(
+            2,
+            Record::CallResolved {
+                key,
+                attempt: 0,
+                episode: 0,
+                resolution: Resolution::Rerun,
+                source: ResolutionSource::Operator,
+            },
+        ));
+        assert_eq!(Fold::records(&rerun).unwrap().parked, 0);
     }
 }

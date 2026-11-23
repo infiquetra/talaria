@@ -118,6 +118,13 @@ pub enum JournalNotice {
     RouteNote {
         message: String,
     },
+    /// A stopped call the operator answered with use-reply now waits for the next reply on its
+    /// session. Nothing ends the wait but that reply.
+    WaitingForReply {
+        key: String,
+        label: String,
+        session_id: String,
+    },
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CallHistory {
@@ -199,21 +206,31 @@ impl CallHistory {
             _ => None,
         })
     }
-    /// Every admission this call has made or adopted, across all its attempts.
+    /// Every admission this call has made or adopted, across all its attempts, and every
+    /// other admission the port had seen on its session when it parked. None of them can be
+    /// the reply a stopped call waits for: that reply comes after the stop.
     pub fn known_admissions(&self) -> Vec<String> {
         let mut known: Vec<String> = Vec::new();
-        for r in &self.records {
-            let id = match &r.record {
-                Record::TurnAdmitted { admission_id, .. }
-                | Record::TurnSettled { admission_id, .. } => admission_id,
-                Record::CallAttention {
-                    admission_id: Some(id),
-                    ..
-                } => id,
-                _ => continue,
-            };
+        let mut add = |id: &String| {
             if !known.contains(id) {
                 known.push(id.clone());
+            }
+        };
+        for r in &self.records {
+            match &r.record {
+                Record::TurnAdmitted { admission_id, .. }
+                | Record::TurnSettled { admission_id, .. } => add(admission_id),
+                Record::CallAttention {
+                    admission_id,
+                    seen_admissions,
+                    ..
+                } => {
+                    admission_id
+                        .iter()
+                        .chain(seen_admissions)
+                        .for_each(&mut add);
+                }
+                _ => {}
             }
         }
         known

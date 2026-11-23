@@ -146,10 +146,13 @@ pub trait GatewayPort: Send + Sync + 'static {
     }
     /// Wait for the next turn on the session that the run did not submit, for example one a
     /// person started by typing into the session from another window, and return its settled
-    /// receipt with its result. `known` holds every admission the run already made there; a
-    /// turn that settled before the call is returned at once. There is no time limit: the
-    /// wait ends when such a turn settles or the caller drops it. A port that cannot see other
-    /// clients' turns refuses with `unsupported`.
+    /// receipt with its result. `known` holds every admission that is not a candidate: the
+    /// run's own and those the port had already seen when the call parked. Only turns this port
+    /// saw can be found: those that ran while it followed the session, and those still queued
+    /// or running when it attached; a turn that started and settled while nothing followed the
+    /// session cannot be seen. Such a turn that settled before the call is returned at once.
+    /// There is no time limit: the wait ends when such a turn settles or the caller drops it. A
+    /// port that cannot see other clients' turns refuses with `unsupported`.
     fn next_reply(
         &self,
         _profile: String,
@@ -163,6 +166,16 @@ pub trait GatewayPort: Send + Sync + 'static {
                 detail: Some("this gateway port cannot follow turns other clients start".into()),
             })
         })
+    }
+    /// Every admission this port has seen on the session so far, the run's own and other
+    /// clients'. A parked call records them, so that its next reply is a turn that came after
+    /// the stop. A port that follows no other clients' turns has seen none.
+    fn seen_admissions(
+        &self,
+        _profile: String,
+        _session_id: String,
+    ) -> BoxFuture<'static, Result<Vec<String>, PortError>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 }
 /// What `GatewayPort::sweep_route` found on a call's route after the call ended.
@@ -202,6 +215,8 @@ pub enum StopSource {
     WorkflowView,
     /// The Talaria workflow view stopped the turn so that the agent can be restarted.
     WorkflowViewRestart,
+    /// The runner stopped the turn because the run's budget ran out.
+    Budget,
 }
 /// The `result_meta` key that names a [`StopSource`].
 pub const STOPPED_BY: &str = "stopped_by";
@@ -211,6 +226,7 @@ impl StopSource {
             Self::RunStop => "run_stop",
             Self::WorkflowView => "workflow_view",
             Self::WorkflowViewRestart => "workflow_view_restart",
+            Self::Budget => "budget",
         }
     }
     /// The source a settled turn's kept metadata names, if any.
@@ -391,5 +407,20 @@ impl<P: GatewayPort> GatewayPort for Arc<P> {
         stored: String,
     ) -> BoxFuture<'static, Result<RouteSweep, PortError>> {
         (**self).sweep_route(p, s, stored)
+    }
+    fn next_reply(
+        &self,
+        p: String,
+        s: String,
+        known: Vec<String>,
+    ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+        (**self).next_reply(p, s, known)
+    }
+    fn seen_admissions(
+        &self,
+        p: String,
+        s: String,
+    ) -> BoxFuture<'static, Result<Vec<String>, PortError>> {
+        (**self).seen_admissions(p, s)
     }
 }

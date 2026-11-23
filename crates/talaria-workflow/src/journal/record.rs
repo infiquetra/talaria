@@ -184,6 +184,10 @@ records! {
         admission_id: Option<String>,
         execution_generation: Option<i64>,
         detail: String,
+        /// The admissions of other clients the port had already seen on the session when a
+        /// stopped call parked. Its next reply must be a later turn than any of them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        seen_admissions: Vec<String>,
     },
     CallResolved {
         key: String,

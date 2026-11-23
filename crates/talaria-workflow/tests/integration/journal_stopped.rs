@@ -10,7 +10,7 @@ use talaria_workflow::{
     engine::{AgentRequest, BudgetSnapshot, EngineEvent, RunOutcome},
     journal::{
         AdmissionGate, AttentionCause, CallOutcome, GateDecision, GatePermit, GateReason,
-        JournalNotice, Record, Resolution, ResolvedLaunch,
+        JournalNotice, Record, Resolution, ResolvedLaunch, StopSource, StopTurn,
         fake_gateway::{FakeGateway, FakeOutcome, ScriptRule},
     },
 };
@@ -290,4 +290,240 @@ fn key_of(harness: &Harness) -> String {
             _ => None,
         })
         .unwrap()
+}
+
+fn admission_of(harness: &Harness) -> String {
+    harness
+        .records()
+        .iter()
+        .rev()
+        .find_map(|line| match &line.record {
+            Record::TurnAdmitted { admission_id, .. } => Some(admission_id.clone()),
+            _ => None,
+        })
+        .unwrap()
+}
+
+/// Start the call, stop the runner while its turn is held, and return the harness. The turn
+/// settles stopped once released.
+async fn crashed_while_running(rules: Vec<ScriptRule>) -> (String, Harness) {
+    let (script, harness) = harness(rules);
+    harness
+        .crash_when(&script, |events| {
+            events
+                .iter()
+                .any(|e| matches!(e, EngineEvent::AgentStarted { .. }))
+                && harness.gateway.stats().admissions >= 1
+        })
+        .await;
+    (script, harness)
+}
+
+fn held_stop() -> Vec<ScriptRule> {
+    vec![ScriptRule {
+        hold: Some("hold".into()),
+        ..stopped("slow")
+    }]
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn use_reply_on_a_resumed_runner_sees_a_reply_typed_while_the_call_waits() {
+    let (script, harness) = harness(vec![stopped("slow")]);
+    // The first runner parks the stopped call and then goes away.
+    harness
+        .crash_when(&script, |_| {
+            harness
+                .records()
+                .iter()
+                .any(|line| matches!(line.record, Record::CallAttention { .. }))
+        })
+        .await;
+    // The next runner connects afresh: Hermes has shown it nothing on the session yet.
+    harness.gateway.new_client();
+    let gateway = harness.gateway.clone();
+    let (run, _) = tokio::time::timeout(
+        Duration::from_secs(24 * 3600),
+        harness.run_parked_then(&script, Duration::ZERO, |_| {
+            // While the call waits for its answer, someone continues the session and that turn
+            // settles at once, before the answer is read.
+            let session = first_session(&gateway);
+            gateway
+                .continue_session(&session, rule("other", "typed while parked", 0, None))
+                .unwrap();
+            Some(Resolution::UseReply)
+        }),
+    )
+    .await
+    .expect("use-reply never saw the reply typed while the call waited");
+    assert_eq!(result(run.outcome), json!("typed while parked"));
+    // The wait for the reply was announced.
+    assert!(
+        run.notices
+            .iter()
+            .any(|n| matches!(n, JournalNotice::WaitingForReply { label, .. } if label == "slow")),
+        "{:?}",
+        run.notices
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn use_reply_never_takes_a_reply_that_settled_before_the_stop() {
+    let script = source(
+        "return await agent('slow',{label:'slow',schema:{type:'object',properties:{v:{type:'string'}}}});",
+    );
+    let mut harness = Harness::new(&script);
+    harness.gateway = FakeGateway::new().with_script(vec![
+        // The schema correction turn is the one that gets stopped.
+        ScriptRule {
+            text_contains: Some("Return valid JSON".into()),
+            ..stopped("slow")
+        },
+        rule("slow", "not json", 10, Some("first")),
+    ]);
+    let gateway = harness.gateway.clone();
+    // While turn 0 runs, a person types a message into the session; Hermes queues it and it is
+    // answered before the run's correction turn starts.
+    tokio::spawn({
+        let gateway = gateway.clone();
+        async move {
+            while gateway.stats().admissions < 1 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            let session = first_session(&gateway);
+            gateway
+                .continue_session(&session, rule("other", r#"{"v":"stale"}"#, 0, None))
+                .unwrap();
+            gateway.release("first");
+        }
+    });
+    let (run, notice) = harness
+        .run_parked_then(&script, Duration::ZERO, |_| {
+            let gateway = gateway.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                let session = first_session(&gateway);
+                gateway.continue_session(&session, rule("other", r#"{"v":"fresh"}"#, 10, None));
+            });
+            Some(Resolution::UseReply)
+        })
+        .await;
+    assert!(matches!(
+        notice,
+        JournalNotice::NeedsOperator {
+            cause: AttentionCause::Stopped,
+            ..
+        }
+    ));
+    assert_eq!(result(run.outcome), json!({"v":"fresh"}));
+    // The attention record kept the reply that came before the stop, so it was passed over.
+    assert!(harness.records().iter().any(|line| matches!(
+        &line.record,
+        Record::CallAttention { seen_admissions, .. } if seen_admissions == &["admission-2".to_owned()]
+    )));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_run_stop_noted_before_a_crash_is_still_the_runs_stop_in_the_next_execution() {
+    for (source, stopped_by) in [
+        (StopSource::RunStop, "run_stop"),
+        (StopSource::Budget, "budget"),
+    ] {
+        let (script, harness) = crashed_while_running(held_stop()).await;
+        // The runner noted its stop and sent it, but the turn settled only after it went away.
+        let turn = StopTurn {
+            attempt: 0,
+            turn: 0,
+            admission_id: Some(admission_of(&harness)),
+        };
+        harness
+            .dir
+            .note_stop(&key_of(&harness), source, Some(&turn), 1)
+            .unwrap();
+        harness.gateway.release("hold");
+        // The next execution is not stopping the run, yet the stop stays the runner's.
+        let run = harness.run(&script).await;
+        assert_eq!(result(run.outcome), json!(null));
+        assert!(
+            !run.notices
+                .iter()
+                .any(|n| matches!(n, JournalNotice::NeedsOperator { .. })),
+            "{stopped_by}"
+        );
+        assert_eq!(settled_source(&harness).as_deref(), Some(stopped_by));
+        assert!(harness.dir.agent_stop(&key_of(&harness)).is_none());
+    }
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_stop_note_about_another_turn_is_ignored_and_the_call_parks() {
+    let (script, harness) = crashed_while_running(held_stop()).await;
+    // A restart note left over from an earlier attempt's turn: it does not name this one.
+    let stale = StopTurn {
+        attempt: 0,
+        turn: 0,
+        admission_id: Some("an-earlier-admission".into()),
+    };
+    harness
+        .dir
+        .note_stop(
+            &key_of(&harness),
+            StopSource::WorkflowViewRestart,
+            Some(&stale),
+            1,
+        )
+        .unwrap();
+    harness.gateway.release("hold");
+    let (run, notice) = harness
+        .run_parked(&script, Some(Resolution::Fail), Duration::ZERO)
+        .await;
+    assert!(matches!(
+        notice,
+        JournalNotice::NeedsOperator {
+            cause: AttentionCause::Stopped,
+            ..
+        }
+    ));
+    assert_eq!(result(run.outcome), json!(null));
+    assert_eq!(settled_source(&harness), None);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_new_execution_removes_stop_notes_whose_turn_is_not_running() {
+    let (_script, harness) = crashed_while_running(held_stop()).await;
+    let key = key_of(&harness);
+    // A note naming the running turn is kept.
+    harness.dir.note_agent_stop(&key, false, 1).unwrap();
+    harness.dir.prune_agent_stops().unwrap();
+    assert_eq!(harness.dir.agent_stop(&key), Some(StopSource::WorkflowView));
+    // One naming an attempt that is not running is removed.
+    let other = StopTurn {
+        attempt: 3,
+        turn: 0,
+        admission_id: None,
+    };
+    harness
+        .dir
+        .note_stop(&key, StopSource::WorkflowView, Some(&other), 1)
+        .unwrap();
+    harness.dir.prune_agent_stops().unwrap();
+    assert!(harness.dir.agent_stop(&key).is_none());
+    // So is one written before notes named their turn.
+    let old = harness
+        .dir
+        .path()
+        .join("control")
+        .join(talaria_workflow::journal::agent_stop_name(&key));
+    std::fs::write(
+        &old,
+        format!(r#"{{"v":1,"kind":"agent_restart","key":"{key}","at_ms":1}}"#),
+    )
+    .unwrap();
+    assert!(
+        harness
+            .dir
+            .agent_stop_for(&key, 0, 0, "admission-1")
+            .is_none()
+    );
+    harness.dir.prune_agent_stops().unwrap();
+    assert!(!old.exists());
 }

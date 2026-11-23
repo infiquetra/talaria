@@ -812,6 +812,7 @@ pub fn parked_records(dir: &RunDir) -> Vec<talaria_workflow::journal::Record> {
             admission_id: Some("admission".into()),
             execution_generation: Some(1),
             detail: "unknown".into(),
+            seen_admissions: Vec::new(),
         },
     ]
 }

@@ -17,7 +17,8 @@ pub use control::{
     AnswerError, ControlWrite, PausingGate, StopExit, answer_parked, request_stop, write_control,
 };
 pub use execute::{
-    ResumeRequest, RunExit, RunRequest, RunnerEvent, SpendView, run_child, run_new, run_resume,
+    ResumeRequest, RunExit, RunRequest, RunnerEvent, SpendView, replay_result, run_child, run_new,
+    run_resume,
 };
 #[cfg(feature = "mock")]
 pub use execute::{run_new_with_services, run_resume_with_services};

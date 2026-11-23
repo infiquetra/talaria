@@ -69,6 +69,11 @@ struct State {
     stats: FakeStats,
     #[serde(skip)]
     subscriptions: BTreeSet<String>,
+    /// The admissions this client has seen on each session, as Hermes shows them: those made
+    /// while it was subscribed, and those still queued or running when it subscribed. A turn
+    /// that started and settled while it was not subscribed is never shown to it.
+    #[serde(skip)]
+    seen: BTreeMap<String, Vec<String>>,
     #[serde(skip)]
     closed: Vec<String>,
     #[serde(skip)]
@@ -123,6 +128,7 @@ impl FakeGateway {
                 rules: Vec::new(),
                 stats: FakeStats::default(),
                 subscriptions: BTreeSet::new(),
+                seen: BTreeMap::new(),
                 closed: Vec::new(),
                 released: BTreeSet::new(),
                 fail_count: 0,
@@ -183,6 +189,16 @@ impl FakeGateway {
         if let Ok(mut s) = self.state.lock() {
             s.released.insert(hold.into());
             refresh(&mut s);
+            let _ = save(&mut s);
+        }
+    }
+    /// Replace this client with a new one, as a runner started again connects afresh: it
+    /// holds no subscription and has seen nothing on any session.
+    pub fn new_client(&self) {
+        if let Ok(mut s) = self.state.lock() {
+            refresh(&mut s);
+            s.subscriptions.clear();
+            s.seen.clear();
             let _ = save(&mut s);
         }
     }
@@ -260,6 +276,9 @@ impl FakeGateway {
             .entry(session.into())
             .or_default()
             .push(id.clone());
+        if s.subscriptions.contains(session) {
+            show(&mut s, session, &id);
+        }
         refresh(&mut s);
         let _ = save(&mut s);
         Some(id)
@@ -305,6 +324,33 @@ impl FakeGateway {
         let receipt = receipt(&session, a, true);
         save(&mut s)?;
         Ok(receipt)
+    }
+}
+/// Show `admission` on `session` to this client.
+fn show(s: &mut State, session: &str, admission: &str) {
+    let seen = s.seen.entry(session.into()).or_default();
+    if !seen.iter().any(|a| a == admission) {
+        seen.push(admission.into());
+    }
+}
+/// Subscribe this client to `session`: what is queued or running there is shown to it, as a
+/// Hermes snapshot lists its pending admissions.
+fn subscribe(s: &mut State, session: &str) {
+    s.subscriptions.insert(session.into());
+    let pending: Vec<String> = s
+        .sessions
+        .get(session)
+        .map(|stored| {
+            stored
+                .admissions
+                .iter()
+                .filter(|a| matches!(a.status, AdmissionState::Queued | AdmissionState::Started))
+                .map(|a| a.id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    for id in pending {
+        show(s, session, &id);
     }
 }
 fn refresh(s: &mut State) {
@@ -443,7 +489,7 @@ impl GatewayPort for FakeGateway {
                 );
                 s.stats.sessions += 1;
             }
-            s.subscriptions.insert(id.clone());
+            subscribe(&mut s, &id);
             save(&mut s)?;
             Ok(SessionBound {
                 session_id: id.clone(),
@@ -463,7 +509,7 @@ impl GatewayPort for FakeGateway {
             if !s.sessions.get(&session).is_some_and(|s| !s.deleted) {
                 return Err(PortError::refused("not_found"));
             }
-            s.subscriptions.insert(session);
+            subscribe(&mut s, &session);
             save(&mut s)?;
             Ok(())
         })
@@ -545,6 +591,7 @@ impl GatewayPort for FakeGateway {
                 .entry(req.session_id.clone())
                 .or_default()
                 .push(id.clone());
+            show(&mut s, &req.session_id, &id);
             refresh(&mut s);
             let a = find(&s, &req.session_id, &id)?;
             let r = receipt(&req.session_id, a, false);
@@ -637,9 +684,12 @@ impl GatewayPort for FakeGateway {
                         .get(&session)
                         .filter(|s| !s.deleted)
                         .ok_or_else(|| PortError::refused("not_found"))?;
+                    // Only a turn Hermes showed this client can be found, as with Hermes.
+                    let shown = s.seen.get(&session);
                     let next = stored
                         .admissions
                         .iter()
+                        .filter(|a| shown.is_some_and(|seen| seen.contains(&a.id)))
                         .find(|a| !known.contains(&a.id))
                         .filter(|a| a.status == AdmissionState::Terminal)
                         .map(|a| receipt(&session, a, true));
@@ -651,6 +701,21 @@ impl GatewayPort for FakeGateway {
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
+        })
+    }
+    fn seen_admissions(
+        &self,
+        _profile: String,
+        session: String,
+    ) -> BoxFuture<'static, Result<Vec<String>, PortError>> {
+        let this = self.clone();
+        // Not routed through `access`: reading what the client saw is not a gateway call.
+        Box::pin(async move {
+            let s = this
+                .state
+                .lock()
+                .map_err(|e| PortError::Transport(e.to_string()))?;
+            Ok(s.seen.get(&session).cloned().unwrap_or_default())
         })
     }
     fn close_session(

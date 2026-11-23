@@ -84,6 +84,7 @@ fn round_trip_every_record_type() {
             admission_id: Some("admission".into()),
             execution_generation: Some(1),
             detail: "unknown".into(),
+            seen_admissions: Vec::new(),
         },
         Record::CallResolved {
             key: k.clone(),
@@ -258,6 +259,7 @@ async fn every_allowed_transition_round_trips() {
             admission_id: Some("admission".into()),
             execution_generation: Some(1),
             detail: "unknown".into(),
+            seen_admissions: Vec::new(),
         }
     }
     fn resolved(resolution: Resolution) -> Record {

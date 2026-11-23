@@ -584,7 +584,7 @@ fn stopped_outcomes_take_precedence_over_the_failed_flag() {
             SchemaTurnPolicy.after_turn(&request(), &[turn]),
             NextStep::Finish(AgentOutcome::Failed {
                 reason: format!(
-                    "agent stopped: a stop was requested from outside the runner, for example a key press in a window showing the agent's session; Hermes ended the turn as '{outcome}' (interrupted). This was a requested stop, not a timeout: a time in Hermes's text is how long the turn had run"
+                    "agent stopped: Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn; Hermes ended the turn as '{outcome}' (interrupted). This was a stop, not a timeout: a time in Hermes's text is how long the turn had run"
                 ),
             })
         );
@@ -648,4 +648,11 @@ async fn next_reply_follows_a_turn_another_client_started_on_the_session() {
     assert_eq!(reply.admission_id, "other");
     assert_eq!(reply.status, AdmissionState::Terminal);
     assert_eq!(reply.result.unwrap()["final_response"], "picked up");
+    // What the port saw on the session is what a parked call records as already answered.
+    assert_eq!(
+        p.seen_admissions("fixture".into(), "session".into())
+            .await
+            .unwrap(),
+        ["admission", "other"]
+    );
 }

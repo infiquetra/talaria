@@ -153,6 +153,17 @@ pub enum RunnerEvent {
         reason: String,
         /// The answers `talaria workflow resolve --resolution` accepts for it.
         choices: Vec<String>,
+        /// The branch the parked attempt's uncommitted work was saved to, when it ran in its own
+        /// worktree and left changes there.
+        saved_branch: Option<String>,
+    },
+    /// A stopped agent the operator answered with use-reply waits for the next reply on its
+    /// Hermes session; nothing ends the wait but that reply.
+    WaitingForReply {
+        run_id: String,
+        label: String,
+        key: String,
+        session_id: String,
     },
     Finished {
         run_id: String,
@@ -595,44 +606,7 @@ async fn resume(
                 output.diagnostic(e.to_string());
                 1
             })?;
-            output.started(&dir);
-            let result = match files::read_json::<OutcomeFile>(&path.join("outcome.json")) {
-                Ok(saved) if saved.v == 1 && saved.outcome == outcome => saved.result,
-                _ => {
-                    (output.out)(&RunnerEvent::Log {
-                        message: format!(
-                            "stored result unavailable; {outcome} summary {}",
-                            fold.summary.unwrap_or(Value::Null)
-                        ),
-                    });
-                    None
-                }
-            };
-            if outcome == "budget_exhausted" {
-                output.diagnostic(
-                    "this run's budget ran out; to continue it, resume with a larger --budget-tokens or --budget-usd",
-                );
-            }
-            replayed_code = code;
-            (output.out)(&RunnerEvent::Finished {
-                run_id: dir.run_id().as_str().into(),
-                outcome: outcome.into(),
-                result,
-                spend: SpendView {
-                    tokens: fold.tokens.unwrap_or_default(),
-                    cache_read_tokens: fold.cache_read_tokens,
-                    cache_unknown_turns: fold.cache_unknown_turns,
-                    money_usd: fold.money,
-                    // The journal keeps only the costs Hermes reported, so a replay cannot show
-                    // money the live run priced from the price list.
-                    money_source: if fold.money.is_some() {
-                        "hermes"
-                    } else {
-                        "unrecorded"
-                    }
-                    .into(),
-                },
-            });
+            replayed_code = replay_finished(&dir, fold, outcome, code, &mut output);
             drop(lease);
             return Ok(None);
         }
@@ -703,6 +677,11 @@ async fn resume(
             output.diagnostic(e.to_string());
             1
         })?;
+        // A new execution starts: stop notes whose turn has settled since are stale.
+        dir.prune_agent_stops().map_err(|e| {
+            output.diagnostic(e.to_string());
+            1
+        })?;
         control::remove_stale_runner(dir.path()).map_err(|e| {
             output.diagnostic(e.to_string());
             1
@@ -735,6 +714,99 @@ async fn resume(
     }
 }
 
+/// Print a finished run's stored result as its runner printed it at the end, and return the
+/// exit code it ended with. `workflow resume` of a finished run and `workflow result` both use
+/// it, so the two print the same lines.
+fn replay_finished(dir: &RunDir, fold: Fold, outcome: &str, code: i32, output: &mut Output) -> i32 {
+    output.started(dir);
+    let result = match files::read_json::<OutcomeFile>(&dir.path().join("outcome.json")) {
+        Ok(saved) if saved.v == 1 && saved.outcome == outcome => saved.result,
+        _ => {
+            (output.out)(&RunnerEvent::Log {
+                message: format!(
+                    "stored result unavailable; {outcome} summary {}",
+                    fold.summary.unwrap_or(Value::Null)
+                ),
+            });
+            None
+        }
+    };
+    if outcome == "budget_exhausted" {
+        output.diagnostic(
+            "this run's budget ran out; to continue it, resume with a larger --budget-tokens or --budget-usd",
+        );
+    }
+    (output.out)(&RunnerEvent::Finished {
+        run_id: dir.run_id().as_str().into(),
+        outcome: outcome.into(),
+        result,
+        spend: SpendView {
+            tokens: fold.tokens.unwrap_or_default(),
+            cache_read_tokens: fold.cache_read_tokens,
+            cache_unknown_turns: fold.cache_unknown_turns,
+            money_usd: fold.money,
+            // The journal keeps only the costs Hermes reported, so a replay cannot show
+            // money the live run priced from the price list.
+            money_source: if fold.money.is_some() {
+                "hermes"
+            } else {
+                "unrecorded"
+            }
+            .into(),
+        },
+    });
+    code
+}
+/// Print a finished run's stored result, read from its folder only: the same lines and exit
+/// code as `workflow resume` prints when it replays a finished run, and for a run that failed
+/// or was aborted, what its runner printed when it ended. Nothing is started, no execution is
+/// opened, and a pending restart request is left for the next resume. A run that has not
+/// finished is reported, with exit code 1.
+pub fn replay_result(runs_dir: &Path, target: &str, out: &mut dyn FnMut(&RunnerEvent)) -> RunExit {
+    let mut output = Output {
+        out,
+        problems: Vec::new(),
+        run_id: None,
+    };
+    let code = (|| {
+        let path = runs::find_run(runs_dir, target).map_err(|e| {
+            output.diagnostic(e.to_string());
+            2
+        })?;
+        let dir = RunDir::open(&path).map_err(|e| {
+            output.diagnostic(e.to_string());
+            2
+        })?;
+        output.run_id = Some(dir.run_id().as_str().into());
+        let records = control::read_records(&path).map_err(|e| {
+            output.diagnostic(e.to_string());
+            2
+        })?;
+        let fold = Fold::records(&records).map_err(|e| {
+            output.diagnostic(e.to_string());
+            2
+        })?;
+        let ended = match fold.terminal.as_deref() {
+            Some("completed") => Some(("completed", 0)),
+            Some("budget_exhausted") => Some(("budget_exhausted", 4)),
+            Some("completed_with_failures") => Some(("completed_with_failures", 5)),
+            Some("failed") => Some(("failed", 1)),
+            Some("aborted") => Some(("aborted", 3)),
+            _ => None,
+        };
+        let Some((outcome, code)) = ended else {
+            let status = runs::summarize_run(&path).status;
+            output.diagnostic(format!(
+                "run {} has not finished (it is {}), so it has no result yet; talaria workflow list shows its progress",
+                dir.run_id().as_str(),
+                status.as_str().replace('_', " ")
+            ));
+            return Err(1);
+        };
+        Ok(replay_finished(&dir, fold, outcome, code, &mut output))
+    })();
+    output.exit(code.unwrap_or_else(|code| code))
+}
 pub async fn run_child(run_dir: PathBuf, out: &mut dyn FnMut(&RunnerEvent)) -> RunExit {
     run_child_with_options(run_dir, ChildOptions::default(), out).await
 }
@@ -1149,7 +1221,8 @@ async fn execute_inner(
                     }
                     (output.out)(&RunnerEvent::Scheduler(event));
                 }
-                Some(Input::Notice(JournalNotice::NeedsOperator{key,label,attempt,episode,cause,detail,..}))=>(output.out)(&RunnerEvent::Parked{run_id:dir.run_id().as_str().into(),label,key,attempt,episode,cause:cause.as_str().into(),reason:detail,choices:cause.choices().iter().map(|c|(*c).to_owned()).collect()}),
+                Some(Input::Notice(JournalNotice::NeedsOperator{key,label,attempt,episode,cause,detail,..}))=>(output.out)(&RunnerEvent::Parked{run_id:dir.run_id().as_str().into(),label,key,attempt,episode,cause:cause.as_str().into(),saved_branch:crate::worktree::saved_branch_in(&detail),reason:detail,choices:cause.choices().iter().map(|c|(*c).to_owned()).collect()}),
+                Some(Input::Notice(JournalNotice::WaitingForReply{key,label,session_id}))=>(output.out)(&RunnerEvent::WaitingForReply{run_id:dir.run_id().as_str().into(),label,key,session_id}),
                 Some(Input::Notice(JournalNotice::Warning(warning)))=>output.diagnostic(format!("journal warning: {warning:?}")),
                 Some(Input::Notice(JournalNotice::RouteNote{message}))=>(output.out)(&RunnerEvent::Log{message}),
                 Some(Input::Notice(_))=>{},
@@ -1425,6 +1498,8 @@ fn stop_for_budget(
             .lock()
             .is_ok_and(|mut set| set.insert(target.admission_id.clone()));
         if fresh {
+            // The note goes first, so a settlement a later execution reads is still the budget's.
+            note_runner_stop(dir, &target, crate::journal::StopSource::Budget);
             let (port, sent) = (port.clone(), sent.clone());
             handles.push(tokio::spawn(async move {
                 // `NotRunning` can also mean the port has no receipt yet for a reattached turn.
@@ -1482,6 +1557,11 @@ async fn settle_stop(
     };
     let deadline = tokio::time::Instant::now() + bound;
     let mut pending = Vec::new();
+    // Each note goes before its stop, so a settlement that only a later execution reads is
+    // still the run's stop and does not park.
+    for target in &targets {
+        note_runner_stop(&path, target, crate::journal::StopSource::RunStop);
+    }
     for target in targets {
         let attached = tokio::time::timeout_at(
             deadline,
@@ -1511,14 +1591,19 @@ async fn settle_stop(
             .await;
             match result {
                 Ok(Ok(receipt)) if receipt.status == AdmissionState::Terminal => {
-                    let _ = journal
+                    if journal
                         .append(run_stop_settlement(
                             &target.key,
                             target.attempt,
                             target.turn,
                             receipt,
                         ))
-                        .await;
+                        .await
+                        .is_ok()
+                    {
+                        // The settlement names the run's stop itself; its note is used up.
+                        let _ = journal.dir().clear_agent_stop(&target.key);
+                    }
                 }
                 _ => remaining.push(target),
             }
@@ -1530,6 +1615,24 @@ async fn settle_stop(
     }
     uncertain.extend(pending.into_iter().map(|t| t.session_id));
     uncertain
+}
+/// Leave the durable note that the runner is about to stop `target`'s turn. A note that cannot
+/// be written leaves the stop unattributed: a later execution then parks the agent for the
+/// operator, which loses nothing.
+fn note_runner_stop(
+    run_dir: &Path,
+    target: &control::StopTarget,
+    source: crate::journal::StopSource,
+) {
+    let Ok(dir) = RunDir::open(run_dir) else {
+        return;
+    };
+    let turn = crate::journal::StopTurn {
+        attempt: target.attempt,
+        turn: target.turn,
+        admission_id: Some(target.admission_id.clone()),
+    };
+    let _ = dir.note_stop(&target.key, source, Some(&turn), files::now_ms());
 }
 /// A turn the run's stop settled, marked as stopped by the runner when it ended stopped, so a
 /// later resume fails it as part of the stop instead of parking it for the operator.

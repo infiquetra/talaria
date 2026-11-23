@@ -208,18 +208,48 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             AgentOutcome::Stopped { .. } => "was stopped",
             _ => return outcome,
         };
-        let Ok(history) = self.journal.history(key) else {
+        let Some(branch) = self.save_folder(key, state).await else {
             return outcome;
         };
-        let Some((call_id, launch, _, label)) = history.intent() else {
-            return outcome;
+        // Leave room for the branch, so the length cap on recorded reasons never cuts it off.
+        // A reason that already names this branch (a parked call's saved work, kept in the
+        // reason it parked with) is not given it twice.
+        let attach = |reason: String| {
+            if crate::worktree::saved_branch_in(&reason).as_deref() == Some(branch.as_str()) {
+                reason
+            } else {
+                crate::worktree::with_saved_branch(&super::cut(&reason, 3800), &branch)
+            }
         };
-        if launch.isolation != Some(crate::engine::Isolation::Worktree) {
-            return outcome;
+        match outcome {
+            AgentOutcome::CutShort {
+                value,
+                mut cut_short,
+            } => {
+                cut_short.saved_branch = Some(branch);
+                AgentOutcome::CutShort { value, cut_short }
+            }
+            AgentOutcome::Failed { reason } => AgentOutcome::Failed {
+                reason: attach(reason),
+            },
+            AgentOutcome::Stopped { reason } => AgentOutcome::Stopped {
+                reason: attach(reason),
+            },
+            other => other,
         }
-        let Some(folder) = launch.cwd.clone() else {
-            return outcome;
-        };
+    }
+    /// Save the uncommitted changes in the worktree of a call that ran in its own worktree to
+    /// a new branch, and return the branch, or `None` when the call has no worktree or nothing
+    /// to save. `state` says what happened to the agent, for the saved commit's message. The
+    /// worktree itself is not changed, and a save of exactly the same work names the branch
+    /// that already holds it. A save that cannot be made is noted in the journal and shown live.
+    async fn save_folder(&self, key: &str, state: &str) -> Option<String> {
+        let history = self.journal.history(key).ok()?;
+        let (call_id, launch, _, label) = history.intent()?;
+        if launch.isolation != Some(crate::engine::Isolation::Worktree) {
+            return None;
+        }
+        let folder = launch.cwd.clone()?;
         let label = label.to_owned();
         let run_id = self.journal.dir().run_id().as_str().to_owned();
         let branch =
@@ -245,7 +275,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     "runner: could not save the uncommitted work of agent {label} to a branch: {error}"
                 ))
                 .await;
-                return outcome;
+                return None;
             }
         };
         let skipped = saved
@@ -259,32 +289,13 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 ))
                 .await;
             }
-            return outcome;
+            return None;
         };
         self.note_route(format!(
             "runner: saved the uncommitted work of agent {label} to branch {branch}{skipped}"
         ))
         .await;
-        // Leave room for the branch, so the length cap on recorded reasons never cuts it off.
-        let attach = |reason: String| {
-            crate::worktree::with_saved_branch(&super::cut(&reason, 3800), &branch)
-        };
-        match outcome {
-            AgentOutcome::CutShort {
-                value,
-                mut cut_short,
-            } => {
-                cut_short.saved_branch = Some(branch);
-                AgentOutcome::CutShort { value, cut_short }
-            }
-            AgentOutcome::Failed { reason } => AgentOutcome::Failed {
-                reason: attach(reason),
-            },
-            AgentOutcome::Stopped { reason } => AgentOutcome::Stopped {
-                reason: attach(reason),
-            },
-            other => other,
-        }
+        Some(branch)
     }
     /// Look at the call's route and say why it is not quiet, or `None` when nothing the run
     /// does not follow is still running there. A check that could not be made counts as not
@@ -555,6 +566,9 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             }
             if matches!(last.record, Record::CallAttention { .. }) {
                 let parked = h.attention().ok_or_else(|| io_error("missing attention"))?;
+                if parked.cause == AttentionCause::Stopped {
+                    self.follow_session(&h, &mut runner).await;
+                }
                 self.journal.notice(JournalNotice::NeedsOperator {
                     key: key.clone(),
                     label: request.label.clone(),
@@ -739,6 +753,10 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                         });
                     }
                     Resolution::Rerun | Resolution::Abort => {
+                        // The next attempt reuses the call's worktree: keep what the parked
+                        // attempt left there first.
+                        self.save_folder(&key, "was parked and then run again")
+                            .await;
                         next_attempt = Some(
                             attempt
                                 .checked_add(1)
@@ -975,14 +993,19 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                             )
                             .await;
                     }
-                    // A stop that was not part of stopping the run parks the call for the
-                    // operator instead of failing it; the parked call waits until answered.
+                    // A stop that was not part of stopping the run, of its budget or of a
+                    // restart parks the call for the operator instead of failing it; the
+                    // parked call waits until answered.
                     if let NextStep::Finish(AgentOutcome::Failed { reason }) = &next
                         && let Some(last) = turns.last()
                         && stopped_outcome(&last.outcome)
                         && !matches!(
                             StopSource::from_meta(&last.result_meta),
-                            Some(StopSource::RunStop | StopSource::WorkflowViewRestart)
+                            Some(
+                                StopSource::RunStop
+                                    | StopSource::Budget
+                                    | StopSource::WorkflowViewRestart
+                            )
                         )
                         && !self.gate.run_stopping()
                     {
@@ -1164,10 +1187,14 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         turn: u32,
         r: Receipt,
     ) -> Result<(), JournalError> {
+        // A stop the workflow view or the runner sent left a note naming this turn before it
+        // was sent; the settled turn keeps who sent it. A note about another turn is ignored.
+        // While the run is being stopped, the stop is the run's.
+        let note = self
+            .journal
+            .dir()
+            .agent_stop_for(key, attempt, turn, &r.admission_id);
         let mut record = settled_record(key, attempt, turn, r);
-        // A stop the workflow view sent left a note before it was sent; the settled turn
-        // keeps who sent it. While the run is being stopped, the stop is the run's.
-        let note = self.journal.dir().agent_stop(key);
         let source = if self.gate.run_stopping() {
             Some(StopSource::RunStop)
         } else {
@@ -1218,6 +1245,11 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             "runner: agent {label}: waiting for the next reply on session {session} to use as its result"
         ))
         .await;
+        self.journal.notice(JournalNotice::WaitingForReply {
+            key: key.into(),
+            label: label.into(),
+            session_id: session.clone(),
+        });
         let receipt = runner
             .call(
                 || {
@@ -1315,6 +1347,17 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             } => Some((admission_id.clone(), *execution_generation)),
             _ => None,
         });
+        let seen_admissions = if cause == AttentionCause::Stopped {
+            self.seen_elsewhere(h).await
+        } else {
+            Vec::new()
+        };
+        // An answer of rerun starts the next attempt in the same worktree, so the parked
+        // attempt's uncommitted work is saved now and the parked reason names the branch.
+        let detail = match self.save_folder(key, "was parked for the operator").await {
+            Some(branch) => crate::worktree::with_saved_branch(&cut(detail, 3800), &branch),
+            None => detail.to_owned(),
+        };
         self.journal
             .append(Record::CallAttention {
                 key: key.into(),
@@ -1328,11 +1371,73 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 execution_generation: receipt
                     .and_then(|r| r.execution_generation)
                     .or_else(|| admission.and_then(|a| a.1)),
-                detail: cut(detail, 4096),
+                detail: cut(&detail, 4096),
+                seen_admissions,
             })
             .await?;
         drop(permit.take());
         Ok(())
+    }
+    /// The admissions of other clients the port has already seen on a stopping call's session.
+    /// A reply to use for the call must come after them: one of them may be a reply to a
+    /// message a person typed before the stop.
+    async fn seen_elsewhere(&self, h: &CallHistory) -> Vec<String> {
+        let (Some(session), Some((_, launch, _, label))) = (h.session(), h.intent()) else {
+            return Vec::new();
+        };
+        let own = h.known_admissions();
+        let seen = tokio::time::timeout(
+            Duration::from_secs(15),
+            self.port
+                .seen_admissions(launch.profile.clone(), session.clone()),
+        )
+        .await;
+        match seen {
+            Ok(Ok(seen)) => seen.into_iter().filter(|id| !own.contains(id)).collect(),
+            Ok(Err(e)) => {
+                self.note(format!(
+                    "runner: agent {label}: could not read which turns already ran on session {session} ({e}); a use-reply answer may take a reply that came before the stop"
+                ))
+                .await;
+                Vec::new()
+            }
+            Err(_) => {
+                self.note(format!(
+                    "runner: agent {label}: no answer within 15 seconds when reading which turns already ran on session {session}; a use-reply answer may take a reply that came before the stop"
+                ))
+                .await;
+                Vec::new()
+            }
+        }
+    }
+    /// Follow a stopped parked call's session, so that a reply typed into it while the call
+    /// waits for its answer is seen and a use-reply answer can take it. In the execution that
+    /// parked the call the session is already followed; a later execution attaches again.
+    async fn follow_session(&self, h: &CallHistory, runner: &mut PortRunner<'_, P>) {
+        let (Some(session), Some((_, launch, _, label))) = (h.session(), h.intent()) else {
+            return;
+        };
+        let target = (launch.profile.clone(), session.clone());
+        if runner.attached.contains(&target) {
+            return;
+        }
+        let attached = tokio::time::timeout(
+            Duration::from_secs(60),
+            self.port.attach(target.0.clone(), target.1.clone()),
+        )
+        .await;
+        let problem = match attached {
+            Ok(Ok(())) => {
+                runner.attached.insert(target);
+                return;
+            }
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "no answer within 60 seconds".into(),
+        };
+        self.note_route(format!(
+            "runner: agent {label}: could not follow session {session} while it waits for an answer ({problem}); a reply typed there before the answer may not be seen, so after a use-reply answer type the reply again"
+        ))
+        .await;
     }
 }
 enum StepError {
