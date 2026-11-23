@@ -77,6 +77,48 @@ fn validate_root(path: &Path) -> Result<&str, SkillError> {
         _ => Err(SkillError::InvalidRoot(path.into())),
     }
 }
+const PROFILE_TOKEN: &str = "@@TALARIA_PROFILE@@";
+const COMMAND_TOKEN: &str = "@@TALARIA_COMMAND@@";
+/// What the size budget counts for each `@@TALARIA_COMMAND@@`: room for
+/// `HERMES_HOME='<folder>' <command>` with a folder of about 45 bytes. A real folder path is
+/// not measured, so the budget gives the same answer on every machine.
+pub const COMMAND_ALLOWANCE: usize = 64;
+/// What the size budget counts for each `@@TALARIA_PROFILE@@`.
+pub const PROFILE_ALLOWANCE: usize = 24;
+/// The budget for `SKILL.md`, counted on its template with the allowances above.
+pub const SKILL_BUDGET: usize = 8192;
+/// The budget for each reference file, counted the same way.
+pub const REFERENCE_BUDGET: usize = 24576;
+/// The budget for all files together, counted the same way.
+pub const TOTAL_BUDGET: usize = 65536;
+/// How far the rendered text may pass a budget before `render` refuses. It is what a long Hermes
+/// folder path may add, so that path length alone rarely decides whether a skill installs.
+pub const RENDER_HEADROOM: usize = 4096;
+/// The budget for the file at `path`.
+pub fn file_budget(path: &str) -> usize {
+    if path == "SKILL.md" {
+        SKILL_BUDGET
+    } else {
+        REFERENCE_BUDGET
+    }
+}
+/// The size a template counts toward its budget: its own length, with every placeholder counted
+/// at its fixed allowance instead of the text it will be replaced by.
+pub fn budgeted_size(template: &str) -> usize {
+    let template = template.replace("\r\n", "\n");
+    let commands = template.matches(COMMAND_TOKEN).count();
+    let profiles = template.matches(PROFILE_TOKEN).count();
+    template.len() - commands * COMMAND_TOKEN.len() - profiles * PROFILE_TOKEN.len()
+        + commands * COMMAND_ALLOWANCE
+        + profiles * PROFILE_ALLOWANCE
+}
+/// Render the skill files.
+///
+/// Two size rules apply. First, each template must fit its budget when counted by
+/// [`budgeted_size`]; that depends on the embedded text only, so it cannot pass on one machine
+/// and fail on another. Second, the rendered text may exceed its budget by at most
+/// [`RENDER_HEADROOM`] bytes; a Hermes folder path long enough to pass that is refused with an
+/// error that names the path length.
 pub fn render(
     profile: &str,
     command: &str,
@@ -86,13 +128,35 @@ pub fn render(
     validate_command(command)?;
     let root = validate_root(hermes_root)?;
     let prefix = format!("HERMES_HOME='{root}' {command}");
+    for (path, template) in SKILL_FILES {
+        let counted = budgeted_size(template);
+        if counted > file_budget(path) {
+            return Err(SkillError::Template(format!(
+                "embedded skill size limit exceeded in {path}: {counted} bytes counting each placeholder at its allowance, limit {}",
+                file_budget(path)
+            )));
+        }
+    }
+    let counted_total: usize = SKILL_FILES.iter().map(|(_, t)| budgeted_size(t)).sum();
+    if counted_total > TOTAL_BUDGET {
+        return Err(SkillError::Template(format!(
+            "embedded skill size limit exceeded: {counted_total} bytes in all files counting each placeholder at its allowance, limit {TOTAL_BUDGET}"
+        )));
+    }
+    let too_long = |what: &str, size: usize, limit: usize| {
+        SkillError::Template(format!(
+            "{what} renders to {size} bytes, over the limit of {limit}; the cause is the Hermes folder path ({} bytes) and command ({} bytes) written into every command line, so use a shorter Hermes folder path",
+            root.len(),
+            command.len()
+        ))
+    };
     let mut total = 0;
     SKILL_FILES
         .iter()
         .map(|(path, template)| {
             let text = template
-                .replace("@@TALARIA_PROFILE@@", &profile)
-                .replace("@@TALARIA_COMMAND@@", &prefix)
+                .replace(PROFILE_TOKEN, &profile)
+                .replace(COMMAND_TOKEN, &prefix)
                 .replace("\r\n", "\n");
             if text.contains("@@") {
                 return Err(SkillError::Template(format!(
@@ -100,10 +164,16 @@ pub fn render(
                 )));
             }
             total += text.len();
-            if text.len() > if *path == "SKILL.md" { 8192 } else { 24576 } || total > 65536 {
-                return Err(SkillError::Template(format!(
-                    "embedded skill size limit exceeded in {path}"
-                )));
+            let limit = file_budget(path) + RENDER_HEADROOM;
+            if text.len() > limit {
+                return Err(too_long(path, text.len(), limit));
+            }
+            if total > TOTAL_BUDGET + RENDER_HEADROOM {
+                return Err(too_long(
+                    "the skill files together",
+                    total,
+                    TOTAL_BUDGET + RENDER_HEADROOM,
+                ));
             }
             Ok(RenderedFile {
                 path,

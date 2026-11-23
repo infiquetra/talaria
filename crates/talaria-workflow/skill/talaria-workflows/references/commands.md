@@ -10,6 +10,14 @@ Use the rendered root prefix on every command. Do not put credentials in argumen
 
 Options: --staffing, --budget-tokens, --budget-usd, --profile, --json. The version 1 envelope contains report, paths, workflows, skill, warnings, and error. Exit 0 means usable staffing, 2 means report.check problems, 1 means report is null and error explains why.
 
+## Check
+
+```sh
+@@TALARIA_COMMAND@@ workflow check --json <path>
+```
+
+Run it on every draft before asking to start. It starts no agent, spends nothing, and does not contact the gateway. Options: --json, --args, --args-file, --staffing, --workflows-dir. Exit 0 means acceptable; exit 2 means at least one error. The JSON has version, ok, name, errors, warnings, named_routes and probe. Each error and warning has kind (input, meta, import, syntax, option, route or probe), message, and line and column when known. It checks the meta block, JavaScript syntax with line and column, imports, and then runs the script against made-up agent answers (probe.agent_calls counts the calls it reached; none runs) to find options the engine refuses, a provider named without a model, a tier missing from the staffing table, and nested workflows that do not compile. It cannot check real agent answers, whether named models or providers exist (named_routes only lists them), or code the probe did not reach. Pass --args when the script reads args. A probe warning means the probe stopped early; read it, but it is not an error.
+
 ## Run
 
 ```sh
@@ -57,3 +65,7 @@ Options: --runs-dir, --timeout. Exit 0 means already finished or confirmed stopp
 ```
 
 Options: --profile, --json. Shows current, outdated, modified, foreign, or missing, versions and differences. Exit 0 inspected, 1 I/O or mismatch, 2 invalid input or missing profile. Installation is an explicit developer action. It never happens merely by enabling hivecode.
+
+## Compile
+
+`workflow compile` turns a workflow's agent calls into kanban board cards. It is for kanban boards only and is not a script validator; use `workflow check` to validate a script.

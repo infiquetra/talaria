@@ -1,5 +1,8 @@
 use std::path::Path;
-use talaria_workflow::skill::render;
+use talaria_workflow::skill::{
+    COMMAND_ALLOWANCE, PROFILE_ALLOWANCE, RENDER_HEADROOM, SKILL_FILES, TOTAL_BUDGET,
+    budgeted_size, file_budget, render,
+};
 fn files() -> Vec<(String, String)> {
     render("fixture", "talaria", Path::new("/h"))
         .unwrap()
@@ -36,14 +39,52 @@ fn no_preprocessing_or_injection_tokens() {
 }
 #[test]
 fn size_budgets() {
-    let all = files();
+    // The budget is counted on the embedded templates, each placeholder at a fixed allowance, so
+    // it does not depend on the machine's Hermes folder path.
     let mut total = 0;
-    for (name, text) in all {
-        assert!(!text.is_empty());
-        assert!(text.len() <= if name == "SKILL.md" { 8192 } else { 24576 });
-        total += text.len();
+    for (name, template) in SKILL_FILES {
+        let counted = budgeted_size(template);
+        assert!(counted > 0);
+        assert!(counted <= file_budget(name), "{name}: {counted} bytes");
+        total += counted;
     }
-    assert!(total <= 65536);
+    assert!(total <= TOTAL_BUDGET, "{total} bytes in all");
+    assert_eq!(file_budget("SKILL.md"), 8192);
+    assert_eq!(file_budget("references/commands.md"), 24576);
+}
+#[test]
+fn the_budget_counts_placeholders_at_their_allowance() {
+    assert_eq!(budgeted_size("abc"), 3);
+    assert_eq!(
+        budgeted_size("a @@TALARIA_COMMAND@@ b"),
+        4 + COMMAND_ALLOWANCE
+    );
+    assert_eq!(
+        budgeted_size("@@TALARIA_PROFILE@@\r\n@@TALARIA_PROFILE@@"),
+        1 + 2 * PROFILE_ALLOWANCE
+    );
+}
+#[test]
+fn a_skill_renders_for_any_realistic_hermes_folder_path() {
+    for length in [1_usize, 20, 80, 300, 600] {
+        let root = format!("/{}", "h".repeat(length - 1));
+        let files = render("fixture", "talaria", Path::new(&root))
+            .unwrap_or_else(|e| panic!("path of {length} bytes: {e}"));
+        assert!(
+            files[0].bytes.len() <= 8192 + RENDER_HEADROOM,
+            "SKILL.md is {} bytes",
+            files[0].bytes.len()
+        );
+    }
+}
+#[test]
+fn a_very_long_path_is_refused_by_naming_its_length() {
+    let root = format!("/{}", "h".repeat(1000));
+    let error = render("fixture", "talaria", Path::new(&root))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Hermes folder path (1001 bytes)"), "{error}");
+    assert!(error.contains("over the limit of"), "{error}");
 }
 #[test]
 fn statements_s1_to_s12_present() {
