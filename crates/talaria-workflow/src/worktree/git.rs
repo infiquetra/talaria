@@ -30,11 +30,21 @@ pub struct WorktreeInfo {
     pub dirty: bool,
 }
 
+/// Every git call here may run in a folder an agent wrote to. Repository configuration there can
+/// name programs (`core.fsmonitor`), so the options that could run one are switched off and no
+/// optional locks are taken, as the leftover-edits check in the runner does.
 fn run(repo: &Path, args: &[&OsStr]) -> Result<Output, String> {
     Command::new("git")
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+        ])
         .arg("-C")
         .arg(repo)
         .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {

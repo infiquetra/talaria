@@ -59,8 +59,8 @@ pub(crate) fn leftover_folders(
 }
 
 /// The read-only status command. Repository configuration in an agent's folder can name
-/// programs (`core.fsmonitor`), so both options that could run one are switched off, and the
-/// command takes no optional locks.
+/// programs (`core.fsmonitor`), so both options that could run one are switched off, submodules are
+/// not entered, and the command takes no optional locks.
 fn status_command(folder: &Path) -> Command {
     let mut command = Command::new("git");
     command
@@ -72,7 +72,12 @@ fn status_command(folder: &Path) -> Command {
         ])
         .arg("-C")
         .arg(folder)
-        .args(["status", "--porcelain", "--no-renames"])
+        .args([
+            "status",
+            "--porcelain",
+            "--no-renames",
+            "--ignore-submodules=all",
+        ])
         .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -197,6 +202,7 @@ mod tests {
             "status",
             "--porcelain",
             "--no-renames",
+            "--ignore-submodules=all",
         ];
         assert_eq!(args, want.map(OsStr::new));
         let locks = command
