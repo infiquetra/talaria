@@ -363,6 +363,7 @@ async fn stale_generation_is_dropped() {
         kind: NoticeKind::System,
         text: format!("Scheduled jobs: {notice}"),
         detail: None,
+        body: None,
     };
     assert!(cell.text.contains("nightly check"));
     assert!(cell.text.contains("profile fixture"));

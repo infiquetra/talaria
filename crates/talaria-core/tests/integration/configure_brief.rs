@@ -141,3 +141,34 @@ fn context_reply_builds_requested_sections() {
     assert!(text.ends_with("Reply with one talaria-configure block."));
     assert!(text.len() <= CONTEXT_REPLY_MAX_BYTES);
 }
+
+#[test]
+fn context_reply_lists_the_values_the_chooser_offers() {
+    let ctx = context();
+    let need = Need {
+        sections: vec![
+            "settings:agent.coding_context".into(),
+            "settings:human_delay.mode".into(),
+            "settings:display.skin".into(),
+        ],
+        why: None,
+    };
+    let text = build_context_reply(&ctx, &need, detect);
+    let line = |key: &str| {
+        text.lines()
+            .find(|line| line.starts_with(&format!("{key} |")))
+            .unwrap_or_else(|| panic!("no line for {key}: {text}"))
+            .to_owned()
+    };
+    // A key the gateway types as plain text still lists its built-in values.
+    let coding = line("agent.coding_context");
+    for word in ["auto", "focus", "on", "off"] {
+        assert!(coding.contains(&format!("\"{word}\"")), "{coding}");
+    }
+    // A corrected list replaces the gateway's wrong one.
+    let delay = line("human_delay.mode");
+    assert!(delay.contains("\"natural\""), "{delay}");
+    assert!(!delay.contains("\"typing\""), "{delay}");
+    // A key that takes the user's own entries says so.
+    assert!(line("display.skin").contains("or your own entry"), "{text}");
+}

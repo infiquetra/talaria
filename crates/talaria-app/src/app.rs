@@ -5,7 +5,9 @@
 //! depends on a terminal library. Every gateway call runs in a spawned task and comes back as an
 //! [`AppMessage`]; the loop itself never waits on the network.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+pub mod choice;
+
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::future::Future;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -66,9 +68,10 @@ use talaria_core::queue::{
     IdSource, QueueAction, QueueIntent, RECONCILE_WAIT, SubmissionId, update_queue,
 };
 use talaria_core::rewind::{
-    CallFailure, DiffCommand, DiffSource, DoubleEsc, Reply, RewindEffect, RewindInput, RewindKey,
-    RewindState, RewindView, RollbackCommand, parse_diff as parse_diff_command, parse_rollback,
-    parse_undo, text as rewind_text, update as rewind_update,
+    CallFailure, DiffCommand, DiffSource, DoubleEsc, InterruptConfirm, InterruptPress, Reply,
+    RewindEffect, RewindInput, RewindKey, RewindState, RewindView, RollbackCommand,
+    parse_diff as parse_diff_command, parse_rollback, parse_undo, text as rewind_text,
+    update as rewind_update,
 };
 use talaria_core::session::{
     Cell, ConnectionChoice, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState,
@@ -156,6 +159,12 @@ pub const REFRESHED_NOTICE: &str = "Reconnected. The transcript was refreshed.";
 pub const STALE_SUBSCRIPTION: &str =
     "Hermes no longer knew this connection's subscription; the session is unaffected.";
 const LINK_STOPPED_NOTICE: &str = "This prompt was not sent: the connection to Hermes has stopped.";
+/// What `/thinking full` says. Scrollback cannot be redrawn, so only blocks drawn from here on
+/// change.
+const THINKING_FULL_NOTICE: &str = "Thinking now shows in full in this view. Set [ui] reasoning = \"full\" in ~/.talaria/config.toml to keep it.";
+/// What `/thinking collapsed` says.
+const THINKING_COLLAPSED_NOTICE: &str =
+    "Thinking now shows as one line per block in this view; the transcript view shows it in full.";
 pub(crate) const REFRESH_FAILED_NOTICE: &str =
     "The transcript could not be refreshed after the reconnect.";
 /// The line a prompt gets while a switch or a branch runs.
@@ -182,7 +191,7 @@ const RENAME_FENCE: &str = "Hermes refused the rename: the session changed while
 const RENAME_TAKEN: &str = "Hermes could not rename the session. Another session may already use that title; titles must be unique.";
 /// The line a branch while a turn runs gets; nothing is sent.
 const BRANCH_TURN_RUNNING: &str =
-    "A turn is running. Wait for it to finish or press Esc to stop it, then branch.";
+    "A turn is running. Wait for it to finish or press Esc twice to stop it, then branch.";
 /// The line an export to a file Talaria cannot write in any format gets.
 const EXPORT_BAD_EXTENSION: &str = "Use a file name ending in .md, .json or .html.";
 /// The line an export with arguments Talaria does not know gets.
@@ -201,6 +210,9 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    /// In a workflow agent's session opened from the run view: go back to the session the
+    /// person came from and open the run view again.
+    WorkflowAgentBack,
     /// Toggle or reopen the client work panel.
     LayoutPanel,
     /// Toggle the menu preference.
@@ -269,6 +281,8 @@ pub enum UserAction {
     FleetAnswerEdited,
     /// Open or close the foreground subagents panel.
     ToggleAgents,
+    /// Open the foreground session's workflow run, or the run list when it has none.
+    WorkflowView,
     /// A control from the subagents overlay.
     Subagent(crate::subagents::SubagentAction),
     /// Open the panel for another attached owner.
@@ -299,8 +313,12 @@ pub enum UserAction {
     ModelConfirm(ConfirmKey),
     /// The composer sent this text.
     Submit(String),
-    /// Stop the running turn (Esc, or Ctrl+C on a card or an empty draft).
+    /// Stop the running turn now (Ctrl+C, or Esc on a card).
     Interrupt,
+    /// The interrupt key was pressed in the composer. While a turn runs the first press only
+    /// arms a confirmation and a second press inside the window interrupts; with no turn
+    /// running it does what [`UserAction::Interrupt`] does.
+    InterruptKey,
     /// `/quit` or the composer's exit request.
     Quit,
     /// A key the transcript screen owns.
@@ -333,6 +351,10 @@ pub enum UserAction {
     Queue(QueueIntent),
     /// The draft changed, or a completion-list key was pressed. Issue #223.
     Palette(PaletteInput),
+    /// A key for the open `/theme` or `/skin` selector.
+    Choice(talaria_core::commands::ChoiceKey),
+    /// A key for the open `/effort` selector.
+    EffortScale(talaria_core::models::ScaleKey),
     /// A composer edit, including an explicit history recall.
     DraftEdited {
         text: String,
@@ -430,6 +452,10 @@ pub struct View<'a> {
     pub held: usize,
     /// The slash palette under the composer.
     pub palette: &'a PaletteState,
+    /// The `/theme` or `/skin` selector under the composer, while it is open.
+    pub choice: Option<&'a talaria_core::commands::ChoiceList>,
+    /// The `/effort` selector under the composer, while it is open.
+    pub effort_scale: Option<&'a talaria_core::models::EffortScale>,
     /// The rewind overlay, while it is open. Issue #233.
     pub rewind: Option<RewindView<'a>>,
     /// Whether the context figure must stay hidden for this session.
@@ -474,7 +500,18 @@ pub struct View<'a> {
     pub pr_labels: BTreeMap<RowKey, talaria_core::review::PrLabel>,
     /// The background counters the status line shows.
     pub fleet_counts: StatusCounts,
-    pub ultracode: bool,
+    pub hivecode: bool,
+    /// The foreground session's active workflow run, for the dock line and the status bar.
+    pub workflow_run: Option<&'a talaria_workflow::runner::RunSummary>,
+    /// What the journal says about the foreground session, when it is a workflow agent's.
+    pub workflow_agent: Option<&'a talaria_workflow::progress::agent_session::AgentSessionNote>,
+    /// One press of the interrupt key is waiting for a second: the working row says so.
+    pub interrupt_armed: bool,
+    /// The open session is a workflow agent's, opened from the run view, and the person can go
+    /// back to the session they came from.
+    pub agent_back: bool,
+    /// The building block, while a routed turn builds a workflow and no run it started shows.
+    pub authoring: Option<talaria_core::hivecode::authoring::AuthoringView>,
 }
 
 impl View<'_> {
@@ -494,6 +531,14 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     /// Open or close the profiles overlay before other overlay synchronizers run.
     fn sync_profiles(&mut self, _view: Option<&ProfilesView>) {}
+    /// The labels of the keys bound to the profiles actions the hints name.
+    fn profiles_key_labels(&self) -> talaria_core::profiles::KeyLabels {
+        talaria_core::profiles::KeyLabels::default()
+    }
+    /// The label of the key bound to reloading settings, named by the chooser's hints.
+    fn settings_reload_key(&self) -> Option<String> {
+        Some("Ctrl+R".into())
+    }
     /// The number of profiles rows visible above notices in this terminal.
     fn profiles_page_size(&self, view: &ProfilesView) -> usize {
         let (width, height) = self.pane_size();
@@ -560,6 +605,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn menu_bar(&self) -> bool {
         false
     }
+    /// Startup form of reasoning on the main screen; `/thinking` changes the view alone.
+    fn reasoning_display(&self) -> talaria_core::layout::ReasoningDisplay {
+        talaria_core::layout::ReasoningDisplay::Collapsed
+    }
     /// Identify the source before ordered commit effects reach the screen. The
     /// counter locates the uncommitted tail; callback order locates local output.
     fn sync_workspace_transcript(&mut self, _source_epoch: u64, _committed_cells: usize) {}
@@ -606,6 +655,11 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn load_draft(&mut self, text: &str);
     /// Take a draft the composer recorded on Enter back out of Up-arrow recall.
     fn unrecord_submit(&mut self, _text: &str) {}
+    /// Save a line the slash palette ran to Up-arrow recall and the history file. A notice
+    /// comes back when the file could not be written.
+    fn record_submit(&mut self, _text: &str, _has_session: bool) -> Option<String> {
+        None
+    }
     /// Hand back a prompt that left the queue: it goes into the composer only when the composer
     /// is empty and no edit is open; the transcript already shows it (#232).
     fn offer_draft(&mut self, text: &str) {
@@ -664,6 +718,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     /// How the start-up notice names the jump key; `None` leaves the key out.
     fn attention_key_label(&self) -> Option<String> {
+        None
+    }
+    /// How workflow run notices name the key that opens the run; `None` leaves the key out.
+    fn workflow_key_label(&self) -> Option<String> {
         None
     }
 
@@ -791,8 +849,22 @@ pub struct AppState {
     voice_submissions: BTreeMap<String, String>,
     remembered_notes: BTreeMap<String, String>,
     pub workflow_views: crate::workflow_progress::ProgressViews,
-    pub ultracode: crate::ultracode::UltracodeService,
-    ultracode_requests: std::collections::HashMap<SessionId, u64>,
+    /// The open session, when it belongs to a workflow agent.
+    pub(crate) workflow_agent: Option<crate::workflow_agent::WorkflowAgentSession>,
+    /// Stored ids of workflow agent sessions the person has been warned about.
+    workflow_agent_warned: HashSet<String>,
+    /// Where the person came from when the run view opened the agent session in the window.
+    pub(crate) workflow_origin: Option<crate::workflow_origin::WorkflowOrigin>,
+    /// A trip back to that place that is under way: the run view opens when it lands.
+    pub(crate) workflow_return: Option<crate::workflow_origin::WorkflowReturn>,
+    /// Where workflow runs live, for finding the run a session's folder names.
+    pub(crate) workflow_runs_dir: PathBuf,
+    pub hivecode: crate::hivecode::HivecodeService,
+    hivecode_requests: std::collections::HashMap<SessionId, u64>,
+    /// Where the per-session switch is saved; none in tests.
+    hivecode_file: Option<crate::hivecode_files::ModeFile>,
+    /// The number of the last save of the switch file.
+    hivecode_saves: u64,
     configure: Option<talaria_core::configure::ConfigureState>,
     configure_service: Option<Arc<crate::configure::Service>>,
     configure_generation: u64,
@@ -811,6 +883,9 @@ pub struct AppState {
     settings: talaria_core::settings::SettingsState,
     settings_service: Option<Arc<crate::settings::SettingsService>>,
     settings_generation: u64,
+    /// Profiles whose harmful Hermes settings were already looked up in this run, so each profile
+    /// is announced once.
+    config_checked: BTreeSet<String>,
     /// The doctor overlay, while it is open.
     pub doctor: Option<DoctorView>,
     /// A restart continues after its overlay closes.
@@ -826,6 +901,10 @@ pub struct AppState {
     provider_pending_loads: Vec<ProvidersEffect>,
     model_roles: Option<talaria_core::model_roles::ModelRolesState>,
     model_roles_profile: String,
+    /// The connected profile when the page opened; the page closes when the connection moves.
+    model_roles_connection: String,
+    /// The page was opened from /profiles and returns there when it closes.
+    model_roles_return_to_profiles: bool,
     model_roles_service: Option<Arc<crate::model_roles::ModelRolesService>>,
     model_roles_generation: u64,
     pub mcp: talaria_core::mcp::McpState,
@@ -888,6 +967,10 @@ pub struct AppState {
     pub draft: String,
     /// Slash palette. Closed until a slash draft opens it. Issue #223.
     pub palette: PaletteState,
+    /// The open `/theme` or `/skin` selector.
+    pub choice: Option<choice::Selector>,
+    /// A skin preview that changed, or may change, the profile's skin.
+    pub skin_preview: Option<choice::SkinPreview>,
     /// The catalogue store for this connection.
     pub commands: CommandsState,
     /// Commands Talaria runs itself.
@@ -931,12 +1014,19 @@ pub struct AppState {
     pub switch_reason: Option<String>,
     /// The channel the loop reads; a new link forwards its events through it.
     pub sender: Option<mpsc::UnboundedSender<AppMessage>>,
+    /// How many times a new link has replaced the foreground link. Each link's forwarder knows
+    /// the count it was started for and stops forwarding once a later link is installed.
+    pub link_epoch: Arc<AtomicU64>,
     /// The rewind overlay and the typed rewind commands. Issue #233.
     rewind: RewindState,
     /// Session that owns the rewind state and outstanding calls.
     rewind_owner: Option<RowKey>,
     /// Two quick eligible Esc presses open the rewind overlay.
     double_esc: DoubleEsc,
+    /// The first press of the interrupt key while a turn runs waits here for a second one.
+    interrupt_confirm: InterruptConfirm,
+    /// Set by the loop around a tick while input is waiting to be read.
+    keys_waiting: bool,
     /// Retry submissions still waiting for their outcome, keyed by submission id.
     retry: BTreeMap<String, (RowKey, String)>,
     /// Failed retries waiting to return to their original session's composer.
@@ -987,6 +1077,8 @@ pub struct AppState {
     pub home: Option<PathBuf>,
     /// How the `/cd` refusal names the interrupt key (#237).
     pub interrupt_label: Option<String>,
+    /// How workflow run notices name the key that opens the run.
+    pub workflow_key_label: Option<String>,
     /// The folder check and the move; a new one with every connection (#237).
     workspace_service: Option<Arc<WorkspaceService>>,
     counter: Arc<AtomicU64>,
@@ -1121,6 +1213,7 @@ impl AppState {
             ),
             settings_service: None,
             settings_generation: 0,
+            config_checked: BTreeSet::new(),
             doctor: None,
             doctor_restart: RestartState::Idle,
             profiles: ProfilesState::new("default"),
@@ -1133,6 +1226,8 @@ impl AppState {
             provider_pending_loads: Vec::new(),
             model_roles: None,
             model_roles_profile: String::new(),
+            model_roles_connection: String::new(),
+            model_roles_return_to_profiles: false,
             model_roles_service: None,
             model_roles_generation: 0,
             mcp: talaria_core::mcp::McpState::default(),
@@ -1213,8 +1308,12 @@ impl AppState {
             masked: Vec::new(),
             draft: String::new(),
             palette: PaletteState::closed(),
-            ultracode: crate::ultracode::UltracodeService::default(),
-            ultracode_requests: std::collections::HashMap::new(),
+            choice: None,
+            skin_preview: None,
+            hivecode: crate::hivecode::HivecodeService::default(),
+            hivecode_requests: std::collections::HashMap::new(),
+            hivecode_file: None,
+            hivecode_saves: 0,
             commands: CommandsState::default(),
             local: LocalCommandTable::builtin(),
             picker: None,
@@ -1236,9 +1335,12 @@ impl AppState {
             pending_switch_events: Vec::new(),
             switch_reason: None,
             sender: None,
+            link_epoch: Arc::new(AtomicU64::new(0)),
             rewind: RewindState::default(),
             rewind_owner: None,
             double_esc: DoubleEsc::default(),
+            interrupt_confirm: InterruptConfirm::default(),
+            keys_waiting: false,
             retry: BTreeMap::new(),
             retry_returns: BTreeMap::new(),
             context: ContextTracker::new(),
@@ -1268,6 +1370,7 @@ impl AppState {
             folder: SessionFolder::default(),
             home: None,
             interrupt_label: None,
+            workflow_key_label: None,
             workspace_service: None,
             service: None,
             link: None,
@@ -1278,6 +1381,11 @@ impl AppState {
             kanban: None,
             kanban_service: None,
             workflow_views: crate::workflow_progress::ProgressViews::default(),
+            workflow_agent: None,
+            workflow_agent_warned: HashSet::new(),
+            workflow_origin: None,
+            workflow_return: None,
+            workflow_runs_dir: talaria_workflow::runner::runs_dir(None),
             subagents_usage_active: 0,
             attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
             caret: 0,
@@ -1321,6 +1429,12 @@ impl AppState {
 
     /// The view the screen draws from.
     #[inline(never)]
+    /// Tell the application that input is waiting to be read, so a tick does not settle the
+    /// interrupt key before that input is seen. The loop sets this around each tick.
+    pub fn set_keys_waiting(&mut self, waiting: bool) {
+        self.keys_waiting = waiting;
+    }
+
     #[must_use]
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
@@ -1390,7 +1504,7 @@ impl AppState {
             model_roles: self
                 .model_roles
                 .as_ref()
-                .filter(|_| self.model_roles_profile == self.profile)
+                .filter(|_| self.model_roles_connection == self.profile)
                 .map(talaria_core::model_roles::ModelRolesState::view),
             processes_open: self.processes_open,
             state: opened.map(|opened| &opened.state),
@@ -1418,6 +1532,8 @@ impl AppState {
             masked: &self.masked,
             held: self.held.len(),
             palette: &self.palette,
+            choice: choice::list(self),
+            effort_scale: choice::scale(self),
             rewind: self.rewind.is_open().then(|| self.rewind.view(wall_ms())),
             context_hidden: self
                 .opened
@@ -1470,12 +1586,33 @@ impl AppState {
                     .collect()
             }),
             fleet_counts: self.status_counts,
-            ultracode: self.ultracode.status_input(
+            hivecode: self.hivecode.status_input(
                 self.opened
                     .as_ref()
                     .map(|s| SessionId::new(s.session_id.clone()))
                     .as_ref(),
             ),
+            workflow_run: self.opened.as_ref().and_then(|opened| {
+                self.hivecode
+                    .active_run(&SessionId::new(opened.session_id.clone()))
+            }),
+            workflow_agent: self
+                .opened
+                .as_ref()
+                .and(self.workflow_agent.as_ref())
+                .map(crate::workflow_agent::WorkflowAgentSession::note),
+            interrupt_armed: turn_running(self) && self.interrupt_confirm.is_armed(self.now_ms),
+            agent_back: self.workflow_agent.is_some()
+                && opened
+                    .zip(self.workflow_origin.as_ref())
+                    .is_some_and(|(opened, origin)| origin.is_away_in(&opened.session_id)),
+            authoring: self.opened.as_ref().and_then(|opened| {
+                self.hivecode.authoring_view(
+                    &SessionId::new(opened.session_id.clone()),
+                    opened.state.cells(),
+                    self.now_ms,
+                )
+            }),
         }
     }
 
@@ -1516,6 +1653,7 @@ impl AppState {
         copy.launch_folder = self.launch_folder.clone();
         copy.launch = self.launch.clone();
         copy.sender = self.sender.clone();
+        copy.link_epoch = Arc::clone(&self.link_epoch);
         copy.connectors = self.connectors.clone();
         copy.connectors_open = self.connectors_open;
         copy.connectors_consent = self.connectors_consent.clone();
@@ -1764,24 +1902,44 @@ pub enum AppMessage {
         run: PathBuf,
         result: Result<crate::workflow_progress::PollBatch, String>,
     },
+    /// A read of the journal of the run a workflow agent's session belongs to.
+    WorkflowAgentRead {
+        stored_id: String,
+        result: Result<talaria_workflow::progress::agent_session::AgentSessionRead, String>,
+    },
     WorkflowProgress {
         run: PathBuf,
         input: talaria_workflow::progress::live::ProgressInput,
     },
-    UltracodeCatalog {
+    HivecodeCatalog {
         request_id: u64,
         session: SessionId,
         profile: String,
-        command: talaria_core::ultracode::UltracodeCommand,
+        command: talaria_core::hivecode::HivecodeCommand,
         result: Result<talaria_core::commands::CommandCatalog, String>,
     },
-    UltracodeDone {
+    HivecodeDone {
         session: SessionId,
         original_text: String,
         outcome: Result<Value, talaria_core::commands::ErrorView>,
     },
-    UltracodeNotice {
+    HivecodeNotice {
         text: String,
+    },
+    /// The harmful Hermes settings found on a profile, possibly none.
+    ConfigFindings {
+        profile: String,
+        findings: Vec<talaria_core::config_check::Finding>,
+    },
+    /// What a read of the local workflow setup found for a session.
+    HivecodeSetup {
+        session: SessionId,
+        profile: String,
+        facts: crate::hivecode::SetupFacts,
+    },
+    /// One read of the runs folder for the sessions that wait for a workflow run.
+    HivecodeRuns {
+        rows: Vec<talaria_workflow::runner::RunSummary>,
     },
     Configure {
         generation: u64,
@@ -1958,6 +2116,8 @@ pub enum AppMessage {
         /// The connection generation of a reconnect describe.
         generation: Option<u64>,
     },
+    /// Work for the `/theme` or `/skin` selector finished.
+    Choice(choice::ChoiceReply),
     /// A file read and whole-file validation completed off the application loop.
     ThemeFileDone {
         generation: u64,
@@ -2103,6 +2263,11 @@ pub enum AppEffect {
         reference: talaria_workflow::progress::BlobRef,
     },
     WorkflowOpen(PathBuf),
+    /// Read the journal of the run a workflow agent's session belongs to, off the update thread.
+    WorkflowAgentRead {
+        stored_id: String,
+        request: crate::workflow_agent::JournalReadRequest,
+    },
     WorkflowDiscover,
     WorkflowPoll {
         run: PathBuf,
@@ -2115,6 +2280,8 @@ pub enum AppEffect {
         keys: std::collections::HashMap<String, String>,
         at_ms: i64,
     },
+    /// One line for `client.log` from the workflow view; it is never shown on screen.
+    WorkflowLog(String),
     Configure {
         generation: u64,
         profile: String,
@@ -2176,6 +2343,20 @@ pub enum AppEffect {
         service: Option<Arc<crate::settings::SettingsService>>,
         effect: talaria_core::settings::SettingsEffect,
     },
+    /// Read a `/config` list that only slash completion on the session socket offers.
+    SettingsChoices {
+        generation: u64,
+        profile: String,
+        key: String,
+        list: talaria_core::settings::RuntimeList,
+        client: Option<hermes_client::Client>,
+        session: Option<String>,
+    },
+    /// Read the profile's effective Hermes settings once and say which harmful ones are set.
+    ConfigCheck {
+        profile: String,
+        home: PathBuf,
+    },
     DoctorGather,
     DoctorActiveWork,
     DoctorPost {
@@ -2189,10 +2370,8 @@ pub enum AppEffect {
     ModelRoles {
         generation: u64,
         profile: String,
-        connection_profile: String,
         home: PathBuf,
         service: Option<Arc<crate::model_roles::ModelRolesService>>,
-        socket: Option<hermes_client::Client>,
         effects: Vec<talaria_core::model_roles::RolesEffect>,
     },
     PrepareMcp,
@@ -2257,6 +2436,9 @@ pub enum AppEffect {
     /// Take the draft back out of Up-arrow recall: the composer recorded it on Enter, but it
     /// was a hint or a usage notice, not a prompt.
     UnrecordSubmit(String),
+    /// Save the line the slash palette ran: the composer did not record it, since Enter only
+    /// told the palette to choose.
+    RecordSubmit(String),
     /// `prompt.submit`.
     Send(Effect),
     /// `shell.exec` or `prompt.btw`, started at once: never queued behind a prompt or a turn.
@@ -2319,13 +2501,24 @@ pub enum AppEffect {
     ContinueThemeFiles,
     /// Run `/skin`, with its name argument if any.
     Skin(Option<String>),
+    /// Work for the `/theme` or `/skin` selector.
+    Choice(choice::ChoiceWork),
     /// Describe again after a reconnect of this generation.
     Describe(u64),
     Quit,
     /// Read the workflow catalogue or run its skill command off the loop.
-    Ultracode {
-        action: crate::ultracode::Action,
+    Hivecode {
+        action: crate::hivecode::Action,
         request_id: u64,
+    },
+    /// Read the local runs folder for runs that started at or after `since_ms`.
+    HivecodeScan {
+        since_ms: i64,
+    },
+    /// Merge changes into the per-session switch file; save number `generation`.
+    HivecodeSave {
+        generation: u64,
+        changes: talaria_core::hivecode::SavedChanges,
     },
     /// Run a Hermes slash command (`slash.exec`) in the background.
     RunCommand {
@@ -2355,6 +2548,11 @@ pub enum AppEffect {
     Switch {
         key: RowKey,
     },
+    /// Start a new session on another profile, then let go of the foreground session.
+    StartInProfile {
+        profile: String,
+        cwd: PathBuf,
+    },
     /// Open a new session after leaving the foreground session.
     ClearSession {
         skip_detach: bool,
@@ -2367,6 +2565,8 @@ pub enum AppEffect {
     /// Open the child a committed branch made, then let go of the parent.
     OpenBranchChild {
         receipt: Value,
+        /// The text typed after `/branch`, which Hermes took as the child's name.
+        name: Option<String>,
     },
     /// Send a rename the loop built with the one ledger, over the side connection.
     RenameRow {
@@ -2388,6 +2588,8 @@ pub enum AppEffect {
     },
     /// Close a link a switch replaced.
     CloseLink(Link),
+    /// Bind the services that hold a client to the link a switch installed.
+    BindLinkServices,
     /// Close the side connection.
     CloseSide,
     /// Report the foreground pane state.
@@ -2442,6 +2644,8 @@ fn model_card_blocked(state: &AppState) -> bool {
 
 fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
     let (width, _) = screen.pane_size();
+    state.profiles.set_key_labels(screen.profiles_key_labels());
+    state.settings.set_reload_key(screen.settings_reload_key());
     let page_size = screen.profiles_page_size(&state.profiles.view());
     state.profiles.set_layout(width, page_size);
     if state.profiles.is_open() {
@@ -2509,6 +2713,7 @@ fn profiles_input(state: &mut AppState, input: ProfilesInput) -> Vec<AppEffect> 
         state.profiles_ticks.remove(token);
     }
     state.profiles.set_connected_profile(&state.profile);
+    state.profiles.set_remote_gateway(state.remote_gateway);
     let produced = state.profiles.update(input, state.now_ms);
     let mut effects = Vec::new();
     for effect in produced {
@@ -2520,6 +2725,15 @@ fn profiles_input(state: &mut AppState, input: ProfilesInput) -> Vec<AppEffect> 
                     text,
                 },
             )),
+            ProfilesEffect::OpenModelRoles { name } => {
+                effects.extend(profiles_input(state, ProfilesInput::Closed));
+                effects.extend(open_model_roles_for(state, name));
+                state.model_roles_return_to_profiles = true;
+            }
+            ProfilesEffect::StartSession { name } => {
+                effects.extend(profiles_input(state, ProfilesInput::Closed));
+                effects.extend(begin_profile_start(state, name));
+            }
             effect => effects.push(AppEffect::Profiles(effect)),
         }
     }
@@ -2742,8 +2956,12 @@ pub(crate) fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppE
             }
         }
         ModelsInput::EffortRead { session_id, value } if Some(session_id.as_str()) == current => {
-            state.effort = Some(value.clone().unwrap_or_else(|| "medium".into()));
-            state.effort_wire = None;
+            let level = value.clone().unwrap_or_else(|| "medium".into());
+            // What Hermes sends on the route still holds while the level is the one it answered.
+            if state.effort.as_deref() != Some(level.as_str()) {
+                state.effort_wire = None;
+            }
+            state.effort = Some(level);
         }
         ModelsInput::SessionEvent {
             session_id,
@@ -2826,6 +3044,7 @@ pub(crate) fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppE
             effects.push(AppEffect::Models(effect));
         }
     }
+    choice::refresh_effort(state);
     effects
 }
 
@@ -2923,6 +3142,8 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
                 RebuildMode::AfterRewind { notice },
             )),
             RewindEffect::ReturnPrompt { text, attachments } => {
+                // A routed prompt comes back as typed; sending it routes it again.
+                let text = talaria_core::hivecode::shown_text(&text).to_owned();
                 effects.extend(return_prompt(state, text, attachments));
             }
             RewindEffect::Submit(text) => {
@@ -2935,7 +3156,7 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
                 effects.extend(reduce(
                     state,
                     Event::Submit {
-                        display: text.clone(),
+                        display: talaria_core::hivecode::shown_text(&text).to_owned(),
                         text,
                         submission_id,
                         attachments: Vec::new(),
@@ -3235,8 +3456,18 @@ fn connectors_input(
 }
 
 /// Apply one message. No input or output: the effects say what to do.
-#[inline(never)]
+///
+/// A session or profile switch, whichever path starts it, first closes an open `/theme` or
+/// `/skin` selector and waits for any skin write in flight.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
+    let cards = choice::cards(state);
+    let effects = update_message(state, message);
+    let effects = choice::yield_to_card(state, cards.as_deref(), effects);
+    choice::before_switch(state, effects)
+}
+
+#[inline(never)]
+fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let queue_now_ms = match &message {
         AppMessage::Tick { now_ms } => *now_ms,
         _ => state.now_ms,
@@ -3264,7 +3495,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let restored = matches!(&message, AppMessage::Opened { .. });
     let settled = mutation_session(&message);
     let mut redraw = match &message {
-        AppMessage::WorkflowScoped(_) | AppMessage::WorkflowProgress { .. } | AppMessage::WorkflowPolled { .. } | AppMessage::WorkflowOpened(_) | AppMessage::User(UserAction::Workflow(_)) | AppMessage::ForegroundKey(UserAction::Workflow(_)) | AppMessage::Cron { .. } | AppMessage::CronPrepared { .. }
+        AppMessage::WorkflowScoped(_) | AppMessage::WorkflowProgress { .. } | AppMessage::WorkflowPolled { .. } | AppMessage::WorkflowAgentRead { .. } | AppMessage::WorkflowOpened(_) | AppMessage::User(UserAction::Workflow(_)) | AppMessage::ForegroundKey(UserAction::Workflow(_)) | AppMessage::Cron { .. } | AppMessage::CronPrepared { .. }
         | AppMessage::User(UserAction::Cron(_))
         | AppMessage::ForegroundKey(UserAction::Cron(_)) => false,
         AppMessage::PromptDone { events, notices, masked } => {
@@ -3278,6 +3509,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::Connectors { .. }
         | AppMessage::Tick { .. }
+        | AppMessage::HivecodeRuns { .. }
         | AppMessage::BackgroundDone { .. }
         | AppMessage::DoctorFacts(_)
         | AppMessage::DoctorRestart(_)
@@ -3427,7 +3659,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 view.report = Some(diagnose(&facts));
                 view.facts = Some(facts);
                 view.running = false;
-                view.selected = view.selected.min(6);
+                view.selected = view.selected.min(view.last_row());
                 vec![AppEffect::Redraw]
             } else {
                 Vec::new()
@@ -3930,7 +4162,8 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                     .as_ref()
                     .map(|opened| opened.state.cells())
                     .unwrap_or_default();
-                let last_user = cells.iter().rposition(|cell| matches!(cell, Cell::User(_)));
+                // A turn starts at the person's prompt or at the notice of a turn Hermes wrote.
+                let last_user = cells.iter().rposition(Cell::starts_turn);
                 if let Some(index) = last_user {
                     let assistant_markdown: Vec<String> = cells[index + 1..]
                         .iter()
@@ -4104,6 +4337,18 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::WorkflowOpened(result) => workflow_opened(state, result),
         AppMessage::WorkflowPolled { run, result } => workflow_polled(state, run, result),
+        AppMessage::WorkflowAgentRead { stored_id, result } => {
+            let changed = state
+                .workflow_agent
+                .as_mut()
+                .filter(|agent| agent.stored_id() == stored_id)
+                .is_some_and(|agent| agent.finish_read(result));
+            if changed {
+                vec![AppEffect::Redraw]
+            } else {
+                Vec::new()
+            }
+        }
         AppMessage::Recovered(result) => recovered(state, result),
         AppMessage::Rewind(input) => rewind_input(state, input),
         AppMessage::RewindReply { owner, input } => {
@@ -4149,48 +4394,76 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             let (effects, _) = palette(state, input);
             effects
         }
-        AppMessage::UltracodeCatalog {
+        AppMessage::HivecodeCatalog {
             request_id,
             session,
             profile,
             command,
             result,
         } => {
-            if state.ultracode_requests.get(&session).copied() != Some(request_id) {
+            if state.hivecode_requests.get(&session).copied() != Some(request_id) {
                 return Vec::new();
             }
             let actions = state
-                .ultracode
+                .hivecode
                 .on_catalog_reply(&session, &profile, command, result);
             if is_foreground(state, session.as_str()) {
-                if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&profile))) {
-                    state.ultracode.record_shown(&session);
+                if actions.iter().any(|action| matches!(action, crate::hivecode::Action::Notice(text) if *text == talaria_core::hivecode::notice::offer(&profile))) {
+                    state.hivecode.record_shown(&session);
                 }
-                ultracode_actions(state, actions)
+                let turned_on = command != talaria_core::hivecode::HivecodeCommand::Status
+                    && state.hivecode.status_input(Some(&session));
+                let mut effects = hivecode_actions(state, actions);
+                if turned_on && let Some(check) = state.hivecode.setup_check(&session) {
+                    effects.extend(apply_hivecode(state, vec![check], false));
+                }
+                effects
             } else {
                 Vec::new()
             }
         }
-        AppMessage::UltracodeDone {
+        AppMessage::HivecodeDone {
             session,
             original_text,
             outcome,
         } => {
             if is_foreground(state, session.as_str()) {
                 let actions = state
-                    .ultracode
+                    .hivecode
                     .on_command_outcome(&session, &original_text, outcome);
-                if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&state.profile))) {
-                    state.ultracode.record_shown(&session);
+                if actions.iter().any(|action| matches!(action, crate::hivecode::Action::Notice(text) if *text == talaria_core::hivecode::notice::offer(&state.profile))) {
+                    state.hivecode.record_shown(&session);
                 }
-                ultracode_actions(state, actions)
+                hivecode_actions(state, actions)
             } else {
                 vec![notice_lines(
                     "The workflow reply belongs to another session; nothing was sent.",
                 )]
             }
         }
-        AppMessage::UltracodeNotice { text } => vec![notice_lines(&text)],
+        AppMessage::HivecodeNotice { text } => vec![notice_lines(&text)],
+        AppMessage::ConfigFindings { profile, findings } => {
+            if profile != state.profile {
+                return Vec::new();
+            }
+            findings
+                .iter()
+                .map(|finding| notice_lines(&finding.notice(&profile)))
+                .collect()
+        }
+        AppMessage::HivecodeSetup {
+            session,
+            profile,
+            facts,
+        } => {
+            // A session in the background hears about its setup when it is next in front.
+            if !is_foreground(state, session.as_str()) {
+                return Vec::new();
+            }
+            let actions = state.hivecode.on_setup(&session, &profile, facts);
+            apply_hivecode(state, actions, false)
+        }
+        AppMessage::HivecodeRuns { rows } => hivecode_runs(state, &rows),
         AppMessage::CommandDone { typed, outcome } => command_done(state, &typed, outcome),
         AppMessage::ContextDone { block } => context_done(state, block),
         AppMessage::CompactDone {
@@ -4210,7 +4483,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             refresh_fleet_warning_count(state);
             let delta = Duration::from_millis(now_ms.saturating_sub(state.voice_last_tick_ms));
             state.voice_last_tick_ms = now_ms;
-            let mut effects = Vec::new();
+            let mut effects = settled_interrupt(state);
             for session in state.voice.session_ids() {
                 effects.extend(voice_input(
                     state,
@@ -4220,6 +4493,15 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects.extend(review_tick(state));
             effects.extend(workflow_tick(state));
+            if let Some(agent) = state.workflow_agent.as_mut()
+                && let Some(request) = agent.tick(now_ms)
+            {
+                effects.push(AppEffect::WorkflowAgentRead {
+                    stored_id: agent.stored_id().to_owned(),
+                    request,
+                });
+            }
+            effects.extend(hivecode_scan(state));
             effects.extend(kanban_input(
                 state,
                 talaria_core::kanban::KanbanInput::Tick {
@@ -4297,6 +4579,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
+        AppMessage::Choice(reply) => choice::reply(state, reply),
         AppMessage::ThemeFileDone { generation, result } => {
             if !state.appearance.finish_file_request(generation) {
                 return Vec::new();
@@ -4388,6 +4671,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 left,
             } => {
                 state.opened = None;
+                state.workflow_agent = None;
+                state.workflow_origin = None;
+                state.workflow_return = None;
                 let notice = if left {
                     let hint = crate::launch::exit_hint(&previous_id, &state.profile);
                     format!(
@@ -4563,6 +4849,16 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
     }
 
+    // A first press of the interrupt key belongs to one running turn in one session.
+    if !turn_running(state)
+        || previous_session.as_ref().map(|(id, _)| id.as_str())
+            != state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.as_str())
+    {
+        state.interrupt_confirm.reset();
+    }
     redraw |= queue_age_changed;
     if let Some(opened) = state.opened.as_mut() {
         // Newly decoded snapshots first meet the application's clock here.
@@ -4576,6 +4872,20 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     {
         effects.push(AppEffect::OfferDraft(text));
     }
+    // A prompt that carried the whole skill never started: the next routed prompt sends it.
+    if let Some(opened) = state.opened.as_mut()
+        && opened.state.queue.take_skill_dropped()
+    {
+        let session = SessionId::new(opened.session_id.clone());
+        state.hivecode.rearm(&session);
+    }
+    // A prompt that named the session model never started: the next routed prompt names it.
+    if let Some(opened) = state.opened.as_mut()
+        && opened.state.queue.take_model_dropped()
+    {
+        let session = SessionId::new(opened.session_id.clone());
+        state.hivecode.forget_model(&session);
+    }
     effects.extend(connectors_effects);
     effects.extend(commit_ready(state));
     if !turn_running(state) {
@@ -4584,6 +4894,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
     }
     effects.extend(checklist_effects(state));
+    effects.extend(authoring_effects(state));
     redraw |= kanban_before != state.kanban.as_ref().map(|s| s.frame());
     redraw |= background_version
         != state
@@ -4709,6 +5020,24 @@ fn checklist_effects(state: &mut AppState) -> Vec<AppEffect> {
     effects
 }
 
+/// Follow a routed turn that builds a workflow; when it ends, commit the one line it leaves.
+fn authoring_effects(state: &mut AppState) -> Vec<AppEffect> {
+    let Some(opened) = state.opened.as_ref() else {
+        return Vec::new();
+    };
+    let session = SessionId::new(opened.session_id.clone());
+    state
+        .hivecode
+        .observe_authoring(
+            &session,
+            opened.state.cells(),
+            opened.state.turn(),
+            state.now_ms,
+        )
+        .map(|line| vec![notice_lines(&line), AppEffect::Redraw])
+        .unwrap_or_default()
+}
+
 fn attention_snapshot(state: &AppState) -> crate::comforts::AttentionSnapshot {
     let empty = SessionState::empty(talaria_core::session::SessionId::new("foreground"));
     let masked: Vec<_> = state
@@ -4820,9 +5149,18 @@ fn pane_notice(state: &mut AppState, text: String) -> Vec<AppEffect> {
 
 /// Open the model roles page for the connection's profile.
 fn open_model_roles(state: &mut AppState) -> Vec<AppEffect> {
-    let (page, effects) = talaria_core::model_roles::ModelRolesState::new(state.profile.clone());
+    let profile = state.profile.clone();
+    open_model_roles_for(state, profile)
+}
+
+/// Open the model roles page for one served profile, which need not be the connected one.
+fn open_model_roles_for(state: &mut AppState, profile: String) -> Vec<AppEffect> {
+    let (mut page, effects) = talaria_core::model_roles::ModelRolesState::new(profile.clone());
+    page.set_connection_profile(&state.profile);
     state.model_roles = Some(page);
-    state.model_roles_profile = state.profile.clone();
+    state.model_roles_profile = profile;
+    state.model_roles_connection = state.profile.clone();
+    state.model_roles_return_to_profiles = false;
     state.model_roles_service = None;
     state.model_roles_generation = state.model_roles_generation.wrapping_add(1);
     let mut result = model_roles_effects(state, effects);
@@ -4835,8 +5173,8 @@ fn model_roles_input(
     state: &mut AppState,
     input: talaria_core::model_roles::RolesInput,
 ) -> Vec<AppEffect> {
-    if state.model_roles_profile != state.profile {
-        // The connection moved to another profile: the page belongs to the old one.
+    if state.model_roles_connection != state.profile {
+        // The connection moved to another profile: the page was opened on the old one.
         close_model_roles(state);
         return vec![AppEffect::Redraw];
     }
@@ -4851,6 +5189,7 @@ fn model_roles_input(
 
 fn close_model_roles(state: &mut AppState) {
     state.model_roles = None;
+    state.model_roles_return_to_profiles = false;
     state.model_roles_service = None;
     state.model_roles_generation = state.model_roles_generation.wrapping_add(1);
 }
@@ -4864,8 +5203,29 @@ fn model_roles_effects(
         .iter()
         .any(|effect| matches!(effect, RolesEffect::Close))
     {
+        let back_to_profiles = state.model_roles_return_to_profiles;
+        let saved = state
+            .model_roles
+            .as_ref()
+            .and_then(talaria_core::model_roles::ModelRolesState::saved_main_route);
+        let name = state.model_roles_profile.clone();
         close_model_roles(state);
-        return Vec::new();
+        let mut result = Vec::new();
+        if let Some((provider, model)) = saved {
+            // The list shows the saved model at once, before Hermes is read again.
+            result.extend(profiles_input(
+                state,
+                ProfilesInput::ModelSaved {
+                    name,
+                    provider,
+                    model,
+                },
+            ));
+        }
+        if back_to_profiles {
+            result.extend(profiles_input(state, ProfilesInput::Open));
+        }
+        return result;
     }
     if effects.is_empty() {
         return Vec::new();
@@ -4880,14 +5240,8 @@ fn model_roles_effects(
     vec![AppEffect::ModelRoles {
         generation: state.model_roles_generation,
         profile: state.model_roles_profile.clone(),
-        connection_profile: state.profile.clone(),
         home: state.hermes_home.clone(),
         service: state.model_roles_service.clone(),
-        socket: state
-            .service
-            .as_ref()
-            .and_then(SessionService::client)
-            .cloned(),
         effects,
     }]
 }
@@ -5483,6 +5837,27 @@ fn settings_input(
                 result.extend(local_effect(state, action, String::new(), String::new()))
             }
             SettingsEffect::CloseOverlay => {}
+            SettingsEffect::LoadChoices {
+                key,
+                list:
+                    list @ (talaria_core::settings::RuntimeList::Skins
+                    | talaria_core::settings::RuntimeList::Personalities),
+                ..
+            } => result.push(AppEffect::SettingsChoices {
+                generation: state.settings_generation,
+                profile: state.profile.clone(),
+                key,
+                list,
+                client: state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .cloned(),
+                session: state
+                    .opened
+                    .as_ref()
+                    .map(|opened| opened.session_id.clone()),
+            }),
             effect => {
                 if matches!(effect, SettingsEffect::Load { .. }) {
                     state.settings_generation = state.settings_generation.wrapping_add(1);
@@ -5821,6 +6196,84 @@ mod settings_wiring_tests {
             talaria_core::settings::Screen::Loading
         );
     }
+
+    #[test]
+    fn a_runtime_list_is_asked_for_on_the_right_channel() {
+        use talaria_core::settings::{
+            ConfigSchemaView, FieldKind, FieldView, RuntimeList, SettingsAction, SettingsEffect,
+            SettingsInput, SettingsKey, SettingsSnapshot,
+        };
+        let mut state = AppState::new("settings-lists");
+        let profile = state.profile.clone();
+        settings_input(
+            &mut state,
+            SettingsInput::Open {
+                profile: profile.clone(),
+                filter: None,
+            },
+            None,
+        );
+        let field = |key: &str| FieldView {
+            key: key.into(),
+            kind: FieldKind::String,
+            description: key.into(),
+            category: "general".into(),
+            options: None,
+            searchable: false,
+            clearable: false,
+        };
+        let values =
+            serde_json::json!({"display": {"skin": "default"}, "terminal": {"backend": "local"}});
+        let generation = state.settings_generation;
+        update(
+            &mut state,
+            AppMessage::Settings {
+                generation,
+                profile: profile.clone(),
+                service: None,
+                input: SettingsInput::Loaded(SettingsSnapshot {
+                    profile: profile.clone(),
+                    schema: ConfigSchemaView {
+                        fields: vec![field("display.skin"), field("terminal.backend")],
+                        category_order: vec!["general".into()],
+                    },
+                    effective: values.clone(),
+                    raw: serde_json::json!({}),
+                    defaults: values,
+                }),
+            },
+        );
+        let key = |action| SettingsInput::Key(SettingsKey::Action(action));
+        // Skins come from the session socket's slash completion.
+        let effects = settings_input(&mut state, key(SettingsAction::Edit), None);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::SettingsChoices { key, list: RuntimeList::Skins, .. } if key == "display.skin"
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Settings { .. }))
+        );
+        settings_input(
+            &mut state,
+            SettingsInput::Key(SettingsKey::Edit(talaria_core::settings::EditKey::Esc)),
+            None,
+        );
+        settings_input(&mut state, key(SettingsAction::Down), None);
+        // Terminal backends come from the profile's REST route.
+        let effects = settings_input(&mut state, key(SettingsAction::Edit), None);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::Settings {
+                effect: SettingsEffect::LoadChoices {
+                    list: RuntimeList::TerminalBackends,
+                    ..
+                },
+                ..
+            }
+        )));
+    }
 }
 
 fn local_effect(
@@ -5922,6 +6375,22 @@ fn local_effect(
             Err(notice) => vec![AppEffect::CommitLines(vec![notice])],
         };
     }
+    if action == LocalAction::Thinking {
+        use talaria_core::layout::ReasoningDisplay;
+        return match talaria_core::layout::parse_thinking_args(&argument, state.layout.reasoning) {
+            Ok(display) => {
+                state.layout.reasoning = display;
+                vec![
+                    notice_lines(match display {
+                        ReasoningDisplay::Full => THINKING_FULL_NOTICE,
+                        ReasoningDisplay::Collapsed => THINKING_COLLAPSED_NOTICE,
+                    }),
+                    AppEffect::Redraw,
+                ]
+            }
+            Err(notice) => vec![notice_lines(&notice)],
+        };
+    }
     if action == LocalAction::Kanban {
         let board = if argument.trim().is_empty() {
             "default"
@@ -5966,24 +6435,22 @@ fn local_effect(
     if action == LocalAction::Workflows {
         return workflow_command(state, &argument);
     }
-    if action == LocalAction::Ultracode {
+    if action == LocalAction::Hivecode {
         let session = state
             .opened
             .as_ref()
             .map(|s| SessionId::new(s.session_id.clone()));
         if let Some(session) = &session {
-            let request = state.ultracode_requests.entry(session.clone()).or_default();
+            let request = state.hivecode_requests.entry(session.clone()).or_default();
             *request = request.wrapping_add(1);
         }
         let profile = state.profile.clone();
-        let foreground = session
-            .as_ref()
-            .map(|session| crate::ultracode::Foreground {
-                session,
-                profile: &profile,
-            });
-        let actions = state.ultracode.handle_local_command(&argument, foreground);
-        return ultracode_actions(state, actions);
+        let foreground = session.as_ref().map(|session| crate::hivecode::Foreground {
+            session,
+            profile: &profile,
+        });
+        let actions = state.hivecode.handle_local_command(&argument, foreground);
+        return hivecode_actions(state, actions);
     }
 
     if action == LocalAction::Configure {
@@ -6346,6 +6813,32 @@ fn route(
                     effects.push(AppEffect::Side { key, effect });
                 }
             }
+            // An edited routed prompt keeps its building block.
+            Effect::ReplaceQueued {
+                ref admission_id,
+                ref submission_id,
+                ref text,
+                ..
+            } if talaria_core::hivecode::typed_text(text).is_some() => {
+                if let Some(opened) = state.opened.as_ref()
+                    && let Some(row) = opened
+                        .state
+                        .queue
+                        .rows
+                        .iter()
+                        .find(|row| row.admission_id == *admission_id)
+                {
+                    let session = SessionId::new(opened.session_id.clone());
+                    let edit = crate::hivecode::Retype {
+                        input_id: &row.input_id.0,
+                        submission_id: &submission_id.0,
+                        old: talaria_core::hivecode::shown_text(&row.text),
+                        new: talaria_core::hivecode::shown_text(text),
+                    };
+                    state.hivecode.retype_authoring(&session, &edit);
+                }
+                effects.push(AppEffect::Queue(effect));
+            }
             // Issue 232. Queue and steer. The queue service will run these calls.
             Effect::CancelQueued { .. }
             | Effect::ReplaceQueued { .. }
@@ -6666,6 +7159,25 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 talaria_workflow::progress::live::ProgressInput::Key(key),
             )
         }
+        UserAction::WorkflowAgentBack => workflow_agent_back(state),
+        UserAction::WorkflowView => {
+            // An agent's own session opens its run's view; the lead session opens the run it
+            // started; any other session opens the run list.
+            let agent_run = state
+                .workflow_agent
+                .as_ref()
+                .filter(|_| state.opened.is_some())
+                .map(|agent| agent.run_dir().to_string_lossy().into_owned());
+            let run = agent_run.or_else(|| {
+                state.opened.as_ref().and_then(|opened| {
+                    state
+                        .hivecode
+                        .tracked(&SessionId::new(opened.session_id.clone()))
+                        .map(|run| run.run_dir.clone())
+                })
+            });
+            workflow_command(state, run.as_deref().unwrap_or_default())
+        }
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -6890,6 +7402,21 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             }
             reduce(state, Event::Interrupt)
         }
+        UserAction::InterruptKey => {
+            // The voice cutoff and an interrupt already in flight take the key as they always did.
+            let voice_cutoff =
+                state.uses_client_voice() && state.client_voice.active() && state.opened.is_some();
+            let mut effects = Vec::new();
+            if turn_running(state) && !state.interrupting && !voice_cutoff {
+                // Only the settle tick interrupts: a second press waits to see whether the key
+                // is held.
+                let _: InterruptPress = state.interrupt_confirm.press(state.now_ms);
+            } else {
+                state.interrupt_confirm.reset();
+                effects.extend(user_action(state, UserAction::Interrupt));
+            }
+            effects
+        }
         UserAction::Quit => {
             state.quitting = true;
             vec![AppEffect::Quit]
@@ -6992,6 +7519,8 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Notice(text) => vec![notice_lines(&text)],
         UserAction::Queue(intent) => queue_intent(state, intent),
         UserAction::Palette(input) => palette_input(state, input),
+        UserAction::Choice(key) => choice::key(state, key),
+        UserAction::EffortScale(key) => choice::scale_key(state, key),
         UserAction::DraftEdited {
             text,
             caret,
@@ -7010,13 +7539,17 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 state.attachments.on_edit(&state.draft, caret, typed, now)
             };
             let mut effects = attachment_effects(effects);
-            effects.extend(palette_input(
-                state,
+            let input = if recalled {
+                PaletteInput::Recalled {
+                    text: state.draft.clone(),
+                }
+            } else {
                 PaletteInput::DraftChanged {
                     text: state.draft.clone(),
                     caret,
-                },
-            ));
+                }
+            };
+            effects.extend(palette_input(state, input));
             effects.extend(restore_failed_attachments(state));
             effects
         }
@@ -7055,35 +7588,12 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             }
         }
         UserAction::Paste { text, draft, caret } => {
-            state.draft = draft;
-            state.caret = caret;
-            let Some(opened) = &state.opened else {
-                return vec![AppEffect::Attachment(AttachmentEffect::EditDraft {
-                    range: caret..caret,
-                    text,
-                })];
-            };
-            let folder = state
-                .folder
-                .cwd
-                .as_deref()
-                .or(opened.info.cwd.as_deref())
-                .map(Path::new)
-                .unwrap_or(&state.attachment_folder);
-            let rule = state.attachments.rule();
-            let effects = state
-                .attachments
-                .on_paste(&text, &SessionId::new(&opened.session_id), folder, &rule)
-                .into_iter()
-                .map(|effect| match effect {
-                    AttachmentEffect::EditDraft { text, .. } => AttachmentEffect::EditDraft {
-                        range: caret..caret,
-                        text,
-                    },
-                    effect => effect,
-                })
-                .collect();
-            attachment_effects(effects)
+            // The paste goes to the composer, so an open selector closes first and puts the
+            // look back, as a typed `/` does; otherwise the next Enter would apply a theme or
+            // skin instead of sending the pasted text.
+            let mut effects = choice::close(state);
+            effects.extend(paste(state, text, draft, caret));
+            effects
         }
         UserAction::Input(key) => input_key(state, key),
         UserAction::LayoutPanel => {
@@ -7143,6 +7653,56 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     }
 }
 
+/// A paste into the composer: it lands at the caret, and a dropped file becomes an attachment.
+fn paste(state: &mut AppState, text: String, draft: String, caret: usize) -> Vec<AppEffect> {
+    state.draft = draft;
+    state.caret = caret;
+    let Some(opened) = &state.opened else {
+        return vec![AppEffect::Attachment(AttachmentEffect::EditDraft {
+            range: caret..caret,
+            text,
+        })];
+    };
+    let folder = state
+        .folder
+        .cwd
+        .as_deref()
+        .or(opened.info.cwd.as_deref())
+        .map(Path::new)
+        .unwrap_or(&state.attachment_folder);
+    let rule = state.attachments.rule();
+    let effects = state
+        .attachments
+        .on_paste(&text, &SessionId::new(&opened.session_id), folder, &rule)
+        .into_iter()
+        .map(|effect| match effect {
+            AttachmentEffect::EditDraft { text, .. } => AttachmentEffect::EditDraft {
+                range: caret..caret,
+                text,
+            },
+            effect => effect,
+        })
+        .collect();
+    attachment_effects(effects)
+}
+
+/// Run the interrupt key's timer at the application clock. When a second press has settled with
+/// no further press, interrupt the turn as the Interrupt action does. The timer is reset when a
+/// turn ends or the open session changes, so a press whose turn or session is gone is dropped
+/// here and nothing else is interrupted.
+fn settled_interrupt(state: &mut AppState) -> Vec<AppEffect> {
+    // Keys that are waiting to be read decide first: one of them may be the press that shows
+    // the key is held. The timer keeps its deadline, so the loop comes straight back.
+    if state.keys_waiting {
+        return Vec::new();
+    }
+    if state.interrupt_confirm.tick(state.now_ms) && turn_running(state) && !state.interrupting {
+        user_action(state, UserAction::Interrupt)
+    } else {
+        Vec::new()
+    }
+}
+
 /// Keys in the foreground: an open palette takes Enter and Esc before the composer and the
 /// turn do, so Esc closes the palette and never interrupts a running turn.
 fn foreground_key(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
@@ -7150,7 +7710,9 @@ fn foreground_key(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         return user_action(state, action);
     }
     match action {
-        UserAction::Interrupt => palette_input(state, PaletteInput::Close),
+        UserAction::Interrupt | UserAction::InterruptKey => {
+            palette_input(state, PaletteInput::Close)
+        }
         UserAction::Submit(text) => palette_enter(state, text),
         other => user_action(state, other),
     }
@@ -7225,6 +7787,10 @@ fn follow(state: &mut AppState, produced: Vec<PaletteEffect>) -> Vec<AppEffect> 
                         caret: 0,
                     },
                 );
+                // Trimmed as a typed submit is, and recorded before the submit, so a later
+                // UnrecordSubmit names the same text and can take it back.
+                let line = line.trim_end().to_owned();
+                effects.push(AppEffect::RecordSubmit(line.clone()));
                 effects.extend(submit(state, line));
                 return effects;
             }
@@ -7287,26 +7853,87 @@ fn commands_follow(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect>
     commands_input(state, input)
 }
 
-/// Apply workflow routing through the existing session events and effects.
-fn ultracode_actions(
-    state: &mut AppState,
-    actions: Vec<crate::ultracode::Action>,
-) -> Vec<AppEffect> {
-    apply_ultracode(state, actions, true)
+/// The conversation the open session holds: its stored id and how often Hermes compacted it.
+fn skill_epoch(opened: &OpenedSession) -> talaria_core::hivecode::SkillEpoch {
+    talaria_core::hivecode::SkillEpoch {
+        stored: opened.stored_session_id.clone(),
+        compressions: opened.state.usage().compressions.unwrap_or(0),
+    }
 }
 
-fn apply_ultracode(
+/// Say which conversation the open session holds before a prompt is routed. A prompt that
+/// carried the whole skill and still waits in the queue may yet be removed, so the next routed
+/// prompt carries the skill as well; the same holds for a prompt that named the session model.
+fn hivecode_note_conversation(state: &mut AppState, session: &SessionId) {
+    let Some(opened) = state.opened.as_ref() else {
+        return;
+    };
+    let epoch = skill_epoch(opened);
+    let waiting = opened.state.queue.skill_waiting();
+    let model_waiting = opened.state.queue.model_waiting();
+    state.hivecode.note_epoch(session, &epoch);
+    if waiting {
+        state.hivecode.rearm(session);
+    }
+    if model_waiting {
+        state.hivecode.forget_model(session);
+    }
+}
+
+/// The one-time look at a profile's Hermes settings, asked the first time a session of the
+/// profile opens in this run. Nothing is asked without a Hermes home to find the gateway from.
+fn config_check_effect(state: &mut AppState) -> Option<AppEffect> {
+    if state.hermes_home.as_os_str().is_empty()
+        || !state.config_checked.insert(state.profile.clone())
+    {
+        return None;
+    }
+    Some(AppEffect::ConfigCheck {
+        profile: state.profile.clone(),
+        home: state.hermes_home.clone(),
+    })
+}
+
+/// Apply workflow routing through the existing session events and effects.
+fn hivecode_actions(state: &mut AppState, actions: Vec<crate::hivecode::Action>) -> Vec<AppEffect> {
+    apply_hivecode(state, actions, true)
+}
+
+fn apply_hivecode(
     state: &mut AppState,
-    actions: Vec<crate::ultracode::Action>,
+    actions: Vec<crate::hivecode::Action>,
     clear_composer: bool,
 ) -> Vec<AppEffect> {
-    use crate::ultracode::Action;
+    use crate::hivecode::Action;
     let mut effects = vec![];
     for action in actions {
         match action {
             Action::Notice(text) => effects.push(notice_lines(&text)),
             Action::SubmitCommand { text, display, .. } => {
                 let submission_id = state.next_submission_id();
+                // Every routed prompt, whole skill or reminder, watches for the run it may start.
+                if let Some(opened) = state.opened.as_ref() {
+                    let session = SessionId::new(opened.session_id.clone());
+                    let epoch = skill_epoch(opened);
+                    let since_ms = (state.wall_s * 1000.0) as i64;
+                    let profile = state.profile.clone();
+                    state
+                        .hivecode
+                        .arm(&session, &profile, since_ms, state.now_ms);
+                    if talaria_core::hivecode::loads_skill(&text) {
+                        state.hivecode.skill_sent(&session, epoch);
+                    }
+                    state.hivecode.model_sent(&session, &text);
+                    state.hivecode.note_routed(&session);
+                    let cells = opened.state.cells().len();
+                    state.hivecode.begin_authoring(
+                        &session,
+                        &submission_id,
+                        &display,
+                        cells,
+                        since_ms,
+                    );
+                }
                 effects.extend(reduce(
                     state,
                     Event::SubmitCommand {
@@ -7322,7 +7949,10 @@ fn apply_ultracode(
                 if clear_composer {
                     clear_submitted_draft(state);
                 }
-                effects.push(AppEffect::Ultracode {
+                if let Action::RunCommand { session, .. } = &action {
+                    state.hivecode.note_routed(session);
+                }
+                effects.push(AppEffect::Hivecode {
                     action,
                     request_id: 0,
                 });
@@ -7330,21 +7960,41 @@ fn apply_ultracode(
             action @ Action::FetchCatalog { .. } => {
                 let request_id = match &action {
                     Action::FetchCatalog { session, .. } => state
-                        .ultracode_requests
+                        .hivecode_requests
                         .get(session)
                         .copied()
                         .unwrap_or_default(),
                     _ => 0,
                 };
-                effects.push(AppEffect::Ultracode { action, request_id });
+                effects.push(AppEffect::Hivecode { action, request_id });
             }
-            action @ Action::InstallSkill { .. } => effects.push(AppEffect::Ultracode {
-                action,
-                request_id: 0,
-            }),
+            action @ (Action::InstallSkill { .. }
+            | Action::ReinstallSkill { .. }
+            | Action::CheckSetup { .. }) => {
+                // The conversation holds the old instructions; the next routed prompt sends
+                // the reinstalled skill whole.
+                if let Action::ReinstallSkill { session, .. } = &action {
+                    state.hivecode.rearm(session);
+                }
+                effects.push(AppEffect::Hivecode {
+                    action,
+                    request_id: 0,
+                });
+            }
         }
     }
+    effects.extend(hivecode_save(state));
     effects
+}
+
+/// Save the per-session switch when a setting changed or a session that has one was opened.
+fn hivecode_save(state: &mut AppState) -> Option<AppEffect> {
+    let changes = state.hivecode.take_saved((state.wall_s * 1000.0) as i64)?;
+    state.hivecode_saves += 1;
+    Some(AppEffect::HivecodeSave {
+        generation: state.hivecode_saves,
+        changes,
+    })
 }
 
 /// Apply a finished command's outcome: notices into the transcript, a directive's prompt
@@ -7540,10 +8190,17 @@ fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
     let command = match action {
         LocalAction::Skin => {
             let name = Some(argument.trim().to_owned()).filter(|name| !name.is_empty());
+            if name.is_none() {
+                return vec![AppEffect::Choice(choice::ChoiceWork::ListSkins)];
+            }
             return vec![AppEffect::Skin(name)];
         }
         LocalAction::Theme => return theme_command(state, argument.trim()),
         LocalAction::Model => parse_model_command(argument).map(ModelCommandOrEffort::Model),
+        // Bare `/effort` opens the scale; without a session it answers as before.
+        LocalAction::Effort if argument.trim().is_empty() && state.opened.is_some() => {
+            return choice::open_effort(state);
+        }
         LocalAction::Effort => parse_effort_command(argument).map(ModelCommandOrEffort::Effort),
         LocalAction::Rewind
         | LocalAction::Undo
@@ -7742,6 +8399,30 @@ fn begin_switch(state: &mut AppState, key: RowKey) -> Vec<AppEffect> {
     state.session_action = true;
     state.pending_switch = Some(key.clone());
     vec![AppEffect::Switch { key }]
+}
+
+/// Start a new session on another served profile in this folder: the guards of a switch
+/// first, then the effect the executor runs. The old session keeps running in Hermes.
+fn begin_profile_start(state: &mut AppState, profile: String) -> Vec<AppEffect> {
+    if let Some(refusal) = session_busy(state) {
+        return refusal;
+    }
+    if !state.held.is_empty() {
+        return vec![notice_lines(crate::switch::HELD_PROMPTS_TEXT)];
+    }
+    let cwd = state
+        .folder
+        .cwd
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.launch_folder.clone());
+    state.switching = true;
+    state.session_action = true;
+    state.pending_switch = Some(RowKey {
+        profile: profile.clone(),
+        session_id: String::new(),
+    });
+    vec![AppEffect::StartInProfile { profile, cwd }]
 }
 
 /// `/rename [title]`: the foreground session, over the foreground link.
@@ -8039,6 +8720,7 @@ fn switched(
     state.session_action = false;
     let target = state.pending_switch.take();
     let pending_events = std::mem::take(&mut state.pending_switch_events);
+    let switched_in = matches!(&outcome, SwitchOutcome::Switched { .. }) && install.is_some();
     let mut effects = match outcome {
         SwitchOutcome::AlreadyHere => {
             end_picker_wait(state, ALREADY_HERE_NOTICE);
@@ -8047,33 +8729,53 @@ fn switched(
         SwitchOutcome::Failed { text } => {
             end_picker_wait(state, &text);
             let mut lines = Vec::new();
-            if reason.as_deref() == Some("not_found")
-                && let Some(target) = target
-            {
+            if state.workflow_return.is_some() {
+                // One line, and the person stays in the agent's session.
+                let because = reason
+                    .as_deref()
+                    .map_or_else(String::new, |reason| format!(" ({reason})"));
                 lines.push(format!(
-                    "No session with the id {} in the profile {}. Type /resume to pick from a list.",
-                    plain(&target.session_id),
-                    plain(&target.profile)
+                    "Could not go back to the session you came from{because}. You are still in the agent's session."
                 ));
+            } else {
+                if reason.as_deref() == Some("not_found")
+                    && let Some(target) = target
+                {
+                    lines.push(format!(
+                        "No session with the id {} in the profile {}. Type /resume to pick from a list.",
+                        plain(&target.session_id),
+                        plain(&target.profile)
+                    ));
+                }
+                lines.push(text);
             }
-            lines.push(text);
             vec![AppEffect::CommitLines(lines)]
         }
         SwitchOutcome::Switched { notice } => {
-            let mut effects = vec![AppEffect::CommitLines(vec![notice])];
-            if let Some(install) = install {
-                if let Some(target) = target {
-                    if state.appearance.set_file_profile(&target.profile) {
-                        effects.push(AppEffect::ThemeFileCommand("reload".into()));
+            // The notice follows the new session's replayed history, so it is not buried.
+            let mut effects = Vec::new();
+            match install {
+                Some(install) => {
+                    if let Some(target) = target {
+                        if state.appearance.set_file_profile(&target.profile) {
+                            effects.push(AppEffect::ThemeFileCommand("reload".into()));
+                        }
+                        if state.profile != target.profile {
+                            forget_profile_views(state);
+                            // Approval notices name the profile they are about.
+                            state.permissions = Some(PermissionsState::new(target.profile.clone()));
+                        }
+                        state.profile = target.profile;
                     }
-                    state.profile = target.profile;
+                    effects.extend(install_session(state, install, Some(notice)));
                 }
-                effects.extend(install_session(state, install));
+                None => effects.push(notice_lines(&notice)),
             }
             effects.extend(close_picker(state));
             effects
         }
     };
+    effects.extend(workflow_origin_settle(state, switched_in));
     for event in pending_events {
         effects.extend(link_event(
             state,
@@ -8096,9 +8798,30 @@ fn branched(
     state.session_action = false;
     match outcome {
         BranchOutcome::Branched { notice } => {
-            let mut effects = vec![AppEffect::CommitLines(vec![notice])];
-            if let Some(install) = install {
-                effects.extend(install_session(state, install));
+            // The notice follows the child's replayed history, so the copied messages do not
+            // bury it.
+            let mut effects = Vec::new();
+            let parent = state
+                .opened
+                .as_ref()
+                .map(|opened| SessionId::new(opened.session_id.clone()));
+            match install {
+                Some(install) => {
+                    let child = SessionId::new(install.opened.session_id.clone());
+                    // Hivecode follows the branch, so a held prompt in the child is routed too.
+                    let carried = parent
+                        .as_ref()
+                        .is_some_and(|parent| state.hivecode.carry(parent, &child));
+                    if carried {
+                        // The branch notice below says it; the open does not repeat it.
+                        state.hivecode.mark_announced(&child);
+                    }
+                    effects.extend(install_session(state, install, Some(notice)));
+                    if carried {
+                        effects.push(notice_lines(talaria_core::hivecode::notice::BRANCH_CARRIED));
+                    }
+                }
+                None => effects.push(notice_lines(&notice)),
             }
             effects.extend(close_picker(state));
             effects
@@ -8128,13 +8851,109 @@ fn branch_sent(
         return vec![AppEffect::BranchSession { request: retry }];
     }
     match outcome {
-        MutationOutcome::Committed(receipt) => vec![AppEffect::OpenBranchChild { receipt }],
+        MutationOutcome::Committed(receipt) => {
+            let name = request
+                .payload
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            vec![AppEffect::OpenBranchChild { receipt, name }]
+        }
         outcome => branched(state, crate::switch::branch_refusal(&outcome), None),
     }
 }
 
 /// Put the new session in front: the link, the service, the fences and the history.
-fn install_session(state: &mut AppState, install: SwitchInstall) -> Vec<AppEffect> {
+/// Forward one link's events to the loop until a later link replaces it.
+///
+/// `started_for` is the value [`AppState::link_epoch`] has while this link is the foreground
+/// link. A replaced link still reports its own closing, and the loop cannot tell which link an
+/// event came from, so without this check the status line said "disconnected" after every switch
+/// to another profile. A server request still queued on a replaced link is released, not
+/// refused, so other viewers of that session keep their prompt.
+pub(crate) fn forward_link_events(
+    epoch: Arc<AtomicU64>,
+    started_for: u64,
+    sender: mpsc::UnboundedSender<AppMessage>,
+    mut inbound: mpsc::Receiver<LinkEvent>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(event) = inbound.recv().await {
+            if epoch.load(Ordering::SeqCst) > started_for {
+                if let LinkEvent::Inbound {
+                    item: Inbound::ServerRequest(request),
+                    ..
+                } = event
+                {
+                    request.responder.ignore();
+                }
+                continue;
+            }
+            if sender.send(AppMessage::Link(event)).is_err() {
+                break;
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod link_forward_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_replaced_link_stops_forwarding_and_the_new_link_keeps_forwarding() {
+        let epoch = Arc::new(AtomicU64::new(0));
+        let (sender, mut loop_inbox) = mpsc::unbounded_channel();
+        let (old_link, old_events) = mpsc::channel(8);
+        let old = forward_link_events(Arc::clone(&epoch), 0, sender.clone(), old_events);
+        // The switch starts the new link's forwarder before the loop installs the link.
+        let (new_link, new_events) = mpsc::channel(8);
+        let new = forward_link_events(Arc::clone(&epoch), 1, sender, new_events);
+
+        old_link
+            .send(LinkEvent::State(LinkState::Connected { generation: 1 }))
+            .await
+            .unwrap();
+        assert!(matches!(
+            loop_inbox.recv().await,
+            Some(AppMessage::Link(LinkEvent::State(LinkState::Connected {
+                generation: 1
+            })))
+        ));
+
+        // The loop installs the new link, then closes the old one.
+        epoch.fetch_add(1, Ordering::SeqCst);
+        old_link
+            .send(LinkEvent::State(LinkState::Closed))
+            .await
+            .unwrap();
+        drop(old_link);
+        old.await.unwrap();
+        assert!(
+            loop_inbox.try_recv().is_err(),
+            "the replaced link's closing must not reach the loop"
+        );
+
+        new_link
+            .send(LinkEvent::State(LinkState::Connected { generation: 1 }))
+            .await
+            .unwrap();
+        drop(new_link);
+        new.await.unwrap();
+        assert!(matches!(
+            loop_inbox.try_recv(),
+            Ok(AppMessage::Link(LinkEvent::State(LinkState::Connected {
+                generation: 1
+            })))
+        ));
+    }
+}
+
+fn install_session(
+    state: &mut AppState,
+    install: SwitchInstall,
+    notice: Option<String>,
+) -> Vec<AppEffect> {
     let SwitchInstall {
         opened,
         service,
@@ -8162,16 +8981,21 @@ fn install_session(state: &mut AppState, install: SwitchInstall) -> Vec<AppEffec
         .map(Arc::new);
     state.service = Some(service);
     if let Some(link) = link {
+        // From here the replaced link's events, its own closing among them, are not this
+        // connection's: its forwarder stops passing them on.
+        state.link_epoch.fetch_add(1, Ordering::SeqCst);
         if let Some(old) = state.link.replace(link) {
             effects.push(AppEffect::CloseLink(old));
         }
+        // Before the session opens, so its first approval read goes over the new link.
+        effects.push(AppEffect::BindLinkServices);
         let counter = Arc::clone(&state.counter);
         let launch_id = state.launch_id.clone();
         state.prompts = Some(Arc::new(Mutex::new(PromptService::new(Box::new(
             move || submission_id(&launch_id, counter.fetch_add(1, Ordering::SeqCst) + 1),
         )))));
     }
-    effects.extend(opened_session(state, opened, None));
+    effects.extend(opened_session(state, opened, notice));
     effects.extend(prepare_cron(state, true));
     effects
 }
@@ -8613,15 +9437,54 @@ fn tasks_key(state: &AppState, key: &InputKey) -> bool {
 /// question, then slash lines, then the held-prompt rule and `prompt.submit`. Neither a command
 /// nor a side question is ever held or queued behind a turn.
 fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    let bypassed = state
+        .opened
+        .as_ref()
+        .filter(|_| !state.session_gone)
+        .and_then(|opened| {
+            let on = state
+                .hivecode
+                .status_input(Some(&SessionId::new(opened.session_id.clone())));
+            talaria_core::hivecode::bypass(&text, on)
+        });
+    let mut effects = submit_line(state, text);
+    // Only a command that went somewhere gets the notice; a refused one is back in the composer.
+    if let Some(command) = bypassed
+        && effects.iter().any(|effect| {
+            !matches!(
+                effect,
+                AppEffect::CommitLines(_) | AppEffect::LoadDraft(_) | AppEffect::Redraw
+            )
+        })
+    {
+        effects.insert(
+            0,
+            notice_lines(&talaria_core::hivecode::notice::bypassed(&command)),
+        );
+    }
+    effects
+}
+
+/// The model and provider the open session runs on, for a Hivecode-routed prompt; the model
+/// the user switched to wins over the one the session started with.
+fn session_model(state: &AppState) -> Option<(String, String)> {
+    state
+        .model
+        .clone()
+        .or_else(|| state.opened.as_ref().and_then(|o| o.info.model.clone()))
+        .zip(state.opened.as_ref().and_then(|o| o.info.provider.clone()))
+}
+
+fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         if let Some(session) = state
             .opened
             .as_ref()
             .filter(|_| !state.session_gone)
             .map(|opened| SessionId::new(opened.session_id.clone()))
-            && let Some(actions) = state.ultracode.answer_install(&session, &text)
+            && let Some(actions) = state.hivecode.answer_install(&session, &text)
         {
-            return ultracode_actions(state, actions);
+            return hivecode_actions(state, actions);
         }
         return Vec::new();
     }
@@ -8716,12 +9579,40 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
         .filter(|_| !state.session_gone)
         .map(|s| SessionId::new(s.session_id.clone()))
     {
-        state.ultracode.bind(&session, &state.profile);
-        if let Some(actions) = state.ultracode.answer_install(&session, &text) {
-            return ultracode_actions(state, actions);
+        state.hivecode.bind(&session, &state.profile);
+        if let Some(actions) = state.hivecode.answer_install(&session, &text) {
+            return hivecode_actions(state, actions);
         }
-        if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
-            return ultracode_actions(state, actions);
+        hivecode_note_conversation(state, &session);
+        let session_model = session_model(state);
+        if let Some(actions) = state.hivecode.intercept_submit_with_model(
+            &session,
+            &text,
+            session_model
+                .as_ref()
+                .map(|(model, provider)| (model.as_str(), provider.as_str())),
+        ) {
+            // A prompt sent with the reminder goes straight to Hermes, like a plain one.
+            if actions
+                .iter()
+                .any(|action| matches!(action, crate::hivecode::Action::SubmitCommand { .. }))
+            {
+                if state.link_failed {
+                    return vec![
+                        notice_lines(LINK_STOPPED_NOTICE),
+                        AppEffect::LoadDraft(text),
+                    ];
+                }
+                clear_submitted_draft(state);
+            }
+            let mut effects = hivecode_actions(state, actions);
+            // A routed prompt checks the local setup on the side; the prompt does not wait.
+            if state.hivecode.status_input(Some(&session))
+                && let Some(check) = state.hivecode.setup_check(&session)
+            {
+                effects.extend(apply_hivecode(state, vec![check], false));
+            }
+            return effects;
         }
     }
     submit_prose(state, text)
@@ -8834,6 +9725,12 @@ fn submit_prose(state: &mut AppState, text: String) -> Vec<AppEffect> {
             Err(notice) => vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
         };
     }
+    // A workflow agent's session is not an ordinary conversation: say so once, keep the text.
+    if let Some(agent) = state.workflow_agent.as_mut()
+        && let Some(warning) = agent.first_send_warning(&mut state.workflow_agent_warned)
+    {
+        return vec![notice_lines(&warning), AppEffect::LoadDraft(text)];
+    }
     send_text(state, text)
 }
 
@@ -8918,10 +9815,14 @@ fn send_expanded(state: &mut AppState, payload: SubmittedAttachments) -> Vec<App
     effects
 }
 
-/// `/theme` with its argument: the report, or a background override for this session.
+/// `/theme` with its argument: the report and the selector, or a background override for this
+/// session.
 fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     if argument.is_empty() {
-        return vec![AppEffect::ThemeReport];
+        return vec![
+            AppEffect::ThemeReport,
+            AppEffect::Choice(choice::ChoiceWork::ListThemes),
+        ];
     }
     if matches!(argument.split_whitespace().next(), Some("use" | "reload")) {
         return vec![AppEffect::ThemeFileCommand(argument.to_owned())];
@@ -9207,6 +10108,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
         event @ LinkEvent::State(LinkState::Failed { .. }) => {
             state.link_state = LinkView::Failed;
             state.link_failed = true;
+            abandon_foreground_turn(state);
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
             client_voice_link_lost(state, &mut effects);
@@ -9337,8 +10239,27 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     }
                     opened.state.background_mut().observe_time(state.now_ms);
                     opened.state.queue.observe_time(state.now_ms);
+                    // A compaction while the session is in the background moves it too.
+                    let rotated = (inbound.raw.get("type").and_then(Value::as_str)
+                        == Some("session.info"))
+                    .then(|| {
+                        inbound
+                            .raw
+                            .get("payload")
+                            .and_then(|payload| payload.get("stored_session_id"))
+                            .and_then(Value::as_str)
+                            .filter(|stored| !stored.is_empty())
+                            .map(str::to_owned)
+                    })
+                    .flatten();
                     let produced =
                         apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
+                    if let Some(stored) = rotated {
+                        state
+                            .hivecode
+                            .rotate(&SessionId::new(session_id.clone()), &stored);
+                        hub_effects.extend(hivecode_save(state));
+                    }
                     let background = produced
                         .into_iter()
                         .filter_map(|effect| match effect {
@@ -9433,6 +10354,18 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 {
                     state.folder.apply_info_cwd(cwd);
                 }
+                // A compaction moves the session to a new stored id; the switch follows it.
+                if type_name == "session.info"
+                    && let Some(stored) = payload
+                        .get("stored_session_id")
+                        .and_then(Value::as_str)
+                        .filter(|stored| !stored.is_empty())
+                {
+                    state
+                        .hivecode
+                        .rotate(&SessionId::new(session_id.clone()), stored);
+                    effects.extend(hivecode_save(state));
+                }
                 if let Some(input) = rewound {
                     effects.extend(rewind_input(state, input));
                 }
@@ -9526,6 +10459,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             }
             let mut closing = close_processes(state);
             state.session_gone = true;
+            abandon_foreground_turn(state);
             let mut effects = link_notice(&event)
                 .map(|text| vec![notice_lines(&text)])
                 .unwrap_or_default();
@@ -9534,6 +10468,14 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             effects.append(&mut closing);
             effects
         }
+    }
+}
+
+/// The foreground session's open turn can no longer finish, so every surface that waits on a
+/// running turn (the working row, the status bar's working count, the interrupt key) lets go.
+fn abandon_foreground_turn(state: &mut AppState) {
+    if let Some(opened) = state.opened.as_mut() {
+        opened.state.abandon_turn();
     }
 }
 
@@ -9593,6 +10535,65 @@ mod link_event_prompt_tests {
         let effects = link_event(&mut state_with_retained_session(), sudo_request("s9"));
         assert!(effects.is_empty());
     }
+
+    fn foreground_running(state: &AppState) -> bool {
+        state
+            .opened
+            .as_ref()
+            .is_some_and(|opened| *opened.state.turn() == TurnState::Running)
+    }
+
+    #[test]
+    fn a_session_the_gateway_lost_has_no_running_turn() {
+        let mut state = state_with_retained_session();
+        assert!(foreground_running(&state), "the fixture's turn runs");
+        link_event(
+            &mut state,
+            LinkEvent::SessionGone {
+                session_id: "s2".into(),
+            },
+        );
+        assert!(state.session_gone);
+        assert!(
+            !foreground_running(&state),
+            "the turn of a session that no longer exists still runs: {:?}",
+            state.opened.as_ref().map(|opened| opened.state.turn())
+        );
+    }
+
+    #[test]
+    fn a_failed_link_leaves_no_running_turn() {
+        let mut state = state_with_retained_session();
+        link_event(
+            &mut state,
+            LinkEvent::State(LinkState::Failed {
+                reason: "the gateway closed the connection".into(),
+                next_step: "Try again.".into(),
+            }),
+        );
+        assert!(
+            !foreground_running(&state),
+            "the turn still runs after the link gave up: {:?}",
+            state.opened.as_ref().map(|opened| opened.state.turn())
+        );
+    }
+
+    #[test]
+    fn a_reconnecting_link_keeps_the_running_turn() {
+        let mut state = state_with_retained_session();
+        link_event(
+            &mut state,
+            LinkEvent::State(LinkState::Reconnecting {
+                attempt: 1,
+                retry_in: std::time::Duration::from_millis(250),
+                reason: "connection closed".into(),
+            }),
+        );
+        assert!(
+            foreground_running(&state),
+            "the gateway may still be running the turn while the link redials"
+        );
+    }
 }
 
 fn opened_session(
@@ -9600,6 +10601,7 @@ fn opened_session(
     mut opened: OpenedSession,
     notice: Option<String>,
 ) -> Vec<AppEffect> {
+    workflow_origin_follow(state, &opened);
     let rewind_owner = RowKey {
         profile: state.profile.clone(),
         session_id: opened.session_id.clone(),
@@ -9613,6 +10615,24 @@ fn opened_session(
         .take()
         .unwrap_or_else(|| state.profile.clone());
     let same_session = old_profile == state.profile && is_open_session(state, &opened.session_id);
+    // A reconnect may reopen the same stored session under a new runtime id.
+    if let Some(old) = state.opened.as_ref().filter(|old| {
+        old_profile == state.profile
+            && old.session_id != opened.session_id
+            && old.stored_session_id == opened.stored_session_id
+    }) {
+        let old = SessionId::new(old.session_id.clone());
+        state
+            .hivecode
+            .carry(&old, &SessionId::new(opened.session_id.clone()));
+    }
+    // The switch belongs to the stored session, so a return from another session, a restart or
+    // a compaction finds it again.
+    let hivecode_session = SessionId::new(opened.session_id.clone());
+    let announce_hivecode = state
+        .hivecode
+        .adopt(&hivecode_session, &opened.stored_session_id)
+        && !same_session;
     if !same_session && let Some(old_id) = state.opened.as_ref().map(|old| old.session_id.clone()) {
         background.extend(background_event(
             state,
@@ -9717,6 +10737,20 @@ fn opened_session(
         .cd_ledger
         .fences_mut(&session_id)
         .adopt(Some(opened.revision), Some(opened.execution_generation));
+    state.workflow_agent = crate::workflow_agent::WorkflowAgentSession::identify(
+        &opened,
+        &state.workflow_views,
+        &state.workflow_runs_dir,
+        state.now_ms,
+    );
+    if let Some(agent) = state.workflow_agent.as_mut()
+        && let Some(request) = agent.first_read()
+    {
+        effects.push(AppEffect::WorkflowAgentRead {
+            stored_id: agent.stored_id().to_owned(),
+            request,
+        });
+    }
     state.opened = Some(opened);
     if state.client_voice_config.backend == "client-bridge" {
         if !same_session {
@@ -9798,6 +10832,7 @@ fn opened_session(
         state,
         CommandsInput::ForegroundSession(Some(session_id.clone())),
     ));
+    effects.extend(config_check_effect(state));
     state.source_epoch += 1;
     if state.pager_open {
         effects.push(AppEffect::Transcript(TranscriptAction::Changed));
@@ -9815,6 +10850,14 @@ fn opened_session(
     if let Some(notice) = notice.filter(|notice| !notice.is_empty()) {
         effects.push(notice_lines(&notice));
     }
+    if announce_hivecode {
+        state.hivecode.bind(&hivecode_session, &state.profile);
+        effects.push(notice_lines(state.hivecode.opened_notice()));
+        if let Some(check) = state.hivecode.setup_check(&hivecode_session) {
+            effects.extend(apply_hivecode(state, vec![check], false));
+        }
+    }
+    effects.extend(hivecode_save(state));
     // The snapshot's `yolo` is never read: it is false after a gateway restart until the next
     // turn (#237). `install` made the state when the connection opened; a session that opens
     // without it makes it here.
@@ -9830,7 +10873,7 @@ fn opened_session(
         .opened
         .as_ref()
         .map(|opened| SessionId::new(opened.session_id.clone()))
-        && let Some(text) = state.ultracode.show_kept(&session)
+        && let Some(text) = state.hivecode.show_kept(&session)
     {
         effects.push(notice_lines(&text));
     }
@@ -9840,12 +10883,20 @@ fn opened_session(
             .as_ref()
             .map(|opened| SessionId::new(opened.session_id.clone()))
         {
-            state.ultracode.bind(&session, &state.profile);
-            if let Some(actions) = state.ultracode.answer_install(&session, &text) {
-                effects.extend(apply_ultracode(state, actions, false));
+            state.hivecode.bind(&session, &state.profile);
+            if let Some(actions) = state.hivecode.answer_install(&session, &text) {
+                effects.extend(apply_hivecode(state, actions, false));
                 continue;
             }
-            if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
+            hivecode_note_conversation(state, &session);
+            let session_model = session_model(state);
+            if let Some(actions) = state.hivecode.intercept_submit_with_model(
+                &session,
+                &text,
+                session_model
+                    .as_ref()
+                    .map(|(model, provider)| (model.as_str(), provider.as_str())),
+            ) {
                 if state
                     .held_attachments
                     .front()
@@ -9853,9 +10904,17 @@ fn opened_session(
                 {
                     state.held_attachments.pop_front();
                 }
-                effects.extend(apply_ultracode(state, actions, false));
+                effects.extend(apply_hivecode(state, actions, false));
                 continue;
             }
+        }
+        // A prompt typed before the session finished opening gets the same first-send warning.
+        if let Some(agent) = state.workflow_agent.as_mut()
+            && let Some(warning) = agent.first_send_warning(&mut state.workflow_agent_warned)
+        {
+            effects.push(notice_lines(&warning));
+            effects.extend(return_held_prompt(state, text));
+            continue;
         }
         if state
             .held_attachments
@@ -9872,6 +10931,37 @@ fn opened_session(
         }
     }
     effects
+}
+
+/// Put a held prompt back in the composer, with its attachments, ahead of anything typed
+/// since.
+fn return_held_prompt(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    let display = if state
+        .held_attachments
+        .front()
+        .is_some_and(|payload| payload.expanded.display == text)
+    {
+        let payload = state
+            .held_attachments
+            .pop_front()
+            .expect("checked held payload");
+        state.attachments.chips.restore_payloads(payload.media);
+        state
+            .attachments
+            .chips
+            .restore_pastes(&payload.expanded.display);
+        payload.expanded.display
+    } else {
+        text
+    };
+    state.draft = if state.draft.is_empty() {
+        display
+    } else {
+        format!("{display}\n{}", state.draft)
+    };
+    state.caret = state.draft.len();
+    state.attachment_epoch = state.attachment_epoch.wrapping_add(1);
+    vec![AppEffect::LoadDraft(state.draft.clone())]
 }
 
 fn restore_failed_attachments(state: &mut AppState) -> Vec<AppEffect> {
@@ -10023,8 +11113,10 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
             .ledger
             .get(&SubmissionId(id.clone()))
             .filter(|entry| entry.retried)
-            .map(|entry| entry.text.clone())
+            .map(|entry| talaria_core::hivecode::shown_text(&entry.text).to_owned())
     });
+    // A routed prompt that was not sent builds no workflow.
+    state.hivecode.submission_failed(&id);
     let mut effects = reduce(
         state,
         Event::SubmitFailed {
@@ -10076,7 +11168,18 @@ fn interrupt_done(
     state.interrupting = false;
     let mut effects: Vec<AppEffect> = notices.iter().map(|text| notice_lines(text)).collect();
     let reason = match outcome {
-        ExecuteOutcome::Sent => return effects,
+        ExecuteOutcome::Sent => {
+            // An accidental interrupt does not end workflow mode; say so.
+            if let Some(session) = state
+                .opened
+                .as_ref()
+                .map(|opened| SessionId::new(opened.session_id.clone()))
+                && let Some(action) = state.hivecode.after_interrupt(&session)
+            {
+                effects.extend(apply_hivecode(state, vec![action], false));
+            }
+            return effects;
+        }
         ExecuteOutcome::Refused { reason } => reason,
         ExecuteOutcome::OutcomeUnknown | ExecuteOutcome::VoiceStopped => {
             "connection_dropped".to_string()
@@ -10637,7 +11740,7 @@ mod attachment_tests {
     #[test]
     fn cold_start_routes_held_workflows_without_clearing_the_next_draft() {
         let mut state = AppState::new("cold-start");
-        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
         let initial = submit(&mut state, "review the parser".into());
         assert!(
             !initial
@@ -10649,7 +11752,7 @@ mod attachment_tests {
         state.caret = state.draft.len();
         let session = opened().opened.take().unwrap();
         let effects = opened_session(&mut state, session, None);
-        assert!(effects.iter().any(|effect|matches!(effect,AppEffect::Ultracode{action:crate::ultracode::Action::RunCommand{command_line,..},..} if command_line=="/talaria-workflows review the parser")));
+        assert!(effects.iter().any(|effect|matches!(effect,AppEffect::Hivecode{action:crate::hivecode::Action::RunCommand{command_line,..},..} if command_line=="/talaria-workflows review the parser")));
         assert!(
             !effects
                 .iter()
@@ -10659,6 +11762,63 @@ mod attachment_tests {
         assert_eq!(state.caret, 10);
         assert!(state.held.is_empty());
         assert!(state.held_attachments.is_empty());
+    }
+
+    #[test]
+    fn held_workflow_prompt_names_the_model_the_opened_session_runs_on() {
+        let mut state = AppState::new("cold-start");
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
+        let _ = submit(&mut state, "review the parser".into());
+        assert_eq!(state.held.len(), 1);
+        let mut session = opened().opened.take().unwrap();
+        session.info.model = Some("session-model".into());
+        session.info.provider = Some("provider-a".into());
+        let effects = opened_session(&mut state, session, None);
+        let lines: Vec<_> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::RunCommand { command_line, .. },
+                    ..
+                } => Some(command_line.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            ["/talaria-workflows review the parser\nSession model: session-model on provider-a"]
+        );
+    }
+
+    #[test]
+    fn routed_workflow_prompt_names_the_model_the_session_runs_on() {
+        let mut state = opened();
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
+        let line = |effects: &[AppEffect]| {
+            effects.iter().find_map(|effect| match effect {
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::RunCommand { command_line, .. },
+                    ..
+                } => Some(command_line.clone()),
+                _ => None,
+            })
+        };
+        let effects = submit(&mut state, "review the parser".into());
+        assert_eq!(
+            line(&effects).as_deref(),
+            Some("/talaria-workflows review the parser")
+        );
+        if let Some(opened) = state.opened.as_mut() {
+            opened.info.model = Some("profile-model".into());
+            opened.info.provider = Some("provider-a".into());
+        }
+        // The model the user switched to wins over the one the session started with.
+        state.model = Some("picked-model".into());
+        let effects = submit(&mut state, "review the parser".into());
+        assert_eq!(
+            line(&effects).as_deref(),
+            Some("/talaria-workflows review the parser\nSession model: picked-model on provider-a")
+        );
     }
 
     fn image(state: &mut AppState, path: &str) -> String {
@@ -11590,6 +12750,14 @@ fn notice_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     executor.started.checked_add(Duration::from_millis(due))
 }
 
+/// When the interrupt key's timer next changes: a pending press settles into an interrupt, the
+/// "press again to interrupt" hint ends, or a held key is over. The loop wakes then with no key
+/// pressed.
+fn interrupt_hint_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
+    let due = state.interrupt_confirm.next_deadline()?;
+    executor.started.checked_add(Duration::from_millis(due))
+}
+
 fn queue_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     if state.session_gone {
         return None;
@@ -11608,10 +12776,18 @@ fn workflow_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     if state.kanban.is_some() {
         return Some(Instant::now() + Duration::from_millis(250));
     }
-    state
-        .workflow_views
-        .next_tick_ms()
-        .and_then(|ms| executor.started.checked_add(Duration::from_millis(ms)))
+    [
+        state.workflow_views.next_tick_ms(),
+        state.hivecode.next_scan_ms(),
+        state
+            .workflow_agent
+            .as_ref()
+            .and_then(crate::workflow_agent::WorkflowAgentSession::next_refresh_ms),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .and_then(|ms| executor.started.checked_add(Duration::from_millis(ms)))
 }
 
 /// When the side-tasks section next changes, while anything is pending.
@@ -11864,6 +13040,15 @@ async fn profiles_without_client(
             ProfilesInput::Described(generation, name, Err(CallFailure::NotSent))
         }
         ProfilesEffect::Create(_) => ProfilesInput::CreateAnswered(Err(CallFailure::NotSent)),
+        // Rename and delete ride a ticket of their own, not the session socket.
+        ProfilesEffect::Delete { name } => {
+            let result = crate::profiles::delete_profile(&home, &name).await;
+            ProfilesInput::DeleteAnswered(name, result)
+        }
+        ProfilesEffect::Rename { name, new_name } => {
+            let result = crate::profiles::rename_profile(&home, &name, &new_name).await;
+            ProfilesInput::RenameAnswered(name, result)
+        }
         ProfilesEffect::Configure { name, section, .. } => {
             ProfilesInput::ConfigureAnswered(name, section, Err(CallFailure::NotSent))
         }
@@ -12411,6 +13596,7 @@ fn apply<S: Screen>(
                     kind: talaria_core::session::NoticeKind::Diagnostic,
                     text: format!("Scheduled jobs: {text}"),
                     detail: None,
+                    body: None,
                 })]);
             }
             AppEffect::CronFrame => {
@@ -12512,6 +13698,56 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            AppEffect::SettingsChoices {
+                generation,
+                profile,
+                key,
+                list,
+                client,
+                session,
+            } => executor.send_later(async move {
+                use talaria_core::settings::{FailReason, SettingsInput};
+                let answer = match &client {
+                    Some(client) => {
+                        crate::settings::slash_choices(client, session.as_deref(), list).await
+                    }
+                    None => Err(FailReason::NotConnected.text()),
+                };
+                let input = match answer {
+                    Ok(items) => SettingsInput::ChoicesLoaded {
+                        key,
+                        profile: profile.clone(),
+                        items,
+                    },
+                    Err(reason) => SettingsInput::ChoicesFailed {
+                        key,
+                        profile: profile.clone(),
+                        reason,
+                    },
+                };
+                AppMessage::Settings {
+                    generation,
+                    profile,
+                    service: None,
+                    input,
+                }
+            }),
+            AppEffect::ConfigCheck { profile, home } => {
+                executor.send_later(async move {
+                    use talaria_core::config_check::ConfigFacts;
+                    // A configuration that cannot be read adds no notice.
+                    let findings = match crate::settings::discover_service(home).await {
+                        Some(service) => {
+                            match crate::settings::config_facts(&service, &profile).await {
+                                ConfigFacts::Read(findings) => findings,
+                                ConfigFacts::NotTried | ConfigFacts::Unknown { .. } => Vec::new(),
+                            }
+                        }
+                        None => Vec::new(),
+                    };
+                    AppMessage::ConfigFindings { profile, findings }
+                });
+            }
             AppEffect::DoctorGather => {
                 let service = crate::doctor::DoctorService::new(state.hermes_home.clone());
                 let profile = state.profile.clone();
@@ -12584,10 +13820,8 @@ fn apply<S: Screen>(
             AppEffect::ModelRoles {
                 generation,
                 profile,
-                connection_profile,
                 home,
                 service,
-                socket,
                 effects,
             } => {
                 let sender = executor.sender.clone();
@@ -12595,15 +13829,7 @@ fn apply<S: Screen>(
                     use talaria_core::model_roles::RolesInput;
                     let service = match service {
                         Some(service) => Some(service),
-                        None => {
-                            crate::model_roles::open_service(
-                                home,
-                                profile.clone(),
-                                connection_profile,
-                                socket,
-                            )
-                            .await
-                        }
+                        None => crate::model_roles::open_service(home, profile.clone()).await,
                     };
                     for effect in effects {
                         let sender = sender.clone();
@@ -12742,6 +13968,20 @@ fn apply<S: Screen>(
                     service.execute(&board, effect, executor.sender.clone());
                 }
             }
+            AppEffect::HivecodeScan { since_ms } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let rows = tokio::task::spawn_blocking(move || {
+                        talaria_workflow::runner::discover_runs_since(
+                            &talaria_workflow::runner::runs_dir(None),
+                            since_ms,
+                        )
+                    })
+                    .await
+                    .unwrap_or_default();
+                    let _ = sender.send(AppMessage::HivecodeRuns { rows });
+                });
+            }
             AppEffect::WorkflowDiscover => {
                 let sender = executor.sender.clone();
                 tokio::spawn(async move {
@@ -12761,6 +14001,20 @@ fn apply<S: Screen>(
                     .await
                     .unwrap_or_else(|_| Err("workflow view task failed".into()));
                     let _ = sender.send(AppMessage::WorkflowOpened(result));
+                });
+            }
+            AppEffect::WorkflowAgentRead { stored_id, request } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        talaria_workflow::progress::agent_session::read_agent_journal(
+                            &request.run_dir,
+                            request.offset,
+                        )
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err("workflow agent read task failed".into()));
+                    let _ = sender.send(AppMessage::WorkflowAgentRead { stored_id, result });
                 });
             }
             AppEffect::WorkflowPoll {
@@ -12801,10 +14055,10 @@ fn apply<S: Screen>(
             }
             AppEffect::CommitSubagentBatch(batch) => screen.commit_subagent_batch(&batch),
             AppEffect::Background {
-                session_id,
+                session_id: _,
                 effect: BackgroundEffect::Log { text },
-            } => {
-                let _ = session_id;
+            }
+            | AppEffect::WorkflowLog(text) => {
                 if let Some(home) = state.home.clone() {
                     tokio::task::spawn_blocking(move || {
                         let text: String = talaria_core::side::clean_output(&text).chars().filter(|ch| !ch.is_control() && !matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')).collect();
@@ -13021,6 +14275,7 @@ fn apply<S: Screen>(
                         },
                         text,
                         detail: None,
+                        body: None,
                     })]);
                 }
                 ModelsEffect::SaveFile(saved) => {
@@ -13061,6 +14316,13 @@ fn apply<S: Screen>(
             }
             AppEffect::Redraw => redraw = true,
             AppEffect::UnrecordSubmit(text) => screen.unrecord_submit(&text),
+            AppEffect::RecordSubmit(text) => {
+                if let Some(notice) = screen.record_submit(&text, state.opened.is_some())
+                    && let AppEffect::CommitLines(lines) = notice_lines(&notice)
+                {
+                    screen.commit_lines(lines);
+                }
+            }
             AppEffect::LoadDraft(text) => {
                 screen.load_draft(&text);
                 if let Some((text, caret)) = screen.draft_snapshot() {
@@ -13420,8 +14682,8 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::Quit => state.quitting = true,
-            AppEffect::Ultracode { action, request_id } => match action {
-                crate::ultracode::Action::FetchCatalog {
+            AppEffect::Hivecode { action, request_id } => match action {
+                crate::hivecode::Action::FetchCatalog {
                     session,
                     profile,
                     command,
@@ -13435,7 +14697,7 @@ fn apply<S: Screen>(
                             }
                             None => Err("not connected".into()),
                         };
-                        AppMessage::UltracodeCatalog {
+                        AppMessage::HivecodeCatalog {
                             request_id,
                             session,
                             profile,
@@ -13444,7 +14706,7 @@ fn apply<S: Screen>(
                         }
                     });
                 }
-                crate::ultracode::Action::RunCommand {
+                crate::hivecode::Action::RunCommand {
                     session,
                     original_text,
                     command_line,
@@ -13457,14 +14719,48 @@ fn apply<S: Screen>(
                             }
                             None => Err(talaria_core::commands::ErrorView::NotConnected),
                         };
-                        AppMessage::UltracodeDone {
+                        AppMessage::HivecodeDone {
                             session,
                             original_text,
                             outcome,
                         }
                     });
                 }
-                crate::ultracode::Action::InstallSkill { profile, .. } => {
+                crate::hivecode::Action::CheckSetup { session, profile } => {
+                    let Some(talaria_home) = talaria_workflow::staffing::talaria_home() else {
+                        continue;
+                    };
+                    let hermes_home = hermes_client::default_home();
+                    executor.send_later(async move {
+                        let read_profile = profile.clone();
+                        let facts = tokio::task::spawn_blocking(move || {
+                            crate::hivecode_files::read_setup(
+                                &read_profile,
+                                &hermes_home,
+                                &talaria_home,
+                            )
+                        })
+                        .await
+                        .unwrap_or(crate::hivecode::SetupFacts {
+                            skill: crate::hivecode::SkillCheck::Unknown,
+                            tiers: crate::hivecode::TierCheck::Present,
+                            missing_builtins: Vec::new(),
+                        });
+                        AppMessage::HivecodeSetup {
+                            session,
+                            profile,
+                            facts,
+                        }
+                    });
+                }
+                action @ (crate::hivecode::Action::InstallSkill { .. }
+                | crate::hivecode::Action::ReinstallSkill { .. }) => {
+                    // A reinstall replaces a changed copy after backing it up.
+                    let (profile, force) = match action {
+                        crate::hivecode::Action::ReinstallSkill { profile, .. } => (profile, true),
+                        crate::hivecode::Action::InstallSkill { profile, .. } => (profile, false),
+                        _ => continue,
+                    };
                     executor.send_later(async move {
                         let result = async {
                             let (target, warnings) =
@@ -13475,9 +14771,10 @@ fn apply<S: Screen>(
                                         "no home folder for Talaria".into(),
                                     )
                                 })?;
+                            let builtins_home = home.clone();
                             let options = talaria_workflow::skill::InstallOptions {
-                                command: "talaria".into(),
-                                force: false,
+                                command: crate::hivecode_files::INSTALL_COMMAND.into(),
+                                force,
                                 dry_run: false,
                                 talaria_home: home,
                                 now: chrono::Utc::now(),
@@ -13492,20 +14789,66 @@ fn apply<S: Screen>(
                                 talaria_workflow::skill::SkillError::Template(error.to_string())
                             })??;
                             report.warnings.splice(0..0, warnings);
-                            Ok::<_, talaria_workflow::skill::SkillError>(
-                                talaria_workflow::skill::report_text(
-                                    &target, &report, false, false,
+                            // The built-in workflows go in with the skill, so the agent has
+                            // something to start from. A copy already there is kept.
+                            let builtins = tokio::task::spawn_blocking(move || {
+                                crate::hivecode_files::install_missing_builtins(&builtins_home)
+                            })
+                            .await
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                            let builtins_note = match builtins {
+                                Ok(done) => talaria_core::hivecode::notice::builtins_outcome(
+                                    &done.created,
+                                    &done.unreadable,
                                 ),
-                            )
+                                Err(reason) => {
+                                    Some(talaria_core::hivecode::notice::builtins_failed(&reason))
+                                }
+                            };
+                            // `/hivecode reinstall` confirms in one line.
+                            let text = if force {
+                                talaria_core::hivecode::notice::reinstalled(
+                                    &target.profile,
+                                    report
+                                        .backup
+                                        .as_ref()
+                                        .map(|backup| backup.display().to_string())
+                                        .as_deref(),
+                                )
+                            } else {
+                                talaria_workflow::skill::report_text(&target, &report, false, false)
+                            };
+                            Ok::<_, talaria_workflow::skill::SkillError>(match builtins_note {
+                                Some(note) => format!("{text}\n{note}"),
+                                None => text,
+                            })
                         }
                         .await;
-                        AppMessage::UltracodeNotice {
-                            text: result.unwrap_or_else(|error| error.to_string()),
-                        }
+                        let text = match result {
+                            Ok(text) => text,
+                            Err(error) if force => {
+                                talaria_core::hivecode::notice::reinstall_failed(&error.to_string())
+                            }
+                            Err(error) => error.to_string(),
+                        };
+                        AppMessage::HivecodeNotice { text }
                     });
                 }
                 _ => {}
             },
+            AppEffect::HivecodeSave {
+                generation,
+                changes,
+            } => {
+                if let Some(file) = state.hivecode_file.clone() {
+                    executor.spawn(async move {
+                        let _ =
+                            tokio::task::spawn_blocking(move || file.write(generation, &changes))
+                                .await;
+                    });
+                }
+            }
             AppEffect::RunCommand { session_id, typed } => {
                 let Some(commands) = &state.command_service else {
                     continue;
@@ -13604,6 +14947,18 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            AppEffect::StartInProfile { profile, cwd } => {
+                let mut copy = state.working_copy();
+                executor.send_later(async move {
+                    let outcome = crate::switch::start_in_profile(&mut copy, profile, cwd).await;
+                    let install = copy.into_install();
+                    AppMessage::Switched {
+                        outcome,
+                        install,
+                        reason: None,
+                    }
+                });
+            }
             AppEffect::ClearSession { skip_detach, cwd } => {
                 let mut copy = state.working_copy();
                 executor.send_later(async move {
@@ -13688,10 +15043,12 @@ fn apply<S: Screen>(
                     }
                 });
             }
-            AppEffect::OpenBranchChild { receipt } => {
+            AppEffect::OpenBranchChild { receipt, name } => {
                 let mut copy = state.working_copy();
                 executor.send_later(async move {
-                    let outcome = crate::switch::open_branch_child(&mut copy, &receipt).await;
+                    let outcome =
+                        crate::switch::open_branch_child(&mut copy, &receipt, name.as_deref())
+                            .await;
                     let install = copy.into_install();
                     AppMessage::Branched { outcome, install }
                 });
@@ -13755,6 +15112,7 @@ fn apply<S: Screen>(
             AppEffect::CloseLink(link) => {
                 executor.spawn(async move { link.close().await });
             }
+            AppEffect::BindLinkServices => bind_link_services(state, executor),
             AppEffect::Herdr(effect) => {
                 use talaria_core::fleet_view::{
                     FleetViewEffect, FleetViewInput, PeekStatus, ReplyOutcome, StopOutcome,
@@ -14035,6 +15393,10 @@ fn apply<S: Screen>(
                 run_theme_file_command(state, executor, argument)
             }
             AppEffect::ContinueThemeFiles => start_next_theme_file_command(state, executor),
+            AppEffect::Choice(work) => {
+                let ignored = screen.theme_report().and_then(|report| report.not_applied);
+                choice::run(state, executor, work, ignored);
+            }
             AppEffect::Skin(name) => {
                 let client = state
                     .service
@@ -14240,7 +15602,7 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
     state.gateway_version = connection.gateway_version.clone();
     let OpenConnection {
         link,
-        mut inbound,
+        inbound,
         profile_name,
         describe,
         ..
@@ -14260,24 +15622,66 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         .permissions
         .get_or_insert_with(|| PermissionsState::new(profile_name.clone()));
     if state.profile != profile_name {
-        state.memory_visible = false;
-        state.memory_profile = None;
-        state.memory_service = None;
-        state.memory = talaria_core::memory::MemoryState::new();
-        state.memory_generation = state.memory_generation.wrapping_add(1);
-        state.connectors_open = false;
-        state.connectors_profile = None;
-        state.connectors_service = None;
-        state.connectors_deadline = None;
-        state.connectors_reads.clear();
-        state.connectors_generation = state.connectors_generation.wrapping_add(1);
-        state.connectors = talaria_core::connectors::ConnectorsState::new();
+        forget_profile_views(state);
     }
     state.profile = profile_name;
     if state.appearance.set_file_profile(&state.profile) {
         run_theme_file_command(state, executor, "reload".into());
     }
-    let mut commands = CommandService::new(link.client());
+    state.link = Some(link);
+    state.background_service = service
+        .client()
+        .cloned()
+        .map(crate::background::BackgroundService::new)
+        .map(Arc::new);
+    state.service = Some(service);
+    bind_link_services(state, executor);
+    let counter = Arc::clone(&state.counter);
+    let launch_id = state.launch_id.clone();
+    state.prompts = Some(Arc::new(Mutex::new(PromptService::new(Box::new(
+        move || submission_id(&launch_id, counter.fetch_add(1, Ordering::SeqCst) + 1),
+    )))));
+    forward_link_events(
+        Arc::clone(&state.link_epoch),
+        state.link_epoch.load(Ordering::SeqCst),
+        executor.sender.clone(),
+        inbound,
+    );
+    AppMessage::Opened { opened, notice }
+}
+
+/// Drop what the memory and connectors views hold about the profile Talaria is leaving.
+fn forget_profile_views(state: &mut AppState) {
+    state.memory_visible = false;
+    state.memory_profile = None;
+    state.memory_service = None;
+    state.memory = talaria_core::memory::MemoryState::new();
+    state.memory_generation = state.memory_generation.wrapping_add(1);
+    state.connectors_open = false;
+    state.connectors_profile = None;
+    state.connectors_service = None;
+    state.connectors_deadline = None;
+    state.connectors_reads.clear();
+    state.connectors_generation = state.connectors_generation.wrapping_add(1);
+    state.connectors = talaria_core::connectors::ConnectorsState::new();
+}
+
+/// Bind the services that hold a client to the foreground link's client: Hermes commands,
+/// the approval settings, workspace changes, the provider list and the model picker.
+///
+/// Start-up does this once. A switch to a session on another profile opens a new link, so it
+/// has to do it again; before it did, these services kept calling the closed link, and the
+/// approval setting read as unknown with "Talaria is not connected to Hermes".
+fn bind_link_services(state: &mut AppState, executor: &Executor) {
+    let Some(client) = state
+        .service
+        .as_ref()
+        .and_then(SessionService::client)
+        .cloned()
+    else {
+        return;
+    };
+    let mut commands = CommandService::new(client.clone());
     if let Some(mut replies) = commands.take_replies() {
         let sender = executor.sender.clone();
         tokio::spawn(async move {
@@ -14289,19 +15693,10 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         });
     }
     state.command_service = Some(commands);
-    state.link = Some(link);
-    state.permissions_service = service
-        .client()
-        .map(|client| Arc::new(PermissionsService::new(Arc::new(client.clone()))));
-    state.workspace_service = service
-        .client()
-        .map(|client| Arc::new(WorkspaceService::new(MutationClient::new(client.clone()))));
-    state.background_service = service
-        .client()
-        .cloned()
-        .map(crate::background::BackgroundService::new)
-        .map(Arc::new);
-    state.service = Some(service);
+    state.permissions_service = Some(Arc::new(PermissionsService::new(Arc::new(client.clone()))));
+    state.workspace_service = Some(Arc::new(WorkspaceService::new(MutationClient::new(
+        client.clone(),
+    ))));
     state.provider_generation = state.provider_generation.wrapping_add(1);
     state.provider_pending_loads.clear();
     if let Some(service) = state.provider_service.take() {
@@ -14309,28 +15704,9 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
     }
     start_provider_service(state, executor);
     state.model_service = Some(Arc::new(crate::models::ModelService::new(
-        state
-            .service
-            .as_ref()
-            .and_then(SessionService::client)
-            .expect("an installed connection has a client")
-            .clone(),
+        client,
         crate::config::models_path().unwrap_or_default(),
     )));
-    let counter = Arc::clone(&state.counter);
-    let launch_id = state.launch_id.clone();
-    state.prompts = Some(Arc::new(Mutex::new(PromptService::new(Box::new(
-        move || submission_id(&launch_id, counter.fetch_add(1, Ordering::SeqCst) + 1),
-    )))));
-    let sender = executor.sender.clone();
-    tokio::spawn(async move {
-        while let Some(event) = inbound.recv().await {
-            if sender.send(AppMessage::Link(event)).is_err() {
-                break;
-            }
-        }
-    });
-    AppMessage::Opened { opened, notice }
 }
 
 fn run_theme_file_command(state: &mut AppState, executor: &Executor, argument: String) {
@@ -15357,7 +16733,7 @@ pub async fn run<S: Screen>(
     Box::pin(run_inner(launch, setup, screen, inputs, false, None)).await
 }
 
-pub async fn run_with_ultracode<S: Screen>(
+pub async fn run_with_hivecode<S: Screen>(
     launch: Launch,
     setup: RunSetup,
     screen: &mut S,
@@ -15392,7 +16768,7 @@ async fn run_inner<S: Screen>(
     mut setup: RunSetup,
     screen: &mut S,
     mut inputs: mpsc::UnboundedReceiver<S::Input>,
-    default_ultracode: bool,
+    default_hivecode: bool,
     remote_audio: Option<hermes_client::audio_api::AudioRelay>,
 ) -> Outcome {
     let mut state = AppState::new_boxed(setup.launch_id.clone());
@@ -15406,9 +16782,22 @@ async fn run_inner<S: Screen>(
         .map(str::trim)
         .filter(|host| !host.is_empty())
         .map(str::to_owned);
-    state.ultracode = crate::ultracode::UltracodeService::new(default_ultracode);
+    state.hivecode = crate::hivecode::HivecodeService::new(default_hivecode);
     if setup.remote_gateway {
-        state.ultracode.set_remote(true);
+        state.hivecode.set_remote(true);
+    }
+    // The per-session switch saved by earlier runs; an unreadable file starts empty and is
+    // replaced by the next change.
+    if let Some(home) = talaria_workflow::staffing::talaria_home() {
+        let path = home.join(crate::hivecode_files::MODE_FILE);
+        if let Ok(mut saved) = crate::hivecode_files::ModeFile::read(&path) {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_millis() as i64);
+            saved.prune(now_ms);
+            state.hivecode.restore(saved);
+        }
+        state.hivecode_file = Some(crate::hivecode_files::ModeFile::new(path));
     }
     let voice_config = screen.voice_config();
     state.configure_voice(voice_config);
@@ -15446,6 +16835,7 @@ async fn run_inner<S: Screen>(
     state.key_bindings = setup.keys.clone();
     state.toggle_label = screen.toggle_label();
     state.interrupt_label = screen.interrupt_label();
+    state.workflow_key_label = screen.workflow_key_label();
     state.home = std::env::var_os("HOME").map(PathBuf::from);
     state.profile = launch.profile.trim().to_lowercase();
     state.hub = AttentionHub::new(
@@ -15471,6 +16861,7 @@ async fn run_inner<S: Screen>(
         state.pane_size.0,
         state.pane_size.1,
     );
+    state.layout.reasoning = screen.reasoning_display();
     sync_models(&mut state, screen);
     sync_picker(&state, screen);
     draw_current_view(&state, screen);
@@ -15589,6 +16980,8 @@ async fn run_inner<S: Screen>(
         let deadline = earliest_of([deadline, voice_due]);
         let deadline = earliest_of([deadline, state.attachments.next_deadline()]);
         let deadline = earliest_of([deadline, state.automation_deadline]);
+        let interrupt_due = interrupt_hint_wake(&state, &executor);
+        let deadline = earliest_of([deadline, interrupt_due]);
         let deadline = earliest_of([deadline, state.configure_tick_at]);
         let provider_deadline = talaria_core::providers::next_deadline(&state.providers);
         let deadline = earliest_of([deadline, provider_deadline]);
@@ -15644,10 +17037,12 @@ async fn run_inner<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
-                if voice_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || notice_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || queue_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
+                state.keys_waiting = !inputs.is_empty();
+                if voice_due.is_some_and(|due| due <= now) || interrupt_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || notice_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || queue_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
                     redraw |= apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
+                state.keys_waiting = false;
                 if let Some((text, caret)) = screen.draft_snapshot()
                     && (text != state.draft || caret != state.caret) {
                         let _ = apply(&mut state, AppMessage::User(UserAction::DraftEdited {
@@ -15735,6 +17130,7 @@ async fn run_inner<S: Screen>(
         task.abort();
     }
     state.close_client_voice_jobs().await;
+    choice::restore_on_exit(&mut state).await;
     let provider_closing = state.provider_service.as_ref().map(|service| {
         let closing = service.close();
         tokio::spawn(async move {
@@ -16287,6 +17683,7 @@ mod doctor_loop_tests {
             }),
             attach: AttachFacts::NotTried,
             status: StatusFacts::NotTried,
+            config: talaria_core::config_check::ConfigFacts::NotTried,
         }
     }
 
@@ -17185,6 +18582,443 @@ mod checklist_command_tests {
 }
 
 #[cfg(test)]
+mod profiles_action_tests {
+    use super::*;
+    use talaria_core::model_roles::{RolesInput, RolesKey};
+    use talaria_core::profiles::{GatewayView, HostTopology, KeyAction};
+
+    /// Connected to `fixture` with a session open, and /profiles loaded with `default` selected.
+    fn loaded() -> AppState {
+        let recording = include_str!("../../talaria-core/tests/data/resume_snapshot.jsonl");
+        let mut snapshot = recording
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find_map(|line| line.get("frame").and_then(|f| f.get("result")).cloned())
+            .unwrap();
+        snapshot["prompts"] = serde_json::json!([]);
+        snapshot["running"] = serde_json::json!(false);
+        snapshot["info"]["cwd"] = serde_json::json!("/work");
+        let mut state = AppState::new("profiles-actions");
+        state.profile = "fixture".into();
+        state.link_state = LinkView::Connected;
+        update(
+            &mut state,
+            AppMessage::Opened {
+                opened: OpenedSession::from_snapshot(serde_json::from_value(snapshot).unwrap()),
+                notice: None,
+            },
+        );
+        profiles_input(&mut state, ProfilesInput::Open);
+        let served = ["default", "fixture"].map(String::from).to_vec();
+        profiles_input(
+            &mut state,
+            ProfilesInput::Discovered(
+                0,
+                Ok(GatewayView {
+                    served,
+                    parked: vec![("fixture-b".into(), "unusable".into())],
+                }),
+            ),
+        );
+        profiles_input(&mut state, ProfilesInput::Listed(0, Err("no".into())));
+        profiles_input(
+            &mut state,
+            ProfilesInput::Topology(
+                0,
+                Ok(HostTopology {
+                    stopped: vec![],
+                    own_gateway: Some(vec![]),
+                    gateway_mode: Some("multiplex".into()),
+                    single_reason: None,
+                }),
+            ),
+        );
+        // The connected profile is selected first; `default` sorts above it.
+        profiles_input(&mut state, ProfilesInput::Key(KeyAction::Up));
+        state
+    }
+
+    fn key(state: &mut AppState, key: KeyAction) -> Vec<AppEffect> {
+        update(
+            state,
+            AppMessage::User(UserAction::Profiles(ProfilesInput::Key(key))),
+        )
+    }
+
+    fn lines(effects: &[AppEffect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::CommitLines(lines) => Some(lines.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn roles_title(state: &AppState) -> Option<String> {
+        state.view().model_roles.map(|view| view.title)
+    }
+
+    #[test]
+    fn models_page_opened_for_another_profile_stays_open_and_returns_to_profiles() {
+        for opener in [KeyAction::Models, KeyAction::Open] {
+            let mut state = loaded();
+            let effects = key(&mut state, opener.clone());
+            assert!(!state.profiles.is_open(), "{opener:?} leaves the list");
+            assert!(
+                effects.iter().any(|effect| matches!(
+                    effect,
+                    AppEffect::ModelRoles { profile, .. } if profile == "default"
+                )),
+                "{opener:?} loads the page for default, not the fixture connection"
+            );
+            let title = roles_title(&state).expect("the page is drawn");
+            assert!(title.ends_with("default"), "{title}");
+
+            // A reply for the page keeps it open: it belongs to default, not the connection.
+            update(
+                &mut state,
+                AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Down))),
+            );
+            assert!(roles_title(&state).is_some(), "{opener:?} keeps the page");
+
+            // Closing the page lands back in /profiles.
+            update(
+                &mut state,
+                AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Escape))),
+            );
+            assert!(roles_title(&state).is_none());
+            assert!(state.profiles.is_open(), "{opener:?} returns to /profiles");
+        }
+
+        // /models still opens the connected profile and does not return to /profiles.
+        let mut state = loaded();
+        profiles_input(&mut state, ProfilesInput::Closed);
+        open_model_roles(&mut state);
+        assert!(roles_title(&state).is_some_and(|title| title.ends_with("fixture")));
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Escape))),
+        );
+        assert!(!state.profiles.is_open());
+    }
+
+    /// A main model saved on the page shows in the list the moment the page closes.
+    #[test]
+    fn a_main_model_saved_on_the_models_page_shows_in_the_list_at_once() {
+        use talaria_core::model_roles::{ApplyReply, ApplyStep, AssignOutcome};
+        let model_cell = |state: &AppState| {
+            state
+                .profiles
+                .view()
+                .rows
+                .into_iter()
+                .find(|row| row.name_cell == "default")
+                .map(|row| row.model_cell)
+        };
+        let mut state = loaded();
+        key(&mut state, KeyAction::Models);
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Applied {
+                step: ApplyStep::MainModel,
+                reply: ApplyReply::Assigned(AssignOutcome::Main {
+                    provider: "fixture-provider".to_owned(),
+                    model: "fixture-model".to_owned(),
+                    stale: Vec::new(),
+                }),
+            })),
+        );
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Escape))),
+        );
+        assert!(state.profiles.is_open());
+        assert_eq!(
+            model_cell(&state).as_deref(),
+            Some("fixture-model · fixture-provider")
+        );
+
+        // Closing without a save leaves the list as Hermes last reported it.
+        let mut state = loaded();
+        let before = model_cell(&state);
+        key(&mut state, KeyAction::Models);
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Escape))),
+        );
+        assert_eq!(model_cell(&state), before);
+    }
+
+    /// Over a remote gateway the registry routes need this machine's control socket, so delete
+    /// and rename are refused before anything is typed or sent.
+    #[test]
+    fn delete_and_rename_are_refused_over_a_remote_gateway() {
+        for (action, words) in [
+            (
+                KeyAction::Delete,
+                "Talaria deletes profiles only through a gateway on this machine. On the gateway's machine, run: hermes profile delete default",
+            ),
+            (
+                KeyAction::Rename,
+                "Talaria renames profiles only through a gateway on this machine. On the gateway's machine, run: hermes profile rename default NEW-NAME",
+            ),
+        ] {
+            let mut state = loaded();
+            state.attached_to_remote_gateway();
+            let effects = key(&mut state, action);
+            assert!(
+                !effects.iter().any(|effect| matches!(
+                    effect,
+                    AppEffect::Profiles(
+                        ProfilesEffect::Delete { .. } | ProfilesEffect::Rename { .. }
+                    )
+                )),
+                "{words}"
+            );
+            assert_eq!(state.profiles.view().notice.as_deref(), Some(words));
+        }
+    }
+
+    #[test]
+    fn models_page_for_another_profile_closes_when_the_connection_moves() {
+        let mut state = loaded();
+        key(&mut state, KeyAction::Models);
+        state.profile = "elsewhere".into();
+        update(
+            &mut state,
+            AppMessage::User(UserAction::ModelRoles(RolesInput::Key(RolesKey::Down))),
+        );
+        assert!(roles_title(&state).is_none());
+        assert!(
+            !state.profiles.is_open(),
+            "a moved connection does not reopen the list"
+        );
+    }
+
+    #[test]
+    fn connect_puts_the_previewed_skin_back_before_it_starts_on_another_profile() {
+        use super::choice::tests::{answered, open, previewing, switches, writes};
+        let mut state = loaded();
+        open(&mut state);
+        previewing(&mut state);
+        let _ = answered(&mut state, "ares");
+        key(&mut state, KeyAction::Connect);
+        let effects = key(&mut state, KeyAction::Char('y'));
+        assert!(
+            state.choice.is_none(),
+            "the selector closes before the start"
+        );
+        assert_eq!(writes(&effects), ["default"], "the restore goes to fixture");
+        assert_eq!(switches(&effects), 0, "the start waits for the restore");
+        let effects = answered(&mut state, "default");
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                AppEffect::StartInProfile { profile, .. } if profile == "default"
+            )),
+            "the start on default runs once fixture has its skin back"
+        );
+    }
+
+    #[test]
+    fn connect_starts_a_session_on_the_profile_in_this_folder() {
+        let mut state = loaded();
+        key(&mut state, KeyAction::Connect);
+        let effects = key(&mut state, KeyAction::Char('y'));
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                AppEffect::StartInProfile { profile, cwd }
+                    if profile == "default" && cwd == Path::new("/work")
+            )),
+            "the start runs on default in the session's folder"
+        );
+        assert!(!state.profiles.is_open());
+        assert!(state.switching);
+    }
+
+    #[test]
+    fn start_is_refused_while_prompts_are_held_or_a_switch_runs() {
+        let mut state = loaded();
+        state.held.push_back("unsent words".into());
+        key(&mut state, KeyAction::Connect);
+        let effects = key(&mut state, KeyAction::Char('y'));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::StartInProfile { .. }))
+        );
+        assert!(
+            lines(&effects)
+                .iter()
+                .any(|line| line.contains(crate::switch::HELD_PROMPTS_TEXT)),
+            "{:?}",
+            lines(&effects)
+        );
+
+        let mut state = loaded();
+        state.switching = true;
+        key(&mut state, KeyAction::Connect);
+        let effects = key(&mut state, KeyAction::Char('y'));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::StartInProfile { .. }))
+        );
+        assert!(lines(&effects).contains(&SWITCHING_NOTICE.to_owned()));
+    }
+
+    /// A terminal whose keymap binds the models action to F5 and leaves connect unbound.
+    #[derive(Default)]
+    struct Rebound {
+        drawn: Option<ProfilesView>,
+    }
+    impl ComposerDeadline for Rebound {
+        fn tick(&mut self, _: Instant) {}
+        fn next_tick(&self) -> Option<Instant> {
+            None
+        }
+    }
+    impl StatusHost for Rebound {
+        fn on_tick(&mut self, _: Instant) {}
+        fn next_wake(&self, _: Instant) -> Option<Instant> {
+            None
+        }
+        fn shutdown(&mut self) -> impl Future<Output = ()> + Send {
+            std::future::ready(())
+        }
+    }
+    impl Screen for Rebound {
+        type Input = ();
+        fn input(&mut self, _: (), _: &View<'_>, _: Instant) -> Vec<UserAction> {
+            Vec::new()
+        }
+        fn draw(&mut self, _: &View<'_>) {}
+        fn commit_lines(&mut self, _: Vec<String>) {}
+        fn commit_context(&mut self, _block: &ContextBlock) {}
+        fn commit_cells(&mut self, _: &[Cell]) {}
+        fn load_draft(&mut self, _: &str) {}
+        fn restore(&mut self) {}
+        fn sync_profiles(&mut self, view: Option<&ProfilesView>) {
+            self.drawn = view.cloned();
+        }
+        fn profiles_key_labels(&self) -> talaria_core::profiles::KeyLabels {
+            talaria_core::profiles::KeyLabels {
+                models: Some("F5".into()),
+                connect: None,
+                ..Default::default()
+            }
+        }
+    }
+
+    #[test]
+    fn profiles_hints_use_the_terminal_key_labels() {
+        let mut state = loaded();
+        let mut screen = Rebound::default();
+        sync_models(&mut state, &mut screen);
+        let drawn = screen.drawn.expect("the profiles screen is drawn");
+        // Creating a profile leads the hints; the rebound models key follows it.
+        assert_eq!(
+            drawn.hints.get(..2),
+            Some(&["n new profile".to_owned(), "F5 models".to_owned()][..])
+        );
+        assert!(
+            !drawn.hints.iter().any(|hint| hint.ends_with("connect")),
+            "{:?}",
+            drawn.hints
+        );
+    }
+}
+
+#[cfg(test)]
+mod settings_reload_key_tests {
+    use super::*;
+    use talaria_core::settings::{
+        ConfigSchemaView, FieldKind, FieldView, SettingsAction, SettingsInput, SettingsKey,
+        SettingsSnapshot,
+    };
+
+    /// A terminal whose keymap binds reloading settings to F5.
+    struct ReloadOnF5;
+    impl ComposerDeadline for ReloadOnF5 {
+        fn tick(&mut self, _: Instant) {}
+        fn next_tick(&self) -> Option<Instant> {
+            None
+        }
+    }
+    impl StatusHost for ReloadOnF5 {
+        fn on_tick(&mut self, _: Instant) {}
+        fn next_wake(&self, _: Instant) -> Option<Instant> {
+            None
+        }
+        fn shutdown(&mut self) -> impl Future<Output = ()> + Send {
+            std::future::ready(())
+        }
+    }
+    impl Screen for ReloadOnF5 {
+        type Input = ();
+        fn input(&mut self, _: (), _: &View<'_>, _: Instant) -> Vec<UserAction> {
+            Vec::new()
+        }
+        fn draw(&mut self, _: &View<'_>) {}
+        fn commit_lines(&mut self, _: Vec<String>) {}
+        fn commit_context(&mut self, _block: &ContextBlock) {}
+        fn commit_cells(&mut self, _: &[Cell]) {}
+        fn load_draft(&mut self, _: &str) {}
+        fn restore(&mut self) {}
+        fn settings_reload_key(&self) -> Option<String> {
+            Some("F5".into())
+        }
+    }
+
+    #[test]
+    fn the_chooser_hint_names_the_terminal_reload_key() {
+        let mut state = AppState::new("settings-test");
+        state.settings.update(SettingsInput::Open {
+            profile: "fixture".into(),
+            filter: None,
+        });
+        state
+            .settings
+            .update(SettingsInput::Loaded(SettingsSnapshot {
+                profile: "fixture".into(),
+                schema: ConfigSchemaView {
+                    fields: vec![FieldView {
+                        key: "terminal.backend".into(),
+                        kind: FieldKind::String,
+                        description: String::new(),
+                        category: "general".into(),
+                        options: None,
+                        searchable: false,
+                        clearable: false,
+                    }],
+                    category_order: vec!["general".into()],
+                },
+                effective: serde_json::json!({"terminal": {"backend": "local"}}),
+                raw: serde_json::json!({}),
+                defaults: serde_json::json!({}),
+            }));
+        state
+            .settings
+            .update(SettingsInput::Key(SettingsKey::Action(
+                SettingsAction::Edit,
+            )));
+        assert!(
+            state
+                .settings
+                .view()
+                .footer
+                .ends_with("· Ctrl+R reload list")
+        );
+        sync_models(&mut state, &mut ReloadOnF5);
+        let footer = state.settings.view().footer;
+        assert!(footer.ends_with("· F5 reload list"), "{footer}");
+    }
+}
+
+#[cfg(test)]
 mod cron_binding_tests {
     use super::*;
 
@@ -17349,6 +19183,12 @@ fn workflow_opened(
                 .offsets
                 .insert(run.clone(), opened.offset);
             state.workflow_views.states.insert(run.clone(), view);
+            if let Some((pending, selection)) = state.workflow_views.pending_selection.take()
+                && pending == run
+                && let Some(view) = state.workflow_views.states.get_mut(&run)
+            {
+                view.selection = selection;
+            }
             state.workflow_views.active = Some(run.clone());
             state.workflow_views.last_poll_ms = state.now_ms;
             let mut effects = workflow_input(
@@ -17383,9 +19223,16 @@ fn workflow_polled(
             );
             effects.extend(workflow_input(
                 state,
-                run,
+                run.clone(),
                 talaria_workflow::progress::live::ProgressInput::Controls(batch.controls),
             ));
+            if let Some(alive) = batch.runner_alive {
+                effects.extend(workflow_input(
+                    state,
+                    run,
+                    talaria_workflow::progress::live::ProgressInput::Runner { alive },
+                ));
+            }
             effects
         }
         Err(reason) => workflow_input(
@@ -17394,6 +19241,32 @@ fn workflow_polled(
             talaria_workflow::progress::live::ProgressInput::Error(reason),
         ),
     }
+}
+/// Read the runs folder when a session waits for a workflow run and a read is due.
+fn hivecode_scan(state: &mut AppState) -> Vec<AppEffect> {
+    state
+        .hivecode
+        .scan_due(state.now_ms)
+        .map(|since_ms| AppEffect::HivecodeScan { since_ms })
+        .into_iter()
+        .collect()
+}
+/// Announce the foreground session's run starting and ending; other sessions only update.
+fn hivecode_runs(
+    state: &mut AppState,
+    rows: &[talaria_workflow::runner::RunSummary],
+) -> Vec<AppEffect> {
+    let key = state.workflow_key_label.clone();
+    let actions = state.hivecode.on_runs(rows, state.now_ms, key.as_deref());
+    let actions = actions
+        .into_iter()
+        .filter(|(session, action)| {
+            matches!(action, crate::hivecode::Action::Changed)
+                || is_foreground(state, session.as_str())
+        })
+        .map(|(_, action)| action)
+        .collect();
+    apply_hivecode(state, actions, false)
 }
 fn workflow_tick(state: &mut AppState) -> Vec<AppEffect> {
     state.workflow_views.last_tick_ms = state.now_ms;
@@ -17503,7 +19376,17 @@ fn workflow_input(
         view.prompt_identity = None;
         view.prompt_first_line = None;
     }
+    let run_name = run.file_name().map_or_else(
+        || run.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    result.extend(
+        view.take_diagnostics()
+            .into_iter()
+            .map(|line| AppEffect::WorkflowLog(format!("{line} (run {run_name})"))),
+    );
     let opened = view.opened_session.take();
+    let selection = view.selection.clone();
     let closed = view.closed;
     if view.revision != previous {
         result.push(AppEffect::Redraw);
@@ -17526,19 +19409,180 @@ fn workflow_input(
             .filter(|p| !p.is_empty())
             .cloned()
             .unwrap_or_else(|| state.profile.clone());
-        if profile == state.profile {
-            result.extend(resume_command(state, &session));
+        let target = RowKey {
+            profile: profile.clone(),
+            session_id: session.clone(),
+        };
+        let started = if profile == state.profile {
+            resume_command(state, &session)
         } else {
-            result.extend(begin_switch(
-                state,
-                RowKey {
-                    profile,
-                    session_id: session,
-                },
-            ));
+            begin_switch(state, target.clone())
+        };
+        if started
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Switch { .. }))
+        {
+            workflow_origin_enter(state, run.clone(), selection, target);
         }
+        result.extend(started);
     }
     result
+}
+
+/// The run view's Enter has started a switch to an agent's session: remember where the person
+/// is. An agent's session is never the place to return to, so an Enter made from one keeps the
+/// place the first Enter remembered, and shows the run and row of the newest Enter.
+fn workflow_origin_enter(
+    state: &mut AppState,
+    run: PathBuf,
+    selection: talaria_workflow::progress::live::NodeKey,
+    target: RowKey,
+) {
+    use crate::workflow_origin::{WorkflowOrigin, origin_row};
+    let here = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone());
+    let kept = state
+        .workflow_origin
+        .as_mut()
+        .filter(|origin| here.as_deref().is_some_and(|id| origin.is_away_in(id)));
+    if let Some(origin) = kept {
+        origin.retarget(run, selection, target);
+        return;
+    }
+    state.workflow_origin = if state.workflow_agent.is_some() {
+        None
+    } else {
+        let profile = state
+            .opened_profile
+            .clone()
+            .unwrap_or_else(|| state.profile.clone());
+        state
+            .opened
+            .as_ref()
+            .and_then(|opened| origin_row(opened, &profile))
+            .map(|session| WorkflowOrigin::leaving(session, run, selection, target))
+    };
+}
+
+/// A switch finished. Settle the trip it belonged to: confirm the agent's session, drop the
+/// memory when the switch landed elsewhere, or open the run view when the trip back landed.
+fn workflow_origin_settle(state: &mut AppState, switched_in: bool) -> Vec<AppEffect> {
+    if let Some(plan) = state.workflow_return.take() {
+        let landed = switched_in
+            && state
+                .opened
+                .as_ref()
+                .is_some_and(|opened| plan.matches(opened, &state.profile));
+        return if landed {
+            reopen_workflow_view(state, plan.run, plan.selection)
+        } else {
+            Vec::new()
+        };
+    }
+    let Some(origin) = state.workflow_origin.as_mut() else {
+        return Vec::new();
+    };
+    if !origin.is_leaving() {
+        return Vec::new();
+    }
+    let kept = if switched_in {
+        state
+            .opened
+            .as_ref()
+            .is_some_and(|opened| origin.landed(opened, &state.profile))
+    } else {
+        origin.failed()
+    };
+    if !kept {
+        state.workflow_origin = None;
+    }
+    Vec::new()
+}
+
+/// A session opened by some route other than the trip: the memory follows the same stored
+/// session across a reconnect and ends for any other.
+fn workflow_origin_follow(state: &mut AppState, opened: &OpenedSession) {
+    let Some(origin) = state.workflow_origin.as_mut() else {
+        return;
+    };
+    if origin.is_leaving() {
+        return;
+    }
+    let same_profile = state
+        .opened_profile
+        .as_deref()
+        .is_none_or(|profile| profile == state.profile);
+    let kept = state
+        .opened
+        .as_ref()
+        .is_some_and(|old| origin.follow_reopen(old, opened, same_profile));
+    if !kept {
+        state.workflow_origin = None;
+    }
+}
+
+/// The key in an agent's session: go back to the session the person came from. Nothing is sent
+/// to the agent; the session is left as any switch leaves it.
+fn workflow_agent_back(state: &mut AppState) -> Vec<AppEffect> {
+    let Some(here) = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+    else {
+        return Vec::new();
+    };
+    let Some(target) = state
+        .workflow_origin
+        .as_ref()
+        .filter(|origin| origin.is_away_in(&here))
+        .map(|origin| origin.session().clone())
+    else {
+        return Vec::new();
+    };
+    if state.workflow_agent.is_none()
+        || !state.draft.is_empty()
+        || state.palette.open
+        || state.picker.is_some()
+    {
+        return Vec::new();
+    }
+    let effects = begin_switch(state, target);
+    if effects
+        .iter()
+        .any(|effect| matches!(effect, AppEffect::Switch { .. }))
+        && let Some(origin) = state.workflow_origin.take()
+    {
+        state.workflow_return = Some(origin.into_return());
+    }
+    effects
+}
+
+/// Open the run's view again with the row selected that was selected when Enter left it.
+fn reopen_workflow_view(
+    state: &mut AppState,
+    run: PathBuf,
+    selection: talaria_workflow::progress::live::NodeKey,
+) -> Vec<AppEffect> {
+    state.workflow_views.picker = None;
+    if !state.workflow_views.states.contains_key(&run) {
+        state.workflow_views.pending_selection = Some((run.clone(), selection));
+        return vec![AppEffect::WorkflowOpen(run)];
+    }
+    if let Some(view) = state.workflow_views.states.get_mut(&run) {
+        view.selection = selection;
+    }
+    state.workflow_views.active = Some(run.clone());
+    state.workflow_views.last_poll_ms = state.now_ms;
+    let connected = state.link_state == LinkView::Connected;
+    let mut effects = workflow_input(
+        state,
+        run,
+        talaria_workflow::progress::live::ProgressInput::Reopen { connected },
+    );
+    effects.push(AppEffect::Redraw);
+    effects
 }
 
 fn workflow_link(state: &mut AppState, event: &LinkEvent) -> Vec<AppEffect> {
@@ -17691,6 +19735,2076 @@ mod workflow_wake_tests {
             "connection failure must not start another connection loop"
         );
         assert!(workflow_wake(&state, &executor).is_none());
+    }
+
+    #[test]
+    fn closing_and_reopening_a_folded_view_lists_its_agents_and_logs_unknown_events() {
+        use talaria_workflow::progress::live::{NodeKey, ProgressInput, ProgressKey};
+        let mut state = AppState::new("workflow-reopen");
+        let run = PathBuf::from("reopen-run");
+        let manifest = serde_json::from_value(serde_json::json!({
+            "v":1,"run_id":"01JB2X9Q4M8Z7K3T5V6W8Y0A1C", "created_at_ms":1000,
+            "workflow":{"name":"review-branch","script_sha256":"a".repeat(64)},
+            "args":null,"started_at_ms":1,"seed":4242,"profile":"fixture",
+            "on_unknown":"wait","talaria_version":env!("CARGO_PKG_VERSION"), "hermes":{},
+            "roster":{},"approval_policy":{}
+        }))
+        .unwrap();
+        let key = "8".repeat(32);
+        let lines: Vec<talaria_workflow::journal::RecordLine> = [
+            serde_json::json!({"t":"run_started","run_id":"01JB2X9Q4M8Z7K3T5V6W8Y0A1C",
+                "script_sha256":"a".repeat(64)}),
+            serde_json::json!({"t":"call_intent","key":key,"attempt":0,
+                "call_id":{"digest":key,"occurrence":0},"label":"fixture-row","phase":"Verify",
+                "workflow_path":[],"launch":{"profile":"fixture","model":"fixture-model",
+                "provider":null,"effort":null,"toolsets":[],"skills":[],"max_turns":null,
+                "isolation":null,"cwd":null},"request_id":"wf:fixture"}),
+            serde_json::json!({"t":"session_bound","key":key,"attempt":0,
+                "session_id":"fixture-session","stored_session_id":"fixture-session"}),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut record)| {
+            record["v"] = 1.into();
+            record["seq"] = (i as u64 + 1).into();
+            record["at_ms"] = (1000 + i as i64).into();
+            serde_json::from_value(record).unwrap()
+        })
+        .collect();
+        let opened = crate::workflow_progress::OpenedRun {
+            path: run.clone(),
+            profile: "fixture".into(),
+            state: talaria_workflow::progress::live::ProgressState::new(
+                talaria_workflow::progress::RunProgress::from_records(&manifest, &lines),
+            ),
+            offset: 0,
+        };
+        workflow_opened(&mut state, Ok(opened));
+        let listed = |state: &AppState| {
+            state.workflow_views.states[&run]
+                .visible_nodes()
+                .iter()
+                .any(|n| n.key == NodeKey::Agent(key.clone()))
+        };
+        assert!(listed(&state));
+        for _ in 0..4 {
+            workflow_input(&mut state, run.clone(), ProgressInput::Key(ProgressKey::Up));
+            workflow_input(
+                &mut state,
+                run.clone(),
+                ProgressInput::Key(ProgressKey::Left),
+            );
+        }
+        workflow_input(
+            &mut state,
+            run.clone(),
+            ProgressInput::Key(ProgressKey::CloseView),
+        );
+        workflow_command(&mut state, "reopen-run");
+        assert!(listed(&state), "reopening must list the agents again");
+
+        // A broadcast never reaches the footer; an unknown type for an owned session is logged once.
+        let broadcast = hermes_contract::events::EventFrame::from_params(&serde_json::json!({
+            "type":"platforms.changed","session_id":"","payload":{}
+        }))
+        .unwrap();
+        workflow_input(
+            &mut state,
+            run.clone(),
+            ProgressInput::Gateway {
+                session_id: String::new(),
+                event: broadcast.notification,
+            },
+        );
+        assert_eq!(state.workflow_views.states[&run].footer, None);
+        let unknown = || ProgressInput::Gateway {
+            session_id: "fixture-session".into(),
+            event: hermes_contract::events::EventFrame::from_params(&serde_json::json!({
+                "type":"groups.changed","session_id":"fixture-session","payload":{}
+            }))
+            .unwrap()
+            .notification,
+        };
+        let logged: Vec<_> = workflow_input(&mut state, run.clone(), unknown())
+            .into_iter()
+            .chain(workflow_input(&mut state, run.clone(), unknown()))
+            .filter_map(|e| match e {
+                AppEffect::WorkflowLog(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert!(
+            logged[0].contains("groups.changed") && logged[0].contains("reopen-run"),
+            "{logged:?}"
+        );
+        assert_eq!(state.workflow_views.states[&run].footer, None);
+    }
+}
+
+#[cfg(test)]
+mod hivecode_visibility_tests {
+    use super::*;
+    use talaria_core::hivecode::{HivecodeCommand, notice};
+
+    fn session(runtime: &str, stored: &str) -> OpenedSession {
+        OpenedSession {
+            state: SessionState::empty(SessionId::new(runtime)),
+            session_id: runtime.into(),
+            stored_session_id: stored.into(),
+            subscription_id: "subscription".into(),
+            title: None,
+            revision: 0,
+            execution_generation: 0,
+            launch_notices: Vec::new(),
+            effort: None,
+            info: SessionInfoSummary {
+                model: None,
+                provider: None,
+                cwd: None,
+                branch: None,
+            },
+            cursor: Cursor {
+                replay_epoch: "epoch".into(),
+                last_sequence: 0,
+            },
+        }
+    }
+
+    fn opened(runtime: &str) -> AppState {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.opened = Some(session(runtime, &format!("stored-{runtime}")));
+        state
+    }
+
+    /// Turn Hivecode on the way `/hivecode on` does once the catalogue lists the skill.
+    fn turn_on(state: &mut AppState, runtime: &str) {
+        let result: talaria_core::commands::CatalogResult = serde_json::from_value(json!({
+            "skills": {"/talaria-workflows": {"usage": 0, "origin": "local"}},
+            "pairs": []
+        }))
+        .unwrap();
+        let catalog = talaria_core::commands::CommandCatalog::from_result(&result);
+        let _ = state.hivecode.on_catalog_reply(
+            &SessionId::new(runtime),
+            "fixture",
+            HivecodeCommand::On,
+            Ok(catalog),
+        );
+        assert!(state.hivecode.status_input(Some(&SessionId::new(runtime))));
+    }
+
+    fn lines(effects: &[AppEffect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::CommitLines(lines) => Some(lines.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn summary(
+        status: talaria_workflow::runner::RunStatus,
+        finished: u32,
+    ) -> talaria_workflow::runner::RunSummary {
+        talaria_workflow::runner::RunSummary {
+            run_id: "run-0001".into(),
+            name: "review-branch".into(),
+            profile: "fixture".into(),
+            started_at_ms: 2_000_000,
+            status,
+            agents_finished: finished,
+            agents_total_known: 10,
+            parked: 0,
+            tokens_spent: None,
+            cache_read_tokens: None,
+            cache_unknown_turns: 0,
+            money_spent_usd: None,
+            run_dir: "fixture-runs/run-0001".into(),
+            warning: None,
+        }
+    }
+
+    #[test]
+    fn goal_with_hivecode_on_runs_command_with_notice() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let effects = submit(&mut state, "/goal build a fixture tool".into());
+        let expected = vec![format!("\u{b7} {}", notice::bypassed("goal"))];
+        assert!(
+            matches!(effects.first(), Some(AppEffect::CommitLines(first)) if *first == expected),
+            "the notice comes first: {effects:?}"
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(effect,
+                AppEffect::RunCommand { typed, .. } if typed == "/goal build a fixture tool")),
+            "the goal still goes to Hermes: {effects:?}"
+        );
+        let status = submit(&mut state, "/goal status".into());
+        assert!(lines(&status).is_empty(), "{status:?}");
+        let mut off = opened("session");
+        let effects = submit(&mut off, "/goal build a fixture tool".into());
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn routed_prompt_prints_no_interim_line() {
+        // The building block above the composer says the prompt is handled as a workflow.
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let effects = submit(&mut state, "fix the parser".into());
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    /// A frame from Hermes for the open session, numbered after the last one.
+    fn frame(state: &mut AppState, kind: &str, payload: Value) -> Vec<AppEffect> {
+        let opened = state.opened.as_mut().unwrap();
+        let raw = json!({"session_id": opened.session_id, "replay_epoch": opened.cursor.replay_epoch,
+            "seq": opened.cursor.last_sequence + 1, "type": kind, "payload": payload});
+        update(
+            state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: Inbound::Event(hermes_client::channel::InboundEvent {
+                    generation: hermes_client::channel::Generation(1),
+                    frame: EventFrame::from_params(&raw).unwrap(),
+                    raw,
+                }),
+                replayed: false,
+            }),
+        )
+    }
+
+    /// What Hermes expands a routed prompt into.
+    fn expanded(typed: &str) -> String {
+        format!(
+            "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\n\nThe user has provided the following instruction alongside the skill invocation: {typed}"
+        )
+    }
+
+    fn loads_skill(effects: &[AppEffect]) -> bool {
+        effects.iter().any(|effect| {
+            matches!(
+                effect,
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::RunCommand { .. },
+                    ..
+                }
+            )
+        })
+    }
+
+    fn sent(effects: &[AppEffect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::Send(Effect::SendPrompt { text, .. }) => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn user_cells(state: &AppState) -> Vec<String> {
+        state
+            .opened
+            .as_ref()
+            .unwrap()
+            .state
+            .cells()
+            .iter()
+            .filter_map(|cell| match cell {
+                Cell::User(user) => Some(user.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Type `typed` into the composer and press Enter.
+    fn enter(state: &mut AppState, typed: &str) -> Vec<AppEffect> {
+        state.draft = typed.into();
+        state.caret = state.draft.len();
+        submit(state, typed.into())
+    }
+
+    /// Hermes answers the skill dispatch of a routed prompt.
+    fn dispatched(state: &mut AppState, typed: &str) -> Vec<AppEffect> {
+        let reply = json!({"type": "skill", "name": "talaria-workflows",
+            "message": expanded(typed), "display": format!("/talaria-workflows {typed}")});
+        update(
+            state,
+            AppMessage::HivecodeDone {
+                session: SessionId::new("session"),
+                original_text: typed.into(),
+                outcome: Ok(reply),
+            },
+        )
+    }
+
+    fn turn(state: &mut AppState, status: &str) -> Vec<AppEffect> {
+        let mut effects = frame(state, "message.start", json!({}));
+        effects.extend(frame(
+            state,
+            "message.complete",
+            json!({"text": "Here is the proposed workflow.", "status": status}),
+        ));
+        effects
+    }
+
+    const DRAFT: &str = "/home/fixture/.talaria/drafts/fix-parser.workflow";
+
+    fn tool_start(state: &mut AppState, id: &str, name: &str, args: Value) -> Vec<AppEffect> {
+        frame(
+            state,
+            "tool.start",
+            json!({"tool_id": id, "name": name, "args": args, "context": name}),
+        )
+    }
+
+    fn stage(state: &AppState) -> Option<talaria_core::hivecode::authoring::AuthoringStage> {
+        state.view().authoring.map(|block| block.progress.stage)
+    }
+
+    #[test]
+    fn a_routed_turn_shows_the_building_block_until_it_ends() {
+        use talaria_core::hivecode::authoring::AuthoringStage;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        // Nothing shows until the turn starts.
+        assert_eq!(stage(&state), None);
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(stage(&state), Some(AuthoringStage::Planning));
+        state.now_ms = 66_000;
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "write_file",
+            json!({"path": DRAFT, "content": "export const meta = {name:'fix-parser'};"}),
+        );
+        let block = state
+            .view()
+            .authoring
+            .expect("the block shows while writing");
+        assert_eq!(block.progress.stage, AuthoringStage::Writing);
+        assert_eq!(
+            block.progress.script.as_deref(),
+            Some("fix-parser.workflow")
+        );
+        assert_eq!(block.elapsed_ms, 65_000);
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Here is the proposed workflow. Start it?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Hivecode wrote the workflow script fix-parser.workflow in 1m 05s and is waiting for your approval to start it."
+            ]
+        );
+        assert_eq!(stage(&state), None, "the block leaves with the turn");
+        // The line is committed once.
+        let effects = update(&mut state, AppMessage::Tick { now_ms: 90_000 });
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn an_interrupted_build_says_it_stopped() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        state.now_ms = 13_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "", "status": "interrupted"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Hivecode stopped: interrupted while planning the workflow after 12s. No workflow started. Hivecode is still on."
+            ]
+        );
+        assert_eq!(stage(&state), None);
+    }
+
+    #[test]
+    fn an_interrupted_build_leaves_one_line_after_the_interrupted_notice() {
+        let expected = [
+            "\u{b7} Hivecode stopped: interrupted while planning the workflow after 12s. No workflow started. Hivecode is still on.",
+        ];
+        // Hermes's interrupt reply comes before the turn's end, and after it.
+        for reply_first in [true, false] {
+            let mut state = opened("session");
+            turn_on(&mut state, "session");
+            state.now_ms = 1_000;
+            let _ = enter(&mut state, "fix the parser");
+            let _ = dispatched(&mut state, "fix the parser");
+            let _ = frame(&mut state, "message.start", json!({}));
+            state.now_ms = 13_000;
+            let mut all = vec![];
+            if reply_first {
+                all.extend(lines(&interrupt_done(
+                    &mut state,
+                    ExecuteOutcome::Sent,
+                    Vec::new(),
+                )));
+            }
+            let ended = frame(
+                &mut state,
+                "message.complete",
+                json!({"text": "", "status": "interrupted"}),
+            );
+            all.extend(lines(&ended));
+            // Hermes's own line goes into the scrollback first.
+            let cells = state.opened.as_ref().unwrap().state.cells();
+            let committed = ended.iter().position(|effect| {
+                matches!(effect, AppEffect::CommitCells(range) if cells[range.clone()].iter().any(
+                    |cell| matches!(cell, Cell::Notice(notice) if notice.kind == NoticeKind::Interrupted)))
+            });
+            let line = ended
+                .iter()
+                .position(|effect| matches!(effect, AppEffect::CommitLines(_)));
+            assert!(committed.is_some() && committed < line, "{ended:?}");
+            if !reply_first {
+                all.extend(lines(&interrupt_done(
+                    &mut state,
+                    ExecuteOutcome::Sent,
+                    Vec::new(),
+                )));
+            }
+            assert_eq!(all, expected, "reply first: {reply_first}");
+            let interrupted = state.opened.as_ref().unwrap().state.cells().iter().any(
+                |cell| matches!(cell, Cell::Notice(notice) if notice.kind == NoticeKind::Interrupted),
+            );
+            assert!(interrupted, "Hermes's own line stays");
+        }
+    }
+
+    #[test]
+    fn a_tracked_run_takes_the_slot_and_the_last_line_counts_its_agents() {
+        use talaria_core::hivecode::authoring::AuthoringStage;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.wall_s = 2_000.0;
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "terminal",
+            json!({"command": format!("talaria workflow run --profile fixture --json {DRAFT}"), "background": true}),
+        );
+        assert_eq!(stage(&state), Some(AuthoringStage::Running));
+        let mut run = summary(talaria_workflow::runner::RunStatus::Running, 0);
+        run.started_at_ms = 2_000_500;
+        let _ = update(&mut state, AppMessage::HivecodeRuns { rows: vec![run] });
+        assert_eq!(stage(&state), None, "the run dock takes over");
+        assert!(state.view().workflow_run.is_some());
+        state.now_ms = 201_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Started.", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Hivecode built the workflow in 3m 20s: review-branch is running (10 agents so far)."
+            ]
+        );
+    }
+
+    #[test]
+    fn a_build_stopped_after_starting_the_run_says_the_run_may_go_on() {
+        // On a remote gateway, or before the runs folder is read again, Talaria has not found
+        // the run the turn started: the line must not say no workflow started.
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "write_file",
+            json!({"path": DRAFT, "content": "export const meta = {name:'fix-parser'};"}),
+        );
+        let _ = tool_start(
+            &mut state,
+            "t2",
+            "terminal",
+            json!({"command": format!("talaria workflow run --profile fixture --json {DRAFT}"), "background": true}),
+        );
+        state.now_ms = 131_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "", "status": "interrupted"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Hivecode stopped: interrupted after starting fix-parser.workflow, 2m 10s in. The workflow may still be running. Hivecode is still on."
+            ]
+        );
+    }
+
+    #[test]
+    fn a_routed_prompt_queued_behind_a_building_turn_waits_for_its_own_turn() {
+        use talaria_core::hivecode::authoring::AuthoringStage;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "terminal",
+            json!({"command": "talaria workflow roster --profile fixture --json"}),
+        );
+        state.now_ms = 5_000;
+        // The skill is loaded, so the second prompt goes with the reminder and waits in the
+        // queue behind the running turn.
+        let effects = enter(&mut state, "also cover the lexer");
+        assert!(!loads_skill(&effects), "{effects:?}");
+        let block = state
+            .view()
+            .authoring
+            .expect("the first turn keeps its block");
+        assert_eq!(block.progress.stage, AuthoringStage::Planning);
+        assert_eq!(block.elapsed_ms, 4_000);
+        state.now_ms = 11_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Which tests matter?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Hivecode finished in 10s without writing a workflow script."]
+        );
+        // The queued prompt's turn starts and gets its own block and its own line.
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("also cover the lexer")
+        );
+        assert_eq!(stage(&state), Some(AuthoringStage::Planning));
+        state.now_ms = 14_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "", "status": "interrupted"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Hivecode stopped: interrupted while planning the workflow after 3s. No workflow started. Hivecode is still on."
+            ]
+        );
+        assert_eq!(stage(&state), None);
+    }
+
+    #[test]
+    fn an_edited_queued_routed_prompt_keeps_its_building_block() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = frame(&mut state, "message.start", json!({}));
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        let input = sent_id(&effects);
+        state.opened.as_mut().unwrap().state.queue.rows = vec![talaria_core::queue::QueuedRow {
+            admission_id: talaria_core::queue::AdmissionId("admission-1".into()),
+            input_id: talaria_core::queue::SubmissionId(input),
+            text: expanded("fix the parser"),
+            status: talaria_core::queue::RowStatus::Queued,
+            outcome: None,
+            controls: talaria_core::queue::Controls {
+                steer: true,
+                replace: true,
+            },
+            steering: false,
+            sequence: 1,
+            execution_generation: Some(1),
+        }];
+        // Edit the queued prompt before it starts.
+        let _ = queue_intent(&mut state, QueueIntent::EnterSelection);
+        let _ = queue_intent(&mut state, QueueIntent::BeginEdit);
+        let effects = queue_intent(
+            &mut state,
+            QueueIntent::SaveEdit("fix the parser and the lexer".into()),
+        );
+        let replaced = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Queue(Effect::ReplaceQueued { submission_id, .. }) => {
+                    Some(submission_id.clone())
+                }
+                _ => None,
+            })
+            .expect("the edit replaces the row");
+        let receipt = serde_json::from_value(json!({"admission_id": "admission-2",
+            "authority_epoch": 1, "execution_generation": null, "outcome": null,
+            "ref": {"profile_id": "fixture", "session_id": "session"}, "sequence": 2,
+            "status": "queued"}))
+        .unwrap();
+        let _ = update(
+            &mut state,
+            AppMessage::PromptDone {
+                events: vec![Event::QueueCallResult {
+                    action: QueueAction::Edit,
+                    admission_id: Some(talaria_core::queue::AdmissionId("admission-1".into())),
+                    submission_id: Some(replaced),
+                    result: receipt,
+                }],
+                notices: Vec::new(),
+                masked: None,
+            },
+        );
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        // The edited row starts.
+        let raw = {
+            let opened = state.opened.as_ref().unwrap();
+            json!({"session_id": opened.session_id, "replay_epoch": opened.cursor.replay_epoch,
+                "seq": opened.cursor.last_sequence + 1, "type": "message.start",
+                "admission_id": "admission-2", "payload": {}})
+        };
+        let _ = update(
+            &mut state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: Inbound::Event(hermes_client::channel::InboundEvent {
+                    generation: hermes_client::channel::Generation(1),
+                    frame: EventFrame::from_params(&raw).unwrap(),
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("fix the parser and the lexer")
+        );
+        assert!(
+            stage(&state).is_some(),
+            "the edited prompt's turn shows the block"
+        );
+        state.now_ms = 11_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Which tests matter?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Hivecode finished in 10s without writing a workflow script."]
+        );
+    }
+
+    #[test]
+    fn editing_the_second_of_two_identical_queued_routed_prompts_keeps_both_blocks() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = frame(&mut state, "message.start", json!({}));
+        state.now_ms = 1_000;
+        let mut inputs = vec![];
+        for _ in 0..2 {
+            let _ = enter(&mut state, "fix the parser");
+            inputs.push(sent_id(&dispatched(&mut state, "fix the parser")));
+        }
+        let row = |admission: &str, input: &str, sequence: i64| talaria_core::queue::QueuedRow {
+            admission_id: talaria_core::queue::AdmissionId(admission.into()),
+            input_id: talaria_core::queue::SubmissionId(input.into()),
+            text: expanded("fix the parser"),
+            status: talaria_core::queue::RowStatus::Queued,
+            outcome: None,
+            controls: talaria_core::queue::Controls {
+                steer: true,
+                replace: true,
+            },
+            steering: false,
+            sequence,
+            execution_generation: Some(1),
+        };
+        state.opened.as_mut().unwrap().state.queue.rows = vec![
+            row("admission-1", &inputs[0], 1),
+            row("admission-2", &inputs[1], 2),
+        ];
+        // Edit the newest queued copy.
+        let _ = queue_intent(&mut state, QueueIntent::EnterSelection);
+        let _ = queue_intent(&mut state, QueueIntent::BeginEdit);
+        let effects = queue_intent(
+            &mut state,
+            QueueIntent::SaveEdit("fix the parser and the lexer".into()),
+        );
+        let (replaced, old) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Queue(Effect::ReplaceQueued {
+                    submission_id,
+                    admission_id,
+                    ..
+                }) => Some((submission_id.clone(), admission_id.0.clone())),
+                _ => None,
+            })
+            .expect("the edit replaces the row");
+        assert_eq!(old, "admission-2");
+        let receipt = serde_json::from_value(json!({"admission_id": "admission-3",
+            "authority_epoch": 1, "execution_generation": null, "outcome": null,
+            "ref": {"profile_id": "fixture", "session_id": "session"}, "sequence": 3,
+            "status": "queued"}))
+        .unwrap();
+        let _ = update(
+            &mut state,
+            AppMessage::PromptDone {
+                events: vec![Event::QueueCallResult {
+                    action: QueueAction::Edit,
+                    admission_id: Some(talaria_core::queue::AdmissionId("admission-2".into())),
+                    submission_id: Some(replaced),
+                    result: receipt,
+                }],
+                notices: Vec::new(),
+                masked: None,
+            },
+        );
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let start = |state: &mut AppState, admission: &str| {
+            let raw = {
+                let opened = state.opened.as_ref().unwrap();
+                json!({"session_id": opened.session_id, "replay_epoch": opened.cursor.replay_epoch,
+                    "seq": opened.cursor.last_sequence + 1, "type": "message.start",
+                    "admission_id": admission, "payload": {}})
+            };
+            let _ = update(
+                state,
+                AppMessage::Link(LinkEvent::Inbound {
+                    item: Inbound::Event(hermes_client::channel::InboundEvent {
+                        generation: hermes_client::channel::Generation(1),
+                        frame: EventFrame::from_params(&raw).unwrap(),
+                        raw,
+                    }),
+                    replayed: false,
+                }),
+            );
+        };
+        // The unedited copy runs first and shows its block and its line.
+        start(&mut state, "admission-1");
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("fix the parser")
+        );
+        assert!(stage(&state).is_some(), "the first copy shows the block");
+        state.now_ms = 11_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Which tests matter?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Hivecode finished in 10s without writing a workflow script."]
+        );
+        // Then the edited prompt runs and keeps its own block and line.
+        start(&mut state, "admission-3");
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("fix the parser and the lexer")
+        );
+        assert!(stage(&state).is_some(), "the edited prompt shows the block");
+        state.now_ms = 14_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Which tests matter?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Hivecode finished in 3s without writing a workflow script."]
+        );
+    }
+
+    #[test]
+    fn a_refused_routed_prompt_leaves_no_block_for_a_later_turn() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        let _ = update(
+            &mut state,
+            AppMessage::SubmitDone {
+                submission_id: sent_id(&effects),
+                outcome: ExecuteOutcome::Refused {
+                    reason: "invalid_params".into(),
+                },
+            },
+        );
+        // A turn Hermes starts on its own draws no prompt cell, so the refused prompt's cell is
+        // still the newest one; it must not take that turn.
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(stage(&state), None);
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Done.", "status": "complete"}),
+        );
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    /// The submission id of the prompt a routed prompt's dispatch sent.
+    fn sent_id(effects: &[AppEffect]) -> String {
+        effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Send(Effect::SendPrompt { submission_id, .. }) => {
+                    Some(submission_id.clone())
+                }
+                _ => None,
+            })
+            .expect("the prompt is sent")
+    }
+
+    #[test]
+    fn a_refused_routed_prompt_does_not_take_a_plain_turn_after_hivecode_is_off() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        let _ = update(
+            &mut state,
+            AppMessage::SubmitDone {
+                submission_id: sent_id(&effects),
+                outcome: ExecuteOutcome::Refused {
+                    reason: "invalid_params".into(),
+                },
+            },
+        );
+        // The refused prompt's cell stays; Hivecode is turned off and a plain prompt sent.
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("fix the parser")
+        );
+        let _ = submit(&mut state, "/hivecode off".into());
+        let _ = enter(&mut state, "hello");
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(user_cells(&state).last().map(String::as_str), Some("hello"));
+        assert_eq!(stage(&state), None);
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Hi.", "status": "complete"}),
+        );
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn the_answer_to_an_approval_question_goes_on_from_the_written_script() {
+        use talaria_core::hivecode::authoring::AuthoringStage;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.now_ms = 1_000;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "write_file",
+            json!({"path": DRAFT, "content": "export const meta = {name:'fix-parser'};"}),
+        );
+        state.now_ms = 91_000;
+        // The agent asks in its reply, which ends the turn.
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Here is the proposed workflow. Start it?", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [
+                "\u{b7} Hivecode wrote the workflow script fix-parser.workflow in 1m 30s and is waiting for your approval to start it."
+            ]
+        );
+        // The answer's turn starts at the answer, with the script named and the time going on.
+        state.now_ms = 300_000;
+        let _ = enter(&mut state, "yes");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let block = state
+            .view()
+            .authoring
+            .expect("the answer's turn shows the block");
+        assert_eq!(block.progress.stage, AuthoringStage::Answered);
+        assert_eq!(block.progress.label(), "reading your answer");
+        assert_eq!(
+            block.progress.script.as_deref(),
+            Some("fix-parser.workflow")
+        );
+        assert_eq!(block.elapsed_ms, 90_000);
+        let _ = tool_start(
+            &mut state,
+            "t2",
+            "terminal",
+            json!({"command": format!("talaria workflow run --profile fixture --json {DRAFT}"), "background": true}),
+        );
+        assert_eq!(stage(&state), Some(AuthoringStage::Running));
+        state.now_ms = 308_000;
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Started.", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            ["\u{b7} Hivecode built the workflow in 1m 38s and started fix-parser.workflow."]
+        );
+        // Nothing is carried past a turn that started the run.
+        let _ = enter(&mut state, "and the lexer");
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(stage(&state), Some(AuthoringStage::Planning));
+    }
+
+    #[test]
+    fn a_plain_turn_shows_no_building_block() {
+        let mut state = opened("session");
+        let _ = enter(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        assert_eq!(stage(&state), None);
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Done.", "status": "complete"}),
+        );
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn workflow_prompts_show_what_was_typed_and_load_the_skill_once() {
+        let reminder = talaria_core::hivecode::follow_up_text;
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let mut screen = vec![];
+
+        // The first prompt goes to Hermes for the whole skill.
+        let effects = enter(&mut state, "fix the parser");
+        assert!(loads_skill(&effects), "{effects:?}");
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+        assert!(state.draft.is_empty());
+        screen.extend(lines(&effects));
+        let effects = dispatched(&mut state, "fix the parser");
+        assert_eq!(sent(&effects), [expanded("fix the parser")]);
+        assert_eq!(user_cells(&state), ["fix the parser"]);
+        screen.extend(lines(&effects));
+        screen.extend(lines(&turn(&mut state, "complete")));
+
+        // A short reply and a new task carry the reminder, not the skill.
+        for typed in ["go ahead", "now add a test for the lexer"] {
+            let effects = enter(&mut state, typed);
+            assert!(!loads_skill(&effects), "{effects:?}");
+            assert_eq!(sent(&effects), [reminder(typed)]);
+            assert!(lines(&effects).is_empty(), "{effects:?}");
+            assert!(state.draft.is_empty(), "the composer clears");
+            assert_eq!(user_cells(&state).last().map(String::as_str), Some(typed));
+            screen.extend(lines(&effects));
+            screen.extend(lines(&turn(&mut state, "complete")));
+        }
+
+        // An interrupted routed turn leaves the skill in the conversation.
+        let effects = enter(&mut state, "and the docs");
+        assert_eq!(sent(&effects), [reminder("and the docs")]);
+        screen.extend(lines(&turn(&mut state, "interrupted")));
+        let effects = enter(&mut state, "keep going");
+        assert_eq!(sent(&effects), [reminder("keep going")]);
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("keep going")
+        );
+        screen.extend(lines(&effects));
+
+        // A prompt sent while that turn runs waits, then shows what was typed.
+        screen.extend(lines(&frame(&mut state, "message.start", json!({}))));
+        let effects = enter(&mut state, "then tidy the docs");
+        assert_eq!(sent(&effects), [reminder("then tidy the docs")]);
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("keep going")
+        );
+        screen.extend(lines(&effects));
+        screen.extend(lines(&frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok"}),
+        )));
+        screen.extend(lines(&turn(&mut state, "complete")));
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("then tidy the docs")
+        );
+
+        // After a compaction the next routed prompt loads the whole skill again.
+        screen.extend(lines(&frame(
+            &mut state,
+            "session.usage",
+            json!({"usage": {"compressions": 1}}),
+        )));
+        let effects = enter(&mut state, "go on");
+        assert!(loads_skill(&effects), "{effects:?}");
+        assert!(sent(&effects).is_empty());
+
+        let mut shown = screen;
+        shown.extend(user_cells(&state));
+        for line in &shown {
+            for hidden in [
+                "/talaria-workflows",
+                "[IMPORTANT",
+                "Fixture workflow guide",
+                "[Talaria workflow mode",
+            ] {
+                assert!(
+                    !line.contains(hidden),
+                    "{hidden:?} reached the screen: {line:?}"
+                );
+            }
+        }
+    }
+
+    /// The routed prompt's skill dispatch, answered by Hermes with the request it was sent.
+    fn dispatched_line(state: &mut AppState, typed: &str, request: &str) -> Vec<AppEffect> {
+        let reply = json!({"type": "skill", "name": "talaria-workflows",
+            "message": expanded(request), "display": format!("/talaria-workflows {request}")});
+        update(
+            state,
+            AppMessage::HivecodeDone {
+                session: SessionId::new("session"),
+                original_text: typed.into(),
+                outcome: Ok(reply),
+            },
+        )
+    }
+
+    fn command_line(effects: &[AppEffect]) -> Option<String> {
+        effects.iter().find_map(|effect| match effect {
+            AppEffect::Hivecode {
+                action: crate::hivecode::Action::RunCommand { command_line, .. },
+                ..
+            } => Some(command_line.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_switched_model_goes_with_the_next_routed_prompt() {
+        let reminder = talaria_core::hivecode::follow_up_text;
+        let mut state = opened("session");
+        {
+            let opened = state.opened.as_mut().unwrap();
+            opened.info.model = Some("model-a".into());
+            opened.info.provider = Some("provider-a".into());
+        }
+        turn_on(&mut state, "session");
+        let effects = enter(&mut state, "fix the parser");
+        let first = command_line(&effects).expect("the first prompt carries the skill");
+        assert!(
+            first.ends_with("\nSession model: model-a on provider-a"),
+            "{first:?}"
+        );
+        let request = first.trim_start_matches("/talaria-workflows ").to_owned();
+        let _ = dispatched_line(&mut state, "fix the parser", &request);
+        let _ = turn(&mut state, "complete");
+        // The same pair is not repeated.
+        let effects = enter(&mut state, "go ahead");
+        assert_eq!(sent(&effects), [reminder("go ahead")]);
+        let _ = turn(&mut state, "complete");
+        // The user switches the session's model, then sends the next task.
+        state.model = Some("model-b".into());
+        let effects = enter(&mut state, "now add a test for the lexer");
+        assert_eq!(
+            sent(&effects),
+            [format!(
+                "{}\nSession model: model-b on provider-a",
+                reminder("now add a test for the lexer")
+            )]
+        );
+        assert_eq!(
+            user_cells(&state).last().map(String::as_str),
+            Some("now add a test for the lexer"),
+            "the line never shows on screen"
+        );
+        let _ = turn(&mut state, "complete");
+        let effects = enter(&mut state, "and the docs");
+        assert_eq!(sent(&effects), [reminder("and the docs")]);
+    }
+
+    #[test]
+    fn a_switched_model_whose_prompt_never_ran_goes_with_the_next_routed_prompt() {
+        let reminder = talaria_core::hivecode::follow_up_text;
+        let with_b =
+            |typed: &str| format!("{}\nSession model: model-b on provider-a", reminder(typed));
+        let mut state = opened("session");
+        {
+            let opened = state.opened.as_mut().unwrap();
+            opened.info.model = Some("model-a".into());
+            opened.info.provider = Some("provider-a".into());
+        }
+        turn_on(&mut state, "session");
+        let effects = enter(&mut state, "fix the parser");
+        let first = command_line(&effects).expect("the first prompt carries the skill");
+        let request = first.trim_start_matches("/talaria-workflows ").to_owned();
+        let _ = dispatched_line(&mut state, "fix the parser", &request);
+        let _ = turn(&mut state, "complete");
+        // The user switches model; the prompt that names it is refused by Hermes.
+        state.model = Some("model-b".into());
+        let effects = enter(&mut state, "add a lexer test");
+        assert_eq!(sent(&effects), [with_b("add a lexer test")]);
+        let _ = update(
+            &mut state,
+            AppMessage::SubmitDone {
+                submission_id: sent_id(&effects),
+                outcome: ExecuteOutcome::Refused {
+                    reason: "invalid_params".into(),
+                },
+            },
+        );
+        let effects = enter(&mut state, "add a parser test");
+        assert_eq!(sent(&effects), [with_b("add a parser test")]);
+        // The next one waits in the queue behind a running turn, and is removed from it.
+        let _ = turn(&mut state, "complete");
+        state.model = Some("model-c".into());
+        let _ = frame(&mut state, "message.start", json!({}));
+        let effects = enter(&mut state, "add a docs test");
+        let line =
+            |typed: &str| format!("{}\nSession model: model-c on provider-a", reminder(typed));
+        assert_eq!(sent(&effects), [line("add a docs test")]);
+        state.opened.as_mut().unwrap().state.queue.rows = vec![talaria_core::queue::QueuedRow {
+            admission_id: talaria_core::queue::AdmissionId("admission-1".into()),
+            input_id: talaria_core::queue::SubmissionId(sent_id(&effects)),
+            text: line("add a docs test"),
+            status: talaria_core::queue::RowStatus::Queued,
+            outcome: None,
+            controls: talaria_core::queue::Controls {
+                steer: true,
+                replace: true,
+            },
+            steering: false,
+            sequence: 1,
+            execution_generation: Some(1),
+        }];
+        // While it waits, a routed prompt names the model again: the first may yet be removed.
+        let effects = enter(&mut state, "add a config test");
+        assert_eq!(sent(&effects), [line("add a config test")]);
+        let receipt = serde_json::from_value(json!({"admission_id": "admission-1",
+            "authority_epoch": 1, "execution_generation": null, "outcome": "cancelled",
+            "ref": {"profile_id": "fixture", "session_id": "session"}, "sequence": 1,
+            "status": "terminal"}))
+        .unwrap();
+        let _ = update(
+            &mut state,
+            AppMessage::PromptDone {
+                events: vec![Event::QueueCallResult {
+                    action: QueueAction::Remove,
+                    admission_id: Some(talaria_core::queue::AdmissionId("admission-1".into())),
+                    submission_id: None,
+                    result: receipt,
+                }],
+                notices: Vec::new(),
+                masked: None,
+            },
+        );
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let effects = enter(&mut state, "add a cli test");
+        assert_eq!(sent(&effects), [line("add a cli test")]);
+    }
+
+    #[test]
+    fn a_provider_learned_later_goes_with_the_next_routed_prompt() {
+        let reminder = talaria_core::hivecode::follow_up_text;
+        let mut state = opened("session");
+        state.opened.as_mut().unwrap().info.model = Some("model-a".into());
+        turn_on(&mut state, "session");
+        let effects = enter(&mut state, "fix the parser");
+        let first = command_line(&effects).expect("the first prompt carries the skill");
+        assert!(!first.contains("Session model"), "{first:?}");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = turn(&mut state, "complete");
+        state.opened.as_mut().unwrap().info.provider = Some("provider-a".into());
+        let effects = enter(&mut state, "go ahead");
+        assert_eq!(
+            sent(&effects),
+            [format!(
+                "{}\nSession model: model-a on provider-a",
+                reminder("go ahead")
+            )]
+        );
+    }
+
+    fn scans(effects: &[AppEffect]) -> Vec<i64> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::HivecodeScan { since_ms } => Some(*since_ms),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_reply_after_the_first_hour_still_watches_for_the_run_it_starts() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.wall_s = 1_000.0;
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = turn(&mut state, "complete");
+        // An hour on, the watch ends without seeing a run.
+        let late = 61 * 60 * 1_000;
+        let effects = update(&mut state, AppMessage::Tick { now_ms: late });
+        assert_eq!(scans(&effects), [1_000_000]);
+        let _ = update(&mut state, AppMessage::HivecodeRuns { rows: vec![] });
+        let effects = update(
+            &mut state,
+            AppMessage::Tick {
+                now_ms: late + 5_000,
+            },
+        );
+        assert!(scans(&effects).is_empty(), "the watch ended: {effects:?}");
+        // The answer goes with the reminder, and watches for the run it starts.
+        state.wall_s = 5_000.0;
+        let effects = enter(&mut state, "go ahead");
+        assert_eq!(
+            sent(&effects),
+            [talaria_core::hivecode::follow_up_text("go ahead")]
+        );
+        let effects = update(
+            &mut state,
+            AppMessage::Tick {
+                now_ms: late + 6_000,
+            },
+        );
+        assert_eq!(scans(&effects), [5_000_000]);
+        let mut run = summary(talaria_workflow::runner::RunStatus::Running, 0);
+        run.started_at_ms = 5_100_000;
+        let effects = update(&mut state, AppMessage::HivecodeRuns { rows: vec![run] });
+        assert_eq!(
+            lines(&effects),
+            [format!(
+                "\u{b7} {}",
+                notice::run_started("review-branch", "run-0001", None)
+            )]
+        );
+    }
+
+    #[test]
+    fn a_first_prompt_that_never_starts_leaves_the_skill_to_the_next_one() {
+        // Queued behind a running turn, then removed from the queue.
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        assert_eq!(sent(&effects), [expanded("fix the parser")]);
+        // The first one still waits, so the second carries the skill too.
+        let second = enter(&mut state, "fix the tokenizer");
+        assert!(loads_skill(&second), "{second:?}");
+        state.opened.as_mut().unwrap().state.queue.rows = vec![talaria_core::queue::QueuedRow {
+            admission_id: talaria_core::queue::AdmissionId("admission-1".into()),
+            input_id: talaria_core::queue::SubmissionId("input-1".into()),
+            text: expanded("fix the parser"),
+            status: talaria_core::queue::RowStatus::Queued,
+            outcome: None,
+            controls: talaria_core::queue::Controls {
+                steer: true,
+                replace: true,
+            },
+            steering: false,
+            sequence: 1,
+            execution_generation: Some(1),
+        }];
+        let cancelled = serde_json::from_value(json!({"admission_id": "admission-1",
+            "authority_epoch": 1, "execution_generation": null, "outcome": "cancelled",
+            "ref": {"profile_id": "fixture", "session_id": "session"}, "sequence": 1,
+            "status": "terminal"}))
+        .unwrap();
+        let effects = update(
+            &mut state,
+            AppMessage::PromptDone {
+                events: vec![Event::QueueCallResult {
+                    action: QueueAction::Remove,
+                    admission_id: Some(talaria_core::queue::AdmissionId("admission-1".into())),
+                    submission_id: None,
+                    result: cancelled,
+                }],
+                notices: Vec::new(),
+                masked: None,
+            },
+        );
+        assert!(
+            effects.iter().any(
+                |effect| matches!(effect, AppEffect::OfferDraft(text) if text == "fix the parser")
+            ),
+            "{effects:?}"
+        );
+        let effects = enter(&mut state, "fix the lexer");
+        assert!(loads_skill(&effects), "{effects:?}");
+
+        // Refused by Hermes.
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        let id = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Send(Effect::SendPrompt { submission_id, .. }) => {
+                    Some(submission_id.clone())
+                }
+                _ => None,
+            })
+            .expect("the whole skill is sent");
+        let _ = update(
+            &mut state,
+            AppMessage::SubmitDone {
+                submission_id: id,
+                outcome: ExecuteOutcome::Refused {
+                    reason: "invalid_params".into(),
+                },
+            },
+        );
+        let effects = enter(&mut state, "fix the lexer");
+        assert!(loads_skill(&effects), "{effects:?}");
+    }
+
+    #[test]
+    fn a_routed_prompt_behind_a_waiting_skill_prompt_carries_the_skill_too() {
+        // The prompt that carries the skill waits in the queue, so a removal could still take
+        // the skill out of the conversation: the next routed prompt carries it as well.
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = enter(&mut state, "fix the parser");
+        let effects = dispatched(&mut state, "fix the parser");
+        assert_eq!(sent(&effects), [expanded("fix the parser")]);
+        let effects = enter(&mut state, "fix the tokenizer");
+        assert!(loads_skill(&effects), "{effects:?}");
+        let effects = dispatched(&mut state, "fix the tokenizer");
+        assert_eq!(sent(&effects), [expanded("fix the tokenizer")]);
+        // Once the first one starts, the skill is in the conversation.
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "ok", "status": "complete"}),
+        );
+        let effects = enter(&mut state, "fix the lexer");
+        assert_eq!(
+            sent(&effects),
+            [talaria_core::hivecode::follow_up_text("fix the lexer")]
+        );
+    }
+
+    #[test]
+    fn branch_child_inherits_hivecode() {
+        let mut state = opened("parent");
+        turn_on(&mut state, "parent");
+        let install = SwitchInstall {
+            opened: session("child", "stored-child"),
+            service: SessionService::new("launch"),
+            link: None,
+        };
+        let effects = branched(
+            &mut state,
+            BranchOutcome::Branched {
+                notice: "Branched into the fixture.".into(),
+            },
+            Some(install),
+        );
+        assert!(state.hivecode.status_input(Some(&SessionId::new("child"))));
+        let shown = lines(&effects);
+        let branch = shown
+            .iter()
+            .position(|line| line.contains("Branched into the fixture."))
+            .expect("branch notice");
+        let carried = shown
+            .iter()
+            .position(|line| line == &format!("\u{b7} {}", notice::BRANCH_CARRIED))
+            .unwrap_or_else(|| panic!("carried notice: {shown:?}"));
+        assert!(carried > branch, "{shown:?}");
+
+        let mut off = opened("parent");
+        let install = SwitchInstall {
+            opened: session("child", "stored-child"),
+            service: SessionService::new("launch"),
+            link: None,
+        };
+        let effects = branched(
+            &mut off,
+            BranchOutcome::Branched {
+                notice: "Branched into the fixture.".into(),
+            },
+            Some(install),
+        );
+        assert!(!off.hivecode.status_input(Some(&SessionId::new("child"))));
+        assert!(!lines(&effects).iter().any(|line| line.contains("Hivecode")));
+    }
+
+    #[test]
+    fn reopen_with_same_stored_id_keeps_hivecode() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.opened = Some(session("runtime-1", "stored-1"));
+        turn_on(&mut state, "runtime-1");
+        let _ = opened_session(&mut state, session("runtime-2", "stored-1"), None);
+        assert!(
+            state
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-2")))
+        );
+        let _ = opened_session(&mut state, session("runtime-3", "stored-other"), None);
+        assert!(
+            !state
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-3"))),
+            "another stored session keeps its own setting"
+        );
+    }
+
+    /// `/hivecode on` typed in the composer, answered by a catalogue that lists the skill.
+    fn type_hivecode_on(state: &mut AppState) -> Vec<AppEffect> {
+        let mut effects = submit(state, "/hivecode on".into());
+        let (request_id, session) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::FetchCatalog { session, .. },
+                    request_id,
+                } => Some((*request_id, session.clone())),
+                _ => None,
+            })
+            .expect("the catalogue is read");
+        let result: talaria_core::commands::CatalogResult = serde_json::from_value(json!({
+            "skills": {"/talaria-workflows": {"usage": 0, "origin": "local"}},
+            "pairs": []
+        }))
+        .unwrap();
+        effects.extend(update(
+            state,
+            AppMessage::HivecodeCatalog {
+                request_id,
+                session,
+                profile: "fixture".into(),
+                command: HivecodeCommand::On,
+                result: Ok(talaria_core::commands::CommandCatalog::from_result(&result)),
+            },
+        ));
+        effects
+    }
+
+    /// The saved switch file after the saves `effects` asked for, starting from an empty file.
+    fn saved(effects: &[AppEffect]) -> Option<talaria_core::hivecode::SavedModes> {
+        let mut file = None;
+        for effect in effects {
+            if let AppEffect::HivecodeSave { changes, .. } = effect {
+                file.get_or_insert_with(talaria_core::hivecode::SavedModes::default)
+                    .merge(changes);
+            }
+        }
+        file
+    }
+
+    fn checks_setup(effects: &[AppEffect]) -> bool {
+        effects.iter().any(|effect| {
+            matches!(
+                effect,
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::CheckSetup { .. },
+                    ..
+                }
+            )
+        })
+    }
+
+    fn opened_line() -> String {
+        format!("\u{b7} {}", notice::OPENED_ON)
+    }
+
+    #[test]
+    fn hivecode_survives_return_from_another_session() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
+        let _ = type_hivecode_on(&mut state);
+        // A workflow agent's session opened from the workflow view.
+        let effects = opened_session(&mut state, session("runtime-w1", "stored-w"), None);
+        assert!(
+            !state
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-w1")))
+        );
+        assert!(!lines(&effects).contains(&opened_line()), "{effects:?}");
+        // Back to the first session, which Hermes reopens under a new runtime id.
+        let effects = opened_session(&mut state, session("runtime-b2", "stored-s"), None);
+        assert!(
+            state
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-b2")))
+        );
+        assert_eq!(
+            lines(&effects)
+                .iter()
+                .filter(|line| **line == opened_line())
+                .count(),
+            1,
+            "{effects:?}"
+        );
+        assert!(checks_setup(&effects), "a reopen checks the setup");
+        let effects = enter(&mut state, "fix the parser");
+        assert!(
+            effects.iter().any(|effect| matches!(effect,
+                AppEffect::Hivecode { action: crate::hivecode::Action::RunCommand { session, .. }, .. }
+                    if session.as_str() == "runtime-b2")),
+            "{effects:?}"
+        );
+        assert!(checks_setup(&effects), "a routed prompt checks the setup");
+        // A plain reconnect of the same runtime session repeats nothing.
+        let effects = opened_session(&mut state, session("runtime-b2", "stored-s"), None);
+        assert!(!lines(&effects).contains(&opened_line()), "{effects:?}");
+    }
+
+    #[test]
+    fn hivecode_is_restored_after_a_restart() {
+        let mut first = AppState::new("launch");
+        first.profile = "fixture".into();
+        let _ = opened_session(&mut first, session("runtime-a1", "stored-s"), None);
+        let effects = type_hivecode_on(&mut first);
+        assert!(checks_setup(&effects), "turning on checks the setup");
+        let text = saved(&effects).expect("turning on saves the switch");
+
+        // `talaria --resume` in a new process opens the stored session under a new runtime id.
+        let mut second = AppState::new("launch");
+        second.profile = "fixture".into();
+        second.hivecode.restore(text);
+        let effects = opened_session(&mut second, session("runtime-r2", "stored-s"), None);
+        assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
+        let effects = enter(&mut second, "lets continue the workflow");
+        assert!(loads_skill(&effects), "{effects:?}");
+
+        // Off is remembered the same way.
+        let effects = submit(&mut second, "/hivecode off".into());
+        let text = saved(&effects).expect("turning off saves the switch");
+        let mut third = AppState::new("launch");
+        third.profile = "fixture".into();
+        third.hivecode.restore(text);
+        let effects = opened_session(&mut third, session("runtime-r3", "stored-s"), None);
+        assert!(
+            !third
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-r3")))
+        );
+        assert!(!lines(&effects).contains(&opened_line()), "{effects:?}");
+    }
+
+    #[test]
+    fn the_launch_flag_turns_on_the_session_it_opens_even_when_saved_off() {
+        let text = talaria_core::hivecode::SavedModes::from_json(
+            r#"{"version":1,"sessions":{"stored-s":{"on":false,"seen_ms":0},"stored-t":{"on":false,"seen_ms":0}}}"#,
+        )
+        .unwrap();
+        // `talaria --hivecode --resume stored-s`.
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
+        state.hivecode.restore(text);
+        let effects = opened_session(&mut state, session("runtime-1", "stored-s"), None);
+        assert!(
+            state
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-1")))
+        );
+        assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
+        let file = saved(&effects).expect("the launch's choice is saved");
+        assert!(
+            file.to_json().contains("\"on\": true"),
+            "{}",
+            file.to_json()
+        );
+        // Only the session the launch opened: another session saved as off keeps its setting.
+        let _ = opened_session(&mut state, session("runtime-2", "stored-t"), None);
+        assert!(
+            !state
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-2")))
+        );
+    }
+
+    #[test]
+    fn a_session_compacted_while_away_keeps_hivecode() {
+        // Back under the same runtime id, after Hermes compacted it with no frame seen.
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
+        let _ = type_hivecode_on(&mut state);
+        let _ = opened_session(&mut state, session("runtime-w1", "stored-w"), None);
+        let effects = opened_session(&mut state, session("runtime-a1", "stored-tip"), None);
+        assert!(
+            state
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-a1")))
+        );
+        assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
+        assert!(saved(&effects).is_some_and(|file| file.to_json().contains("stored-tip")));
+
+        // Back under a new runtime id: a resume by id answers with the id Talaria asked for,
+        // here the stored id saved before the restart, and names the compaction's tip.
+        let mut restarted = AppState::new("launch");
+        restarted.profile = "fixture".into();
+        restarted.hivecode.restore(
+            talaria_core::hivecode::SavedModes::from_json(
+                r#"{"version":1,"sessions":{"stored-s":{"on":true,"seen_ms":0}}}"#,
+            )
+            .unwrap(),
+        );
+        let effects = opened_session(&mut restarted, session("stored-s", "stored-tip"), None);
+        assert!(
+            restarted
+                .hivecode
+                .status_input(Some(&SessionId::new("stored-s")))
+        );
+        assert!(lines(&effects).contains(&opened_line()), "{effects:?}");
+    }
+
+    #[test]
+    fn a_compaction_in_the_background_moves_hivecode() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
+        let _ = type_hivecode_on(&mut state);
+        let _ = opened_session(&mut state, session("runtime-w1", "stored-w"), None);
+        // A frame for the retained first session, while the agent's session is in front.
+        let raw = json!({"session_id": "runtime-a1", "replay_epoch": "epoch", "seq": 1,
+            "type": "session.info", "payload": {"stored_session_id": "stored-tip"}});
+        let effects = update(
+            &mut state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: Inbound::Event(hermes_client::channel::InboundEvent {
+                    generation: hermes_client::channel::Generation(1),
+                    frame: EventFrame::from_params(&raw).unwrap(),
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+        let file = saved(&effects).expect("the move is saved");
+        let mut restarted = AppState::new("launch");
+        restarted.profile = "fixture".into();
+        restarted.hivecode.restore(file);
+        let _ = opened_session(&mut restarted, session("runtime-2", "stored-tip"), None);
+        assert!(
+            restarted
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-2")))
+        );
+    }
+
+    #[test]
+    fn compaction_moves_hivecode_to_the_new_stored_id() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("session", "stored-before"), None);
+        let _ = type_hivecode_on(&mut state);
+        let effects = frame(
+            &mut state,
+            "session.info",
+            json!({"stored_session_id": "stored-after"}),
+        );
+        let text = saved(&effects).expect("the new stored id is saved");
+        let mut restarted = AppState::new("launch");
+        restarted.profile = "fixture".into();
+        restarted.hivecode.restore(text);
+        let _ = opened_session(&mut restarted, session("runtime-2", "stored-after"), None);
+        assert!(
+            restarted
+                .hivecode
+                .status_input(Some(&SessionId::new("runtime-2")))
+        );
+    }
+
+    #[test]
+    fn a_branch_says_hivecode_once() {
+        let mut state = opened("parent");
+        turn_on(&mut state, "parent");
+        let install = SwitchInstall {
+            opened: session("child", "stored-child"),
+            service: SessionService::new("launch"),
+            link: None,
+        };
+        let effects = branched(
+            &mut state,
+            BranchOutcome::Branched {
+                notice: "Branched into the fixture.".into(),
+            },
+            Some(install),
+        );
+        let shown = lines(&effects);
+        assert_eq!(
+            shown
+                .iter()
+                .filter(|line| line.contains("Hivecode"))
+                .count(),
+            1,
+            "{shown:?}"
+        );
+        assert!(saved(&effects).is_some_and(|file| file.to_json().contains("stored-child")));
+    }
+
+    #[test]
+    fn interrupting_a_routed_turn_says_hivecode_is_still_on() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let effects = interrupt_done(&mut state, ExecuteOutcome::Sent, Vec::new());
+        assert_eq!(
+            lines(&effects),
+            [format!("\u{b7} {}", notice::STILL_ON)],
+            "{effects:?}"
+        );
+        let mut off = opened("session");
+        let effects = interrupt_done(&mut off, ExecuteOutcome::Sent, Vec::new());
+        assert!(lines(&effects).is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn a_remote_gateway_skips_the_setup_check() {
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.hivecode.set_remote(true);
+        let _ = opened_session(&mut state, session("runtime-a1", "stored-s"), None);
+        let effects = type_hivecode_on(&mut state);
+        assert!(!checks_setup(&effects), "{effects:?}");
+        let effects = enter(&mut state, "fix the parser");
+        assert!(!checks_setup(&effects), "{effects:?}");
+    }
+
+    #[test]
+    fn a_remote_session_opened_with_hivecode_on_says_runs_are_elsewhere() {
+        // `talaria --remote <host> --hivecode --resume stored-s`.
+        let mut state = AppState::new("launch");
+        state.profile = "fixture".into();
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
+        state.hivecode.set_remote(true);
+        let shown = lines(&opened_session(
+            &mut state,
+            session("runtime-1", "stored-s"),
+            None,
+        ));
+        assert_eq!(shown, [format!("\u{b7} {}", notice::OPENED_ON_REMOTE)]);
+        assert!(shown[0].contains("gateway's machine"), "{shown:#?}");
+        // The line a routed turn leaves once it started a run says so again.
+        let _ = enter(&mut state, "fix the parser");
+        let reply = json!({"type": "skill", "name": "talaria-workflows",
+            "message": expanded("fix the parser"), "display": "/talaria-workflows fix the parser"});
+        let _ = update(
+            &mut state,
+            AppMessage::HivecodeDone {
+                session: SessionId::new("runtime-1"),
+                original_text: "fix the parser".into(),
+                outcome: Ok(reply),
+            },
+        );
+        let _ = frame(&mut state, "message.start", json!({}));
+        let _ = tool_start(
+            &mut state,
+            "t1",
+            "terminal",
+            json!({"command": format!("talaria workflow run --profile fixture --json {DRAFT}")}),
+        );
+        let effects = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Started.", "status": "complete"}),
+        );
+        assert_eq!(
+            lines(&effects),
+            [format!(
+                "\u{b7} Hivecode built the workflow in 0s and started the run. {}",
+                notice::REMOTE_RUN_TAIL
+            )]
+        );
+    }
+
+    #[test]
+    fn a_profiles_harmful_settings_are_looked_up_once_per_run() {
+        let mut state = opened("session");
+        state.profile = "fixture".into();
+        state.config_checked.clear();
+        state.hermes_home = PathBuf::new();
+        assert!(
+            config_check_effect(&mut state).is_none(),
+            "no home, no lookup"
+        );
+        state.hermes_home = PathBuf::from("hermes-home");
+        assert!(matches!(
+            config_check_effect(&mut state),
+            Some(AppEffect::ConfigCheck { profile, .. }) if profile == "fixture"
+        ));
+        assert!(
+            config_check_effect(&mut state).is_none(),
+            "the same profile is not asked twice"
+        );
+        state.profile = "other".into();
+        assert!(
+            config_check_effect(&mut state).is_some(),
+            "another profile is asked once"
+        );
+    }
+
+    #[test]
+    fn each_harmful_setting_shows_one_short_notice() {
+        use talaria_core::config_check::Finding;
+        let mut state = opened("session");
+        state.profile = "fixture".into();
+        let findings = vec![
+            Finding::CompressionNotInPlace,
+            Finding::StepCap { turns: 60 },
+        ];
+        let shown = lines(&update(
+            &mut state,
+            AppMessage::ConfigFindings {
+                profile: "fixture".into(),
+                findings: findings.clone(),
+            },
+        ));
+        assert_eq!(shown.len(), 2, "{shown:?}");
+        assert!(shown[0].contains("compression.in_place") && shown[0].contains("context overflow"));
+        assert!(shown[1].contains("agent.max_turns") && shown[1].contains("60 steps"));
+        let none = update(
+            &mut state,
+            AppMessage::ConfigFindings {
+                profile: "fixture".into(),
+                findings: Vec::new(),
+            },
+        );
+        assert!(lines(&none).is_empty());
+        let stale = update(
+            &mut state,
+            AppMessage::ConfigFindings {
+                profile: "elsewhere".into(),
+                findings,
+            },
+        );
+        assert!(
+            lines(&stale).is_empty(),
+            "a reply for another profile is dropped"
+        );
+    }
+
+    fn setup(state: &mut AppState, skill: crate::hivecode::SkillCheck) -> Vec<AppEffect> {
+        update(
+            state,
+            AppMessage::HivecodeSetup {
+                session: SessionId::new("session"),
+                profile: "fixture".into(),
+                facts: crate::hivecode::SetupFacts {
+                    skill,
+                    tiers: crate::hivecode::TierCheck::Present,
+                    missing_builtins: Vec::new(),
+                },
+            },
+        )
+    }
+
+    fn reinstalls(effects: &[AppEffect]) -> bool {
+        effects.iter().any(|effect| {
+            matches!(
+                effect,
+                AppEffect::Hivecode {
+                    action: crate::hivecode::Action::ReinstallSkill { .. },
+                    ..
+                }
+            )
+        })
+    }
+
+    #[test]
+    fn a_changed_skill_never_takes_the_answer_meant_for_the_agent() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = frame(&mut state, "message.start", json!({}));
+        // The setup read the routed prompt started comes back while the turn runs.
+        let shown = lines(&setup(
+            &mut state,
+            crate::hivecode::SkillCheck::Modified {
+                changes: vec!["changed:SKILL.md".into()],
+                digest: "digest-1".into(),
+            },
+        ));
+        assert!(
+            shown
+                .iter()
+                .any(|line| line.contains("/hivecode reinstall")),
+            "{shown:#?}"
+        );
+        assert!(
+            !shown.iter().any(|line| line.contains("[y/N]")),
+            "{shown:#?}"
+        );
+        let _ = frame(
+            &mut state,
+            "message.complete",
+            json!({"text": "Here is the proposed workflow. Start it?", "status": "complete"}),
+        );
+        // The yes goes to the agent.
+        let effects = enter(&mut state, "yes");
+        assert_eq!(
+            sent(&effects),
+            [talaria_core::hivecode::follow_up_text("yes")]
+        );
+        assert!(!reinstalls(&effects), "{effects:?}");
+        // So does an empty line or a no: nothing waits for an answer.
+        assert!(!reinstalls(&enter(&mut state, "n")));
+    }
+
+    #[test]
+    fn hivecode_reinstall_reinstalls_the_skill_and_sends_it_whole_next_time() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        let _ = enter(&mut state, "fix the parser");
+        let _ = dispatched(&mut state, "fix the parser");
+        let _ = turn(&mut state, "complete");
+        let effects = submit(&mut state, "/hivecode reinstall".into());
+        assert!(reinstalls(&effects), "{effects:?}");
+        let effects = enter(&mut state, "go on");
+        assert!(loads_skill(&effects), "{effects:?}");
+        // A remote gateway's skill lives on its own machine.
+        let mut remote = opened("session");
+        remote.hivecode.set_remote(true);
+        let effects = submit(&mut remote, "/hivecode reinstall".into());
+        assert!(!reinstalls(&effects), "{effects:?}");
+        assert!(
+            lines(&effects)
+                .iter()
+                .any(|line| line.contains("talaria workflow skill install --force")),
+            "{effects:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_tick_schedules_hivecode_scan_only_when_armed() {
+        let mut state = opened("session");
+        turn_on(&mut state, "session");
+        state.wall_s = 2_000.0;
+        let idle = update(&mut state, AppMessage::Tick { now_ms: 10 });
+        assert!(
+            !idle
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::HivecodeScan { .. }))
+        );
+        let reply = json!({"type": "skill", "name": "talaria-workflows",
+            "message": "fixture skill body", "display": "/talaria-workflows fix it"});
+        let _ = update(
+            &mut state,
+            AppMessage::HivecodeDone {
+                session: SessionId::new("session"),
+                original_text: "fix it".into(),
+                outcome: Ok(reply),
+            },
+        );
+        let armed = update(&mut state, AppMessage::Tick { now_ms: 20 });
+        assert!(
+            armed
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::HivecodeScan { .. })),
+            "{armed:?}"
+        );
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let executor = Executor::new(tx);
+        assert!(
+            workflow_wake(&state, &executor).is_none(),
+            "a scan is in flight"
+        );
+        state.workflow_key_label = Some("Alt+W".into());
+        let effects = update(
+            &mut state,
+            AppMessage::HivecodeRuns {
+                rows: vec![summary(talaria_workflow::runner::RunStatus::Running, 3)],
+            },
+        );
+        assert_eq!(
+            lines(&effects),
+            [format!(
+                "\u{b7} {}",
+                notice::run_started("review-branch", "run-0001", Some("Alt+W"))
+            )]
+        );
+        assert!(workflow_wake(&state, &executor).is_some(), "the next scan");
+        assert_eq!(
+            state.view().workflow_run.map(|run| run.agents_finished),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn alt_w_opens_tracked_run_or_picker() {
+        let mut state = opened("session");
+        let effects = update(&mut state, AppMessage::User(UserAction::WorkflowView));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::WorkflowDiscover)),
+            "{effects:?}"
+        );
+        turn_on(&mut state, "session");
+        state.wall_s = 1_000.0;
+        state
+            .hivecode
+            .arm(&SessionId::new("session"), "fixture", 1_000_000, 0);
+        let _ = state.hivecode.scan_due(0);
+        let _ = state.hivecode.on_runs(
+            &[summary(talaria_workflow::runner::RunStatus::Running, 1)],
+            0,
+            None,
+        );
+        let effects = update(&mut state, AppMessage::User(UserAction::WorkflowView));
+        assert!(
+            effects.iter().any(|effect| matches!(effect,
+                AppEffect::WorkflowOpen(path) if path == Path::new("fixture-runs/run-0001"))),
+            "{effects:?}"
+        );
     }
 }
 
@@ -18659,5 +22773,776 @@ mod background_client_log_tests {
         assert_eq!(seen, "legacy\nsecret\n");
         assert_ne!(disk.metadata().unwrap().ino(), old_ino);
         assert_eq!(mode(&path) & 0o777, 0o600);
+    }
+}
+
+#[cfg(test)]
+mod workflow_agent_session_tests {
+    use super::*;
+    use talaria_workflow::progress::agent_session::{AgentPhase, Tracking};
+
+    const RUN: &str = "01JB2X9Q4M8Z7K3T5V6W8Y0A1C";
+
+    fn digest() -> String {
+        "a".repeat(64)
+    }
+
+    /// A run folder under `runs` whose one agent, `review:gameplay`, is bound to
+    /// `stored-bound` and has failed.
+    fn run_folder(runs: &Path) -> PathBuf {
+        let dir = runs.join(RUN);
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = json!({
+            "v":1,"run_id":RUN,"created_at_ms":1000,
+            "workflow":{"name":"review-branch","script_sha256":"a".repeat(64)},
+            "args":null,"started_at_ms":1,"seed":4242,"profile":"fixture",
+            "on_unknown":"wait","talaria_version":env!("CARGO_PKG_VERSION"), "hermes":{},
+            "roster":{},"approval_policy":{}
+        });
+        std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
+        std::fs::write(dir.join("run.lock"), "").unwrap();
+        let key = "8".repeat(32);
+        let records = [
+            json!({"t":"run_started","run_id":RUN,"script_sha256":"a".repeat(64)}),
+            json!({"t":"call_intent","key":key,"attempt":0,
+                "call_id":{"digest":digest(),"occurrence":0},"label":"review:gameplay",
+                "phase":"Verify","workflow_path":[],
+                "launch":{"profile":"fixture","model":"fixture-model","provider":null,
+                "effort":null,"toolsets":[],"skills":[],"max_turns":null,"isolation":null,
+                "cwd":null},"request_id":"wf:fixture"}),
+            json!({"t":"session_bound","key":key,"attempt":0,
+                "session_id":"runtime-bound","stored_session_id":"stored-bound"}),
+            json!({"t":"call_finished","key":key,"attempt":0,
+                "outcome":{"kind":"failed","reason":"context too long"},"turns":1}),
+        ];
+        let mut text = String::new();
+        for (i, mut record) in records.into_iter().enumerate() {
+            record["v"] = 1.into();
+            record["seq"] = (i as u64 + 1).into();
+            record["at_ms"] = (1000 + i as i64).into();
+            text.push_str(&format!("{record}\n"));
+        }
+        std::fs::write(dir.join("journal.jsonl"), text).unwrap();
+        dir
+    }
+
+    fn session(runtime: &str, stored: &str, cwd: Option<String>) -> OpenedSession {
+        OpenedSession {
+            state: SessionState::empty(SessionId::new(runtime)),
+            session_id: runtime.into(),
+            stored_session_id: stored.into(),
+            subscription_id: "subscription".into(),
+            title: None,
+            revision: 0,
+            execution_generation: 0,
+            launch_notices: Vec::new(),
+            effort: None,
+            info: SessionInfoSummary {
+                model: None,
+                provider: None,
+                cwd,
+                branch: None,
+            },
+            cursor: Cursor {
+                replay_epoch: "epoch".into(),
+                last_sequence: 0,
+            },
+        }
+    }
+
+    /// Do what the executor does with the journal read an opening asks for, then hand the
+    /// answer back as the message the executor would send.
+    fn answer_reads(state: &mut AppState, effects: Vec<AppEffect>) {
+        for effect in effects {
+            if let AppEffect::WorkflowAgentRead { stored_id, request } = effect {
+                let result = talaria_workflow::progress::agent_session::read_agent_journal(
+                    &request.run_dir,
+                    request.offset,
+                );
+                let _ = update(state, AppMessage::WorkflowAgentRead { stored_id, result });
+            }
+        }
+    }
+
+    fn open_with(
+        state: &mut AppState,
+        runs: &Path,
+        runtime: &str,
+        stored: &str,
+        in_worktree: bool,
+    ) -> Vec<AppEffect> {
+        state.profile = "fixture".into();
+        state.workflow_runs_dir = runs.to_owned();
+        let cwd = in_worktree.then(|| {
+            runs.join(RUN)
+                .join("worktrees")
+                .join(format!("{}-0", digest()))
+                .to_string_lossy()
+                .into_owned()
+        });
+        opened_session(state, session(runtime, stored, cwd), None)
+    }
+
+    fn open(state: &mut AppState, runs: &Path, runtime: &str, stored: &str, in_worktree: bool) {
+        let effects = open_with(state, runs, runtime, stored, in_worktree);
+        answer_reads(state, effects);
+    }
+
+    fn sent(effects: &[AppEffect]) -> bool {
+        effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Send(Effect::SendPrompt { .. })))
+    }
+
+    #[test]
+    fn a_follow_on_session_in_a_run_worktree_is_labelled_untracked() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        let note = state.view().workflow_agent.cloned().expect("labelled");
+        assert_eq!(note.label.as_deref(), Some("review:gameplay"));
+        assert_eq!(note.phase, Some(AgentPhase::Failed));
+        assert_eq!(note.tracking, Tracking::NotFollowed);
+    }
+
+    #[test]
+    fn the_bound_session_is_followed_even_without_a_worktree_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let run = run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        // The folder is not a worktree, so only the loaded run can say whose session this is.
+        let manifest = talaria_workflow::journal::RunDir::open(&run).unwrap();
+        let (lines, offset) = talaria_workflow::journal::JournalReader::read_from(&run, 0).unwrap();
+        let opened_run = crate::workflow_progress::OpenedRun {
+            path: run.clone(),
+            profile: "fixture".into(),
+            state: talaria_workflow::progress::live::ProgressState::new(
+                talaria_workflow::progress::RunProgress::from_records(manifest.manifest(), &lines),
+            ),
+            offset,
+        };
+        workflow_opened(&mut state, Ok(opened_run));
+        open(
+            &mut state,
+            temp.path(),
+            "runtime-bound",
+            "stored-bound",
+            false,
+        );
+        let note = state.view().workflow_agent.cloned().expect("labelled");
+        assert_eq!(note.tracking, Tracking::Followed);
+        assert_eq!(note.phase, Some(AgentPhase::Failed));
+    }
+
+    #[test]
+    fn an_ordinary_session_shows_no_banner_and_sends_at_once() {
+        let mut state = AppState::new("agent-banner");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("runtime-1", "stored-1", None), None);
+        assert!(state.view().workflow_agent.is_none());
+        assert!(sent(&submit(&mut state, "hello".into())));
+    }
+
+    #[test]
+    fn the_first_prompt_into_an_agent_session_warns_and_keeps_the_text_then_the_second_sends() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        let first = submit(&mut state, "yes, commit it".into());
+        assert!(!sent(&first), "{first:?}");
+        assert!(
+            first.iter().any(
+                |effect| matches!(effect, AppEffect::LoadDraft(text) if text == "yes, commit it")
+            ),
+            "the typed text must come back: {first:?}"
+        );
+        let warning: Vec<String> = first
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::CommitLines(lines) => Some(lines.join("\n")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(warning.len(), 1, "{first:?}");
+        assert!(warning[0].contains("review:gameplay"), "{warning:?}");
+        assert!(
+            warning[0].contains("does not track this conversation"),
+            "{warning:?}"
+        );
+        assert!(warning[0].contains("Submit again to send."), "{warning:?}");
+        let second = submit(&mut state, "yes, commit it".into());
+        assert!(sent(&second), "{second:?}");
+        let third = submit(&mut state, "and push".into());
+        assert!(sent(&third), "once per session: {third:?}");
+    }
+
+    #[test]
+    fn leaving_and_returning_to_the_session_does_not_warn_again() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(!sent(&submit(&mut state, "one".into())));
+        let _ = opened_session(&mut state, session("runtime-1", "stored-1", None), None);
+        assert!(state.view().workflow_agent.is_none());
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(state.view().workflow_agent.is_some());
+        assert!(sent(&submit(&mut state, "two".into())));
+    }
+
+    #[test]
+    fn the_workflow_key_in_an_agent_session_opens_that_runs_view() {
+        let temp = tempfile::tempdir().unwrap();
+        let run = run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        let effects = update(&mut state, AppMessage::User(UserAction::WorkflowView));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::WorkflowOpen(path) if *path == run)),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn the_banner_follows_the_journal_while_the_agent_runs() {
+        let temp = tempfile::tempdir().unwrap();
+        let run = run_folder(temp.path());
+        // A live runner, and the failure taken back out: the agent is bound and unfinished.
+        let runner = std::fs::File::open(run.join("run.lock")).unwrap();
+        runner.try_lock().unwrap();
+        let journal = std::fs::read_to_string(run.join("journal.jsonl")).unwrap();
+        let unfinished: Vec<&str> = journal.lines().take(3).collect();
+        std::fs::write(run.join("journal.jsonl"), unfinished.join("\n") + "\n").unwrap();
+        let mut state = AppState::new("agent-banner");
+        state.now_ms = 1_000;
+        let opening = open_with(
+            &mut state,
+            temp.path(),
+            "runtime-bound",
+            "stored-bound",
+            true,
+        );
+        // Until the read answers, the banner says it is still reading.
+        let note = state.view().workflow_agent.cloned().unwrap();
+        assert!(note.pending, "{note:?}");
+        answer_reads(&mut state, opening);
+        let note = state.view().workflow_agent.cloned().unwrap();
+        assert_eq!(note.phase, Some(AgentPhase::Queued));
+        std::fs::write(run.join("journal.jsonl"), journal).unwrap();
+        let effects = update(&mut state, AppMessage::Tick { now_ms: 4_000 });
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, AppEffect::WorkflowAgentRead { .. })),
+            "the tick asks for a read instead of doing it: {effects:?}"
+        );
+        answer_reads(&mut state, effects);
+        let note = state.view().workflow_agent.cloned().unwrap();
+        assert_eq!(note.phase, Some(AgentPhase::Failed));
+        // The agent has stopped: no further reads are asked for.
+        let later = update(&mut state, AppMessage::Tick { now_ms: 9_000 });
+        assert!(
+            !later
+                .iter()
+                .any(|e| matches!(e, AppEffect::WorkflowAgentRead { .. })),
+            "{later:?}"
+        );
+        drop(runner);
+    }
+
+    #[test]
+    fn one_read_runs_at_a_time_and_a_dead_runner_is_not_polled() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        state.now_ms = 1_000;
+        let opening = open_with(
+            &mut state,
+            temp.path(),
+            "runtime-bound",
+            "stored-bound",
+            true,
+        );
+        assert_eq!(
+            opening
+                .iter()
+                .filter(|e| matches!(e, AppEffect::WorkflowAgentRead { .. }))
+                .count(),
+            1
+        );
+        // The first read has not answered: a tick must not start a second one.
+        let tick = update(&mut state, AppMessage::Tick { now_ms: 9_000 });
+        assert!(
+            !tick
+                .iter()
+                .any(|e| matches!(e, AppEffect::WorkflowAgentRead { .. }))
+        );
+    }
+
+    #[test]
+    fn a_failed_open_clears_the_agent_session_and_its_polling() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(state.workflow_agent.is_some());
+        let _ = update(
+            &mut state,
+            AppMessage::SessionCleared(SessionCleared::OpenFailed {
+                previous_id: "runtime-new".into(),
+                reason: "gone".into(),
+                left: true,
+            }),
+        );
+        assert!(state.opened.is_none());
+        assert!(state.workflow_agent.is_none());
+    }
+
+    #[test]
+    fn a_prompt_held_while_the_session_opened_gets_the_first_send_warning() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        // The person typed before the session finished opening.
+        state.held.push_back("yes, commit it".into());
+        let effects = open_with(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(!sent(&effects), "{effects:?}");
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, AppEffect::LoadDraft(text) if text == "yes, commit it")),
+            "the text comes back to the composer: {effects:?}"
+        );
+        assert_eq!(state.draft, "yes, commit it");
+        assert!(state.held.is_empty());
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, AppEffect::CommitLines(lines)
+            if lines.iter().any(|l| l.contains("Workflow agent session"))))
+        );
+        // Submitting it again goes through: the warning was given once.
+        assert!(sent(&submit(&mut state, "yes, commit it".into())));
+    }
+
+    #[test]
+    fn a_held_prompt_returns_ahead_of_text_typed_since() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        state.held.push_back("first".into());
+        state.draft = "second".into();
+        state.caret = state.draft.len();
+        let _ = open_with(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert_eq!(state.draft, "first\nsecond");
+    }
+
+    // --- Going back from an agent's session to the session the person came from. ---
+
+    const AGENT_KEY: &str = "88888888888888888888888888888888";
+
+    /// A person in an ordinary session with the run's view loaded.
+    fn from_origin(profile: &str) -> (tempfile::TempDir, AppState, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let run = run_folder(temp.path());
+        let mut state = AppState::new("agent-back");
+        state.profile = profile.into();
+        state.workflow_runs_dir = temp.path().to_owned();
+        let manifest = talaria_workflow::journal::RunDir::open(&run).unwrap();
+        let (lines, offset) = talaria_workflow::journal::JournalReader::read_from(&run, 0).unwrap();
+        workflow_opened(
+            &mut state,
+            Ok(crate::workflow_progress::OpenedRun {
+                path: run.clone(),
+                profile: profile.into(),
+                state: talaria_workflow::progress::live::ProgressState::new(
+                    talaria_workflow::progress::RunProgress::from_records(
+                        manifest.manifest(),
+                        &lines,
+                    ),
+                ),
+                offset,
+            }),
+        );
+        let _ = opened_session(
+            &mut state,
+            session("runtime-origin", "stored-origin", None),
+            None,
+        );
+        (temp, state, run)
+    }
+
+    /// Enter on the agent row: the run view's key.
+    fn press_enter(state: &mut AppState, run: &Path, session: &str) -> Vec<AppEffect> {
+        let view = state.workflow_views.states.get_mut(run).unwrap();
+        view.selection = talaria_workflow::progress::live::NodeKey::Agent(AGENT_KEY.into());
+        workflow_input(
+            state,
+            run.to_owned(),
+            talaria_workflow::progress::live::ProgressInput::Opened(session.into()),
+        )
+    }
+
+    fn switch_target(effects: &[AppEffect]) -> Option<(String, String)> {
+        effects.iter().find_map(|effect| match effect {
+            AppEffect::Switch { key } => Some((key.profile.clone(), key.session_id.clone())),
+            _ => None,
+        })
+    }
+
+    /// The executor opened `opened` and the switch finished.
+    fn land(state: &mut AppState, opened: OpenedSession) -> Vec<AppEffect> {
+        let effects = update(
+            state,
+            AppMessage::Switched {
+                outcome: SwitchOutcome::Switched {
+                    notice: "Switched.".into(),
+                },
+                install: Some(SwitchInstall {
+                    opened,
+                    service: SessionService::new("launch"),
+                    link: None,
+                }),
+                reason: None,
+            },
+        );
+        let reads: Vec<AppEffect> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::WorkflowAgentRead { stored_id, request } => {
+                    Some(AppEffect::WorkflowAgentRead {
+                        stored_id: stored_id.clone(),
+                        request: request.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        answer_reads(state, reads);
+        effects
+    }
+
+    fn agent_session(runs: &Path) -> OpenedSession {
+        let _ = runs;
+        session("runtime-bound", "stored-bound", None)
+    }
+
+    /// The key did nothing: at most the screen is drawn again.
+    fn only_redraws(effects: &[AppEffect]) -> bool {
+        effects
+            .iter()
+            .all(|effect| matches!(effect, AppEffect::Redraw))
+    }
+
+    fn back(state: &mut AppState) -> Vec<AppEffect> {
+        update(state, AppMessage::User(UserAction::WorkflowAgentBack))
+    }
+
+    #[test]
+    fn back_returns_to_the_origin_and_reopens_the_view_with_the_agent_selected() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let entered = press_enter(&mut state, &run, "runtime-bound");
+        assert_eq!(
+            switch_target(&entered),
+            Some(("fixture".into(), "runtime-bound".into()))
+        );
+        assert!(!state.view().agent_back, "not confirmed until it lands");
+        let _ = land(&mut state, agent_session(temp.path()));
+        assert!(state.view().workflow_agent.is_some());
+        assert!(state.view().agent_back);
+        assert_eq!(state.workflow_views.active, None, "Enter closed the view");
+        // The person moves the selection elsewhere while away; the view comes back as left.
+        state.workflow_views.states.get_mut(&run).unwrap().selection =
+            talaria_workflow::progress::live::NodeKey::Run;
+
+        let sent = back(&mut state);
+        assert_eq!(
+            switch_target(&sent),
+            Some(("fixture".into(), "stored-origin".into())),
+            "{sent:?}"
+        );
+        assert!(
+            !sent
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Interrupt(_) | AppEffect::Send(_))),
+            "nothing is sent to the agent: {sent:?}"
+        );
+        // The origin is dropped as the trip starts, so a second press does nothing.
+        assert!(state.workflow_origin.is_none());
+        assert!(!state.view().agent_back);
+
+        let _ = land(
+            &mut state,
+            session("runtime-origin-2", "stored-origin", None),
+        );
+        assert_eq!(state.workflow_views.active.as_deref(), Some(run.as_path()));
+        let view = &state.workflow_views.states[&run];
+        assert!(!view.closed);
+        assert_eq!(
+            view.selection,
+            talaria_workflow::progress::live::NodeKey::Agent(AGENT_KEY.into())
+        );
+        assert!(state.workflow_return.is_none());
+        assert!(state.workflow_agent.is_none());
+        assert!(!state.view().agent_back);
+    }
+
+    #[test]
+    fn back_does_nothing_with_a_draft_or_a_palette_and_keeps_the_memory() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        state.draft = "half a thought".into();
+        assert!(only_redraws(&back(&mut state)));
+        state.draft.clear();
+        state.palette.open = true;
+        assert!(only_redraws(&back(&mut state)));
+        state.palette.open = false;
+        assert!(state.view().agent_back, "the memory is still there");
+        assert!(switch_target(&back(&mut state)).is_some());
+    }
+
+    #[test]
+    fn back_without_a_remembered_origin_does_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-back");
+        // An agent's session reached by /resume or a picker, with no Enter behind it.
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(state.view().workflow_agent.is_some());
+        assert!(!state.view().agent_back);
+        assert!(only_redraws(&back(&mut state)));
+        // An ordinary session has nowhere to go back to either.
+        let _ = opened_session(&mut state, session("runtime-1", "stored-1", None), None);
+        assert!(only_redraws(&back(&mut state)));
+    }
+
+    #[test]
+    fn any_other_route_to_a_different_session_drops_the_memory() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        assert!(state.view().agent_back);
+        // A picker, /resume or a new session opens another session.
+        let _ = opened_session(&mut state, session("runtime-9", "stored-9", None), None);
+        assert!(state.workflow_origin.is_none());
+        // Coming back to the agent's session by that route does not bring the memory back.
+        let _ = opened_session(&mut state, agent_session(temp.path()), None);
+        assert!(!state.view().agent_back);
+        assert!(only_redraws(&back(&mut state)));
+    }
+
+    #[test]
+    fn a_reconnect_of_the_agents_session_keeps_the_memory() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        // The same stored session reopens under a new runtime id.
+        let _ = opened_session(
+            &mut state,
+            session("runtime-bound-2", "stored-bound", None),
+            None,
+        );
+        assert!(state.view().agent_back);
+        let sent = back(&mut state);
+        assert_eq!(
+            switch_target(&sent),
+            Some(("fixture".into(), "stored-origin".into()))
+        );
+    }
+
+    #[test]
+    fn entering_another_agent_keeps_the_original_session_as_the_origin() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        // The person opens the run view from the agent's session and enters another agent,
+        // whose session sits in the run's worktrees.
+        let second = press_enter(&mut state, &run, "runtime-agent-2");
+        assert_eq!(
+            switch_target(&second),
+            Some(("fixture".into(), "runtime-agent-2".into()))
+        );
+        let worktree = temp
+            .path()
+            .join(RUN)
+            .join("worktrees")
+            .join(format!("{}-0", digest()))
+            .to_string_lossy()
+            .into_owned();
+        let _ = land(
+            &mut state,
+            session("runtime-agent-2", "stored-agent-2", Some(worktree)),
+        );
+        assert!(state.view().workflow_agent.is_some());
+        assert!(state.view().agent_back);
+        let sent = back(&mut state);
+        assert_eq!(
+            switch_target(&sent),
+            Some(("fixture".into(), "stored-origin".into())),
+            "never the first agent's session: {sent:?}"
+        );
+    }
+
+    #[test]
+    fn a_second_enter_that_fails_leaves_the_first_trip_standing() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        let _ = press_enter(&mut state, &run, "runtime-agent-2");
+        let _ = update(
+            &mut state,
+            AppMessage::Switched {
+                outcome: SwitchOutcome::Failed {
+                    text: "could not open".into(),
+                },
+                install: None,
+                reason: None,
+            },
+        );
+        assert!(
+            state.view().agent_back,
+            "still in the first agent's session"
+        );
+        assert!(switch_target(&back(&mut state)).is_some());
+    }
+
+    #[test]
+    fn a_first_enter_that_fails_remembers_nothing() {
+        let (_temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = update(
+            &mut state,
+            AppMessage::Switched {
+                outcome: SwitchOutcome::Failed {
+                    text: "could not open".into(),
+                },
+                install: None,
+                reason: None,
+            },
+        );
+        assert!(state.workflow_origin.is_none());
+    }
+
+    #[test]
+    fn back_works_when_the_agent_runs_on_another_profile() {
+        let (temp, mut state, run) = from_origin("fixture");
+        // The run was started on another profile: Enter takes the begin_switch path.
+        state
+            .workflow_views
+            .profiles
+            .insert(run.clone(), "other".into());
+        let entered = press_enter(&mut state, &run, "runtime-bound");
+        assert_eq!(
+            switch_target(&entered),
+            Some(("other".into(), "runtime-bound".into()))
+        );
+        let _ = land(&mut state, agent_session(temp.path()));
+        assert_eq!(state.profile, "other");
+        assert!(state.view().agent_back);
+
+        // The key switches back to the profile and stored session the person left.
+        let sent = back(&mut state);
+        assert_eq!(
+            switch_target(&sent),
+            Some(("fixture".into(), "stored-origin".into())),
+            "{sent:?}"
+        );
+        let _ = land(
+            &mut state,
+            session("runtime-origin-3", "stored-origin", None),
+        );
+        assert_eq!(state.profile, "fixture");
+        assert_eq!(state.workflow_views.active.as_deref(), Some(run.as_path()));
+        assert_eq!(
+            state.workflow_views.states[&run].selection,
+            talaria_workflow::progress::live::NodeKey::Agent(AGENT_KEY.into())
+        );
+    }
+
+    #[test]
+    fn an_origin_that_cannot_be_opened_says_so_once_and_the_person_stays() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        let _ = back(&mut state);
+        let effects = update(
+            &mut state,
+            AppMessage::Switched {
+                outcome: SwitchOutcome::Failed {
+                    text: "Could not open \"stored-origin\": Hermes refused the resume (not_found). Still in the old session.".into(),
+                },
+                install: None,
+                reason: Some("not_found".into()),
+            },
+        );
+        let lines: Vec<String> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::CommitLines(lines) => Some(lines.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("Could not go back"), "{lines:?}");
+        assert_eq!(
+            state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.as_str()),
+            Some("runtime-bound")
+        );
+        assert!(state.workflow_origin.is_none() && state.workflow_return.is_none());
+        assert!(!state.view().agent_back);
+        assert!(state.workflow_views.active.is_none(), "no view opened");
+    }
+
+    #[test]
+    fn an_origin_with_no_stored_id_of_its_own_is_not_offered() {
+        let (temp, mut state, run) = from_origin("fixture");
+        // A brand new session: Hermes has not given it a stored id yet.
+        let _ = opened_session(
+            &mut state,
+            session("runtime-new-origin", "runtime-new-origin", None),
+            None,
+        );
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        assert!(state.workflow_origin.is_none());
+        assert!(!state.view().agent_back);
+        assert!(only_redraws(&back(&mut state)));
+    }
+
+    #[test]
+    fn going_back_leaves_the_agents_turn_alone() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let mut running = agent_session(temp.path());
+        running.state = SessionState::from_snapshot(
+            serde_json::from_value(json!({
+                "session_id": "runtime-bound", "stored_session_id": "stored-bound",
+                "messages": [], "display_messages": [], "message_count": 0, "running": true,
+                "authority_epoch": 1, "replay_epoch": "epoch-1", "last_sequence": 1,
+                "subscription_id": "sub-1", "revision": 1, "execution_generation": 2,
+                "pending": [], "prompts": [], "info": {"desktop_protocol": "1", "cwd": "/work/proj"}
+            }))
+            .unwrap(),
+        );
+        let _ = land(&mut state, running);
+        assert!(turn_running(&state));
+        let sent = back(&mut state);
+        assert!(switch_target(&sent).is_some());
+        assert!(
+            !sent.iter().any(|effect| matches!(
+                effect,
+                AppEffect::Interrupt(_) | AppEffect::Send(_) | AppEffect::Queue(_)
+            )),
+            "{sent:?}"
+        );
     }
 }

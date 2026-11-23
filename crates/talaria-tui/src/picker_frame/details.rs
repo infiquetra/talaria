@@ -4,19 +4,16 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Line};
 use talaria_core::models::PickerView;
 
 use super::{PickerLayout, PickerMode, paint};
-use crate::history::{sanitize, split_lines, wrap_lines};
+use crate::history::word_wrapped;
 use crate::theme::surfaces::ViewStyles;
 
 fn wrapped(view: &PickerView<'_>, width: u16) -> Vec<Line<'static>> {
     let details = view.browse.map(|browse| browse.details).unwrap_or(&[]);
-    wrap_lines(
-        details
-            .iter()
-            .flat_map(|line| split_lines(line))
-            .map(|line| Line::from(sanitize(line).into_owned()))
-            .collect(),
-        width,
-    )
+    details
+        .iter()
+        .flat_map(|line| word_wrapped(line, width))
+        .map(Line::from)
+        .collect()
 }
 
 /// Count wrapped full-details rows for a terminal width, including the frame border.
@@ -31,15 +28,13 @@ pub(super) fn draw_wrapped(text: &str, area: Rect, buffer: &mut Buffer) {
     if area.is_empty() {
         return;
     }
-    for (offset, line) in wrap_lines(
-        split_lines(text)
-            .map(|line| Line::from(sanitize(line).into_owned()))
-            .collect(),
-        area.width,
-    )
-    .iter()
-    .take(usize::from(area.height))
-    .enumerate()
+    for (offset, line) in word_wrapped(text, area.width)
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>()
+        .iter()
+        .take(usize::from(area.height))
+        .enumerate()
     {
         buffer.set_line(
             area.x,
@@ -107,7 +102,7 @@ pub(super) fn draw_summary(
     area.y += 1;
     area.height = area.height.saturating_sub(1);
     if let Some(banner) = view.banner.filter(|text| !text.is_empty()) {
-        let rows = wrap_lines(vec![Line::from(sanitize(banner).into_owned())], area.width);
+        let rows = word_wrapped(banner, area.width);
         let height = u16::try_from(rows.len())
             .unwrap_or(u16::MAX)
             .min(area.height);
@@ -119,23 +114,18 @@ pub(super) fn draw_summary(
         area.y += height;
         area.height -= height;
     }
-    if let Some(browse) = view.browse {
-        for (offset, text) in browse
-            .details
+    if view.browse.is_some() {
+        // Wrap every line so long facts stay readable; F2 still shows the whole list.
+        for (offset, line) in wrapped(view, area.width)
             .iter()
             .take(usize::from(area.height))
             .enumerate()
         {
-            paint(
-                text,
-                Rect::new(
-                    area.x,
-                    area.y + u16::try_from(offset).unwrap_or(0),
-                    area.width,
-                    1,
-                ),
-                Style::default(),
-                buffer,
+            buffer.set_line(
+                area.x,
+                area.y + u16::try_from(offset).unwrap_or(0),
+                line,
+                area.width,
             );
         }
     }

@@ -83,7 +83,7 @@ fn shell_refusal_texts_exact() {
         (
             "unknown_method",
             None,
-            "This Hermes gateway does not offer ! commands (shell.exec). Update Hermes to the release Talaria is pinned to.",
+            "This Hermes gateway does not offer ! commands (shell.exec). It may differ from the Hermes release Talaria was tested against.",
         ),
     ] {
         assert_eq!(shell_refusal_text(reason, detail), want, "{reason}");
@@ -167,7 +167,7 @@ fn side_refusal_texts_exact() {
         ),
         (
             "unknown_method",
-            "This Hermes gateway does not offer /btw (prompt.btw). Update Hermes to the release Talaria is pinned to.",
+            "This Hermes gateway does not offer /btw (prompt.btw). It may differ from the Hermes release Talaria was tested against.",
         ),
     ] {
         assert_eq!(side_refusal_text(reason, None), want, "{reason}");

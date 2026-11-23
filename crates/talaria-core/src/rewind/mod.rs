@@ -16,7 +16,10 @@ pub use checkpoints::{
 pub use command::{
     DiffCommand, RollbackCommand, is_checkpoint_target, parse_diff, parse_rollback, parse_undo,
 };
-pub use esc::{DOUBLE_ESC_WINDOW_MS, DoubleEsc};
+pub use esc::{
+    DOUBLE_ESC_WINDOW_MS, DoubleEsc, INTERRUPT_CONFIRM_WINDOW_MS, INTERRUPT_SETTLE_MS,
+    InterruptConfirm, InterruptPress,
+};
 pub use state::{
     Call, CallFailure, CallKind, DiffSource, LineStyle, MutateOutcome, Reply, RewindEffect,
     RewindInput, RewindKey, RewindScreen, RewindState, RewindView, SessionRead, ViewLine, ViewRow,

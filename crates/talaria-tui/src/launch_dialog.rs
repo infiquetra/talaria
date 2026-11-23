@@ -35,7 +35,7 @@ const HINTS: &str = "enter launch · tab next · shift+tab back · esc close";
 /// What sits at the right of the Profile row when there is more than one profile.
 const PROFILE_HINT: &str = "← → to change";
 /// One frame of the spinner every 100 ms.
-const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub(crate) const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /// Which launch the dialog is collecting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

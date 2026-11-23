@@ -397,9 +397,9 @@ pub fn attach(cli: crate::args::Cli) -> std::process::ExitCode {
         eprintln!("talaria: {}\nNext step: {}", error.what, error.next_step);
         return std::process::ExitCode::from(2);
     }
-    let ultracode = cli.ultracode;
+    let hivecode = cli.hivecode;
     match cli.into_launch() {
-        Ok(launch) => crate::run::run_remote(launch, ultracode, cfg, store),
+        Ok(launch) => crate::run::run_remote(launch, hivecode, cfg, store),
         Err(e) => {
             let failure = talaria_app::failure::LaunchFailure::from(e);
             eprint!("{}", failure.render());

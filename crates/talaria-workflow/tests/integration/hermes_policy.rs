@@ -2,7 +2,7 @@ use crate::hermes_common as common;
 
 use serde_json::{Value, json};
 use talaria_workflow::{
-    engine::AgentOutcome,
+    engine::{AgentOutcome, Isolation},
     hermes::{
         AgentUsage, NextStep, SchemaTurnPolicy, TurnPolicy, brief, call_usage, correction_message,
         validate_output,
@@ -28,6 +28,26 @@ fn first_turn_is_brief() {
     with_schema.schema = Some(schema.clone());
     let briefed = policy.first_turn(&with_schema, &launch);
     assert_eq!(briefed, brief(&with_schema.prompt, Some(&schema)));
+}
+
+#[test]
+fn first_turn_names_the_worktree_for_an_isolated_agent() {
+    let policy = SchemaTurnPolicy;
+    let request = common::request("Report one finding.");
+    let mut isolated = common::launch();
+    isolated.isolation = Some(Isolation::Worktree);
+    isolated.cwd = Some("/work/wt/call-0".into());
+    let text = policy.first_turn(&request, &isolated);
+    assert!(
+        text.starts_with("Your working folder is /work/wt/call-0."),
+        "{text}"
+    );
+    assert!(text.contains("relative paths"));
+    assert!(text.contains("do not change to the source checkout"));
+    assert!(text.ends_with("Report one finding."));
+    let mut shared = common::launch();
+    shared.cwd = Some("/work/proj".into());
+    assert_eq!(policy.first_turn(&request, &shared), request.prompt);
 }
 
 #[test]

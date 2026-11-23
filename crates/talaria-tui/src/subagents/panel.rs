@@ -1,7 +1,8 @@
 //! Full-screen subagent views and finished batch rendering.
 use super::{
     SubagentStyle,
-    dock::{activity, dim_suffix, literal, styled_row},
+    dock::{activity, clean_activity, literal, styled_row},
+    labels::goal_labels,
 };
 use crate::{
     checklist::cut_to_width,
@@ -16,7 +17,9 @@ use std::cell::Cell;
 use talaria_app::subagents::{ControlOutcome, SubagentAction, outcome_text};
 use talaria_core::{
     directory::rows::RowKey,
-    subagents::{Clock, FailKind, FinishedBatch, RowState, Spawning, SubagentRow, SubagentTree},
+    subagents::{
+        Clock, FailKind, FinishedBatch, RowState, Spawning, SubagentRow, SubagentTree, TreeRow,
+    },
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -344,7 +347,8 @@ impl AgentsPanel {
             )
         })
     }
-    fn footer(&self) -> String {
+    /// Key hints in three groups: look at a child, control it, move around.
+    fn footer_groups(&self) -> Vec<String> {
         let stop_all = if self.armed_at.is_some() {
             "again to stop all"
         } else {
@@ -355,28 +359,51 @@ impl AgentsPanel {
         } else {
             "pause spawns"
         };
-        [
-            (Action::AgentsTail, "tail"),
-            (Action::AgentsDetail, "detail"),
-            (Action::AgentsOpenInPane, "new pane"),
-            (Action::AgentsSteer, "steer"),
-            (Action::AgentsStop, "stop"),
-            (Action::AgentsStopAll, stop_all),
-            (Action::AgentsPause, pause),
-            (Action::AgentsNextSession, "session"),
-            (
-                Action::AgentsBack,
-                if self.mode == PanelMode::List {
-                    "close"
-                } else {
-                    "back"
-                },
-            ),
-        ]
-        .into_iter()
-        .filter_map(|(a, s)| self.hint(a, s))
-        .collect::<Vec<_>>()
-        .join(" · ")
+        let back = if self.mode == PanelMode::List {
+            "close"
+        } else {
+            "back"
+        };
+        let groups: [&[(Action, &str)]; 3] = [
+            &[
+                (Action::AgentsTail, "tail"),
+                (Action::AgentsDetail, "detail"),
+                (Action::AgentsOpenInPane, "new pane"),
+            ],
+            &[
+                (Action::AgentsSteer, "steer"),
+                (Action::AgentsStop, "stop"),
+                (Action::AgentsStopAll, stop_all),
+                (Action::AgentsPause, pause),
+            ],
+            &[
+                (Action::AgentsNextSession, "session"),
+                (Action::AgentsBack, back),
+            ],
+        ];
+        groups
+            .into_iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .filter_map(|(a, s)| self.hint(*a, s))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            })
+            .filter(|group| !group.is_empty())
+            .collect()
+    }
+    fn footer(&self) -> String {
+        self.footer_groups().join("   ")
+    }
+    /// The groups run together with the same separator when the gaps do not fit.
+    fn footer_for(&self, width: u16) -> String {
+        let spaced = self.footer();
+        if spaced.width() <= usize::from(width) {
+            spaced
+        } else {
+            self.footer_groups().join(" · ")
+        }
     }
     #[allow(clippy::too_many_arguments)]
     pub fn render(
@@ -398,17 +425,42 @@ impl AgentsPanel {
                 .set(Some(counts.live.saturating_sub(counts.queued)));
         }
         let style = &self.style;
-        let mut lines = vec![Line::styled(
-            panel_header(tree, header, &self.key.session_id, width),
-            style.header,
-        )];
-        let mut budget = usize::from(height.saturating_sub(3));
-        self.viewport.set(budget);
         let mode = if matches!(self.mode, PanelMode::Steer | PanelMode::ConfirmPause) {
             self.previous
         } else {
             self.mode
         };
+        let rows = tree.rows_in_order();
+        let mut lines = vec![Line::styled(
+            panel_header(tree, header, &self.key.session_id, width),
+            style.header,
+        )];
+        // A short terminal keeps its rows and gives up the extra header lines.
+        let tall = height >= 12;
+        if tall {
+            lines.push(Line::styled(
+                cut_to_width(
+                    &status_line(header.spawning, shared_model(tree, &rows)),
+                    width,
+                ),
+                style.hint,
+            ));
+        }
+        let list = (mode == PanelMode::List && !rows.is_empty())
+            .then(|| ListLayout::new(tree, &rows, width, now));
+        if let Some(list) = &list {
+            if tall && let Some(shared) = &list.caption {
+                lines.push(Line::styled(
+                    cut_to_width(&format!("Task: {shared}"), width),
+                    style.hint,
+                ));
+            }
+            if height >= 8 {
+                lines.push(Line::styled(list.column_header(), style.hint));
+            }
+        }
+        let mut budget = usize::from(height).saturating_sub(lines.len() + 2);
+        self.viewport.set(budget);
         let mut body = match mode {
             PanelMode::Detail => self
                 .selected(tree)
@@ -418,28 +470,20 @@ impl AgentsPanel {
                 .selected(tree)
                 .map(|r| tail_lines(r, tail, width))
                 .unwrap_or_default(),
-            _ => {
-                let rows = tree.rows_in_order();
-                if rows.is_empty() {
-                    vec![Line::from(
-                        "No subagents in this session yet. They appear when the agent uses delegate_task.",
-                    )]
-                } else {
+            _ => match &list {
+                None => vec![Line::from(
+                    "No subagents in this session yet. They appear when the agent uses delegate_task.",
+                )],
+                Some(list) => {
+                    let current = self.cursor.min(rows.len() - 1);
                     rows.iter()
                         .enumerate()
-                        .map(|(i, e)| {
-                            list_row(
-                                tree.row(e.index),
-                                e.depth,
-                                i == self.cursor.min(rows.len() - 1),
-                                width,
-                                now,
-                                style,
-                            )
+                        .map(|(i, entry)| {
+                            list.row(i, entry, tree.row(entry.index), i == current, width, style)
                         })
                         .collect()
                 }
-            }
+            },
         };
         if mode == PanelMode::Tail && !body.is_empty() && budget > 0 {
             lines.push(body.remove(0));
@@ -484,7 +528,7 @@ impl AgentsPanel {
         if let Some(flash) = flash {
             lines.push(flash);
         }
-        lines.push(Line::styled(self.footer(), style.hint));
+        lines.push(Line::styled(self.footer_for(width), style.hint));
         lines
             .into_iter()
             .take(usize::from(height))
@@ -508,30 +552,17 @@ fn panel_header(tree: &SubagentTree, header: &PanelHeader, fallback: &str, width
         &header.title
     };
     let left = format!("Subagents · {}", literal(title));
-    let (state, caps) = match header.spawning {
-        Spawning::Unknown => ("spawning state unknown", None),
-        Spawning::On(c) => ("spawning on", c),
-        Spawning::Paused(c) => ("spawning paused for all sessions", c),
-    };
-    let base = format!(
-        "{} running · {} finished · {state}",
-        counts.live.saturating_sub(counts.queued),
-        counts.terminal
-    );
-    let full = caps
-        .map(|c| {
-            format!(
-                "{base} · depth ≤{} · ≤{} at once",
-                c.max_spawn_depth, c.max_concurrent_children
-            )
-        })
-        .unwrap_or_else(|| base.clone());
+    let mut right = format!("{} running", counts.live.saturating_sub(counts.queued));
+    for (count, word) in [
+        (counts.queued, "queued"),
+        (counts.terminal, "finished"),
+        (counts.failed, "failed"),
+    ] {
+        if count > 0 {
+            right.push_str(&format!(" · {count} {word}"));
+        }
+    }
     let w = usize::from(width);
-    let right = if left.width() + 2 + full.width() <= w {
-        full
-    } else {
-        base
-    };
     if right.width() + 2 >= w {
         return cut_to_width(&right, width);
     }
@@ -540,6 +571,43 @@ fn panel_header(tree: &SubagentTree, header: &PanelHeader, fallback: &str, width
         "{left}{}{right}",
         " ".repeat(w - left.width() - right.width())
     )
+}
+/// The model every row uses, when there is one.
+fn shared_model(tree: &SubagentTree, rows: &[TreeRow]) -> Option<String> {
+    let first = model_name(tree.row(rows.first()?.index));
+    rows.iter()
+        .all(|entry| model_name(tree.row(entry.index)) == first)
+        .then_some(first)
+        .filter(|model| !model.is_empty())
+}
+fn model_name(row: &SubagentRow) -> String {
+    literal(
+        row.model
+            .as_deref()
+            .unwrap_or_default()
+            .rsplit('/')
+            .next()
+            .unwrap_or_default(),
+    )
+}
+/// The second header line: what spawning allows, plus the model when all rows use one.
+fn status_line(spawning: Spawning, model: Option<String>) -> String {
+    let (state, caps) = match spawning {
+        Spawning::Unknown => ("Spawning state unknown", None),
+        Spawning::On(c) => ("Spawning on", c),
+        Spawning::Paused(c) => ("Spawning paused for all sessions", c),
+    };
+    let mut text = state.to_owned();
+    if let Some(c) = caps {
+        text.push_str(&format!(
+            " · up to {} at once · max nesting {}",
+            c.max_concurrent_children, c.max_spawn_depth
+        ));
+    }
+    if let Some(model) = model {
+        text.push_str(&format!(" · model {model}"));
+    }
+    text
 }
 fn elapsed(row: &SubagentRow, now: Clock) -> String {
     if row.state.is_terminal() {
@@ -564,63 +632,198 @@ fn tools(row: &SubagentRow) -> String {
         .map(|n| format!("{n} {}", if n == 1 { "tool" } else { "tools" }))
         .unwrap_or_default()
 }
-fn list_row(
-    row: &SubagentRow,
-    depth: u8,
-    selected: bool,
-    width: u16,
-    now: Clock,
-    style: &SubagentStyle,
-) -> Line<'static> {
-    let prefix = format!(
-        "{}{}{} ",
-        if selected { "▸ " } else { "  " },
-        " ".repeat(2 * usize::from(depth.min(8))),
-        row.state.glyph()
-    );
-    let prefix_w = prefix.width() as u16;
-    let goal_w = width.saturating_sub(prefix_w + 75);
-    let goal = literal(&row.goal);
-    let elapsed = elapsed(row, now);
-    let text = if width >= 100 && goal_w >= 10 {
-        let model = row
-            .model
-            .as_deref()
-            .unwrap_or_default()
-            .rsplit('/')
-            .next()
-            .unwrap_or_default();
-        format!(
-            "{prefix}{}  {}  {elapsed:>7}  {}  {}",
-            pad(&goal, goal_w),
-            pad(&literal(model), 24),
-            pad(&tools(row), 8),
-            cut_to_width(&activity(row), 28)
-        )
-    } else {
-        format!(
-            "{prefix}{}  {elapsed:>7}",
-            cut_to_width(&goal, width.saturating_sub(prefix_w + 9))
-        )
-    };
-    let mut line = styled_row(
-        text.trim_end().to_owned(),
-        row.state.glyph(),
-        row.state,
-        width,
-        style,
-        selected,
-    );
-    if width >= 100 && goal_w >= 10 {
-        let suffix = cut_to_width(&activity(row), 28);
+/// Narrow terminals drop the model, tool count and activity columns.
+const WIDE_LIST: u16 = 100;
+/// Least columns the activity cell keeps when the task column grows.
+const MIN_ACTIVITY: usize = 20;
+
+fn right_align(text: &str, width: usize) -> String {
+    format!("{}{text}", " ".repeat(width.saturating_sub(text.width())))
+}
+
+/// Column sizes and cell text for the list, worked out from the rows in view.
+struct ListLayout {
+    labels: Vec<String>,
+    caption: Option<String>,
+    /// Columns from after the marker to the end of the task label.
+    task_w: usize,
+    /// The model column, absent when every row uses one model or the terminal is narrow.
+    models: Option<(Vec<String>, usize)>,
+    times: Vec<String>,
+    time_w: usize,
+    /// The tool count column, absent on a narrow terminal.
+    tools: Option<(Vec<String>, usize)>,
+}
+impl ListLayout {
+    fn new(tree: &SubagentTree, rows: &[TreeRow], width: u16, now: Clock) -> Self {
+        let width = usize::from(width);
+        let wide = width >= usize::from(WIDE_LIST);
+        let goals: Vec<String> = rows
+            .iter()
+            .map(|e| literal(&tree.row(e.index).goal))
+            .collect();
+        let goals: Vec<&str> = goals.iter().map(String::as_str).collect();
+        let found = goal_labels(&goals);
+        let times: Vec<String> = rows
+            .iter()
+            .map(|e| elapsed(tree.row(e.index), now))
+            .collect();
+        let time_w = times
+            .iter()
+            .map(|t| t.width())
+            .max()
+            .unwrap_or(0)
+            .max("Time".width());
+        let names: Vec<String> = rows.iter().map(|e| model_name(tree.row(e.index))).collect();
+        let models = (wide && names.iter().any(|name| name != &names[0])).then(|| {
+            let w = names
+                .iter()
+                .map(|n| n.width())
+                .max()
+                .unwrap_or(0)
+                .max("Model".width());
+            (names, w.min(24))
+        });
+        let tools = wide.then(|| {
+            let counts: Vec<String> = rows
+                .iter()
+                .map(|e| {
+                    tree.row(e.index)
+                        .tool_count
+                        .map(|n| n.to_string())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let w = counts
+                .iter()
+                .map(|c| c.width())
+                .max()
+                .unwrap_or(0)
+                .max("Tools".width());
+            (counts, w)
+        });
+        let mut fixed = 2 + 2 + time_w;
+        if let Some((_, w)) = &models {
+            fixed += 2 + w;
+        }
+        if let Some((_, w)) = &tools {
+            fixed += 2 + w;
+        }
+        if wide {
+            fixed += 2 + MIN_ACTIVITY;
+        }
+        let room = width.saturating_sub(fixed);
+        let limit = if wide {
+            room.min((width * 2 / 5).max(14))
+        } else {
+            room
+        };
+        let natural = rows
+            .iter()
+            .zip(&found.labels)
+            .map(|(e, label)| 2 * usize::from(e.depth.min(8)) + 2 + label.width())
+            .max()
+            .unwrap_or(0);
+        Self {
+            labels: found.labels,
+            caption: found.shared,
+            task_w: natural.min(limit.max(14)),
+            models,
+            times,
+            time_w,
+            tools,
+        }
+    }
+    /// Dim column titles lined up over the cells.
+    fn column_header(&self) -> String {
+        let mut text = format!("  {}", pad("  Task", self.task_w as u16));
+        if let Some((_, w)) = &self.models {
+            text.push_str(&format!("  {}", pad("Model", *w as u16)));
+        }
+        text.push_str(&format!("  {}", right_align("Time", self.time_w)));
+        if let Some((_, w)) = &self.tools {
+            text.push_str(&format!("  {}", right_align("Tools", *w)));
+            text.push_str("  Activity");
+        }
+        text.trim_end().to_owned()
+    }
+    fn row(
+        &self,
+        at: usize,
+        entry: &TreeRow,
+        row: &SubagentRow,
+        selected: bool,
+        width: u16,
+        style: &SubagentStyle,
+    ) -> Line<'static> {
+        let indent = 2 * usize::from(entry.depth.min(8));
+        let base = if selected {
+            Style::new().reversed().bold()
+        } else {
+            Style::new()
+        };
         let dim = if selected {
             style.hint.reversed()
         } else {
             style.hint
         };
-        dim_suffix(&mut line, suffix.trim_end(), dim);
+        let label = pad(
+            &self.labels[at],
+            self.task_w
+                .saturating_sub(indent + 2)
+                .min(usize::from(u16::MAX)) as u16,
+        );
+        // The marker, indent and status glyph keep their own look; the bar starts after the glyph.
+        let mut cells = vec![(label, base)];
+        if let Some((names, w)) = &self.models {
+            cells.push((format!("  {}", pad(&names[at], *w as u16)), dim));
+        }
+        cells.push((
+            format!("  {}", right_align(&self.times[at], self.time_w)),
+            base,
+        ));
+        if let Some((counts, w)) = &self.tools {
+            cells.push((format!("  {}", right_align(&counts[at], *w)), base));
+        }
+        let used: usize =
+            2 + indent + 2 + cells.iter().map(|(text, _)| text.width()).sum::<usize>();
+        let mut spans = vec![
+            Span::raw(format!(
+                "{}{}",
+                if selected { "▸ " } else { "  " },
+                " ".repeat(indent)
+            )),
+            Span::styled(row.state.glyph().to_string(), style.state(row.state)),
+            Span::styled(" ", base),
+        ];
+        if self.tools.is_some() {
+            let room = usize::from(width).saturating_sub(used + 2);
+            let text = cut_to_width(&activity(row), room.min(usize::from(u16::MAX)) as u16);
+            cells.push((format!("  {text}"), dim));
+        }
+        spans.extend(
+            cells
+                .into_iter()
+                .map(|(text, style)| Span::styled(text, style)),
+        );
+        if selected {
+            let gap = usize::from(width).saturating_sub(spans.iter().map(Span::width).sum());
+            if gap > 0 {
+                spans.push(Span::styled(" ".repeat(gap), Style::new().reversed()));
+            }
+        } else {
+            while let Some(last) = spans.last_mut() {
+                let kept = last.content.trim_end().len();
+                if kept == 0 {
+                    spans.pop();
+                } else {
+                    last.content = last.content[..kept].to_owned().into();
+                    break;
+                }
+            }
+        }
+        Line::from(spans)
     }
-    line
 }
 fn status(state: RowState) -> &'static str {
     match state {
@@ -732,7 +935,12 @@ fn detail(row: &SubagentRow, width: u16, now: Clock) -> Vec<Line<'static>> {
     }
     if !row.activity.is_empty() {
         fields.push("Activity:".into());
-        fields.extend(row.activity.iter().map(|a| literal(&a.text)));
+        fields.extend(
+            row.activity
+                .iter()
+                .map(clean_activity)
+                .filter(|a| !a.is_empty()),
+        );
     }
     fields.push(format!(
         "Steering: {}",
@@ -802,12 +1010,25 @@ pub fn batch_block_lines(
         header.push_str(&format!(" · {}", format_elapsed(duration)));
     }
     let mut lines = vec![Line::styled(cut_to_width(&header, width), style.header)];
-    for (row, depth) in batch.rows.iter().take(20) {
+    let goals: Vec<String> = batch
+        .rows
+        .iter()
+        .take(20)
+        .map(|(r, _)| literal(&r.goal))
+        .collect();
+    let goals: Vec<&str> = goals.iter().map(String::as_str).collect();
+    let found = goal_labels(&goals);
+    if let Some(shared) = &found.shared {
+        lines.push(Line::styled(
+            cut_to_width(&format!("  Task: {shared}"), width),
+            style.hint,
+        ));
+    }
+    for ((row, depth), label) in batch.rows.iter().take(20).zip(&found.labels) {
         let mut text = format!(
-            "{}{} {}",
+            "{}{} {label}",
             " ".repeat(2 + 2 * usize::from(*depth)),
             row.state.glyph(),
-            literal(&row.goal)
         );
         if let Some(d) = row.duration_s {
             text.push_str(&format!(" · {}", format_elapsed(d)));
@@ -815,16 +1036,11 @@ pub fn batch_block_lines(
         if row.tool_count.is_some() {
             text.push_str(&format!(" · {}", tools(row)));
         }
-        let summary = row
-            .summary
-            .as_deref()
-            .unwrap_or_default()
-            .lines()
-            .next()
-            .unwrap_or_default();
+        let preview = literal(&outcome_preview(row.summary.as_deref().unwrap_or_default()));
         let outcome = match row.state {
-            RowState::Completed => literal(summary),
-            RowState::Failed(_) => format!("{}: {}", status(row.state), literal(summary)),
+            RowState::Completed => preview,
+            RowState::Failed(_) if preview.is_empty() => status(row.state).into(),
+            RowState::Failed(_) => format!("{}: {preview}", status(row.state)),
             _ => status(row.state).into(),
         };
         if !outcome.is_empty() {
@@ -846,6 +1062,117 @@ pub fn batch_block_lines(
         ));
     }
     lines
+}
+/// JSON keys that say how a child's task went, most telling first.
+const VERDICT_KEYS: [&str; 5] = ["verdict", "status", "result", "outcome", "summary"];
+/// The short result to show for a finished child.
+///
+/// Hermes cuts a summary to 500 characters, so a JSON reply arrives as broken JSON and its
+/// first line is just `{`. A recognised key gives `verdict: pass`; other JSON says so; plain
+/// text gives its first sentence.
+fn outcome_preview(summary: &str) -> String {
+    let trimmed = summary.trim_start();
+    let body = match trimmed.strip_prefix("```") {
+        Some(fence) => fence
+            .split_once('\n')
+            .map_or("", |(_, rest)| rest)
+            .trim_start(),
+        None => trimmed,
+    };
+    if looks_like_json(body) {
+        return json_outcome(body).unwrap_or_else(|| "JSON result".to_owned());
+    }
+    first_sentence(body)
+}
+/// Whether text opens like a JSON object or array, not a bracketed tag such as `[PASS]`.
+fn looks_like_json(body: &str) -> bool {
+    let Some(first) = body.chars().next() else {
+        return false;
+    };
+    let after = body[first.len_utf8()..].trim_start();
+    match first {
+        '{' => after.is_empty() || after.starts_with(['"', '}']),
+        '[' => {
+            after.is_empty()
+                || after.starts_with(['{', '[', '"', ']', '-'])
+                || after.starts_with(|c: char| c.is_ascii_digit())
+                || ["true", "false", "null"].iter().any(|word| {
+                    after.starts_with(word)
+                        && !after[word.len()..].starts_with(char::is_alphanumeric)
+                })
+        }
+        _ => false,
+    }
+}
+fn first_sentence(text: &str) -> String {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default();
+    let end = line
+        .char_indices()
+        .find(|&(at, c)| {
+            matches!(c, '.' | '!' | '?')
+                && line[at + c.len_utf8()..].starts_with(char::is_whitespace)
+        })
+        .map_or(line.len(), |(at, c)| at + c.len_utf8());
+    line[..end].to_owned()
+}
+/// Read the first recognised top-level key of a JSON object that may be cut short.
+fn json_outcome(body: &str) -> Option<String> {
+    if !body.starts_with('{') {
+        return None;
+    }
+    let keys = top_level_keys(body);
+    VERDICT_KEYS.into_iter().find_map(|wanted| {
+        let (_, at) = keys.iter().find(|(key, _)| key == wanted)?;
+        let value = serde_json::Deserializer::from_str(&body[*at..])
+            .into_iter::<serde_json::Value>()
+            .next()?
+            .ok()?;
+        let text = match value {
+            serde_json::Value::String(text) => first_sentence(&text),
+            serde_json::Value::Number(number) => number.to_string(),
+            serde_json::Value::Bool(flag) => flag.to_string(),
+            _ => return None,
+        };
+        (!text.is_empty()).then(|| format!("{wanted}: {text}"))
+    })
+}
+/// Each key of the outermost object with the offset just after its colon.
+fn top_level_keys(text: &str) -> Vec<(String, usize)> {
+    let mut keys = Vec::new();
+    let mut depth = 0usize;
+    let mut chars = text.char_indices();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '{' | '[' => depth += 1,
+            '}' | ']' => depth = depth.saturating_sub(1),
+            '"' => {
+                let mut escaped = false;
+                let mut end = None;
+                for (to, d) in chars.by_ref() {
+                    if escaped {
+                        escaped = false;
+                    } else if d == '\\' {
+                        escaped = true;
+                    } else if d == '"' {
+                        end = Some(to);
+                        break;
+                    }
+                }
+                let Some(end) = end else { break };
+                if depth == 1
+                    && let Some(rest) = text[end + 1..].trim_start().strip_prefix(':')
+                {
+                    keys.push((text[at + 1..end].to_owned(), text.len() - rest.len()));
+                }
+            }
+            _ => {}
+        }
+    }
+    keys
 }
 pub fn format_elapsed(seconds: f64) -> String {
     let s = if seconds.is_finite() {
@@ -964,5 +1291,81 @@ mod tests {
         panel.set_keymap(&map);
         assert!(panel.footer().contains("ctrl+x stop"));
         assert!(!panel.footer().contains("steer"));
+    }
+
+    #[test]
+    fn outcome_preview_reads_verdict_from_truncated_json() {
+        let cut = "{\n  \"item\": \"alpha\",\n  \"verdict\": \"pass\",\n  \"evidence\": [\"cut mid";
+        assert_eq!(outcome_preview(cut), "verdict: pass");
+        let fenced = "```json\n{\"verdict\": \"fail\", \"why\": \"x";
+        assert_eq!(outcome_preview(fenced), "verdict: fail");
+    }
+
+    #[test]
+    fn outcome_preview_prefers_keys_in_order_and_ignores_nested_ones() {
+        let both = r#"{"status": "ok", "verdict": "pass"}"#;
+        assert_eq!(outcome_preview(both), "verdict: pass");
+        let status = r#"{"result": "done", "status": "ok"}"#;
+        assert_eq!(outcome_preview(status), "status: ok");
+        let nested = r#"{"detail": {"verdict": "pass"}, "notes": "cut"#;
+        assert_eq!(outcome_preview(nested), "JSON result");
+        let number = r#"{"result": 3, "x": "#;
+        assert_eq!(outcome_preview(number), "result: 3");
+    }
+
+    #[test]
+    fn outcome_preview_without_known_key_says_json_result() {
+        assert_eq!(
+            outcome_preview("{\n  \"problem_id\": \"p-vs-np\",\n  \"notes\": \"cut"),
+            "JSON result"
+        );
+        assert_eq!(outcome_preview("{"), "JSON result");
+        assert_eq!(outcome_preview("[1, 2"), "JSON result");
+        assert_eq!(
+            outcome_preview(r#"{"verdict": "cut mid wor"#),
+            "JSON result"
+        );
+    }
+
+    #[test]
+    fn outcome_preview_takes_first_sentence() {
+        assert_eq!(
+            outcome_preview("Found the file. Then I read it.\nSecond line"),
+            "Found the file."
+        );
+        assert_eq!(outcome_preview("\n\nRead it twice"), "Read it twice");
+        assert_eq!(
+            outcome_preview("Version 1.2 works fine"),
+            "Version 1.2 works fine"
+        );
+        assert_eq!(outcome_preview(""), "");
+    }
+
+    #[test]
+    fn outcome_preview_keeps_plain_text_that_starts_with_a_bracket() {
+        assert_eq!(
+            outcome_preview("[PASS] all green. More"),
+            "[PASS] all green."
+        );
+        assert_eq!(
+            outcome_preview("[README](README.md) updated with the new flags."),
+            "[README](README.md) updated with the new flags."
+        );
+        assert_eq!(
+            outcome_preview("[todo] wire it up. Later"),
+            "[todo] wire it up."
+        );
+        assert_eq!(outcome_preview("{note} kept. Next"), "{note} kept.");
+        assert_eq!(outcome_preview("[true, false]"), "JSON result");
+        assert_eq!(outcome_preview("[ {\"a\": 1}"), "JSON result");
+    }
+
+    #[test]
+    fn footer_groups_hints() {
+        let panel = panel();
+        assert_eq!(
+            panel.footer(),
+            "enter tail · d detail · o new pane   e steer · x stop · X stop all · p pause spawns   tab session · esc close"
+        );
     }
 }

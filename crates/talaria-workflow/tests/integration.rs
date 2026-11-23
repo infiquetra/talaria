@@ -28,8 +28,12 @@ mod accounting;
 mod agent_call;
 #[path = "integration/budget.rs"]
 mod budget;
+#[path = "integration/builtins_budget.rs"]
+mod builtins_budget;
 #[path = "integration/builtins_fix_failing_tests.rs"]
 mod builtins_fix_failing_tests;
+#[path = "integration/builtins_hivecode.rs"]
+mod builtins_hivecode;
 #[path = "integration/builtins_install.rs"]
 mod builtins_install;
 #[path = "integration/builtins_invariants.rs"]
@@ -42,8 +46,6 @@ mod builtins_resume;
 mod builtins_review_branch;
 #[path = "integration/builtins_scripts.rs"]
 mod builtins_scripts;
-#[path = "integration/builtins_ultracode.rs"]
-mod builtins_ultracode;
 #[path = "integration/call_id.rs"]
 mod call_id;
 #[path = "integration/check.rs"]
@@ -52,6 +54,8 @@ mod check;
 mod combinators;
 #[path = "integration/crate_boundaries.rs"]
 mod crate_boundaries;
+#[path = "integration/cut_short.rs"]
+mod cut_short;
 #[path = "integration/dry_run.rs"]
 mod dry_run;
 #[path = "integration/estimate.rs"]
@@ -112,8 +116,8 @@ mod journal_wire;
 mod kanban_compile;
 #[path = "integration/launch.rs"]
 mod launch;
-#[path = "integration/live_ultracode.rs"]
-mod live_ultracode;
+#[path = "integration/live_hivecode.rs"]
+mod live_hivecode;
 #[path = "integration/meta_parse.rs"]
 mod meta_parse;
 #[path = "integration/mock.rs"]
@@ -122,6 +126,8 @@ mod mock;
 mod nesting;
 #[path = "integration/outcome.rs"]
 mod outcome;
+#[path = "integration/overflow_restart.rs"]
+mod overflow_restart;
 #[path = "integration/price.rs"]
 mod price;
 #[path = "integration/privacy_scan.rs"]
@@ -160,6 +166,8 @@ mod sandbox;
 mod scheduler;
 #[path = "integration/scheduler_composed.rs"]
 mod scheduler_composed;
+#[path = "integration/script_check.rs"]
+mod script_check;
 #[path = "integration/skill_files.rs"]
 mod skill_files;
 #[path = "integration/skill_install.rs"]

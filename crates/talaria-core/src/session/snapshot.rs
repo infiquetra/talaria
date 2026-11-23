@@ -3,6 +3,7 @@
 use hermes_contract::schemas::{CanonicalPendingPromptKind, CanonicalSnapshot};
 use serde_json::Value;
 
+use super::injected::draw_user_row;
 use super::{
     AssistantCell, Cell, NoticeKind, PromptCell, PromptKey, PromptKind, PromptState, ReasoningCell,
     ReplayCursor, SessionId, SessionState, TodoState, ToolCell, ToolStatus, TurnState,
@@ -31,6 +32,7 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
         .first()
         .and_then(|row| row.archived_truncated)
         .unwrap_or(false);
+    state.resumed_running = snapshot.running;
     state.turn = if snapshot.running {
         TurnState::Running
     } else {
@@ -59,9 +61,19 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
                             None,
                         );
                     } else {
-                        let text = crate::automation::fold_user_text(&text)
-                            .map_or(text, |folded| folded.display);
-                        state.user(text);
+                        let metadata = |key: &str| {
+                            row.display_metadata
+                                .as_ref()
+                                .and_then(|metadata| metadata.get(key))
+                                .and_then(Value::as_str)
+                        };
+                        draw_user_row(
+                            &mut state,
+                            row.display_kind.as_deref(),
+                            metadata("display_text"),
+                            metadata("notification_category"),
+                            &text,
+                        );
                     }
                 }
             }
@@ -71,6 +83,8 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
                         id: state.next_id(),
                         text,
                         sealed: true,
+                        latest_step: false,
+                        no_reply: false,
                     }));
                 }
                 if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
@@ -112,6 +126,13 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
             _ => {}
         }
     }
+    // A turn still running has not ended in its reasoning yet.
+    let finished = if snapshot.running {
+        state.cells.iter().rposition(Cell::starts_turn).unwrap_or(0)
+    } else {
+        state.cells.len()
+    };
+    super::cell::mark_unanswered_reasoning(&mut state.cells[..finished]);
     state.turn_start = state.cells.len();
     for prompt in snapshot.prompts {
         let cell = PromptCell {

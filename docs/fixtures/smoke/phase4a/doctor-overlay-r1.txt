@@ -1,10 +1,10 @@
 # recorded
 Doctor: 7 ok, 0 warnings, 0 failures
-ok    Talaria         Talaria 0.7.0-dev, built for Hermes PIN_TAG (PIN_COMMIT8)
+ok    Talaria         Talaria 0.7.0-dev, tested against Hermes PIN_TAG (PIN_COMMIT8)
 ok    Gateway         ready · instance b128a2f2 · epoch 3 · started by hand
-ok    Hermes version  PIN_VERSION (PIN_COMMIT8), the release Talaria was built for
+ok    Hermes version  Hermes PIN_VERSION; this Talaria was tested against PIN_TAG
         running: PIN_VERSION at PIN_COMMIT8
-        built for: PIN_TAG (PIN_COMMIT8)
+        tested against: PIN_TAG (PIN_COMMIT8)
 ok    Capabilities    all 5 capabilities Talaria needs are offered
 ok    Profiles        fixture is served; the gateway serves 2 profiles
 ok    Attach          attached to fixture in 11 ms

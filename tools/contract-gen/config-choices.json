@@ -1,0 +1,1437 @@
+{
+ "hermes": {
+  "tag": "v0.23.1",
+  "commit": "3b421578588243f920886e6fe79a6faa87ea026e"
+ },
+ "choices": [
+  {
+   "key": "agent.agent_cache.memory_high_mb",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "off"
+   ]
+  },
+  {
+   "key": "agent.coding_context",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "focus",
+    "on",
+    "off"
+   ]
+  },
+  {
+   "key": "agent.disabled_toolsets",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": []
+  },
+  {
+   "key": "agent.execution_guidance",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "true",
+    "false"
+   ]
+  },
+  {
+   "key": "agent.image_input_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "native",
+    "text"
+   ]
+  },
+  {
+   "key": "agent.intent_ack_continuation",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "true",
+    "false"
+   ]
+  },
+  {
+   "key": "agent.service_tier",
+   "kind": "constant",
+   "file": "agent/fast_mode.py",
+   "name": "SERVICE_TIER_WORDS",
+   "select": "keys",
+   "match": "subset",
+   "values": [
+    "fast",
+    "priority",
+    "on",
+    "ultrafast",
+    "ultra",
+    "auto",
+    "cold"
+   ]
+  },
+  {
+   "key": "agent.text_verbosity",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "low",
+    "medium",
+    "high"
+   ]
+  },
+  {
+   "key": "agent.tool_use_enforcement",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "true",
+    "false"
+   ]
+  },
+  {
+   "key": "approvals.approvers",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "*"
+   ]
+  },
+  {
+   "key": "approvals.cron_mode",
+   "kind": "comment",
+   "anchor": "cron_mode / single_query_mode / unattended_mode: deny | approve",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "deny",
+    "approve"
+   ]
+  },
+  {
+   "key": "approvals.mode",
+   "kind": "constant",
+   "file": "hermes_cli/approval_mode.py",
+   "name": "VALID_APPROVAL_MODES",
+   "values": [
+    "manual",
+    "smart",
+    "off"
+   ]
+  },
+  {
+   "key": "approvals.single_query_mode",
+   "kind": "comment",
+   "anchor": "cron_mode / single_query_mode / unattended_mode: deny | approve",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "deny",
+    "approve"
+   ]
+  },
+  {
+   "key": "approvals.unattended_mode",
+   "kind": "comment",
+   "anchor": "cron_mode / single_query_mode / unattended_mode: deny | approve",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "deny",
+    "approve"
+   ]
+  },
+  {
+   "key": "auth.codex_login_flow",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "device_code",
+    "browser"
+   ]
+  },
+  {
+   "key": "bedrock.guardrail.stream_processing_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "async",
+    "sync"
+   ]
+  },
+  {
+   "key": "bedrock.guardrail.trace",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "disabled",
+    "enabled",
+    "enabled_full"
+   ]
+  },
+  {
+   "key": "bot_desktop.placement",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "terminal",
+    "gateway"
+   ]
+  },
+  {
+   "key": "browser.dialog_policy",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "must_respond",
+    "auto_dismiss",
+    "auto_accept"
+   ]
+  },
+  {
+   "key": "browser.engine",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "lightpanda"
+   ]
+  },
+  {
+   "key": "code_execution.mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "project",
+    "strict"
+   ]
+  },
+  {
+   "key": "compression.codex_app_server_auto",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "native",
+    "hermes",
+    "off"
+   ]
+  },
+  {
+   "key": "compression.tail_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "lean",
+    "legacy"
+   ]
+  },
+  {
+   "key": "computer_use.capture_after_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "som",
+    "ax",
+    "vision"
+   ]
+  },
+  {
+   "key": "computer_use.no_overlay",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "true",
+    "false"
+   ]
+  },
+  {
+   "key": "computer_use.permission_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "standard",
+    "bounded"
+   ]
+  },
+  {
+   "key": "context.engine",
+   "kind": "comment",
+   "anchor": "\"compressor\" =",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "compressor"
+   ]
+  },
+  {
+   "key": "dashboard.theme",
+   "kind": "constant",
+   "file": "hermes_cli/web_server_dashboard.py",
+   "name": "_BUILTIN_DASHBOARD_THEMES",
+   "select": "names",
+   "values": [
+    "default",
+    "default-large",
+    "nous-blue",
+    "midnight",
+    "ember",
+    "mono",
+    "cyberpunk",
+    "rose"
+   ]
+  },
+  {
+   "key": "database.journal_mode",
+   "kind": "function",
+   "file": "hermes_state_wal.py",
+   "function": "resolve_journal_mode",
+   "values": [
+    "wal",
+    "delete"
+   ]
+  },
+  {
+   "key": "delegation.gateway_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "inline",
+    "background",
+    "auto"
+   ]
+  },
+  {
+   "key": "desktop.disable_gpu",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "true",
+    "false"
+   ]
+  },
+  {
+   "key": "desktop.ozone_platform_hint",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "x11",
+    "wayland"
+   ]
+  },
+  {
+   "key": "desktop.password_store",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "gnome-libsecret",
+    "kwallet",
+    "kwallet5",
+    "kwallet6",
+    "basic"
+   ]
+  },
+  {
+   "key": "discord.server_actions",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "list_guilds",
+    "server_info",
+    "list_channels",
+    "channel_info",
+    "list_roles",
+    "member_info",
+    "search_members",
+    "fetch_messages",
+    "list_pins",
+    "pin_message",
+    "unpin_message",
+    "create_thread",
+    "add_role",
+    "remove_role"
+   ]
+  },
+  {
+   "key": "display.background_process_notifications",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "concise",
+    "all",
+    "result",
+    "error",
+    "off"
+   ]
+  },
+  {
+   "key": "display.cli_layout",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "modern",
+    "classic"
+   ]
+  },
+  {
+   "key": "display.copy_shortcut",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "ctrl_c",
+    "ctrl_shift_c",
+    "disabled"
+   ]
+  },
+  {
+   "key": "display.final_response_markdown",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "strip",
+    "render",
+    "raw"
+   ]
+  },
+  {
+   "key": "display.focus_saved_tool_progress",
+   "kind": "constant",
+   "file": "tui_gateway/agent_factory.py",
+   "name": "_TOOL_PROGRESS_MODES",
+   "values": [
+    "all",
+    "new",
+    "off",
+    "verbose"
+   ]
+  },
+  {
+   "key": "display.inline_images",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "kitty",
+    "iterm",
+    "unicode",
+    "off"
+   ]
+  },
+  {
+   "key": "display.interface",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "cli",
+    "tui"
+   ]
+  },
+  {
+   "key": "display.language",
+   "kind": "constant",
+   "file": "agent/i18n.py",
+   "name": "SUPPORTED_LANGUAGES",
+   "values": [
+    "en",
+    "zh",
+    "zh-hant",
+    "ja",
+    "de",
+    "es",
+    "fr",
+    "tr",
+    "uk",
+    "af",
+    "ko",
+    "it",
+    "ga",
+    "pt",
+    "ru",
+    "hu",
+    "ar"
+   ]
+  },
+  {
+   "key": "display.memory_notifications",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "on",
+    "off",
+    "verbose"
+   ]
+  },
+  {
+   "key": "display.personality",
+   "kind": "constant",
+   "file": "hermes_cli/personality.py",
+   "name": "BUILTIN_PERSONALITIES",
+   "select": "keys",
+   "values": [
+    "helpful",
+    "concise",
+    "technical",
+    "creative",
+    "teacher",
+    "kawaii",
+    "catgirl",
+    "pirate",
+    "shakespeare",
+    "surfer",
+    "noir",
+    "uwu",
+    "philosopher",
+    "hype"
+   ]
+  },
+  {
+   "key": "display.pet.render_mode",
+   "kind": "constant",
+   "file": "agent/pet/render.py",
+   "name": "RENDER_MODES",
+   "values": [
+    "auto",
+    "kitty",
+    "iterm",
+    "sixel",
+    "unicode",
+    "off"
+   ]
+  },
+  {
+   "key": "display.reasoning_style",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "code",
+    "blockquote",
+    "subtext"
+   ]
+  },
+  {
+   "key": "display.runtime_footer.fields",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "model",
+    "context_pct",
+    "cwd",
+    "latency",
+    "served_model"
+   ]
+  },
+  {
+   "key": "display.skin",
+   "kind": "constant",
+   "file": "hermes_cli/skin_engine.py",
+   "name": "_BUILTIN_SKINS",
+   "select": "keys",
+   "values": [
+    "default",
+    "ares",
+    "mono",
+    "slate",
+    "daylight",
+    "warm-lightmode",
+    "poseidon",
+    "sisyphus",
+    "charizard"
+   ]
+  },
+  {
+   "key": "display.status_bar.fields",
+   "kind": "comment",
+   "anchor": "CLI/TUI status bar fields.",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "model",
+    "context_detail",
+    "context_pct",
+    "cache_hit",
+    "latency",
+    "tps",
+    "compressions",
+    "bg_tasks",
+    "bg_processes",
+    "bg_subagents",
+    "goal",
+    "git_branch",
+    "duration",
+    "prompt_elapsed",
+    "idle_since",
+    "focus",
+    "yolo",
+    "stash",
+    "battery",
+    "title",
+    "total_tokens"
+   ]
+  },
+  {
+   "key": "display.tool_progress_grouping",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "accumulate",
+    "separate"
+   ]
+  },
+  {
+   "key": "display.tui_status_indicator",
+   "kind": "constant",
+   "file": "hermes_constants.py",
+   "name": "INDICATOR_STYLES",
+   "values": [
+    "ascii",
+    "emoji",
+    "kaomoji",
+    "unicode"
+   ]
+  },
+  {
+   "key": "gateway.service_install_choice",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "install",
+    "decline"
+   ]
+  },
+  {
+   "key": "human_delay.mode",
+   "kind": "function",
+   "file": "gateway/run_config_loaders.py",
+   "function": "_human_delay_from_config",
+   "values": [
+    "off",
+    "natural",
+    "custom"
+   ]
+  },
+  {
+   "key": "kanban.default_assignee",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": []
+  },
+  {
+   "key": "kanban.orchestrator_profile",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": []
+  },
+  {
+   "key": "local_runtime.backend",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "cuda",
+    "metal",
+    "vulkan",
+    "hip",
+    "cpu"
+   ]
+  },
+  {
+   "key": "lsp.install_strategy",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "manual",
+    "off"
+   ]
+  },
+  {
+   "key": "lsp.package_manager",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "npm",
+    "pnpm",
+    "yarn"
+   ]
+  },
+  {
+   "key": "lsp.wait_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "document",
+    "full"
+   ]
+  },
+  {
+   "key": "nous.anthropic_wire",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "chat",
+    "native",
+    "auto"
+   ]
+  },
+  {
+   "key": "onboarding.profile_build",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "ask",
+    "off"
+   ]
+  },
+  {
+   "key": "onboarding.run",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "true",
+    "false"
+   ]
+  },
+  {
+   "key": "plugins.isolation",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "in_process",
+    "host"
+   ]
+  },
+  {
+   "key": "prompt_caching.cache_ttl",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "5m",
+    "1h",
+    "auto",
+    "off"
+   ]
+  },
+  {
+   "key": "proxy.credential_source",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "env",
+    "bitwarden"
+   ]
+  },
+  {
+   "key": "security.approval.transport_fallback",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "deny",
+    "builtin"
+   ]
+  },
+  {
+   "key": "sessions.fts_optimize_notice",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "advise",
+    "require",
+    "off"
+   ]
+  },
+  {
+   "key": "skills.auto_load",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": []
+  },
+  {
+   "key": "streaming.transport",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "draft",
+    "edit",
+    "off"
+   ]
+  },
+  {
+   "key": "stt.elevenlabs.model_id",
+   "kind": "constant",
+   "file": "tools/transcription_common.py",
+   "name": "STT_MODEL_CATALOG",
+   "select": "elevenlabs",
+   "values": [
+    "scribe_v2",
+    "scribe_v1"
+   ]
+  },
+  {
+   "key": "stt.groq.model",
+   "kind": "constant",
+   "file": "tools/transcription_common.py",
+   "name": "STT_MODEL_CATALOG",
+   "select": "groq",
+   "values": [
+    "whisper-large-v3-turbo",
+    "whisper-large-v3"
+   ]
+  },
+  {
+   "key": "stt.local.model",
+   "kind": "constant",
+   "file": "tools/transcription_common.py",
+   "name": "STT_MODEL_CATALOG",
+   "select": "local",
+   "values": [
+    "base",
+    "tiny",
+    "small",
+    "medium",
+    "large-v3",
+    "turbo"
+   ]
+  },
+  {
+   "key": "stt.mistral.model",
+   "kind": "constant",
+   "file": "tools/transcription_common.py",
+   "name": "STT_MODEL_CATALOG",
+   "select": "mistral",
+   "values": [
+    "voxtral-mini-latest",
+    "voxtral-mini-2602"
+   ]
+  },
+  {
+   "key": "stt.openai.model",
+   "kind": "constant",
+   "file": "tools/transcription_common.py",
+   "name": "STT_MODEL_CATALOG",
+   "select": "openai",
+   "values": [
+    "whisper-1",
+    "gpt-4o-mini-transcribe",
+    "gpt-4o-transcribe",
+    "gpt-transcribe"
+   ]
+  },
+  {
+   "key": "stt.xai.model",
+   "kind": "constant",
+   "file": "tools/transcription_common.py",
+   "name": "STT_MODEL_CATALOG",
+   "select": "xai",
+   "values": [
+    "grok-voice-transcribe-2.0",
+    "grok-voice-transcribe-1.0"
+   ]
+  },
+  {
+   "key": "terminal.degraded_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "warn",
+    "fail"
+   ]
+  },
+  {
+   "key": "terminal.home_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "real",
+    "profile"
+   ]
+  },
+  {
+   "key": "terminal.modal_mode",
+   "kind": "constant",
+   "file": "tools/tool_backend_helpers.py",
+   "name": "_VALID_MODAL_MODES",
+   "values": [
+    "auto",
+    "direct",
+    "managed"
+   ]
+  },
+  {
+   "key": "terminal.vercel_runtime",
+   "kind": "constant",
+   "file": "tools/terminal_tool_backends.py",
+   "name": "_SUPPORTED_VERCEL_RUNTIMES",
+   "values": [
+    "node24",
+    "node22",
+    "python3.13"
+   ]
+  },
+  {
+   "key": "tools.tool_search.enabled",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "on",
+    "off"
+   ]
+  },
+  {
+   "key": "tools.tool_search.listing",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "on",
+    "off"
+   ]
+  },
+  {
+   "key": "toolsets",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "hermes-cli"
+   ]
+  },
+  {
+   "key": "tts.edge.voice",
+   "kind": "desktop",
+   "file": "apps/desktop/src/app/settings/constants.ts",
+   "values": [
+    "en-US-AriaNeural",
+    "en-US-JennyNeural",
+    "en-US-AndrewNeural",
+    "en-US-BrianNeural",
+    "en-US-GuyNeural",
+    "en-GB-SoniaNeural"
+   ]
+  },
+  {
+   "key": "tts.elevenlabs.model_id",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "eleven_multilingual_v2"
+   ]
+  },
+  {
+   "key": "tts.gemini.voice",
+   "kind": "desktop",
+   "file": "apps/desktop/src/app/settings/constants.ts",
+   "values": [
+    "Zephyr",
+    "Puck",
+    "Charon",
+    "Kore",
+    "Fenrir",
+    "Leda",
+    "Orus",
+    "Aoede",
+    "Callirrhoe",
+    "Autonoe",
+    "Enceladus",
+    "Iapetus",
+    "Umbriel",
+    "Algieba",
+    "Despina",
+    "Erinome",
+    "Algenib",
+    "Rasalgethi",
+    "Laomedeia",
+    "Achernar",
+    "Alnilam",
+    "Schedar",
+    "Gacrux",
+    "Pulcherrima",
+    "Achird",
+    "Zubenelgenubi",
+    "Vindemiatrix",
+    "Sadachbia",
+    "Sadaltager",
+    "Sulafat"
+   ]
+  },
+  {
+   "key": "tts.kittentts.model",
+   "kind": "desktop",
+   "file": "apps/desktop/src/app/settings/constants.ts",
+   "values": [
+    "KittenML/kitten-tts-nano-0.8-int8",
+    "KittenML/kitten-tts-micro-0.8-int8",
+    "KittenML/kitten-tts-mini-0.8-int8"
+   ]
+  },
+  {
+   "key": "tts.minimax.model",
+   "kind": "desktop",
+   "file": "apps/desktop/src/app/settings/constants.ts",
+   "values": [
+    "speech-02-hd",
+    "speech-02-turbo"
+   ]
+  },
+  {
+   "key": "tts.neutts.device",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "cpu",
+    "cuda",
+    "mps"
+   ]
+  },
+  {
+   "key": "tts.neutts.model",
+   "kind": "desktop",
+   "file": "apps/desktop/src/app/settings/constants.ts",
+   "values": [
+    "neuphonic/neutts-air-q4-gguf",
+    "neuphonic/neutts-air-q8-gguf",
+    "neuphonic/neutts-air"
+   ]
+  },
+  {
+   "key": "tts.openai.model",
+   "kind": "constant",
+   "file": "tools/tts_tool_openai.py",
+   "name": "MANAGED_OPENAI_TTS_MODELS",
+   "values": [
+    "gpt-4o-mini-tts",
+    "tts-1",
+    "tts-1-hd"
+   ]
+  },
+  {
+   "key": "tts.openai.voice",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "alloy",
+    "ash",
+    "ballad",
+    "cedar",
+    "coral",
+    "echo",
+    "fable",
+    "marin",
+    "nova",
+    "onyx",
+    "sage",
+    "shimmer",
+    "verse"
+   ]
+  },
+  {
+   "key": "tts.piper.voice",
+   "kind": "desktop",
+   "file": "apps/desktop/src/app/settings/constants.ts",
+   "values": [
+    "en_US-lessac-medium",
+    "en_US-amy-medium",
+    "en_US-ryan-high",
+    "en_GB-alan-medium"
+   ]
+  },
+  {
+   "key": "tts.provider",
+   "kind": "constant",
+   "file": "tools/tts_command_provider.py",
+   "name": "BUILTIN_TTS_PROVIDERS",
+   "values": [
+    "deepinfra",
+    "edge",
+    "elevenlabs",
+    "gemini",
+    "kittentts",
+    "minimax",
+    "mistral",
+    "neutts",
+    "openai",
+    "piper",
+    "xai"
+   ]
+  },
+  {
+   "key": "updates.non_interactive_local_changes",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "stash",
+    "discard"
+   ]
+  },
+  {
+   "key": "updates.parked_branch_strategy",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "switch",
+    "update_in_place"
+   ]
+  },
+  {
+   "key": "updates.pre_update_backup",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "quick",
+    "full",
+    "off"
+   ]
+  },
+  {
+   "key": "vault.key_storage",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "file",
+    "keychain"
+   ]
+  },
+  {
+   "key": "voice.gpt_live.voice",
+   "kind": "constant",
+   "file": "tools/voice_live.py",
+   "name": "GPT_LIVE_VOICES",
+   "values": [
+    "marin",
+    "cedar",
+    "quartz",
+    "ripple",
+    "vesper",
+    "willow",
+    "stone",
+    "gleam",
+    "meridian",
+    "bossa",
+    "tempo",
+    "beacon",
+    "delta",
+    "cinder"
+   ]
+  },
+  {
+   "key": "voice.submit_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "direct",
+    "draft"
+   ]
+  },
+  {
+   "key": "voice.voice_chat_mode",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "chained",
+    "gpt-live"
+   ]
+  },
+  {
+   "key": "wake_word.capture",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "local",
+    "client"
+   ]
+  },
+  {
+   "key": "wake_word.provider",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "openwakeword",
+    "sherpa",
+    "porcupine"
+   ]
+  },
+  {
+   "key": "wake_word.surface",
+   "kind": "comment",
+   "file": "hermes_cli/config_defaults.py",
+   "values": [
+    "auto",
+    "cli",
+    "tui",
+    "gui"
+   ]
+  },
+  {
+   "key": "web.search_backend",
+   "kind": "constant",
+   "file": "agent/web_search_registry.py",
+   "name": "_LEGACY_PREFERENCE",
+   "values": [
+    "firecrawl",
+    "parallel",
+    "tavily",
+    "perplexity",
+    "exa",
+    "searxng",
+    "brave-free",
+    "ddgs"
+   ]
+  },
+  {
+   "key": "x_search.reasoning_effort",
+   "kind": "constant",
+   "file": "tools/x_search_tool.py",
+   "name": "X_SEARCH_REASONING_EFFORTS",
+   "values": [
+    "low",
+    "medium",
+    "high",
+    "xhigh"
+   ]
+  }
+ ],
+ "schema": [
+  {
+   "key": "timezone",
+   "options": [],
+   "dynamic": true
+  },
+  {
+   "key": "memory.provider",
+   "options": [],
+   "dynamic": true
+  },
+  {
+   "key": "terminal.backend",
+   "options": [
+    "local",
+    "docker",
+    "ssh",
+    "modal",
+    "daytona",
+    "vercel_sandbox"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "terminal.vercel_runtime",
+   "options": [
+    "node24",
+    "node22",
+    "python3.13"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "terminal.modal_mode",
+   "options": [
+    "sandbox",
+    "function"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "proxy.credential_source",
+   "options": [
+    "env",
+    "bitwarden"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "wake_word.provider",
+   "options": [
+    "auto"
+   ],
+   "dynamic": true
+  },
+  {
+   "key": "tts.provider",
+   "options": [
+    "edge",
+    "elevenlabs",
+    "openai",
+    "xai",
+    "minimax",
+    "mistral",
+    "gemini",
+    "neutts",
+    "kittentts",
+    "piper"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "stt.provider",
+   "options": [
+    "local",
+    "groq",
+    "openai",
+    "mistral",
+    "xai",
+    "elevenlabs",
+    "deepinfra"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "stt.local.model",
+   "options": [],
+   "dynamic": true
+  },
+  {
+   "key": "stt.groq.model",
+   "options": [],
+   "dynamic": true
+  },
+  {
+   "key": "stt.openai.model",
+   "options": [],
+   "dynamic": true
+  },
+  {
+   "key": "stt.openai.streaming_model",
+   "options": [
+    "gpt-live-transcribe",
+    "gpt-transcribe",
+    "gpt-4o-transcribe",
+    "gpt-4o-mini-transcribe"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "stt.mistral.model",
+   "options": [],
+   "dynamic": true
+  },
+  {
+   "key": "stt.xai.model",
+   "options": [],
+   "dynamic": true
+  },
+  {
+   "key": "stt.elevenlabs.model_id",
+   "options": [],
+   "dynamic": true
+  },
+  {
+   "key": "display.skin",
+   "options": [
+    "default",
+    "ares",
+    "mono",
+    "slate"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "dashboard.theme",
+   "options": [
+    "default",
+    "midnight",
+    "ember",
+    "mono",
+    "cyberpunk",
+    "rose"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "display.resume_display",
+   "options": [
+    "minimal",
+    "full",
+    "off"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "display.busy_input_mode",
+   "options": [
+    "interrupt",
+    "queue",
+    "steer"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "approvals.mode",
+   "options": [
+    "manual",
+    "smart",
+    "off"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "context.engine",
+   "options": [
+    "default",
+    "custom"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "human_delay.mode",
+   "options": [
+    "off",
+    "typing",
+    "fixed"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "logging.level",
+   "options": [
+    "DEBUG",
+    "INFO",
+    "WARNING",
+    "ERROR"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "agent.service_tier",
+   "options": [
+    "",
+    "normal",
+    "fast",
+    "auto",
+    "cold"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "delegation.reasoning_effort",
+   "options": [
+    "",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra"
+   ],
+   "dynamic": false
+  },
+  {
+   "key": "updates.non_interactive_local_changes",
+   "options": [
+    "stash",
+    "discard"
+   ],
+   "dynamic": false
+  }
+ ]
+}

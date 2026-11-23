@@ -32,7 +32,7 @@ fn slash_lines_are_the_allowed_list() {
         .into_iter()
         .filter(|line| line.starts_with('/'))
         .collect();
-    assert_eq!(lines, ["/workflows", "/ultracode status", "/quit", "/quit"]);
+    assert_eq!(lines, ["/workflows", "/hivecode status", "/quit", "/quit"]);
 }
 
 #[test]

@@ -3,7 +3,7 @@
 use std::{
     fs,
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use talaria_workflow::{
     journal::{OnUnknown, Resolution},
     runner::{self, ResumeRequest, RunExit, RunRequest, RunnerEvent, SpendView, StopExit, execute},
+    tokens::tokens_text,
 };
 
 use crate::args::{neutralise, required_path, required_text};
@@ -30,15 +31,31 @@ pub struct WorkflowArgs {
 }
 #[derive(Clone, Debug, Subcommand)]
 pub enum WorkflowCommand {
+    /// Install, inspect or remove the workflow skill that teaches Hermes to use this command.
     Skill(crate::workflow_skill::SkillArgs),
+    /// Show the models and providers a workflow run could use, and what is left of their limits.
     Roster(crate::workflow_roster::RosterArgs),
+    /// List, show, install or check the workflows that ship with Talaria.
     Builtins(builtins::BuiltinArgs),
+    /// Start a workflow run from a script or a named workflow.
     Run(RunArgs),
+    /// Continue a run that stopped, using its saved journal.
     Resume(ResumeArgs),
+    /// List recent runs with their status, progress and spend.
     List(ListArgs),
+    /// Stop a running workflow.
     Stop(StopArgs),
+    /// Answer an agent call a run parked because its outcome is unknown: fail it, run it again,
+    /// or abort the run.
     Resolve(ResolveArgs),
+    /// Turn a workflow's agent calls into kanban board cards. Kanban boards only; it does not
+    /// validate a script, so use `check` for that.
     Compile(CompileArgs),
+    /// Check a script for problems before a run: meta block, syntax, agent options and tier
+    /// names. Starts no agent and does not contact the gateway.
+    Check(crate::workflow_check::CheckArgs),
+    /// List or remove the git worktrees and branches that runs keep for review.
+    Worktrees(crate::workflow_worktrees::WorktreesArgs),
 }
 #[derive(Clone, Debug, Args)]
 pub struct CompileArgs {
@@ -73,6 +90,12 @@ pub struct RunArgs {
     pub args_file: Option<PathBuf>,
     #[arg(long,default_value="default",value_parser=required_text)]
     pub profile: String,
+    /// The model the session runs on; calls that name no model or tier use it.
+    #[arg(long, value_parser = required_text, requires = "session_provider", conflicts_with = "foreground_child")]
+    pub session_model: Option<String>,
+    /// The provider of `--session-model`.
+    #[arg(long, value_parser = required_text, requires = "session_model", conflicts_with = "foreground_child")]
+    pub session_provider: Option<String>,
     #[arg(long,value_parser=required_path)]
     pub staffing: Option<PathBuf>,
     #[arg(long,value_parser=required_path)]
@@ -180,6 +203,51 @@ fn absolute(path: PathBuf) -> io::Result<PathBuf> {
         Ok(std::env::current_dir()?.join(path))
     }
 }
+/// True for a missing or empty list of agents, which the final object leaves out.
+fn is_unlisted(list: &&Value) -> bool {
+    list.as_array().is_none_or(Vec::is_empty)
+}
+/// The failed and cut short agents as plain lines, or nothing when there are none.
+fn agent_attention_text(failed: &Value, cut_short: &Value) -> String {
+    let mut text = String::new();
+    for (title, list) in [("Failed agents", failed), ("Cut short agents", cut_short)] {
+        let Some(list) = list.as_array().filter(|list| !list.is_empty()) else {
+            continue;
+        };
+        text.push_str(&format!("{title}:\n"));
+        for note in list {
+            text.push_str(&format!(
+                "  {}: {}\n",
+                safe(note["label"].as_str().unwrap_or("agent")),
+                safe(note["reason"].as_str().unwrap_or("no reason given"))
+            ));
+        }
+    }
+    text
+}
+/// What the run left behind in agent folders, as plain lines, or nothing when there is none:
+/// untracked work found on an agent's route, and folders with uncommitted changes.
+fn leftovers_text(untracked: &Value, leftover: &Value) -> String {
+    let mut text = String::new();
+    if let Some(list) = untracked.as_array().filter(|list| !list.is_empty()) {
+        text.push_str("Untracked work found on agent routes:\n");
+        for note in list {
+            text.push_str(&format!("  {}\n", safe(note.as_str().unwrap_or_default())));
+        }
+    }
+    if let Some(list) = leftover.as_array().filter(|list| !list.is_empty()) {
+        text.push_str("Uncommitted changes left in agent working folders:\n");
+        for folder in list {
+            let count = folder["changed_files"].as_u64().unwrap_or(0);
+            text.push_str(&format!(
+                "  {}: {count} changed file{}\n",
+                safe(folder["path"].as_str().unwrap_or("unknown folder")),
+                if count == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    text
+}
 pub fn safe(text: &str) -> String {
     let mut prepared = String::with_capacity(text.len());
     for character in text.chars() {
@@ -200,6 +268,21 @@ fn fail(text: impl std::fmt::Display, code: u8) -> u8 {
     eprintln!("{}", safe(&text.to_string()));
     code
 }
+/// True when `path` or one of its ancestors holds a `.git` entry (a folder, or the file a
+/// linked worktree uses).
+fn inside_git_repository(path: &Path) -> bool {
+    path.ancestors().any(|dir| dir.join(".git").exists())
+}
+/// A warning, not a refusal: the bootstrap pattern runs its first agent here without isolation.
+fn outside_git_warning(cwd: &Path) -> Option<String> {
+    if inside_git_repository(cwd) {
+        return None;
+    }
+    Some(format!(
+        "warning: the working folder {} is not inside a git repository. Agents with isolation: 'worktree' will fail here. To start a new project, make the script's first agent run without isolation (the run's --cwd is that folder) and have it do only `git init` and an initial commit; give every later agent worktree isolation.",
+        cwd.display()
+    ))
+}
 fn exit_code(exit: RunExit) -> u8 {
     u8::try_from(exit.code).unwrap_or(1)
 }
@@ -218,9 +301,17 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
         } else {
             String::new()
         };
-        let tokens = run
-            .tokens_spent
-            .map_or_else(|| "-".into(), |v| v.to_string());
+        let tokens = run.tokens_spent.map_or_else(
+            || "tokens -".into(),
+            |v| {
+                tokens_text(
+                    v,
+                    run.cache_read_tokens.unwrap_or_default(),
+                    run.cache_unknown_turns,
+                    |n| n.to_string(),
+                )
+            },
+        );
         let money = run
             .money_spent_usd
             .map_or_else(|| "-".into(), |v| format!("${v:.2}"));
@@ -233,10 +324,10 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
                 })
                 .unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
         text.push_str(&format!(
-            "{}  {}  {}  agents {}/{}{}  tokens {}  money {}  {}  {}\n",
+            "{}  {}  {}  agents {}/{}{}  {}  money {}  {}  {}\n",
             safe(&run.run_id),
             safe(&run.name),
-            run.status.as_str(),
+            run.status.label(),
             run.agents_finished,
             run.agents_total_known,
             parked,
@@ -401,12 +492,45 @@ impl Renderer {
             .and_then(|dir| fs::read(dir.join("outcome.json")).ok())
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
             .unwrap_or(Value::Null);
+        // Agents that failed or were cut short come first, before the result they qualify.
+        let failed_agents = &saved["failed_agents"];
+        let cut_short_agents = &saved["cut_short_agents"];
+        let untracked_work = &saved["untracked_work"];
+        let leftover_edits = &saved["leftover_edits"];
+        let attention = format!(
+            "{}{}",
+            agent_attention_text(failed_agents, cut_short_agents),
+            leftovers_text(untracked_work, leftover_edits)
+        );
         #[derive(Serialize)]
         struct Completed<'a> {
             event: &'static str,
             run_id: &'a str,
             outcome: &'a str,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            cut_short_agents: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            untracked_work: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            leftover_edits: &'a Value,
             result: &'a Value,
+            spend: &'a SpendView,
+        }
+        #[derive(Serialize)]
+        struct CompletedWithFailures<'a> {
+            event: &'static str,
+            run_id: &'a str,
+            outcome: &'a str,
+            reason: &'a str,
+            failed_agents: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            cut_short_agents: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            untracked_work: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            leftover_edits: &'a Value,
+            result: &'a Value,
+            summary: &'a Value,
             spend: &'a SpendView,
         }
         #[derive(Serialize)]
@@ -415,6 +539,10 @@ impl Renderer {
             run_id: &'a str,
             outcome: &'a str,
             error: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            untracked_work: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            leftover_edits: &'a Value,
             spend: &'a SpendView,
         }
         #[derive(Serialize)]
@@ -423,6 +551,10 @@ impl Renderer {
             run_id: &'a str,
             outcome: &'a str,
             reason: &'a str,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            untracked_work: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            leftover_edits: &'a Value,
             spend: &'a SpendView,
         }
         match outcome {
@@ -433,12 +565,87 @@ impl Renderer {
                         event: "run_finished",
                         run_id,
                         outcome,
+                        cut_short_agents,
+                        untracked_work,
+                        leftover_edits,
                         result,
                         spend,
                     });
                 } else {
                     self.text(&format!(
-                        "Result:\n{}\n",
+                        "{attention}Result:\n{}\n",
+                        serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
+                    ));
+                }
+            }
+            "completed_with_failures" => {
+                // The script returned, but at least one agent failed; the result is what the script made of that.
+                let result = result.unwrap_or(&Value::Null);
+                let reason = saved["reason"].as_str().unwrap_or("agents failed");
+                if self.json {
+                    self.json(&CompletedWithFailures {
+                        event: "run_finished",
+                        run_id,
+                        outcome,
+                        reason,
+                        failed_agents,
+                        cut_short_agents,
+                        untracked_work,
+                        leftover_edits,
+                        result,
+                        summary: &saved["summary"],
+                        spend,
+                    });
+                } else {
+                    self.text(&format!(
+                        "Completed with failures: {}.\n{attention}Result:\n{}\n",
+                        safe(reason),
+                        serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
+                    ));
+                }
+            }
+            "budget_exhausted" => {
+                // The script returned, but the budget refused or stopped some of its agents.
+                #[derive(Serialize)]
+                struct Exhausted<'a> {
+                    event: &'static str,
+                    run_id: &'a str,
+                    outcome: &'a str,
+                    #[serde(skip_serializing_if = "is_unlisted")]
+                    failed_agents: &'a Value,
+                    #[serde(skip_serializing_if = "is_unlisted")]
+                    cut_short_agents: &'a Value,
+                    #[serde(skip_serializing_if = "is_unlisted")]
+                    untracked_work: &'a Value,
+                    #[serde(skip_serializing_if = "is_unlisted")]
+                    leftover_edits: &'a Value,
+                    result: &'a Value,
+                    reason: &'a str,
+                    summary: &'a Value,
+                    spend: &'a SpendView,
+                }
+                let result = result.unwrap_or(&Value::Null);
+                let reason = saved["reason"].as_str().unwrap_or("budget exhausted");
+                if self.json {
+                    self.json(&Exhausted {
+                        event: "run_finished",
+                        run_id,
+                        outcome,
+                        failed_agents,
+                        cut_short_agents,
+                        untracked_work,
+                        leftover_edits,
+                        result,
+                        reason,
+                        summary: &saved["summary"],
+                        spend,
+                    });
+                } else {
+                    self.text(&format!(
+                        "Budget exhausted: {}. Agents refused: {}, stopped: {}.\n{attention}Result:\n{}\n",
+                        safe(reason),
+                        saved["summary"]["refused"].as_u64().unwrap_or(0),
+                        saved["summary"]["stopped"].as_u64().unwrap_or(0),
                         serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
                     ));
                 }
@@ -450,17 +657,20 @@ impl Renderer {
                         run_id,
                         outcome,
                         error: &saved["error"],
+                        untracked_work,
+                        leftover_edits,
                         spend,
                     });
                 } else {
                     self.text(&format!(
-                        "Failed: {}: {}\n",
+                        "Failed: {}: {}\n{}",
                         safe(saved["error"]["name"].as_str().unwrap_or("Error")),
                         safe(
                             saved["error"]["message"]
                                 .as_str()
                                 .unwrap_or("workflow failed")
-                        )
+                        ),
+                        leftovers_text(untracked_work, leftover_edits)
                     ));
                 }
             }
@@ -472,13 +682,78 @@ impl Renderer {
                         run_id,
                         outcome,
                         reason,
+                        untracked_work,
+                        leftover_edits,
                         spend,
                     });
                 } else {
-                    self.text(&format!("Aborted: {}\n", safe(reason)));
+                    self.text(&format!(
+                        "Aborted: {}\n{}",
+                        safe(reason),
+                        leftovers_text(untracked_work, leftover_edits)
+                    ));
                 }
             }
         }
+        if self.json {
+            let runs_dir = self.dir.as_deref().and_then(std::path::Path::parent);
+            self.text(&format!(
+                "{}\n",
+                closing_line(run_id, outcome, spend, runs_dir)
+            ));
+        }
+    }
+}
+/// The short plain-text line printed after the `run_finished` object in JSON mode. Hermes keeps the
+/// last 2,000 characters of a background command's output and then cuts back to the first newline,
+/// so a single very long final line reached the lead as nothing; this line is always short.
+///
+/// `runs_dir` is the folder holding the run's own folder. When it is not the default one, the
+/// printed `resume` command names it, so the command works as printed.
+fn closing_line(
+    run_id: &str,
+    outcome: &str,
+    spend: &SpendView,
+    runs_dir: Option<&std::path::Path>,
+) -> String {
+    let money = match spend.money_usd {
+        Some(usd) => format!("${usd:.4} ({})", safe(&spend.money_source)),
+        None => "unknown".to_owned(),
+    };
+    format!(
+        "run {} {}: {}, money {}. Full result: talaria workflow resume --json{} {}",
+        safe(run_id),
+        safe(outcome),
+        tokens_text(
+            spend.tokens,
+            spend.cache_read_tokens,
+            spend.cache_unknown_turns,
+            |n| n.to_string()
+        ),
+        money,
+        custom_runs_dir_flag(runs_dir),
+        safe(run_id)
+    )
+}
+/// ` --runs-dir <path>` when `runs_dir` is not the default runs folder, else nothing.
+fn custom_runs_dir_flag(runs_dir: Option<&std::path::Path>) -> String {
+    let Some(used) = runs_dir.and_then(|dir| absolute(dir.to_path_buf()).ok()) else {
+        return String::new();
+    };
+    // The run's folder is reported in its resolved form, so compare resolved forms.
+    let resolved = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
+    let default = absolute(runner::runs_dir(None)).map(resolved);
+    if default.is_ok_and(|default| default == resolved(used.clone())) {
+        return String::new();
+    }
+    let text = safe(&used.to_string_lossy());
+    if text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._-+=:@%".contains(c))
+    {
+        format!(" --runs-dir {text}")
+    } else {
+        format!(" --runs-dir '{}'", text.replace('\'', "'\\''"))
     }
 }
 
@@ -585,6 +860,8 @@ pub async fn run(args: WorkflowArgs) -> u8 {
         WorkflowCommand::Run(args) => run_command(args).await,
         WorkflowCommand::Builtins(args) => builtins::execute(args),
         WorkflowCommand::Compile(args) => compile_command::execute(args).await,
+        WorkflowCommand::Check(args) => crate::workflow_check::execute(args).await,
+        WorkflowCommand::Worktrees(args) => crate::workflow_worktrees::execute(args),
     }
 }
 async fn run_command(args: RunArgs) -> u8 {
@@ -624,6 +901,9 @@ async fn run_command(args: RunArgs) -> u8 {
         Ok(cwd) => cwd,
         Err(e) => return fail(e, 2),
     };
+    if let Some(warning) = outside_git_warning(&cwd) {
+        eprintln!("{}", safe(&warning));
+    }
     let runs_dir = match absolute(runner::runs_dir(args.runs_dir.as_deref())) {
         Ok(dir) => dir,
         Err(e) => return fail(e, 2),
@@ -664,6 +944,7 @@ async fn run_command(args: RunArgs) -> u8 {
         script,
         args: input,
         profile: args.profile,
+        session_model: args.session_model.zip(args.session_provider),
         staffing: args.staffing,
         cwd,
         budget_tokens: args.budget_tokens,
@@ -769,5 +1050,27 @@ pub fn resolve_run_script(arg: &str, dir: &std::path::Path) -> Result<PathBuf, (
                 )),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod leftover_text_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn leftovers_are_plain_lines_and_absent_when_empty() {
+        assert_eq!(leftovers_text(&json!([]), &Value::Null), "");
+        let text = leftovers_text(
+            &json!(["agent a, session s, working folder /w: moved"]),
+            &json!([
+                {"path": "/w/one", "changed_files": 1},
+                {"path": "/w/two", "changed_files": 3}
+            ]),
+        );
+        assert_eq!(
+            text,
+            "Untracked work found on agent routes:\n  agent a, session s, working folder /w: moved\nUncommitted changes left in agent working folders:\n  /w/one: 1 changed file\n  /w/two: 3 changed files\n"
+        );
     }
 }

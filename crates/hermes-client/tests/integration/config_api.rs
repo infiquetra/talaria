@@ -76,3 +76,34 @@ async fn routes_bodies_and_order_preserved() {
         }
     }
 }
+
+#[tokio::test]
+async fn language_save_sends_preserve_language() {
+    let mock = MockRest::start().await;
+    let minter = Arc::new(CountingMinter::default());
+    let rest = RestClient::new(&mock.origin(), minter, RestOptions::default()).unwrap();
+    config_api::config_write(&rest, &json!({"display": {"language": "en"}}))
+        .await
+        .unwrap();
+    config_api::config_write(&rest, &json!({"display": {"compact": true}}))
+        .await
+        .unwrap();
+    config_api::config_write(
+        &rest,
+        &json!({"display": {"compact": false, "language": "de"}, "timezone": ""}),
+    )
+    .await
+    .unwrap();
+    let requests = mock.requests().await;
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| (r.method.as_str(), r.path.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("PUT", "/api/config?preserve_language=true"),
+            ("PUT", "/api/config"),
+            ("PUT", "/api/config?preserve_language=true"),
+        ]
+    );
+}

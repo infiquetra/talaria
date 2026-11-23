@@ -198,19 +198,19 @@ async fn mock_objects_validate_against_request_schemas() {
             None,
         ),
         (
-            "ultracode",
-            include_str!("../data/builtins/ultracode/happy.mock.json"),
-            Some(include_str!("../data/builtins/ultracode/happy.args.json")),
+            "hivecode",
+            include_str!("../data/builtins/hivecode/happy.mock.json"),
+            Some(include_str!("../data/builtins/hivecode/happy.args.json")),
         ),
         (
-            "ultracode",
-            include_str!("../data/builtins/ultracode/blocked.mock.json"),
-            Some(include_str!("../data/builtins/ultracode/happy.args.json")),
+            "hivecode",
+            include_str!("../data/builtins/hivecode/blocked.mock.json"),
+            Some(include_str!("../data/builtins/hivecode/happy.args.json")),
         ),
         (
-            "ultracode",
-            include_str!("../data/builtins/ultracode/bad-choice.mock.json"),
-            Some(include_str!("../data/builtins/ultracode/happy.args.json")),
+            "hivecode",
+            include_str!("../data/builtins/hivecode/bad-choice.mock.json"),
+            Some(include_str!("../data/builtins/hivecode/happy.args.json")),
         ),
     ];
     for (name, mock, args) in cases {

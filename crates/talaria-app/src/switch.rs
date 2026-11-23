@@ -15,7 +15,7 @@ use super::mutation::MutationClient;
 use super::sessions::{OpenError, OpenedSession, SessionService};
 
 /// The line a branch gets while the agent is working.
-pub const BRANCH_BUSY_TEXT: &str = "Hermes cannot branch while the agent is working. Wait for the reply to finish, or press Esc to stop it, then run /branch again.";
+pub const BRANCH_BUSY_TEXT: &str = "Hermes cannot branch while the agent is working. Wait for the reply to finish, or press Esc twice to stop it, then run /branch again.";
 /// The line a branch gets while the conversation is being compacted.
 pub const BRANCH_COMPRESSING_TEXT: &str = "Hermes is already compacting this conversation. Wait for it to finish, then run /branch again.";
 /// The line a branch gets when the last turn's outcome is unknown.
@@ -158,6 +158,77 @@ fn failed_switch(app: &mut AppState, target: &RowKey, error: &OpenError) -> Swit
     }
 }
 
+/// Start a new session on another served profile in `cwd`: a new profile-scoped link
+/// carries it, and the old session is let go only once the new one is open. The old
+/// session keeps running in Hermes, so `/resume` returns to it.
+pub async fn start_in_profile(
+    app: &mut AppState,
+    profile: String,
+    cwd: std::path::PathBuf,
+) -> SwitchOutcome {
+    let failed = |reason: &str| SwitchOutcome::Failed {
+        text: format!(
+            "Could not start a session on profile {profile}: {reason}. Still in the old session."
+        ),
+    };
+    if !app.held.is_empty() {
+        return SwitchOutcome::Failed {
+            text: HELD_PROMPTS_TEXT.to_owned(),
+        };
+    }
+    let (Some(old), Some(old_service), Some(launch)) =
+        (app.opened.clone(), app.service.clone(), app.launch.clone())
+    else {
+        return failed("Talaria is not connected to Hermes");
+    };
+    let mut other = launch;
+    other.profile = profile.clone();
+    let Ok(connection) = ConnectionService::open(&other, &app.hermes_home, None).await else {
+        return failed("Talaria could not reach Hermes for that profile");
+    };
+    let OpenConnection {
+        link,
+        inbound,
+        describe,
+        profile_name,
+        ..
+    } = connection;
+    let service = SessionService::with_client(&app.launch_id, link.client())
+        .with_create_defaults(&profile_name, &describe.session_create.parameters);
+    let request = super::launch::NewSession {
+        request_id: super::launch::new_request_id(),
+        source: super::launch::SESSION_SOURCE.into(),
+        cwd,
+        model: None,
+        provider: None,
+        reasoning: None,
+    };
+    let opened = match service.open(SessionRequest::New(request)).await {
+        Ok(opened) => opened,
+        Err(error) => {
+            link.close().await;
+            return failed(&format!("Hermes refused ({})", refusal_reason(&error)));
+        }
+    };
+    // The old session lets go on the old link; the old link closes after that.
+    stop_voice(app, &old_service, &old.session_id).await;
+    old_service.detach(&old).await;
+    let old_title = session_title(
+        old.title.as_deref(),
+        app.list_title.as_deref(),
+        old.state.cells(),
+    );
+    let notice = format!(
+        "Connected to profile {profile_name} and started a new session in this folder. Left \"{old_title}\"; it keeps running in Hermes. /resume returns to it. To start on this profile next time: talaria --profile {profile_name}"
+    );
+    app.opened = Some(opened);
+    app.service = Some(service);
+    app.link = Some(link);
+    app.profile = profile_name;
+    forward_events(app, inbound);
+    SwitchOutcome::Switched { notice }
+}
+
 /// The gateway's reason for refusing the resume.
 pub(crate) fn refusal_reason(error: &OpenError) -> String {
     match error {
@@ -197,22 +268,25 @@ fn switch_notice(app: &AppState, new: &OpenedSession, old: &OpenedSession) -> St
 }
 
 /// Send the events of a new link to the loop.
-fn forward_events(app: &AppState, mut inbound: tokio::sync::mpsc::Receiver<LinkEvent>) {
+/// Forward the events of a link this switch opened. It becomes the foreground link when the
+/// loop installs the switch, which raises the link count by one.
+fn forward_events(app: &AppState, inbound: tokio::sync::mpsc::Receiver<LinkEvent>) {
     let Some(sender) = app.sender.clone() else {
         return;
     };
-    tokio::spawn(async move {
-        while let Some(event) = inbound.recv().await {
-            if sender.send(super::app::AppMessage::Link(event)).is_err() {
-                break;
-            }
-        }
-    });
+    let started_for = app.link_epoch.load(std::sync::atomic::Ordering::SeqCst) + 1;
+    super::app::forward_link_events(
+        std::sync::Arc::clone(&app.link_epoch),
+        started_for,
+        sender,
+        inbound,
+    );
 }
 
 /// Branch the foreground session on the foreground link, then switch into
 /// the child.
 pub async fn branch_foreground(app: &mut AppState, title: Option<String>) -> BranchOutcome {
+    let name = title.clone();
     let request = match branch_request(app, title) {
         Ok(request) => request,
         Err(refused) => return refused,
@@ -240,7 +314,9 @@ pub async fn branch_foreground(app: &mut AppState, title: Option<String>) -> Bra
         }
     }
     match outcome {
-        MutationOutcome::Committed(receipt) => open_branch_child(app, &receipt).await,
+        MutationOutcome::Committed(receipt) => {
+            open_branch_child(app, &receipt, name.as_deref()).await
+        }
         outcome => branch_refusal(&outcome),
     }
 }
@@ -296,9 +372,28 @@ pub fn branch_refusal(outcome: &MutationOutcome) -> BranchOutcome {
     }
 }
 
+/// The notice a branch commits after the child's replayed history: where the operator is,
+/// where the branch came from, how to go back, and, when text followed `/branch`, that it
+/// named the branch and was not sent.
+fn branch_notice(parent: &str, child: &str, copied: u64, name: Option<&str>) -> String {
+    let mut notice = format!(
+        "Branched into \"{child}\" with {copied} earlier messages. You are now in the new session.\n\"{parent}\" is unchanged; /resume returns to it."
+    );
+    if name.is_some_and(|name| !name.trim().is_empty()) {
+        notice.push_str(
+            "\nThe text after /branch is the new session's name, not a prompt; nothing was sent.",
+        );
+    }
+    notice
+}
+
 /// Open the child a committed branch made, then let go of the parent. When the child does
 /// not open, the parent stays in front and nothing is detached.
-pub async fn open_branch_child(app: &mut AppState, receipt: &Value) -> BranchOutcome {
+pub async fn open_branch_child(
+    app: &mut AppState,
+    receipt: &Value,
+    name: Option<&str>,
+) -> BranchOutcome {
     let child_id = receipt
         .get("branched_session_id")
         .and_then(Value::as_str)
@@ -324,11 +419,10 @@ pub async fn open_branch_child(app: &mut AppState, receipt: &Value) -> BranchOut
             stop_voice(app, &service, &parent.session_id).await;
             service.detach(&parent).await;
             let title = session_title(child.title.as_deref(), None, child.state.cells());
+            let parent_title = session_title(parent.title.as_deref(), None, parent.state.cells());
             app.opened = Some(child);
             BranchOutcome::Branched {
-                notice: format!(
-                    "Branched into \"{title}\" with {copied} earlier messages. The child continues from here."
-                ),
+                notice: branch_notice(&parent_title, &title, copied, name),
             }
         }
         Err(_) => BranchOutcome::Refused {
@@ -395,5 +489,39 @@ pub(crate) async fn stop_voice(app: &mut AppState, service: &SessionService, ses
         if !warning.is_empty() {
             app.voice_warning(session_id, String::from_utf8_lossy(&warning).into_owned());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::branch_notice;
+
+    #[test]
+    fn the_branch_notice_is_two_lines_without_a_name_and_three_with_one() {
+        let plain = branch_notice("Launch title", "Launch title #2", 9, None);
+        assert_eq!(plain.lines().count(), 2, "{plain}");
+        assert!(
+            plain.contains("\"Launch title\" is unchanged; /resume returns to it."),
+            "the notice names the session it came from: {plain}"
+        );
+        assert!(
+            plain.starts_with("Branched into \"Launch title #2\""),
+            "{plain}"
+        );
+
+        let blank = branch_notice("Launch title", "Launch title #2", 9, Some("  "));
+        assert_eq!(
+            blank.lines().count(),
+            2,
+            "a blank name adds no note: {blank}"
+        );
+
+        let named = branch_notice("Launch title", "poem", 9, Some("poem"));
+        assert_eq!(named.lines().count(), 3, "{named}");
+        assert!(named.contains("not a prompt"), "{named}");
+        assert!(
+            named.contains("\"Launch title\" is unchanged"),
+            "the original, not the branch, is the unchanged one: {named}"
+        );
     }
 }

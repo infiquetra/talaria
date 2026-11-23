@@ -86,6 +86,7 @@ async fn each_profile_has_its_own_connection() {
             1
         }
         fn track(&self, _: &str, _: Cursor) {}
+        fn untrack(&self, _: &str) {}
         fn resync(&self, _: &str, _: Cursor) {}
         fn take_events(&self) -> Option<tokio::sync::mpsc::Receiver<WireEvent>> {
             None

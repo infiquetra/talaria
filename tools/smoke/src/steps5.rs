@@ -191,12 +191,12 @@ fn screen_step(run: &Run<'_>, workflows: bool) -> Result<(), Abort> {
                 && screen5::overlay_title_found(s, WORKFLOWS_TITLE, &run.cfg.profile)
         })?;
     } else {
-        submit(run, pane, "/ultracode status")?;
+        submit(run, pane, "/hivecode status")?;
         let text = poll(
             run,
             pane,
             "the status text was not shown",
-            screen5::ultracode_status,
+            screen5::hivecode_status,
         )?;
         require(!screen5::turn_active(&text), "a turn started")?;
         require(!screen5::toggle_on(&text), "the toggle did not stay off")?;
@@ -495,7 +495,7 @@ pub(crate) fn step(run: &mut Run<'_>, name: &str, cfg5: &Phase5Config) -> Result
             answer(run, &run.pane, &token, "the reply did not carry the token")?;
         }
         "workflows-empty" => screen_step(run, true)?,
-        "ultracode-status" => screen_step(run, false)?,
+        "hivecode-status" => screen_step(run, false)?,
         "quit" => {
             quit(run, &run.pane, "Talaria did not exit")?;
             let recent = read(run, &run.pane, ReadSource::RecentUnwrapped)?;

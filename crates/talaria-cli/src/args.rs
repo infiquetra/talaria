@@ -58,9 +58,10 @@ pub struct Cli {
     pub no_ensure: bool,
     #[arg(long)]
     pub remote: Option<String>,
-    /// Route substantive interactive prompts through workflow agents.
-    #[arg(long, global = true)]
-    pub ultracode: bool,
+    /// Start interactive sessions with Hivecode on: plain prompts are handled as workflows.
+    // The flag's earlier name still works, unlisted, so an existing launcher keeps starting.
+    #[arg(long, global = true, alias = "ultracode")]
+    pub hivecode: bool,
     /// Start a session in the background and return.
     #[arg(long)]
     pub bg: bool,
@@ -128,14 +129,17 @@ pub fn render_usage(error: &clap::Error) -> (String, u8) {
     match error.kind() {
         ErrorKind::DisplayVersion => {
             let current = &hermes_contract::compat::CURRENT;
+            let newest = if current.newest_tested == current.pinned_tag {
+                String::new()
+            } else {
+                format!(", newest tested {}", current.newest_tested)
+            };
             (
                 format!(
-                    "talaria {}\nhermes: pinned {} ({}), supported from {}, tested to {}\n",
+                    "talaria {}\nhermes: tested against {} ({}){newest}\n",
                     env!("CARGO_PKG_VERSION"),
                     current.pinned_tag,
                     current.pinned_commit[..8].to_ascii_lowercase(),
-                    current.floor,
-                    current.newest_tested,
                 ),
                 0,
             )

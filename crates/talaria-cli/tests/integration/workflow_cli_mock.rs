@@ -39,8 +39,10 @@ fn output(cmd: &mut Command) -> Output {
 fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).unwrap()
 }
+/// The limit is generous on purpose: these tests start real processes on what may be a loaded
+/// machine.
 fn wait_for(mut condition: impl FnMut() -> bool) {
-    let until = Instant::now() + Duration::from_secs(20);
+    let until = Instant::now() + Duration::from_secs(60);
     while !condition() {
         assert!(Instant::now() < until, "condition timed out");
         thread::sleep(Duration::from_millis(20));
@@ -183,6 +185,36 @@ fn detach_outlives_parent() {
 }
 
 #[test]
+fn a_draft_with_the_workflow_extension_runs() {
+    let temp = tempfile::tempdir().unwrap();
+    let draft = temp.path().join("drafts/fixture-draft.workflow");
+    fs::create_dir_all(draft.parent().unwrap()).unwrap();
+    fs::copy(fixture("scripts/slow.js"), &draft).unwrap();
+    let out = output(
+        command(temp.path(), "foreground-wire.json")
+            .args([
+                "workflow",
+                "run",
+                "--json",
+                "--profile",
+                "fixture",
+                "--runs-dir",
+            ])
+            .arg(temp.path().join("runs"))
+            .arg(&draft),
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).lines().any(|line| {
+            serde_json::from_str::<Value>(line)
+                .is_ok_and(|v| v["event"] == "run_finished" && v["outcome"] == "completed")
+        }),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
 fn list_output_shapes() {
     let temp = tempfile::tempdir().unwrap();
     let runs = temp.path().join("runs");
@@ -237,6 +269,8 @@ fn list_output_shapes() {
             "agents_total_known",
             "parked",
             "tokens_spent",
+            "cache_read_tokens",
+            "cache_unknown_turns",
             "money_spent_usd",
             "run_dir",
             "warning",
@@ -396,7 +430,7 @@ fn ctrl_c_graceful_then_resume_and_hard_kill() {
                 .arg(&runs)
                 .arg(target),
         );
-        assert!(resumed.status.success(), "{}", text(&resumed.stderr));
+        assert_eq!(resumed.status.code(), Some(if graceful { 5 } else { 0 }), "{}", text(&resumed.stderr));
         let after = records(&folder);
         assert_eq!(
             after
@@ -405,10 +439,15 @@ fn ctrl_c_graceful_then_resume_and_hard_kill() {
                 .count(),
             1
         );
+        // The interrupt settled the second agent as cancelled, so a resume finishes it as failed
+        // and the run says it completed with a failure. After a hard kill nothing settled, and
+        // the agent runs again to a plain completion.
+        let expected = if graceful { "completed_with_failures" } else { "completed" };
         assert!(
             after
                 .iter()
-                .any(|r| r["t"] == "run_finished" && r["outcome"] == "completed")
+                .any(|r| r["t"] == "run_finished" && r["outcome"] == expected),
+            "graceful={graceful}"
         );
         assert_eq!(
             fs::read_dir(temp.path().join("empty-hermes"))
@@ -594,6 +633,13 @@ fn progress_detach_keeps_runner_alive() {
     terminal.type_keys("p");
     wait_for(|| folder.join("control/pause.json").exists());
     assert!(!records(&folder).iter().any(|r| r["t"] == "run_finished"));
+    // The view learns that its pause was written from a message that arrives after the file
+    // exists. A second key before that message asks to pause again, not to resume, so wait for
+    // the view to say so.
+    wait_for(|| {
+        let screen = terminal.screen_text();
+        screen.contains("pausing") || screen.contains("paused")
+    });
     terminal.type_keys("p");
     wait_for(|| !folder.join("control/pause.json").exists());
     terminal.type_keys("X");
@@ -634,6 +680,395 @@ fn progress_detach_keeps_runner_alive() {
     terminal_submit(&mut terminal, "/quit");
     let ended = terminal.wait_exit(Duration::from_secs(5));
     assert!(!ended.timed_out);
+}
+
+#[test]
+fn budget_exhausted_run_reports_its_reason_and_exit_code() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let run = |json: bool| {
+        let mut cmd = command(temp.path(), "foreground-wire.json");
+        cmd.args(["workflow", "run", "--profile", "fixture", "--budget-tokens", "10"]);
+        if json {
+            cmd.arg("--json");
+        }
+        output(cmd.arg("--runs-dir").arg(&runs).arg(fixture("scripts/budget.js")))
+    };
+    let out = run(true);
+    assert_eq!(out.status.code(), Some(4), "{}", text(&out.stderr));
+    let finished: Value = text(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "budget_exhausted");
+    assert_eq!(finished["result"], json!(["READY", "BudgetExhaustedError"]));
+    assert_eq!(finished["reason"], "token budget exhausted (spent 10 of 10)");
+    assert_eq!(finished["summary"]["refused"], 1);
+    assert!(
+        text(&out.stdout)
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .any(|v| v["event"] == "agent_finished" && v["label"] == "again" && v["state"] == "refused")
+    );
+
+    let out = run(false);
+    assert_eq!(out.status.code(), Some(4), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains(
+            "Budget exhausted: token budget exhausted (spent 10 of 10). Agents refused: 1, stopped: 0.\nResult:\n"
+        ),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+fn run_finished(stdout: &[u8]) -> Value {
+    text(stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["event"] == "run_finished")
+        .expect("no run_finished line")
+}
+
+#[test]
+fn a_run_reports_cache_reads_as_their_own_number_live_listed_and_replayed() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let out = output(
+        command(temp.path(), "cache-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/one.js")),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let finished = run_finished(&out.stdout);
+    // The recorded turn used 10 tokens, 6 of them cache reads: the budget sees the other 4.
+    let spend = finished["spend"].clone();
+    assert_eq!(spend["tokens"], 4, "{spend}");
+    assert_eq!(spend["cache_read_tokens"], 6, "{spend}");
+    assert_eq!(spend["cache_unknown_turns"], 0, "{spend}");
+    let shown = text(&out.stdout);
+    let last = shown.lines().last().unwrap();
+    assert!(last.contains("4 tokens + 6 cache reads,"), "{last}");
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+    let listed = output(
+        command(temp.path(), "cache-wire.json")
+            .args(["workflow", "list", "--json", "--runs-dir"])
+            .arg(&runs),
+    );
+    let rows: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(rows[0]["tokens_spent"], 4);
+    assert_eq!(rows[0]["cache_read_tokens"], 6);
+    assert_eq!(rows[0]["cache_unknown_turns"], 0);
+    let plain = text(
+        &output(
+            command(temp.path(), "cache-wire.json")
+                .args(["workflow", "list", "--runs-dir"])
+                .arg(&runs),
+        )
+        .stdout,
+    );
+    assert!(plain.contains("4 tokens + 6 cache reads"), "{plain}");
+    // Resuming a finished run rebuilds its spend from the journal and gets the same split.
+    let replay = output(
+        command(temp.path(), "cache-wire.json")
+            .env_remove("TALARIA_WORKFLOW_MOCK")
+            .args(["workflow", "resume", "--json", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    assert_eq!(replay.status.code(), Some(0), "{}", text(&replay.stderr));
+    assert_eq!(run_finished(&replay.stdout)["spend"]["tokens"], 4);
+    assert_eq!(run_finished(&replay.stdout)["spend"]["cache_read_tokens"], 6);
+}
+
+#[test]
+fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let run = |args: &[&str], target: &Path| {
+        output(
+            command(temp.path(), "failed-wire.json")
+                .args(args)
+                .arg("--runs-dir")
+                .arg(&runs)
+                .arg(target),
+        )
+    };
+    let out = run(&["workflow", "run", "--json", "--profile", "fixture"], &fixture("scripts/one.js"));
+    // The run used a custom runs folder, so the printed command names it. The same folder can be
+    // spelled two ways (/var and /private/var on macOS), so compare the resolved folders.
+    let named = |line: &str| -> PathBuf {
+        let rest = line.split("--runs-dir ").nth(1).expect("--runs-dir in the hint");
+        fs::canonicalize(rest.split(' ').next().unwrap()).unwrap()
+    };
+    let resolved_runs = fs::canonicalize(&runs).unwrap();
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    let lines: Vec<&str> = shown.lines().collect();
+    let last = *lines.last().unwrap();
+    // The run_finished object is unchanged and is the last JSON object; the last line is plain text.
+    let finished = run_finished(&out.stdout);
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+    assert!(serde_json::from_str::<Value>(last).is_err(), "{last}");
+    let before = lines[lines.len() - 2];
+    assert_eq!(serde_json::from_str::<Value>(before).unwrap(), finished);
+    assert!(last.len() < 300, "{last}");
+    // The recording gives no cache read total, so the line says they are unknown for that turn.
+    assert!(
+        last.contains("10 tokens (cache reads unknown for 1 turn, counted in full)"),
+        "{last}"
+    );
+    for part in [
+        id.as_str(),
+        "completed_with_failures",
+        &format!("{} tokens", finished["spend"]["tokens"]),
+        &format!("{} turn", finished["spend"]["cache_unknown_turns"]),
+        "talaria workflow resume --json --runs-dir ",
+    ] {
+        assert!(last.contains(part), "{part} missing from {last}");
+    }
+    assert_eq!(named(last), resolved_runs, "{last}");
+    // With the default runs folder the command stays as short as it was.
+    let default_run = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture"])
+            .arg(fixture("scripts/one.js")),
+    );
+    let default_text = text(&default_run.stdout);
+    let default_last = default_text.lines().last().unwrap();
+    let default_id = run_finished(&default_run.stdout)["run_id"].as_str().unwrap().to_owned();
+    assert!(
+        default_last.ends_with(&format!("Full result: talaria workflow resume --json {default_id}")),
+        "{default_last}"
+    );
+    // A replay prints the same shape, and the plain-text mode adds nothing.
+    let replay = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "resume", "--json", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    let replay_last = text(&replay.stdout).lines().last().unwrap().to_owned();
+    assert!(replay_last.ends_with(&format!(" {id}")), "{replay_last}");
+    assert_eq!(named(&replay_last), resolved_runs, "{replay_last}");
+    let plain = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "resume", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    assert!(!text(&plain.stdout).contains("Full result:"), "{}", text(&plain.stdout));
+}
+
+#[test]
+fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let run = |json: bool| {
+        let mut cmd = command(temp.path(), "failed-wire.json");
+        cmd.args(["workflow", "run", "--profile", "fixture"]);
+        if json {
+            cmd.arg("--json");
+        }
+        output(cmd.arg("--runs-dir").arg(&runs).arg(fixture("scripts/one.js")))
+    };
+    let out = run(true);
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
+    let finished = run_finished(&out.stdout);
+    assert_eq!(finished["outcome"], "completed_with_failures");
+    assert_eq!(finished["reason"], "1 agent failed");
+    let reason = "agent failed: The provider refused this request and nothing more can be done. (provider_rejected)";
+    assert_eq!(finished["failed_agents"], json!([{"label": "review", "reason": reason}]));
+    // The script finished and kept what it made of the failure.
+    assert_eq!(finished["result"]["first"], Value::Null);
+    // The failed agents come before the result in the printed line.
+    let line = text(&out.stdout)
+        .lines()
+        .find(|l| l.contains("\"run_finished\""))
+        .unwrap()
+        .to_owned();
+    assert!(line.find("failed_agents").unwrap() < line.find("\"result\"").unwrap(), "{line}");
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+
+    // Listed with its own status, and readable again without paid work.
+    let listed = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "list", "--json", "--runs-dir"])
+            .arg(&runs),
+    );
+    let rows: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(rows[0]["status"], "completed_with_failures");
+    // The text listing says it in words; only JSON keeps the underscores.
+    let plain_list = text(
+        &output(
+            command(temp.path(), "failed-wire.json")
+                .args(["workflow", "list", "--runs-dir"])
+                .arg(&runs),
+        )
+        .stdout,
+    );
+    assert!(plain_list.contains("  completed with failures  agents "), "{plain_list}");
+    assert!(!plain_list.contains("completed_with_failures"), "{plain_list}");
+    assert!(
+        plain_list.contains("10 tokens (cache reads unknown for 1 turn, counted in full)"),
+        "{plain_list}"
+    );
+    let replay = output(
+        command(temp.path(), "failed-wire.json")
+            .env_remove("TALARIA_WORKFLOW_MOCK")
+            .args(["workflow", "resume", "--json", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    assert_eq!(replay.status.code(), Some(5), "{}", text(&replay.stderr));
+    assert!(!text(&replay.stderr).contains("budget ran out"), "{}", text(&replay.stderr));
+    let again = run_finished(&replay.stdout);
+    assert_eq!(again["outcome"], "completed_with_failures");
+    assert_eq!(again["failed_agents"], finished["failed_agents"]);
+    assert_eq!(again["result"], finished["result"]);
+
+    let plain = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "resume", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    let shown = text(&plain.stdout);
+    assert!(
+        shown.contains(&format!(
+            "Completed with failures: 1 agent failed.\nFailed agents:\n  review: {reason}\nResult:\n"
+        )),
+        "{shown}"
+    );
+}
+
+#[test]
+fn work_found_on_a_moved_route_is_printed_live_and_listed_before_the_result() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let out = output(
+        command(temp.path(), "moved-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/one.js")),
+    );
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    let note = "runner: untracked work: ";
+    // Printed live, as a log event, when the sweep wrote it.
+    let live = shown
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["event"] == "log" && v["message"].as_str().is_some_and(|m| m.starts_with(note)))
+        .expect("no live route note");
+    let finished = run_finished(&out.stdout);
+    let listed = finished["untracked_work"].as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{finished}");
+    let entry = listed[0].as_str().unwrap();
+    assert_eq!(format!("{note}{entry}"), live["message"].as_str().unwrap());
+    for part in ["agent review", "session session", "new stored session session-2", "cancelled 1 turn(s)"] {
+        assert!(entry.contains(part), "{part} missing from {entry}");
+    }
+    assert!(finished.get("leftover_edits").is_none());
+    // After the failed agents, before the result.
+    let line = shown.lines().find(|l| l.contains("\"run_finished\"")).unwrap().to_owned();
+    assert!(line.find("failed_agents").unwrap() < line.find("untracked_work").unwrap(), "{line}");
+    assert!(line.find("untracked_work").unwrap() < line.find("\"result\"").unwrap(), "{line}");
+    // The plain text names it too, and so does a replay.
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+    let plain = output(
+        command(temp.path(), "moved-wire.json")
+            .args(["workflow", "resume", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    let shown = text(&plain.stdout);
+    assert!(shown.contains("Untracked work found on agent routes:\n  agent review"), "{shown}");
+    assert!(shown.find("Untracked work").unwrap() < shown.find("Result:").unwrap(), "{shown}");
+}
+
+#[test]
+fn a_route_that_could_not_be_checked_is_not_listed_as_untracked_work() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    // This wire has no answer for the sweep's session.resume.
+    let out = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/one.js")),
+    );
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
+    let finished = run_finished(&out.stdout);
+    assert!(finished.get("untracked_work").is_none(), "{finished}");
+    assert!(
+        text(&out.stdout)
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .any(|v| v["event"] == "log"
+                && v["message"].as_str().is_some_and(|m| m.starts_with("runner: route not checked: ")))
+    );
+}
+
+#[test]
+fn an_agent_stopped_at_its_step_cap_keeps_its_reply_and_is_marked_everywhere() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let out = output(
+        command(temp.path(), "capped-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/one.js")),
+    );
+    // The run is a plain success: the reply was kept.
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let finished = run_finished(&out.stdout);
+    assert_eq!(finished["outcome"], "completed");
+    // The script received the reply, and could see the mark through cutShort().
+    assert_eq!(finished["result"]["first"], "PARTIAL ANSWER");
+    assert_eq!(
+        finished["result"]["capped"],
+        json!([{"label": "review", "steps": 60, "limit": 60}])
+    );
+    assert_eq!(
+        finished["cut_short_agents"],
+        json!([{"label": "review", "reason": "cut short (60 of 60 steps)"}])
+    );
+    assert!(finished.get("failed_agents").is_none());
+    // The event that ends the agent says so, and so does the journal record.
+    let agent_state = text(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["event"] == "agent_finished")
+        .map(|v| v["state"].clone());
+    assert_eq!(agent_state, Some(json!("cut short")));
+    let folder = fs::read_dir(&runs).unwrap().next().unwrap().unwrap().path();
+    let finished_call = records(&folder)
+        .into_iter()
+        .find(|r| r["t"] == "call_finished")
+        .unwrap();
+    assert_eq!(finished_call["outcome"]["kind"], "completed");
+    assert_eq!(finished_call["outcome"]["cut_short"], json!({"steps": 60, "limit": 60}));
+    let engine_finished = records(&folder)
+        .into_iter()
+        .find(|r| r["t"] == "engine" && r["event"]["event"] == "agent_finished")
+        .unwrap();
+    assert_eq!(engine_finished["event"]["outcome"]["kind"], "cut_short");
+
+    let plain = output(
+        command(temp.path(), "capped-wire.json")
+            .args(["workflow", "resume", "--runs-dir"])
+            .arg(&runs)
+            .arg(folder.file_name().unwrap()),
+    );
+    assert_eq!(plain.status.code(), Some(0));
+    assert!(
+        text(&plain.stdout).contains("Cut short agents:\n  review: cut short (60 of 60 steps)\nResult:\n"),
+        "{}",
+        text(&plain.stdout)
+    );
 }
 
 #[test]
@@ -707,3 +1142,38 @@ fn empty_gateway_home_reports_one_plain_gateway_not_found_line() {
 
 #[path = "../workflow_builtins_cli.rs"]
 mod builtins_contract;
+
+fn run_in(temp: &Path, cwd: &Path, runs: &str) -> Output {
+    output(
+        command(temp, "events-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--cwd"])
+            .arg(cwd)
+            .arg("--runs-dir")
+            .arg(temp.join(runs))
+            .arg(fixture("scripts/events.js")),
+    )
+}
+
+#[test]
+fn a_run_outside_a_git_repository_warns_but_still_runs() {
+    let temp = tempfile::tempdir().unwrap();
+    let plain = temp.path().join("new-project");
+    fs::create_dir_all(&plain).unwrap();
+    let out = run_in(temp.path(), &plain, "plain-runs");
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("is not inside a git repository"), "{stderr}");
+    assert!(stderr.contains("isolation: 'worktree' will fail"), "{stderr}");
+    assert!(stderr.contains("git init"), "{stderr}");
+    assert!(
+        text(&out.stdout).contains("\"event\":\"run_finished\""),
+        "the warning must not stop the run"
+    );
+
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    fs::create_dir_all(repo.join("sub")).unwrap();
+    let out = run_in(temp.path(), &repo.join("sub"), "repo-runs");
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(!text(&out.stderr).contains("not inside a git repository"));
+}

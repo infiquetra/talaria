@@ -1,7 +1,7 @@
 # Remote gateways
 
 Talaria can connect to an operator-managed Hermes gateway through a TLS tunnel. On the
-remote machine, run the pinned Hermes release, enable an interactive dashboard sign-in
+remote machine, run Hermes, enable an interactive dashboard sign-in
 provider, and set `dashboard.public_url` to the tunnel's public HTTPS address. Forward the
 tunnel to the gateway's **own** listener, which carries the session authority. Its port is
 random at each gateway start; arrange the tunnel target accordingly. A standalone dashboard
@@ -34,7 +34,7 @@ Open the displayed address in a browser, then paste the address the browser was 
 to into the waiting terminal. Echo is disabled during paste. The callback address includes
 a code that expires after 120 seconds; do not share it. The loopback callback and paste race,
 and the first one wins. Ctrl+C cancels; sign-in otherwise times out after ten minutes.
-Hermes has no device-code sign-in at the pinned release.
+The Hermes release Talaria was tested against has no device-code sign-in.
 
 ```sh
 talaria remote list

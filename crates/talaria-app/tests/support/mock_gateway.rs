@@ -1117,9 +1117,27 @@ impl MockGateway {
             Some(names.iter().map(|name| (*name).to_owned()).collect());
     }
 
+    /// The descriptions `complete.slash` sends as each skin item's `meta`, as Hermes does.
+    pub fn set_skin_descriptions(&self, descriptions: &[(&str, &str)]) {
+        lock(&self.shared).sess.skin_descriptions = descriptions
+            .iter()
+            .map(|(name, text)| ((*name).to_owned(), (*text).to_owned()))
+            .collect();
+    }
+
     /// Refuse `complete.slash` for `/skin`, as when the list cannot be fetched.
     pub fn set_skin_list_unavailable(&self, unavailable: bool) {
         lock(&self.shared).sess.skin_list_unavailable = unavailable;
+    }
+
+    /// The rows `complete.slash` returns for `/personality `, each a name and its description.
+    /// Hermes lists `none` first, then the built-in and configured personalities.
+    pub fn set_personality_rows(&self, rows: &[(&str, &str)]) {
+        lock(&self.shared).sess.personality_rows = Some(
+            rows.iter()
+                .map(|(name, text)| ((*name).to_owned(), (*text).to_owned()))
+                .collect(),
+        );
     }
 
     /// The `execution_generation` written on the envelope of built events. The default is 1.
@@ -2630,6 +2648,8 @@ struct SessionSide {
     options_profile: Value,
     /// When set, `model.options` is refused with this reason instead of a catalogue.
     options_fail: Option<String>,
+    /// The profile this connection's ticket is bound to. Naming any other profile is refused.
+    connection_profile: String,
     /// `config.get` value for the reasoning key. Null is a value the client can read.
     reasoning_value: Value,
     mutate_revision: i64,
@@ -2651,8 +2671,12 @@ struct SessionSide {
     config_skin_null: bool,
     /// Names `complete.slash` returns for a `/skin` query. `None` keeps the generic fixture.
     skin_names: Option<Vec<String>>,
+    /// The `meta` (description) `complete.slash` gives a skin name, when set.
+    skin_descriptions: HashMap<String, String>,
     /// A `/skin` completion is refused, so the caller cannot see the list.
     skin_list_unavailable: bool,
+    /// Rows `complete.slash` returns for a `/personality ` query. `None` keeps the generic fixture.
+    personality_rows: Option<Vec<(String, String)>>,
     // Permissions and moves (#237).
     approvals_mode: String,
     mode_read_denied: bool,
@@ -2748,6 +2772,7 @@ impl SessionSide {
             options_with_session: json!({"model": "", "provider": "", "providers": []}),
             options_profile: json!({"model": "", "provider": "", "providers": []}),
             options_fail: None,
+            connection_profile: "fixture".to_owned(),
             reasoning_value: json!("high"),
             mutate_revision: 0,
             mutate_generation: 0,
@@ -2761,7 +2786,9 @@ impl SessionSide {
             config_skin: "default".to_owned(),
             config_skin_null: false,
             skin_names: None,
+            skin_descriptions: HashMap::new(),
             skin_list_unavailable: false,
+            personality_rows: None,
             approvals_mode: "manual".to_owned(),
             mode_read_denied: false,
             session_bypass: HashMap::new(),
@@ -3323,11 +3350,15 @@ fn plan_slash(
                     .filter(|name| name.starts_with(&prefix) && name.as_str() != prefix)
                     .take(30)
                     .map(|name| {
-                        json!({
+                        let mut item = json!({
                             "text": name,
                             "display": name,
                             "kind": "argument",
-                        })
+                        });
+                        if let Some(meta) = state.sess.skin_descriptions.get(name) {
+                            item["meta"] = json!(meta);
+                        }
+                        item
                     })
                     .collect();
                 let result = json!({"items": items, "replace_from": 6});
@@ -3335,6 +3366,23 @@ fn plan_slash(
                 outgoing.push((None, body, reply_meta(id, method)));
                 return;
             }
+        }
+        // Hermes: hermes_cli/commands_completion.py `_personality_completions`.
+        if let (Some(prefix), Some(rows)) = (
+            text.strip_prefix("/personality "),
+            &state.sess.personality_rows,
+        ) {
+            let items: Vec<Value> = rows
+                .iter()
+                .filter(|(name, _)| name.starts_with(prefix) && name.as_str() != prefix)
+                .map(|(name, meta)| {
+                    json!({"text": name, "display": name, "meta": meta, "kind": "command"})
+                })
+                .collect();
+            let result = json!({"items": items, "replace_from": 13});
+            let body = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+            outgoing.push((None, body, reply_meta(id, method)));
+            return;
         }
     }
     let result = slash_result(method, params, state.turn_running);
@@ -3419,7 +3467,7 @@ fn slash_result(method: &str, params: &Value, turn_running: bool) -> Value {
                     "notice": "Planning: write a haiku about rain"
                 })
             } else if name == "talaria-workflows" {
-                let rows = include_str!("../../../../fixtures/frames/p5-09-ultracode-skill.jsonl");
+                let rows = include_str!("../../../../fixtures/frames/p5-09-hivecode-skill.jsonl");
                 rows.lines()
                     .filter_map(|line| serde_json::from_str::<Value>(line).ok())
                     .find_map(|row| {
@@ -5202,6 +5250,11 @@ impl MockGateway {
         lock(&self.shared).sess.options_fail = reason.map(str::to_owned);
     }
 
+    /// The profile the connection is bound to; `model.options` naming another one is refused.
+    pub fn set_connection_profile(&self, profile: &str) {
+        lock(&self.shared).sess.connection_profile = profile.to_owned();
+    }
+
     /// The value `config.get` returns for `reasoning`.
     pub fn set_reasoning_value(&self, value: Value) {
         lock(&self.shared).sess.reasoning_value = value;
@@ -5503,6 +5556,19 @@ pub struct TicketSeen {
     pub at: Instant,
 }
 
+/// One rename or delete the profile routes read.
+#[derive(Clone, Debug)]
+pub struct RegistrySeen {
+    /// `PATCH` or `DELETE`.
+    pub method: String,
+    /// The request target, `/api/profiles/<name>`.
+    pub target: String,
+    /// The JSON body, or null.
+    pub body: Value,
+    /// The ticket the request carried, when the control socket minted it.
+    pub ticket: Option<TicketSeen>,
+}
+
 struct StandaloneInfo {
     capability_http: Mutex<Vec<(String, String)>>,
     capability_http_failure: Mutex<Option<u16>>,
@@ -5518,7 +5584,12 @@ struct StandaloneInfo {
     refuse_tickets: Mutex<bool>,
     fleet_profiles: Mutex<Vec<String>>,
     parked_profiles: Mutex<Vec<(String, String)>>,
+    profile_registry: Mutex<Vec<RegistrySeen>>,
+    profile_registry_reply: Mutex<Option<(u16, Value)>>,
     configure_rest_origin: Mutex<Option<String>>,
+    /// What `GET /api/config` answers, and every such request seen.
+    config_reply: Mutex<Value>,
+    config_seen: Mutex<Vec<DoctorHttpSeen>>,
     doctor: Mutex<DoctorMockState>,
 }
 
@@ -5641,6 +5712,8 @@ impl StandaloneGateway {
             refuse_tickets: Mutex::new(false),
             fleet_profiles: Mutex::new(Vec::new()),
             parked_profiles: Mutex::new(Vec::new()),
+            profile_registry: Mutex::new(Vec::new()),
+            profile_registry_reply: Mutex::new(None),
             doctor: Mutex::new(DoctorMockState {
                 state: "ready".into(),
                 code_sha: CODE_SHA.into(),
@@ -5652,6 +5725,10 @@ impl StandaloneGateway {
                 http: Vec::new(),
             }),
             configure_rest_origin: Mutex::new(None),
+            config_reply: Mutex::new(
+                json!({"compression":{"in_place":true},"agent":{"max_turns":null}}),
+            ),
+            config_seen: Mutex::new(Vec::new()),
         });
         lock(&shared).sess.profile_id = info.home.clone();
         let socket = home.join("gateway.sock");
@@ -5732,6 +5809,32 @@ impl StandaloneGateway {
         }
     }
 
+    /// Answer one settings route on the REST mock with a handler of the test's own.
+    pub fn configure_rest_route<F>(&self, method: &str, path: &str, handler: F)
+    where
+        F: Fn(&configure_rest::RecordedRequest) -> (u16, Value) + Send + Sync + 'static,
+    {
+        self.enable_configure_rest();
+        if let Some(mock) = plain(&self.configure_rest).as_ref() {
+            mock.set_route(method, path, handler);
+        }
+    }
+
+    /// Merge `patch` into the settings mock's stored configuration file.
+    pub fn configure_rest_merge_raw(&self, patch: &Value) {
+        self.enable_configure_rest();
+        if let Some(mock) = plain(&self.configure_rest).as_ref() {
+            mock.merge_raw(patch);
+        }
+    }
+
+    /// The settings mock's recorded requests, with their headers.
+    pub fn configure_rest_recorded(&self) -> Vec<configure_rest::RecordedRequest> {
+        let rest = plain(&self.configure_rest);
+        rest.as_ref()
+            .map_or_else(Vec::new, |mock| self.block_on(mock.requests()))
+    }
+
     /// Return the settings mock's recorded method, target, and body in order.
     pub fn configure_rest_requests(&self) -> Vec<(String, String, Vec<u8>)> {
         let rest = plain(&self.configure_rest);
@@ -5808,6 +5911,30 @@ impl StandaloneGateway {
         plain(&self.info.parked_profiles).push((name.to_owned(), reason.to_owned()));
     }
 
+    /// Answer every accepted rename or delete with this status and body, until changed.
+    /// Without it a delete answers `{"ok": true}` and a rename names the new profile.
+    pub fn script_profile_registry(&self, status: u16, body: Value) {
+        *plain(&self.info.profile_registry_reply) = Some((status, body));
+    }
+
+    /// Every rename and delete the profile routes read, in order.
+    pub fn profile_registry_requests(&self) -> Vec<RegistrySeen> {
+        plain(&self.info.profile_registry).clone()
+    }
+
+    /// The ticket the control socket minted with this value, if it minted one.
+    pub fn ticket_for(&self, value: &str) -> Option<TicketSeen> {
+        plain(&self.info.tickets)
+            .iter()
+            .find(|issued| issued.value == value)
+            .map(|issued| TicketSeen {
+                scope: issued.scope.clone(),
+                purpose: issued.purpose.clone(),
+                profile_id: issued.profile_id.clone(),
+                at: issued.at,
+            })
+    }
+
     /// Every ticket minted, in order, with the scope and profile it names.
     pub fn ticket_records(&self) -> Vec<TicketSeen> {
         plain(&self.info.tickets)
@@ -5840,6 +5967,14 @@ impl StandaloneGateway {
     }
     pub fn doctor_drop_restart(&self, value: bool) {
         plain(&self.info.doctor).drop_restart = value;
+    }
+    /// Set what `GET /api/config` answers; the default is a healthy configuration.
+    pub fn set_config_reply(&self, reply: Value) {
+        *plain(&self.info.config_reply) = reply;
+    }
+    /// Every `GET /api/config` the gateway answered. They are plain HTTP, not connections.
+    pub fn config_requests(&self) -> Vec<DoctorHttpSeen> {
+        plain(&self.info.config_seen).clone()
     }
     pub fn doctor_http_requests(&self) -> Vec<DoctorHttpSeen> {
         plain(&self.info.doctor).http.clone()
@@ -6018,10 +6153,14 @@ fn issue_ticket(info: &StandaloneInfo, request: &Value) -> Value {
     }
     if !matches!(
         params["purpose"].as_str(),
-        Some("interactive" | "native-http")
+        Some("interactive" | "native-http" | "native-profile-registry")
     ) || !matches!(params["scope"].as_str(), Some("profile" | "host"))
     {
         return refuse("session-ticket: invalid bootstrap parameters");
+    }
+    // gateway/runtime_bootstrap.py: a registry grant names exactly one profile.
+    if params["purpose"] == "native-profile-registry" && params["scope"] == "host" {
+        return refuse("session-ticket: bootstrap binding rejected");
     }
     // gateway/runtime_bootstrap.py lines 37 to 42: host scope needs purpose interactive,
     // and any served profile id may be named. The mock refuses host scope only when a
@@ -6088,7 +6227,7 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
                 let Some(count) = request else { return };
                 let line = String::from_utf8_lossy(&first[..count]);
                 let target = line.split_whitespace().nth(1).unwrap_or("");
-                if target.starts_with("/api/config") {
+                if target.starts_with("/api/config") || target.starts_with("/api/model") {
                     if let Some(address) = origin.strip_prefix("http://")
                         && let Ok(mut rest) = TcpStream::connect(address).await
                     {
@@ -6120,6 +6259,12 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
             if head.starts_with("GET /api/status") || head.starts_with("POST /api/gateway/restart")
             {
                 doctor_http(stream, info).await;
+            } else if head.starts_with("GET /api/config") {
+                config_http(stream, info).await;
+            } else if head.starts_with("DELETE /api/profiles/")
+                || head.starts_with("PATCH /api/profiles/")
+            {
+                profile_registry_http(stream, info).await;
             } else {
                 let connection = {
                     let mut sockets = plain(&info.websockets);
@@ -6734,4 +6879,159 @@ async fn doctor_http(stream: TcpStream, info: Arc<StandaloneInfo>) {
     );
     let _ = stream.write_all(response.as_bytes()).await;
 }
+/// `GET /api/config` for a profile: the effective configuration, behind one unused `native-http`
+/// ticket. It is plain HTTP, so it is not counted as a connection.
+async fn config_http(stream: TcpStream, info: Arc<StandaloneInfo>) {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    if reader.read_line(&mut line).await.is_err() {
+        return;
+    }
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("").to_owned();
+    let target = parts.next().unwrap_or("").to_owned();
+    let mut headers = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).await.unwrap_or(0) == 0 || line == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = line.trim_end().split_once(':') {
+            headers.push((name.to_ascii_lowercase(), value.trim().to_owned()));
+        }
+    }
+    let found: Vec<_> = headers
+        .iter()
+        .filter(|(k, _)| k == "x-hermes-gateway-ticket")
+        .collect();
+    let allowed = found.len() == 1 && {
+        let mut issued = plain(&info.tickets);
+        match issued
+            .iter_mut()
+            .find(|t| t.value == found[0].1 && !t.used && t.purpose == "native-http")
+        {
+            Some(entry) => {
+                entry.used = true;
+                true
+            }
+            None => false,
+        }
+    };
+    plain(&info.config_seen).push(DoctorHttpSeen {
+        method,
+        target,
+        headers,
+        body: String::new(),
+    });
+    let (status, data) = if allowed {
+        (200, plain(&info.config_reply).to_string())
+    } else {
+        (401, json!({"detail":"Unauthorized"}).to_string())
+    };
+    let mut stream = reader.into_inner();
+    let response = format!(
+        "HTTP/1.1 {status} response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}",
+        data.len(),
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+}
+/// `PATCH` and `DELETE /api/profiles/<name>` as the pinned Hermes guards them
+/// (hermes_cli/dashboard_auth/native_http.py): only an unused `native-profile-registry`
+/// ticket minted for that profile's own home, and never the home the gateway runs from.
+async fn profile_registry_http(stream: TcpStream, info: Arc<StandaloneInfo>) {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    if reader.read_line(&mut line).await.is_err() {
+        return;
+    }
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("").to_owned();
+    let target = parts.next().unwrap_or("").to_owned();
+    let mut headers = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).await.unwrap_or(0) == 0 || line == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = line.trim_end().split_once(':') {
+            headers.push((name.to_ascii_lowercase(), value.trim().to_owned()));
+        }
+    }
+    let length = headers
+        .iter()
+        .find(|(k, _)| k == "content-length")
+        .and_then(|(_, v)| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = vec![0u8; length];
+    use tokio::io::AsyncReadExt;
+    if reader.read_exact(&mut body).await.is_err() {
+        return;
+    }
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let credential = headers
+        .iter()
+        .find(|(k, _)| k == "x-hermes-gateway-ticket")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    let name = target.trim_start_matches("/api/profiles/").to_owned();
+    let home = if name == "default" {
+        info.home.clone()
+    } else if name == "fixture" {
+        info.fixture.clone()
+    } else {
+        name.clone()
+    };
+    let ticket = {
+        let mut tickets = plain(&info.tickets);
+        tickets
+            .iter_mut()
+            .find(|ticket| {
+                ticket.value == credential
+                    && !ticket.used
+                    && ticket.purpose == "native-profile-registry"
+            })
+            .map(|ticket| {
+                ticket.used = true;
+                TicketSeen {
+                    scope: ticket.scope.clone(),
+                    purpose: ticket.purpose.clone(),
+                    profile_id: ticket.profile_id.clone(),
+                    at: ticket.at,
+                }
+            })
+    };
+    plain(&info.profile_registry).push(RegistrySeen {
+        method: method.clone(),
+        target,
+        body: body.clone(),
+        ticket: ticket.clone(),
+    });
+    let (status, reply) = match &ticket {
+        None => (401, json!({"detail": "Unauthorized"})),
+        // _check_registry_scope: the grant's own profile, and never the launch home.
+        Some(ticket) if ticket.profile_id != home || home == info.home => {
+            (403, json!({"detail": "profile_scope_mismatch"}))
+        }
+        Some(_) => plain(&info.profile_registry_reply)
+            .clone()
+            .unwrap_or_else(|| {
+                if method == "DELETE" {
+                    (200, json!({"ok": true, "path": home}))
+                } else {
+                    (
+                        200,
+                        json!({"ok": true, "name": body["new_name"], "path": home}),
+                    )
+                }
+            }),
+    };
+    let data = reply.to_string();
+    let mut stream = reader.into_inner();
+    let response = format!(
+        "HTTP/1.1 {status} response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}",
+        data.len(),
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+}
+
 include!("mock_mcp.rs");

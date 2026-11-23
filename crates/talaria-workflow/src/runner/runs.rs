@@ -9,7 +9,10 @@ use std::{
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::journal::{JournalError, JournalReader, Manifest, RecordLine};
+use crate::{
+    journal::{JournalError, JournalReader, Manifest, RecordLine},
+    tokens::CacheTracker,
+};
 
 pub fn configuration_dir() -> PathBuf {
     env::var_os("TALARIA_CONFIG_DIR")
@@ -47,22 +50,45 @@ pub enum RunStatus {
     Running,
     Parked,
     Completed,
+    /// The script returned, but at least one agent failed.
+    CompletedWithFailures,
+    /// The script returned, but the budget refused or stopped at least one agent.
+    BudgetExhausted,
     Failed,
     Aborted,
     Interrupted,
     Unreadable,
 }
 impl RunStatus {
+    /// Whether the run reached a recorded end. Running, parked, interrupted and unreadable runs
+    /// have not: their agents may still be working or may be resumed.
+    pub fn is_finished(self) -> bool {
+        matches!(
+            self,
+            Self::Completed
+                | Self::CompletedWithFailures
+                | Self::BudgetExhausted
+                | Self::Failed
+                | Self::Aborted
+        )
+    }
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::Parked => "parked",
             Self::Completed => "completed",
+            Self::CompletedWithFailures => "completed_with_failures",
+            Self::BudgetExhausted => "budget_exhausted",
             Self::Failed => "failed",
             Self::Aborted => "aborted",
             Self::Interrupted => "interrupted",
             Self::Unreadable => "unreadable",
         }
+    }
+    /// The status as a person reads it: the raw word with its underscores as spaces. JSON keeps
+    /// [`Self::as_str`].
+    pub fn label(self) -> String {
+        self.as_str().replace('_', " ")
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -75,7 +101,14 @@ pub struct RunSummary {
     pub agents_finished: u32,
     pub agents_total_known: u32,
     pub parked: u32,
+    /// Tokens the budget counts: everything except cache reads. A turn whose cache reads Hermes
+    /// did not report is counted whole.
     pub tokens_spent: Option<u64>,
+    /// Cache reads Hermes reported; not in `tokens_spent`. `None` when no turn reported tokens.
+    pub cache_read_tokens: Option<u64>,
+    /// Settled turns whose cache reads were not reported (every turn of a run journaled before
+    /// cache reads were kept apart); their tokens are all in `tokens_spent`.
+    pub cache_unknown_turns: u32,
     pub money_spent_usd: Option<f64>,
     pub run_dir: String,
     pub warning: Option<String>,
@@ -118,6 +151,24 @@ pub fn find_run(runs_dir: &Path, id_or_path: &str) -> Result<PathBuf, FindError>
     }
 }
 
+/// Whether a runner holds the run lock now. A free or missing lock means no runner.
+/// Read access is enough to test the lock, so a viewer that cannot write the run folder
+/// still gets an answer.
+pub fn runner_alive(dir: &Path) -> io::Result<bool> {
+    let file = match File::open(dir.join("run.lock")) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            let _ = file.unlock();
+            Ok(false)
+        }
+        Err(fs::TryLockError::WouldBlock) => Ok(true),
+        Err(fs::TryLockError::Error(e)) => Err(e),
+    }
+}
 pub(crate) enum LockProbe {
     Free(Option<File>),
     Held,
@@ -151,6 +202,8 @@ pub(crate) struct Fold {
     pub total: u32,
     pub parked: u32,
     pub tokens: Option<u64>,
+    pub cache_read_tokens: u64,
+    pub cache_unknown_turns: u32,
     pub money: Option<f64>,
 }
 impl Fold {
@@ -162,6 +215,7 @@ impl Fold {
         let mut money = BTreeMap::new();
         let mut unknown_money = false;
         let mut settled = false;
+        let mut cache = CacheTracker::new();
         for line in records {
             let record = serde_json::to_value(&line.record)?;
             let kind = record["t"].as_str().unwrap_or_default();
@@ -209,15 +263,21 @@ impl Fold {
                 "turn_settled" => {
                     settled = true;
                     let usage = &record["usage"];
-                    let tokens = usage["total_tokens"].as_u64().or_else(|| {
-                        usage["input_tokens"]
-                            .as_u64()
-                            .zip(usage["output_tokens"].as_u64())
-                            .map(|(a, b)| a.saturating_add(b))
-                    });
-                    if let Some(tokens) = tokens {
-                        folded.tokens =
-                            Some(folded.tokens.unwrap_or_default().saturating_add(tokens));
+                    let attempt = record["attempt"].as_u64().unwrap_or_default();
+                    if let Some(turn) = cache.settle((key.to_owned(), attempt), usage) {
+                        folded.tokens = Some(
+                            folded
+                                .tokens
+                                .unwrap_or_default()
+                                .saturating_add(turn.tokens.counted),
+                        );
+                        folded.cache_read_tokens = folded
+                            .cache_read_tokens
+                            .saturating_add(turn.tokens.cache_read);
+                        if !turn.cache_known {
+                            folded.cache_unknown_turns =
+                                folded.cache_unknown_turns.saturating_add(1);
+                        }
                     }
                     let cost = &usage["session_cost"];
                     let amount = cost["estimated_cost_usd"]
@@ -272,6 +332,8 @@ fn unreadable(path: &Path, id: &str, warning: String) -> RunSummary {
         agents_total_known: 0,
         parked: 0,
         tokens_spent: None,
+        cache_read_tokens: None,
+        cache_unknown_turns: 0,
         money_spent_usd: None,
         run_dir: path.to_string_lossy().into_owned(),
         warning: Some(warning),
@@ -324,6 +386,8 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
     };
     let status = match fold.terminal.as_deref() {
         Some("completed") => RunStatus::Completed,
+        Some("completed_with_failures") => RunStatus::CompletedWithFailures,
+        Some("budget_exhausted") => RunStatus::BudgetExhausted,
         Some("failed") => RunStatus::Failed,
         Some("aborted") => RunStatus::Aborted,
         _ if fold.parked > 0 => RunStatus::Parked,
@@ -340,10 +404,20 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
         agents_total_known: fold.total,
         parked: fold.parked,
         tokens_spent: fold.tokens,
+        cache_read_tokens: fold.tokens.map(|_| fold.cache_read_tokens),
+        cache_unknown_turns: fold.cache_unknown_turns,
         money_spent_usd: fold.money,
         run_dir: path.to_string_lossy().into_owned(),
         warning: None,
     }
+}
+/// One run folder's summary, derived exactly as `workflow list` derives it.
+pub fn summarize_run(path: &Path) -> RunSummary {
+    let id = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    summarize(path, &id)
 }
 pub fn discover_runs(runs_dir: &Path) -> Vec<RunSummary> {
     let entries = match fs::read_dir(runs_dir) {
@@ -357,6 +431,41 @@ pub fn discover_runs(runs_dir: &Path) -> Vec<RunSummary> {
         let path = entry.path();
         if is_run_folder(&path) {
             runs.push(summarize(&path, id));
+        }
+    }
+    runs.sort_by(|a, b| {
+        b.started_at_ms
+            .cmp(&a.started_at_ms)
+            .then_with(|| a.run_id.cmp(&b.run_id))
+    });
+    runs
+}
+/// The runs that started at or after `since_ms`, newest first. A folder last changed well
+/// before the cutoff is skipped without reading it, so a frequent check stays cheap.
+pub fn discover_runs_since(runs_dir: &Path, since_ms: i64) -> Vec<RunSummary> {
+    let entries = match fs::read_dir(runs_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    // A coarse file system clock may stamp a new folder slightly before the cutoff.
+    let cutoff = since_ms.saturating_sub(5_000);
+    let mut runs = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(id) = name.to_str() else { continue };
+        let path = entry.path();
+        let changed_ms = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|at| i64::try_from(at.as_millis()).unwrap_or(i64::MAX));
+        if changed_ms.is_some_and(|ms| ms < cutoff) || !is_run_folder(&path) {
+            continue;
+        }
+        let summary = summarize(&path, id);
+        if summary.started_at_ms >= since_ms {
+            runs.push(summary);
         }
     }
     runs.sort_by(|a, b| {

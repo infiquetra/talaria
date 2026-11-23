@@ -3,12 +3,14 @@
 pub mod control;
 pub mod execute;
 mod files;
+mod leftover;
 #[cfg(feature = "mock")]
 pub mod mock_support;
 mod recording;
 pub mod resolver;
 pub mod runs;
 mod services;
+pub mod worktrees;
 
 pub use control::{
     AnswerError, ControlWrite, PausingGate, StopExit, answer_parked, request_stop, write_control,
@@ -20,9 +22,10 @@ pub use execute::{
 pub use execute::{run_new_with_services, run_resume_with_services};
 pub use resolver::FilesystemResolver;
 pub use runs::{
-    FindError, RunStatus, RunSummary, discover_runs, find_run, runs_dir, workflows_dir,
+    FindError, RunStatus, RunSummary, discover_runs, discover_runs_since, find_run, runs_dir,
+    workflows_dir,
 };
-pub use services::RunnerServices;
+pub use services::{ConfigSource, RestConfigSource, RunnerServices};
 
 /// Discovery rows and selection for the progress viewer's run picker.
 #[derive(Clone, Debug)]

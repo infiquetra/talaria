@@ -165,9 +165,13 @@ needle under four characters is refused.
 
 ## Unparseable payloads
 
-Text that is not valid JSON is recorded with `frame: null` and a `parseError` holding the parser's
-position and expectation. The text itself is withheld: it could not be walked by the rules, so it
-cannot be shown to be safe. These records are worth reading: an unparseable frame is protocol
+An inbound frame first gets the same repair the live reader applies: a bare `Infinity`,
+`-Infinity` or `NaN` outside a string, which Python writes for a non-finite float, becomes `null`.
+The recording then holds the frame the client acted on.
+
+Text that is still not valid JSON is recorded with `frame: null` and a `parseError` holding the
+parser's position and expectation. The text itself is withheld: it could not be walked by the
+rules, so it cannot be shown to be safe. These records are worth reading: an unparseable frame is protocol
 drift. Replay skips them.
 
 ## Guarantees and non-guarantees

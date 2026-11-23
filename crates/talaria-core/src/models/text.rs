@@ -118,10 +118,40 @@ pub fn notice_stale(model: &str, provider: &str, why: &str) -> String {
     notice_t36(model, provider, why)
 }
 
+/// A context size such as 200K or 1.5M, rounded to one decimal place.
+pub(super) fn token_count(value: i64) -> String {
+    let (unit, suffix) = if value >= 1_000_000 {
+        (1_000_000, "M")
+    } else if value >= 1_000 {
+        (1_000, "K")
+    } else {
+        return value.to_string();
+    };
+    let tenths = value.saturating_mul(10).saturating_add(unit / 2) / unit;
+    if tenths % 10 == 0 {
+        format!("{}{suffix}", tenths / 10)
+    } else {
+        format!("{}.{}{suffix}", tenths / 10, tenths % 10)
+    }
+}
+
 pub fn usage_model() -> &'static str {
     "Usage: /model [<model> [--provider <id>] [--effort <level>] [--default]]"
 }
 
 pub fn usage_effort() -> &'static str {
     "Usage: /effort [none|minimal|low|medium|high|xhigh|max|ultra|default] [--default]"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::token_count;
+
+    #[test]
+    fn token_count_rounds_and_never_overflows() {
+        assert_eq!(token_count(200_000), "200K");
+        assert_eq!(token_count(1_500_000), "1.5M");
+        assert_eq!(token_count(999), "999");
+        assert_eq!(token_count(i64::MAX), "922337203685.4M");
+    }
 }

@@ -16,10 +16,10 @@ pub fn overlay_title_found(text: &str, title_fmt: &str, profile: &str) -> bool {
 pub fn workflows_empty(text: &str) -> bool {
     text.contains(WORKFLOWS_EMPTY)
 }
-pub fn ultracode_status(text: &str) -> bool {
-    text.contains(ULTRACODE_STATUS)
+pub fn hivecode_status(text: &str) -> bool {
+    text.contains(HIVECODE_STATUS)
         || text.lines().any(|line| {
-            line.split_once(ULTRACODE_STATUS_INSTALLED_PREFIX)
+            line.split_once(HIVECODE_STATUS_INSTALLED_PREFIX)
                 .and_then(|(_, rest)| rest.split_once(")."))
                 .is_some_and(|(origin, _)| !origin.trim().is_empty())
         })
@@ -97,9 +97,9 @@ pub(crate) fn composer_found(text: &str) -> bool {
 }
 pub(crate) fn toggle_on(text: &str) -> bool {
     text.lines().any(|l| {
-        l.trim() == ULTRACODE_BADGE
+        l.trim() == HIVECODE_BADGE
             || l.split(['·', '│'])
-                .any(|part| part.trim() == ULTRACODE_BADGE)
+                .any(|part| part.trim() == HIVECODE_BADGE)
     })
 }
 

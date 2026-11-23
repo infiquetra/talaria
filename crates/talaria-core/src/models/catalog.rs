@@ -2,6 +2,11 @@
 
 use hermes_contract::schemas::{ModelOptionProvider, ModelOptionsResult, ProviderLimitScope};
 
+/// The badge for a model whose catalogue entry advertises no reasoning effort. The details
+/// line ("Reasoning effort: not offered") and the effort footer ("effort: not offered") say
+/// the same thing in the same words.
+pub const EFFORT_NOT_OFFERED: &str = "effort not offered";
+
 /// Minutes east of UTC used to print a rate-limit clock. Tests pass a fixed offset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DisplayZone {
@@ -206,7 +211,7 @@ impl Catalog {
                 row.badges.push("fast".into());
             }
             if !caps.reasoning {
-                row.badges.push("no effort".into());
+                row.badges.push(EFFORT_NOT_OFFERED.into());
             }
         }
         if p.unavailable_models

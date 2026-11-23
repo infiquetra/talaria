@@ -163,10 +163,10 @@ fn effort_control() {
     press(&mut hidden, PickerKey::Right);
     move_down_to(&mut hidden, &model_key("no-dial"));
     let (_title, effort, _filter, _banner) = view_parts(&hidden);
-    assert_eq!(effort, "effort: not offered by this model");
+    assert_eq!(effort, "effort: not offered");
     press(&mut hidden, PickerKey::Right);
     let (_title, effort, _filter, _banner) = view_parts(&hidden);
-    assert_eq!(effort, "effort: not offered by this model");
+    assert_eq!(effort, "effort: not offered");
     press(&mut hidden, PickerKey::Up);
     let (_title, effort, _filter, _banner) = view_parts(&hidden);
     assert_eq!(effort, "effort: high → max");

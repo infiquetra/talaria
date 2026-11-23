@@ -81,9 +81,9 @@ fn main() -> ExitCode {
             if cli.print {
                 return ExitCode::from(talaria_cli::print::run_print(&cli, started));
             }
-            let ultracode = cli.ultracode;
+            let hivecode = cli.hivecode;
             match cli.into_launch() {
-                Ok(launch) => talaria_cli::run::run_with_ultracode(launch, ultracode),
+                Ok(launch) => talaria_cli::run::run_with_hivecode(launch, hivecode),
                 Err(error) => {
                     let failure = talaria_app::failure::LaunchFailure::from(error);
                     eprint!("{}", failure.render());

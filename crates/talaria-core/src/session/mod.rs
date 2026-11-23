@@ -7,6 +7,7 @@ pub mod cell;
 pub mod effect;
 pub mod event;
 pub mod ids;
+pub(crate) mod injected;
 pub mod notices;
 pub mod prompts;
 pub mod reducer;
@@ -31,5 +32,6 @@ pub use state::{
     TurnOutcome, TurnState, Usage,
 };
 pub use tool_view::{
-    OutcomeView, OutputView, ToolView, format_duration, format_progress, tool_view,
+    AskedQuestion, OutcomeView, OutputView, ToolView, format_duration, format_progress,
+    shorten_middle, tool_view,
 };

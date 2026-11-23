@@ -10,14 +10,14 @@ fn range_unknown_and_free() {
         json!({"m-small":{"input":"free","output":"free","free":true}});
     assert_eq!(
         estimate_run_cost(&t, &roster(&free), Some(2_000_000)).to_string(),
-        "$0.00 to $0.00"
+        "$0.00 to $0.00, not counting cache reads"
     );
     let mut priced = data();
     priced["providers"][0]["pricing"] =
         json!({"m-small":{"input":"$3.00","output":"$15.00","free":false}});
     assert_eq!(
         estimate_run_cost(&t, &roster(&priced), Some(2_000_000)).to_string(),
-        "$6.00 to $30.00"
+        "$6.00 to $30.00, not counting cache reads"
     );
     assert_eq!(
         estimate_run_cost(&t, &roster(&data()), Some(2_000_000)).to_string(),
@@ -40,8 +40,21 @@ fn range_unknown_and_free() {
     );
     assert_eq!(
         estimate_run_cost(&mixed, &roster(&priced), Some(2_000_000)).to_string(),
-        "$6.00 to $30.00, plus 1 unpriced tiers (unknown)"
+        "$6.00 to $30.00, not counting cache reads, plus 1 unpriced tiers (unknown)"
     );
     let text = estimate_run_cost(&t, &roster(&priced), None).to_string();
     assert!(text.contains("survey") && text.contains("$3.00/$15.00"));
+}
+
+#[test]
+fn no_tiers_means_no_price_list_and_no_dangling_sentence() {
+    // A script that names models directly leaves the table with no tiers.
+    let mut t = table();
+    t.tiers.clear();
+    let text = estimate_run_cost(&t, &roster(&data()), None).to_string();
+    assert_eq!(
+        text,
+        "no estimate without a token budget; no tiers are set, so there is no price list"
+    );
+    assert!(!text.contains("per million"), "{text}");
 }

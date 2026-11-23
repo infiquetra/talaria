@@ -565,6 +565,64 @@ async fn rewind_rebuild_marks_cells_without_reprint() {
 }
 
 #[tokio::test]
+async fn rewind_rebuild_sends_the_whole_workflow_skill_again() {
+    use talaria_app::hivecode::Action;
+    let snapshot = resume_snapshot();
+    let (_mock, mut app) = opened_app(snapshot.clone()).await;
+    let session = talaria_core::session::SessionId::new(
+        app.opened.as_ref().expect("open").session_id.clone(),
+    );
+    let catalog: talaria_core::commands::CatalogResult = serde_json::from_value(
+        json!({"skills": {"/talaria-workflows": {"usage": 0, "origin": "local"}}, "pairs": []}),
+    )
+    .expect("catalog");
+    let _ = app.hivecode.on_catalog_reply(
+        &session,
+        "fixture",
+        talaria_core::hivecode::HivecodeCommand::On,
+        Ok(talaria_core::commands::CommandCatalog::from_result(
+            &catalog,
+        )),
+    );
+    let loads_skill = |effects: &[AppEffect]| {
+        effects.iter().any(|effect| {
+            matches!(
+                effect,
+                AppEffect::Hivecode {
+                    action: Action::RunCommand { .. },
+                    ..
+                }
+            )
+        })
+    };
+    let routed = |app: &mut AppState, typed: &str| {
+        update(app, AppMessage::User(UserAction::Submit(typed.into())))
+    };
+    assert!(loads_skill(&routed(&mut app, "fix the parser")));
+    let expanded = "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\n\nThe user has provided the following instruction alongside the skill invocation: fix the parser";
+    let _ = update(
+        &mut app,
+        AppMessage::HivecodeDone {
+            session: session.clone(),
+            original_text: "fix the parser".into(),
+            outcome: Ok(json!({"type": "skill", "name": "talaria-workflows",
+                "message": expanded, "display": "/talaria-workflows fix the parser"})),
+        },
+    );
+    assert!(
+        !loads_skill(&routed(&mut app, "fix the tokenizer")),
+        "the conversation holds the skill"
+    );
+    // The rewind cut the prompt that carried it; Hermes kept the stored id and compactions.
+    rebuild_foreground(
+        &mut app,
+        snapshot,
+        RebuildMode::AfterRewind { notice: Vec::new() },
+    );
+    assert!(loads_skill(&routed(&mut app, "fix the lexer")));
+}
+
+#[tokio::test]
 async fn session_updated_is_observed_and_still_reduced() {
     // The other window's rewind is already in the snapshot the re-read returns.
     let mut snapshot = prompts_snapshot();

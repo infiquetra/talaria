@@ -9,6 +9,7 @@ pub mod background;
 pub mod capabilities;
 pub mod checklist;
 pub mod commands;
+pub mod config_check;
 pub mod configure;
 pub mod connectors;
 pub mod context;
@@ -41,7 +42,7 @@ pub mod subagents;
 pub mod text;
 pub mod workspace;
 
-pub mod ultracode;
+pub mod hivecode;
 pub mod voice;
 
 pub use seat_status::{BlockKind, SeatState};

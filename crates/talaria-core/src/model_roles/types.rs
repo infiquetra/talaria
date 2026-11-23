@@ -277,7 +277,7 @@ pub enum RolesInput {
     },
     CatalogLoaded(crate::model_roles::RouteCatalog),
     CatalogFailed {
-        reason: String,
+        error: RolesError,
     },
     /// Talaria's own saved default for this profile, as (provider, model), when one is set.
     SavedDefault(Option<(String, String)>),

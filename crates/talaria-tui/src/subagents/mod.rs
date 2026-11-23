@@ -1,6 +1,7 @@
 //! The subagent dock and the `/agents` panel. Issue #242.
 
 pub mod dock;
+mod labels;
 pub mod panel;
 
 pub use dock::{SubagentDock, SubagentStyle};

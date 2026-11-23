@@ -88,6 +88,11 @@ pub enum JournalNotice {
         usage: Option<Value>,
     },
     Warning(JournalWarning),
+    /// A note about an agent's route (untracked work found, or a route that could not be
+    /// checked), shown live as it is journaled.
+    RouteNote {
+        message: String,
+    },
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CallHistory {
@@ -127,6 +132,21 @@ impl CallHistory {
             _ => None,
         })
     }
+    /// What a route check needs: the call's label and launch, the session id the run holds and
+    /// the stored session it was bound to. `None` when the journal holds no intent or no bound
+    /// session for this call, in which case the route cannot be checked.
+    pub fn route(&self) -> Option<(&str, &ResolvedLaunch, String, String)> {
+        let (_, launch, _, label) = self.intent()?;
+        Some((label, launch, self.session()?, self.stored_session()?))
+    }
+    pub fn stored_session(&self) -> Option<String> {
+        self.current().find_map(|r| match &r.record {
+            Record::SessionBound {
+                stored_session_id, ..
+            } => Some(stored_session_id.clone()),
+            _ => None,
+        })
+    }
     pub fn attention(&self) -> Option<ParkedCall> {
         self.current().rev().find_map(|r| match &r.record {
             Record::CallAttention {
@@ -151,6 +171,47 @@ impl CallHistory {
             }),
             _ => None,
         })
+    }
+    /// The attempts whose last settled turn failed with a context overflow.
+    fn overflowed_attempts(&self) -> BTreeSet<u32> {
+        let mut last = BTreeMap::new();
+        for r in &self.records {
+            if let Record::TurnSettled {
+                attempt,
+                result_meta,
+                ..
+            } = &r.record
+            {
+                last.insert(*attempt, result_meta["failure_reason"] == CONTEXT_OVERFLOW);
+            }
+        }
+        last.into_iter()
+            .filter_map(|(attempt, overflowed)| overflowed.then_some(attempt))
+            .collect()
+    }
+    /// How many times this call was started again after its agent ran out of context, across
+    /// every attempt and every execution of the run. A restart is an attempt that ended with a
+    /// retry finish after a context overflow, so the count survives a resume.
+    pub fn overflow_restarts(&self) -> u32 {
+        let overflowed = self.overflowed_attempts();
+        self.records
+            .iter()
+            .filter(|r| {
+                matches!(&r.record, Record::CallRetryFinished { attempt, .. } if overflowed.contains(attempt))
+            })
+            .count() as u32
+    }
+    /// How many attempts of this call ended because the agent ran out of context.
+    pub fn overflowed(&self) -> u32 {
+        self.overflowed_attempts().len() as u32
+    }
+    /// Whether the previous attempt's last settled turn ran out of context, however that
+    /// attempt ended (a restart, or a failure that a resume runs again). The current attempt's
+    /// first prompt then carries the note about the earlier work in its folder.
+    pub fn previous_attempt_overflowed(&self) -> bool {
+        self.attempt()
+            .checked_sub(1)
+            .is_some_and(|previous| self.overflowed_attempts().contains(&previous))
     }
     pub fn turns(&self, dir: &Path) -> Result<Vec<SettledTurn>, JournalError> {
         self.current()
@@ -191,6 +252,7 @@ pub(crate) struct Index {
     pub closed: bool,
     pub failure: Option<String>,
     next_delivery: u64,
+    refused: usize,
 }
 impl Index {
     pub fn apply(&mut self, line: RecordLine, dir: &Path) -> Result<(), JournalError> {
@@ -215,6 +277,7 @@ impl Index {
                 }
                 self.execution = *resume_count;
                 self.next_delivery = 0;
+                self.refused = 0;
                 self.started.clear();
                 self.encountered.clear();
                 self.active = false;
@@ -240,6 +303,7 @@ impl Index {
                     }
                     self.next_delivery += 1;
                 }
+                EngineEvent::AgentRefused { .. } => self.refused += 1,
                 _ => {}
             }
         }
@@ -371,7 +435,10 @@ impl Index {
         result
     }
     pub fn finish_summary(&self) -> FinishSummary {
-        let mut summary = FinishSummary::default();
+        let mut summary = FinishSummary {
+            refused: self.refused,
+            ..FinishSummary::default()
+        };
         for key in &self.encountered {
             if let Some(last) = self.calls.get(key).and_then(CallHistory::last) {
                 match &last.record {
@@ -379,6 +446,7 @@ impl Index {
                         CallOutcome::Completed { .. } => summary.completed += 1,
                         CallOutcome::Failed { .. } => summary.failed += 1,
                         CallOutcome::Skipped => summary.skipped += 1,
+                        CallOutcome::Stopped { .. } => summary.stopped += 1,
                     },
                     Record::CallAttention { .. } => summary.parked += 1,
                     _ => summary.unfinished += 1,
@@ -514,7 +582,7 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
         let due = matches!(
             &last.record,
             Record::CallFinished {
-                outcome: CallOutcome::Failed { .. },
+                outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
                 ..
             } | Record::CallRetryFinished { .. }
                 | Record::CallResolved {
@@ -530,7 +598,7 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
     let failed = matches!(
         next,
         Record::CallFinished {
-            outcome: CallOutcome::Failed { .. },
+            outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
             ..
         }
     );

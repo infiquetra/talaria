@@ -148,7 +148,12 @@ fn parts_of<'a>(cell: &'a Cell, other: &'a dyn CellLines) -> Vec<Cow<'a, str>> {
                 parts.push(Cow::Borrowed(diff.as_str()));
             }
         }
-        Cell::Notice(inner) => parts.push(Cow::Borrowed(inner.text.as_str())),
+        Cell::Notice(inner) => {
+            parts.push(Cow::Borrowed(inner.text.as_str()));
+            if let Some(body) = &inner.body {
+                parts.push(Cow::Borrowed(body.as_str()));
+            }
+        }
         Cell::Prompt(inner) => {
             if let Some(command) = &inner.command {
                 parts.push(Cow::Borrowed(command.as_str()));

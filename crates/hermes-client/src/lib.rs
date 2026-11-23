@@ -29,6 +29,7 @@ pub mod mcp_api;
 pub mod memory_api;
 pub mod messaging_api;
 pub mod model_roles_api;
+pub mod profiles_api;
 pub mod providers_api;
 pub mod record;
 pub mod redact;
@@ -66,7 +67,7 @@ pub use messaging_api::{
 pub use model_roles_api::{
     AssignScope, AssignmentReply, AuxiliaryModels, AuxiliaryTask, EffortField, MainRoute,
     MoaConfig, MoaPreset, MoaSlot, ModelAssignment, ModelInfo, NamedPreset, RouteFields, StaleAux,
-    assign_model, auxiliary_models, moa_config, model_info, save_moa,
+    assign_model, auxiliary_models, moa_config, model_info, model_options, save_moa,
 };
 pub use record::{
     FRAME_LOG_VERSION, GatewayIdentity, RecordError, RecordSummary, Recorder, RecorderOptions,

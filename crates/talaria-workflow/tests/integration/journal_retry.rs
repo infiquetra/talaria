@@ -140,3 +140,32 @@ async fn outage_budget_is_not_turn_time() {
     };
     assert!(start.elapsed() >= Duration::from_secs(120));
 }
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_settled_call_closes_its_session() {
+    let script = source(
+        "const a = await agent('one',{label:'one'});\nconst b = await agent('two',{label:'two'});\nreturn [a, b];",
+    );
+    let mut harness = Harness::new(&script);
+    let mut failing = rule("two", "boom", 1, None);
+    failing.outcome = talaria_workflow::journal::fake_gateway::FakeOutcome::Failed;
+    harness.gateway = FakeGateway::new().with_script(vec![rule("one", "ok", 1, None), failing]);
+    harness.run(&script).await;
+    let bound: Vec<String> = harness
+        .records()
+        .iter()
+        .filter_map(|line| match &line.record {
+            talaria_workflow::journal::Record::SessionBound { session_id, .. } => {
+                Some(session_id.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bound.len(), 2, "{bound:?}");
+    // Both the answered agent and the failed one are closed, each exactly once.
+    let mut closed = harness.gateway.closed_sessions();
+    closed.sort();
+    let mut expected = bound;
+    expected.sort();
+    assert_eq!(closed, expected);
+}

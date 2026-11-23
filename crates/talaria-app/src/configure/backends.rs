@@ -149,10 +149,8 @@ impl SiblingBackends {
         Ok(crate::model_roles::ModelRolesService::new(
             crate::model_roles::ModelRolesOpen {
                 profile: profile.into(),
-                connection_profile: profile.into(),
                 api_origin: self.api_origin.clone(),
                 rest: Some(self.rest(profile)?),
-                socket: self.client.clone(),
                 served_profiles: self.served_profiles.clone(),
             },
         ))

@@ -68,15 +68,18 @@ fn history(
             key: key.into(),
             attempt: 0,
             turns: 1,
-            outcome: if stage == 2 {
-                CallOutcome::Failed {
+            outcome: match stage {
+                2 => CallOutcome::Failed {
                     reason: "interrupted".into(),
-                }
-            } else {
-                CallOutcome::Completed {
+                },
+                4 => CallOutcome::Stopped {
+                    reason: "token budget exhausted (spent 20 of 10)".into(),
+                },
+                _ => CallOutcome::Completed {
                     value: Some(json!("cached")),
                     value_ref: None,
-                }
+                    cut_short: None,
+                },
             },
         });
     }
@@ -176,6 +179,13 @@ async fn explicit_restarts_advance_unfinished_calls_once() {
     for stage in 0..=2 {
         exercise(stage, false).await;
     }
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn restart_of_a_budget_stopped_call_reruns_it_without_a_second_finish() {
+    // A stopped finish already closes the attempt, like a failed one; another finish after it
+    // would leave the journal unreadable.
+    exercise(4, false).await;
+    exercise(4, true).await;
 }
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn restart_request_survives_a_crash_before_the_next_call() {

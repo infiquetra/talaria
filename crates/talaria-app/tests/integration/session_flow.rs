@@ -1671,7 +1671,7 @@ async fn gap_resumes_rebuilds_resyncs_without_duplicates() {
         resumes[1].params,
         json!({"session_id": "local-session-1", "display_projection": true})
     );
-    let compat_notice = "notice: This gateway runs Hermes 0.22.4. This Talaria supports v0.23.0 and later, and some features will not work. See docs/compatibility.md.".to_string();
+    let compat_notice = "notice: This gateway runs Hermes 0.22.4, older than v0.23.0, the oldest this Talaria was tested against, so some features may not work. See docs/compatibility.md.".to_string();
     let initial_len = SessionState::from_snapshot(snapshot_of(&first))
         .cells()
         .len();
@@ -1766,6 +1766,582 @@ async fn gap_resumes_rebuilds_resyncs_without_duplicates() {
     );
 }
 
+/// A user row Hermes wrote, as a resumed snapshot holds it: drawn as one diagnostic notice.
+fn injected_row() -> Value {
+    json!({
+        "role": "user",
+        "text": "[ASYNC DELEGATION BATCH COMPLETE — deleg_0001]\nTask 1: check the parser\nResult: ok",
+        "display_kind": "async_delegation_complete",
+        "display_metadata": {
+            "display_text": "Subagent Tasks Completed: check the parser (1 task)",
+            "notification_category": "diagnostic"
+        }
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gap_after_a_turn_hermes_wrote_keeps_what_was_shown() {
+    // Resumed: the snapshot already held the notice of a turn Hermes wrote. A gap whose snapshot
+    // only adds a message commits that message and nothing else.
+    let rig = Rig::start();
+    let folder = rig.folder.display().to_string();
+    let base = resume_snapshot(&folder);
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    messages.push(injected_row());
+    messages.push(json!({"role": "assistant", "text": "Subagent done."}));
+    let first = with_messages(base.clone(), messages.clone());
+    messages.push(json!({"role": "user", "text": "And one more thing."}));
+    let extended = with_messages(base, messages);
+    rig.gateway.set_resume_snapshot(first.clone());
+    let gateway = &rig.gateway;
+    let next = extended.clone();
+    let (outcome, log) = rig
+        .drive(
+            StartMode::Resume(Some("local-session-1".to_string())),
+            |driver| async move {
+                driver.opened().await;
+                settle().await;
+                gateway.queue_resume_snapshot(next);
+                overflow(gateway).await;
+                driver.line(REFRESHED_NOTICE).await;
+                settle().await;
+                driver.quit();
+            },
+        )
+        .await;
+    assert_eq!(outcome.code, 0, "{}", outcome.stderr);
+    let lines = locked(&log).lines.clone();
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("Transcript refreshed")),
+        "gap recovery reprinted the transcript: {lines:#?}"
+    );
+    let notices = locked(&log)
+        .cells
+        .iter()
+        .filter(|cell| cell.contains("Subagent Tasks Completed"))
+        .count();
+    assert_eq!(notices, 1, "the notice is committed once");
+}
+
+#[test]
+fn gap_after_a_live_turn_hermes_wrote_keeps_what_was_shown() {
+    // Live: the notice came from message.start, as a diagnostic. The snapshot draws the same
+    // notice from the stored row, so the gap commits only the new message.
+    let base = resume_snapshot("/work/proj");
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let row = injected_row();
+    messages.push(row.clone());
+    messages.push(json!({"role": "assistant", "text": "Subagent done."}));
+    messages.push(json!({"role": "user", "text": "And one more thing."}));
+    let extended = with_messages(base.clone(), messages);
+    let mut state = AppState::new(LAUNCH_ID);
+    update(
+        &mut state,
+        AppMessage::Opened {
+            opened: OpenedSession::from_snapshot(snapshot_of(&base)),
+            notice: None,
+        },
+    );
+    let session = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+        .unwrap_or_default();
+    let frames = [
+        (
+            "message.start",
+            json!({
+                "display_kind": row["display_kind"],
+                "display_text": row["display_metadata"]["display_text"],
+                "text": row["text"],
+                "notification_category": "diagnostic"
+            }),
+        ),
+        ("message.delta", json!({"text": "Subagent done."})),
+        ("message.complete", json!({"outcome": "completed"})),
+    ];
+    // After the snapshot's last sequence, so the events are new.
+    for (seq, (kind, payload)) in (20_u64..).zip(frames) {
+        let raw = json!({
+            "type": kind,
+            "session_id": session,
+            "seq": seq,
+            "replay_epoch": base["replay_epoch"],
+            "authority_epoch": 1,
+            "execution_generation": 3,
+            "admission_id": "adm-hermes",
+            "payload": payload,
+        });
+        let frame = EventFrame::from_params(&raw).expect("contract event");
+        update(
+            &mut state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: hermes_client::Inbound::Event(hermes_client::InboundEvent {
+                    generation: hermes_client::Generation(1),
+                    frame,
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+    }
+    let shown: Vec<String> = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.state.cells().iter().map(cell_text).collect())
+        .unwrap_or_default();
+    assert!(
+        shown
+            .iter()
+            .any(|cell| cell.contains("Subagent Tasks Completed")),
+        "the live notice is drawn: {shown:#?}"
+    );
+    let effects = update(
+        &mut state,
+        AppMessage::Recovered(Ok(OpenedSession::from_snapshot(snapshot_of(&extended)))),
+    );
+    let refreshed = effects.iter().any(|effect| {
+        matches!(effect, AppEffect::CommitLines(lines)
+            if lines.iter().any(|line| line.contains("Transcript refreshed")))
+    });
+    assert!(
+        !refreshed,
+        "gap recovery reprinted the transcript: {effects:#?}"
+    );
+}
+
+/// The stored rows of a turn that asked one question, wrote a line of commentary and ran one
+/// command, as the pinned gateway's display projection writes them: tool rows carry their
+/// arguments, not their result, and the commentary row does not say it was interim.
+fn question_and_command_rows(command: &str) -> Vec<Value> {
+    // synthetic
+    vec![
+        json!({"role": "tool", "name": "clarify", "tool_call_id": "call-q1",
+               "context": "Which parser first?",
+               "args": {"questions": [{"question": "Which parser first?", "choices": ["fast", "strict"]}]}}),
+        json!({"role": "assistant", "text": "Running the tests."}),
+        json!({"role": "tool", "name": "terminal", "tool_call_id": "call-t1",
+               "context": command, "args": {"command": command}}),
+        json!({"role": "assistant", "text": "All tests pass."}),
+    ]
+}
+
+/// Opens `base`, then plays the same turn live: the question asked and settled, the commentary
+/// sent as `message.interim`, the command run with its result and duration, and the reply.
+/// Returns the state with that turn shown.
+fn live_question_and_command_turn(base: &Value) -> AppState {
+    let mut state = AppState::new(LAUNCH_ID);
+    update(
+        &mut state,
+        AppMessage::Opened {
+            opened: OpenedSession::from_snapshot(snapshot_of(base)),
+            notice: None,
+        },
+    );
+    let session = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+        .unwrap_or_default();
+    let question =
+        json!({"questions": [{"question": "Which parser first?", "choices": ["fast", "strict"]}]});
+    let frames = [
+        ("message.start", json!({})),
+        (
+            "tool.start",
+            json!({"tool_id": "call-q1", "name": "clarify",
+                   "context": "Which parser first?", "args": question}),
+        ),
+        (
+            "clarify.request",
+            json!({"kind": "clarify", "prompt_id": "q1", "execution_generation": 3,
+                   "question": "Which parser first?", "choices": ["fast", "strict"],
+                   "multi_select": false}),
+        ),
+        (
+            "clarify.settled",
+            json!({"prompt_id": "q1", "execution_generation": 3}),
+        ),
+        (
+            "tool.complete",
+            json!({"tool_id": "call-q1", "name": "clarify", "duration_s": 4.2,
+                   "result": json!({"responses": [{"question": "Which parser first?",
+                       "status": "answered", "user_response": "strict"}],
+                       "outcome": "submitted"}).to_string()}),
+        ),
+        (
+            "message.interim",
+            json!({"text": "Running the tests.", "already_streamed": false}),
+        ),
+        (
+            "tool.start",
+            json!({"tool_id": "call-t1", "name": "terminal", "context": "cargo test",
+                   "args": {"command": "cargo test"}}),
+        ),
+        (
+            "tool.complete",
+            json!({"tool_id": "call-t1", "name": "terminal", "duration_s": 1.5,
+                   "summary": "ran 3 tests",
+                   "result": json!({"output": "3 passed", "exit_code": 0}).to_string()}),
+        ),
+        ("message.delta", json!({"text": "All tests pass."})),
+        ("message.complete", json!({"outcome": "completed"})),
+    ];
+    for (seq, (kind, payload)) in (20_u64..).zip(frames) {
+        let raw = json!({
+            "type": kind,
+            "session_id": session,
+            "seq": seq,
+            "replay_epoch": base["replay_epoch"],
+            "authority_epoch": 1,
+            "execution_generation": 3,
+            "admission_id": "adm-live",
+            "payload": payload,
+        });
+        let frame = EventFrame::from_params(&raw).expect("contract event");
+        update(
+            &mut state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: hermes_client::Inbound::Event(hermes_client::InboundEvent {
+                    generation: hermes_client::Generation(1),
+                    frame,
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+    }
+    state
+}
+
+fn transcript_refreshed(effects: &[AppEffect]) -> bool {
+    effects.iter().any(|effect| {
+        matches!(effect, AppEffect::CommitLines(lines)
+            if lines.iter().any(|line| line.contains("Transcript refreshed")))
+    })
+}
+
+#[test]
+fn gap_after_a_live_question_and_command_keeps_what_was_shown() {
+    // Live, the command's row has an outcome, a duration and a summary, the question has a
+    // prompt row and the commentary is marked interim; the stored rows have none of those. They
+    // are still the same cells, so the gap commits only the new message.
+    let base = resume_snapshot("/work/proj");
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    messages.extend(question_and_command_rows("cargo test"));
+    messages.push(json!({"role": "user", "text": "And one more thing."}));
+    let extended = with_messages(base.clone(), messages);
+    let mut state = live_question_and_command_turn(&base);
+    let shown: Vec<String> = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.state.cells().iter().map(cell_text).collect())
+        .unwrap_or_default();
+    assert!(
+        shown.iter().any(|cell| cell.starts_with("prompt:")),
+        "the live question has its prompt row: {shown:#?}"
+    );
+    let interim = state.opened.as_ref().is_some_and(|opened| {
+        opened.state.cells().iter().any(
+            |cell| matches!(cell, Cell::Assistant(a) if a.interim && a.text == "Running the tests."),
+        )
+    });
+    assert!(interim, "the live commentary is interim: {shown:#?}");
+    let effects = update(
+        &mut state,
+        AppMessage::Recovered(Ok(OpenedSession::from_snapshot(snapshot_of(&extended)))),
+    );
+    assert!(
+        !transcript_refreshed(&effects),
+        "gap recovery reprinted the transcript: {effects:#?}"
+    );
+    let total = state
+        .opened
+        .as_ref()
+        .map_or(0, |opened| opened.state.cells().len());
+    let committed: Vec<_> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            AppEffect::CommitCells(range) => Some(range.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        committed.iter().all(|range| range.end - range.start <= 1)
+            && committed.iter().all(|range| range.end == total),
+        "only the new message is committed: {committed:?} of {total}"
+    );
+}
+
+#[test]
+fn gap_after_a_live_command_that_differs_reprints_the_transcript() {
+    // The stored command is not the one shown: a real difference still shows the transcript
+    // again.
+    let base = resume_snapshot("/work/proj");
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    messages.extend(question_and_command_rows("cargo build"));
+    let extended = with_messages(base.clone(), messages);
+    let mut state = live_question_and_command_turn(&base);
+    let effects = update(
+        &mut state,
+        AppMessage::Recovered(Ok(OpenedSession::from_snapshot(snapshot_of(&extended)))),
+    );
+    assert!(
+        transcript_refreshed(&effects),
+        "a different command was not shown again: {effects:#?}"
+    );
+}
+
+/// Plays these frames on the open session, after the snapshot's last sequence.
+fn play_live(state: &mut AppState, base: &Value, frames: Vec<(&str, Value)>) {
+    let session = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+        .unwrap_or_default();
+    for (seq, (kind, payload)) in (20_u64..).zip(frames) {
+        let raw = json!({
+            "type": kind,
+            "session_id": session,
+            "seq": seq,
+            "replay_epoch": base["replay_epoch"],
+            "authority_epoch": 1,
+            "execution_generation": 3,
+            "admission_id": "adm-live",
+            "payload": payload,
+        });
+        let frame = EventFrame::from_params(&raw).expect("contract event");
+        update(
+            state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: hermes_client::Inbound::Event(hermes_client::InboundEvent {
+                    generation: hermes_client::Generation(1),
+                    frame,
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+    }
+}
+
+fn opened_on(base: &Value) -> AppState {
+    let mut state = AppState::new(LAUNCH_ID);
+    update(
+        &mut state,
+        AppMessage::Opened {
+            opened: OpenedSession::from_snapshot(snapshot_of(base)),
+            notice: None,
+        },
+    );
+    state
+}
+
+/// Recovers from `extended` after a gap and returns whether the transcript was shown again,
+/// and the cell ranges committed, with the count of cells the fresh state holds.
+fn recover_from(
+    state: &mut AppState,
+    extended: &Value,
+) -> (bool, Vec<std::ops::Range<usize>>, usize) {
+    let effects = update(
+        state,
+        AppMessage::Recovered(Ok(OpenedSession::from_snapshot(snapshot_of(extended)))),
+    );
+    let committed = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            AppEffect::CommitCells(range) => Some(range.clone()),
+            _ => None,
+        })
+        .collect();
+    let total = state
+        .opened
+        .as_ref()
+        .map_or(0, |opened| opened.state.cells().len());
+    (transcript_refreshed(&effects), committed, total)
+}
+
+/// A routed Hivecode prompt shown live as typed (`typed`), then a gap whose snapshot holds the
+/// row Hermes stored for it (`stored`, the request as Hermes folds it).
+fn gap_after_routed_prompt(
+    typed: &str,
+    stored: &str,
+) -> (bool, Vec<std::ops::Range<usize>>, usize) {
+    let base = resume_snapshot("/work/proj");
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    // synthetic: the skill_invocation row the pinned gateway's history projection writes.
+    messages.push(json!({"role": "user", "display_kind": "skill_invocation",
+        "text": format!("/talaria-workflows {stored} Session model: m1 on p1")}));
+    messages.push(json!({"role": "assistant", "text": "Done."}));
+    messages.push(json!({"role": "user", "text": "And one more thing."}));
+    let extended = with_messages(base.clone(), messages);
+    let mut state = opened_on(&base);
+    update(
+        &mut state,
+        AppMessage::PromptDone {
+            events: vec![Event::SubmitCommand {
+                text: format!(
+                    "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill.]\nBODY\n\n\
+                     The user has provided the following instruction alongside the skill \
+                     invocation: {typed}\nSession model: m1 on p1"
+                ),
+                display: typed.to_owned(),
+                submission_id: "routed-1".into(),
+            }],
+            notices: Vec::new(),
+            masked: None,
+        },
+    );
+    play_live(
+        &mut state,
+        &base,
+        vec![
+            ("message.start", json!({})),
+            ("message.delta", json!({"text": "Done."})),
+            ("message.complete", json!({"outcome": "completed"})),
+        ],
+    );
+    let live_text = state.opened.as_ref().and_then(|opened| {
+        opened.state.cells().iter().find_map(|cell| match cell {
+            Cell::User(user) if user.text == typed => Some(()),
+            _ => None,
+        })
+    });
+    assert!(live_text.is_some(), "the live prompt shows as typed");
+    recover_from(&mut state, &extended)
+}
+
+#[test]
+fn gap_after_a_routed_prompt_hermes_folded_keeps_what_was_shown() {
+    // Hermes stores a routed request with every run of whitespace folded to one space, so a
+    // prompt typed on two lines, or with a doubled space, comes back as one line.
+    for (typed, stored) in [
+        ("Plan the parser work.", "Plan the parser work."),
+        (
+            "Plan the parser work.\nThen run the tests.",
+            "Plan the parser work. Then run the tests.",
+        ),
+        ("Plan the  parser work.", "Plan the parser work."),
+    ] {
+        let (refreshed, committed, total) = gap_after_routed_prompt(typed, stored);
+        assert!(
+            !refreshed,
+            "{typed:?}: gap recovery reprinted the transcript"
+        );
+        assert!(
+            committed
+                .iter()
+                .all(|range| range.end - range.start <= 1 && range.end == total),
+            "{typed:?}: only the new message is committed: {committed:?} of {total}"
+        );
+    }
+    // Different words are still a difference.
+    let (refreshed, _, _) = gap_after_routed_prompt(
+        "Plan the parser work.\nThen run the tests.",
+        "Plan the lexer work. Then run the tests.",
+    );
+    assert!(refreshed, "a different stored request was not shown again");
+}
+
+/// A turn that ran one command and got its reasoning only with `message.complete`, as Hermes
+/// sends it when the provider does not stream reasoning; then a gap. `earlier` is the reasoning
+/// the stored tool-calling step carries, if any.
+fn gap_after_tool_turn_with_end_of_turn_reasoning(
+    earlier: Option<&str>,
+    last: &str,
+) -> (bool, Vec<std::ops::Range<usize>>, usize) {
+    let base = resume_snapshot("/work/proj");
+    let mut messages = base["display_messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(earlier) = earlier {
+        messages.push(json!({"role": "assistant", "text": "", "reasoning": earlier}));
+    }
+    messages.push(
+        json!({"role": "tool", "name": "terminal", "tool_call_id": "call-t1",
+        "context": "cargo test", "args": {"command": "cargo test"}}),
+    );
+    messages.push(json!({"role": "assistant", "text": "All tests pass.", "reasoning": last}));
+    messages.push(json!({"role": "user", "text": "And one more thing."}));
+    let extended = with_messages(base.clone(), messages);
+    let mut state = opened_on(&base);
+    play_live(
+        &mut state,
+        &base,
+        vec![
+            ("message.start", json!({})),
+            (
+                "tool.start",
+                json!({"tool_id": "call-t1", "name": "terminal", "context": "cargo test",
+                       "args": {"command": "cargo test"}}),
+            ),
+            (
+                "tool.complete",
+                json!({"tool_id": "call-t1", "name": "terminal", "duration_s": 1.5,
+                       "result": json!({"output": "3 passed", "exit_code": 0}).to_string()}),
+            ),
+            ("message.delta", json!({"text": "All tests pass."})),
+            (
+                "message.complete",
+                json!({"text": "All tests pass.",
+                       "reasoning": "The output shows three passing tests."}),
+            ),
+        ],
+    );
+    let recap = state.opened.as_ref().is_some_and(|opened| {
+        opened
+            .state
+            .cells()
+            .iter()
+            .any(|cell| matches!(cell, Cell::Reasoning(block) if block.latest_step))
+    });
+    assert!(recap, "the live reasoning is the turn's end-of-turn recap");
+    recover_from(&mut state, &extended)
+}
+
+#[test]
+fn gap_after_a_tool_turn_with_end_of_turn_reasoning_keeps_what_was_shown() {
+    for earlier in [None, Some("I should run the tests first.")] {
+        let (refreshed, committed, total) = gap_after_tool_turn_with_end_of_turn_reasoning(
+            earlier,
+            "The output shows three passing tests.",
+        );
+        assert!(
+            !refreshed,
+            "{earlier:?}: gap recovery reprinted the transcript"
+        );
+        assert!(
+            committed
+                .iter()
+                .all(|range| range.end - range.start <= 1 && range.end == total),
+            "{earlier:?}: only the new message is committed: {committed:?} of {total}"
+        );
+    }
+    // Stored reasoning that differs from the recap shown is still a difference.
+    let (refreshed, _, _) = gap_after_tool_turn_with_end_of_turn_reasoning(
+        Some("I should run the tests first."),
+        "The output shows two failing tests.",
+    );
+    assert!(refreshed, "a different stored recap was not shown again");
+}
 // ---------------------------------------------------------------------------------------------
 // Prompts
 // ---------------------------------------------------------------------------------------------
@@ -2864,19 +3440,22 @@ async fn refused_note_follow_up_offers_the_draft() {
             .execute(
                 &client,
                 Effect::RespondApproval {
-                    key,
+                    key: key.clone(),
                     choice: String::from("once"),
                 },
             )
             .await;
         assert_eq!(
             executed.events,
-            vec![Event::Submit {
-                text: String::from("go 2"),
-                display: String::from("go 2"),
-                submission_id: String::from("note-sub-1"),
-                attachments: Vec::new(),
-            }]
+            vec![
+                Event::AnswerAccepted { key },
+                Event::Submit {
+                    text: String::from("go 2"),
+                    display: String::from("go 2"),
+                    submission_id: String::from("note-sub-1"),
+                    attachments: Vec::new(),
+                },
+            ]
         );
         assert!(executed.notices.is_empty());
         assert!(mock.requests("prompt.submit").is_empty());

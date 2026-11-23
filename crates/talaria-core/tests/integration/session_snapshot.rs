@@ -397,3 +397,106 @@ fn pending_connection_becomes_the_same_card() {
         "approval p-1 must remain open when pending_connection is null"
     );
 }
+
+/// The kind of each reasoning cell: whether it is marked as the latest step's thinking.
+fn reasoning_marks(state: &SessionState) -> Vec<(String, bool)> {
+    state
+        .cells()
+        .iter()
+        .filter_map(|cell| match cell {
+            Cell::Reasoning(cell) => Some((cell.text.clone(), cell.latest_step)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Each reasoning cell's text and whether it is marked as its turn's only output.
+fn unanswered_marks(state: &SessionState) -> Vec<(String, bool)> {
+    state
+        .cells()
+        .iter()
+        .filter_map(|cell| match cell {
+            Cell::Reasoning(cell) => Some((cell.text.clone(), cell.no_reply)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn resumed(messages: Value, running: bool) -> SessionState {
+    let mut value = snapshot_json::base(SESSION);
+    value["running"] = json!(running);
+    value["message_count"] = json!(messages.as_array().map_or(0, Vec::len));
+    value["messages"] = messages;
+    drive::reduce_snapshot(snapshot_json::snapshot(value), Vec::new()).0
+}
+
+#[test]
+fn snapshot_marks_only_the_reply_less_final_reasoning() {
+    let messages = json!([
+        {"role": "user", "text": "first question"},
+        {"role": "assistant", "reasoning": "a", "text": ""},
+        {"role": "tool", "name": "terminal", "tool_call_id": "call-1", "context": "ls"},
+        {"role": "assistant", "reasoning": "b", "text": "answer"},
+        {"role": "user", "text": "second question"},
+        {"role": "assistant", "reasoning": "c", "text": ""}
+    ]);
+    assert_eq!(
+        unanswered_marks(&resumed(messages.clone(), false)),
+        vec![
+            ("a".to_owned(), false),
+            ("b".to_owned(), false),
+            ("c".to_owned(), true)
+        ]
+    );
+    assert_eq!(
+        unanswered_marks(&resumed(messages, true)),
+        vec![
+            ("a".to_owned(), false),
+            ("b".to_owned(), false),
+            ("c".to_owned(), false)
+        ],
+        "a turn still running has not ended in its reasoning yet"
+    );
+}
+
+fn resumed_mid_turn(messages: Value) -> SessionState {
+    let mut value = snapshot_json::base(SESSION);
+    value["last_sequence"] = json!(5);
+    value["replay_epoch"] = json!("epoch-1");
+    value["running"] = json!(true);
+    value["message_count"] = json!(messages.as_array().map_or(0, Vec::len));
+    value["messages"] = messages;
+    let events = vec![ev(
+        6,
+        "message.complete",
+        json!({"status": "complete", "text": "Done", "reasoning": "why it is done"}),
+    )];
+    drive::reduce_snapshot(snapshot_json::snapshot(value), events).0
+}
+
+#[test]
+fn end_of_turn_reasoning_after_a_resume_mid_tool_turn_is_the_latest_step() {
+    let state = resumed_mid_turn(json!([
+        {"role": "user", "text": "list the files"},
+        {"role": "tool", "name": "terminal", "tool_call_id": "call-1", "context": "ls"}
+    ]));
+    assert_eq!(
+        reasoning_marks(&state),
+        vec![("why it is done".to_owned(), true)]
+    );
+}
+
+#[test]
+fn end_of_turn_reasoning_after_a_resume_is_not_the_latest_step_when_only_an_earlier_turn_ran_tools()
+{
+    let state = resumed_mid_turn(json!([
+        {"role": "user", "text": "list the files"},
+        {"role": "tool", "name": "terminal", "tool_call_id": "call-1", "context": "ls"},
+        {"role": "assistant", "text": "Listed."},
+        {"role": "user", "text": "thanks"}
+    ]));
+    assert_eq!(
+        reasoning_marks(&state),
+        vec![("why it is done".to_owned(), false)]
+    );
+}

@@ -192,7 +192,11 @@ fn assistant_line(cell: &AssistantCell) -> String {
 }
 
 fn reasoning_line(cell: &ReasoningCell) -> String {
-    format!("reasoning {}", quote(&cell.text))
+    if cell.latest_step {
+        format!("reasoning[latest_step] {}", quote(&cell.text))
+    } else {
+        format!("reasoning {}", quote(&cell.text))
+    }
 }
 
 fn turn_line(turn: &TurnState) -> String {

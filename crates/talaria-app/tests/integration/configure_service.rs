@@ -160,7 +160,8 @@ async fn optional_sections_fail_independently() {
             .with_route("GET", "/api/env", |_| (200, json!({})))
             .with_route("GET", "/api/providers/oauth", |_| (200, json!({"providers":[]})))
             .with_route("GET", "/api/providers/custom-endpoints", |_| (200, json!({"endpoints":[]})))
-            .with_route("GET", "/api/model/auxiliary", |_| (200, json!({"main":{"provider":"ollama-cloud","model":"minimax-m3.1-flash"},"tasks":[]})));
+            .with_route("GET", "/api/model/auxiliary", |_| (200, json!({"main":{"provider":"ollama-cloud","model":"minimax-m3.1-flash"},"tasks":[]})))
+            .with_route("GET", "/api/model/options", |_| (200, json!({"model":"","provider":"","providers":[]})));
         let (gateway, client, _inbound) = mock_gateway::MockGateway::start().await;
         for (method, result) in [
             ("mcp.servers.list", json!({"servers":[]})),
@@ -185,6 +186,8 @@ async fn optional_sections_fail_independently() {
             "skills" => Some("/api/skills?profile=fixture"),
             "toolsets" => Some("/api/tools/toolsets?profile=fixture"),
             "main_model" => Some("/api/model/auxiliary"),
+            // The route list is read over the profile's own REST client.
+            "routes" => Some("/api/model/options?explicit_only=true&include_unconfigured=true"),
             _ => None,
         };
         if let Some(path) = target {
@@ -203,11 +206,11 @@ async fn optional_sections_fail_independently() {
         if let Some(method) = method {
             gateway.script_error(method, None, 4001, "unavailable");
         }
-        if failed == "providers" || failed == "routes" {
+        if failed == "providers" {
             gateway.script_error_for_flag(
                 "model.options",
                 "explicit_only",
-                failed == "routes",
+                false,
                 4001,
                 "unavailable",
             );
@@ -292,6 +295,7 @@ async fn optional_sections_fail_independently() {
             "/api/skills?profile=fixture",
             "/api/tools/toolsets?profile=fixture",
             "/api/model/auxiliary",
+            "/api/model/options?explicit_only=true&include_unconfigured=true",
         ] {
             assert!(
                 reads
@@ -315,12 +319,12 @@ async fn optional_sections_fail_independently() {
                 "failure injection was not reached: {failed}"
             );
         }
-        if failed == "providers" || failed == "routes" {
+        if failed == "providers" {
             assert!(
                 gateway
                     .requests("model.options")
                     .iter()
-                    .any(|frame| frame.params["explicit_only"] == (failed == "routes")),
+                    .any(|frame| frame.params["explicit_only"] == false),
                 "failure injection was not reached: {failed}"
             );
         }

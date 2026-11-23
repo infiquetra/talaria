@@ -22,7 +22,10 @@ impl fmt::Debug for SecretField {
     }
 }
 pub fn is_secret_key(key: &str) -> bool {
-    if key.eq_ignore_ascii_case("voice.record_key") {
+    // A key press and a shared container name, not credentials.
+    if key.eq_ignore_ascii_case("voice.record_key")
+        || key.eq_ignore_ascii_case("terminal.docker_shared_container_key")
+    {
         return false;
     }
     let leaf = key

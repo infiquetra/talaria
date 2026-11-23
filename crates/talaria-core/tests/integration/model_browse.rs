@@ -188,18 +188,30 @@ fn badge_priority() {
     result.providers[0].unavailable_models = Some(vec!["quiet".into()]);
     let mut s = open_loaded(result, Some("high"), starred());
     let view = s.view().unwrap();
-    for (model, badge) in [
-        ("missing", "not listed"),
-        ("quiet", "unavailable"),
-        ("shared", "effort ?"),
+    for (provider, model, badges) in [
+        ("a", "missing", &["not listed"][..]),
+        ("a", "quiet", &["unavailable"][..]),
+        ("a", "shared", &["current"][..]),
+        ("b", "shared", &[][..]),
     ] {
         let r = view
             .rows
             .iter()
-            .find(|r| r.key.as_ref().is_some_and(|k| route(k) == ("a", model)))
+            .find(|r| {
+                r.key
+                    .as_ref()
+                    .is_some_and(|k| route(k) == (provider, model))
+            })
             .unwrap();
-        assert_eq!(r.badges, [badge]);
+        assert_eq!(r.badges, badges, "{provider}/{model}");
     }
+    assert!(
+        !view
+            .rows
+            .iter()
+            .any(|r| r.badges.iter().any(|b| b == "effort ?")),
+        "an ordinary row carries no badge"
+    );
     s.update(ModelsInput::OptionsLoaded {
         session_id: SID.into(),
         result: catalog(),
@@ -207,9 +219,9 @@ fn badge_priority() {
     type_filter(&mut s, "quiet");
     assert_eq!(
         s.view().unwrap().rows.last().unwrap().badges,
-        ["not offered"]
+        ["effort not offered"]
     );
-    assert!(details(&s).contains("Catalogue: reasoning not advertised"));
+    assert!(details(&s).contains("Reasoning effort: not offered"));
     let mut limited = catalog();
     limited.providers[0].limit = Some(
         serde_json::from_value(
@@ -226,29 +238,199 @@ fn badge_priority() {
     assert!(s.view().unwrap().rows.last().unwrap().badges[0].starts_with("rate-limited"));
 }
 #[test]
-fn effort_details_never_invent_support_context_or_price() {
+fn other_routes_hide_unknown_context_and_applied_effort() {
     let mut s = state();
     let d = details(&s);
     for text in [
-        "Requested: high",
-        "Support: unverified for this route",
-        "Applied: unknown",
-        "Context: unknown",
-        "$1/M",
+        "Effort: high requested; Hermes limits it to what this route accepts",
+        "Price: $1/M in · $2/M out",
+        "Account: configured in Hermes (not checked)",
     ] {
         assert!(d.contains(text), "{d}");
     }
-    assert!(!d.contains("supports high"));
+    for text in [
+        "unknown",
+        "Applied",
+        "Context",
+        "Support:",
+        "Selected:",
+        "Requested:",
+        "F2/Ctrl+E",
+        "credential not verified",
+    ] {
+        assert!(!d.contains(text), "{text}: {d}");
+    }
+    type_filter(&mut s, "beta shared");
+    let d = details(&s);
+    assert!(
+        d.contains("Hermes limits it to what this route accepts"),
+        "{d}"
+    );
+    assert!(!d.contains("Context") && !d.contains("unknown"), "{d}");
     press(&mut s, PickerKey::ClearFilter);
     type_filter(&mut s, "quiet");
-    assert!(details(&s).contains("Catalogue: reasoning not advertised"));
-    assert!(!details(&s).contains("Price:"));
+    let d = details(&s);
+    assert!(d.contains("Reasoning effort: not offered"), "{d}");
+    assert!(d.contains("Fast tier available"), "{d}");
+    assert!(!d.contains("Catalogue: fast"), "{d}");
+    assert!(!d.contains("Price:"), "{d}");
+    press(&mut s, PickerKey::ClearFilter);
+    type_filter(&mut s, "alpha shared");
     s.update(ModelsInput::EffortReadFailed {
         session_id: SID.into(),
         reason: "failed".into(),
         unknown_method: false,
     });
-    assert!(details(&s).contains("Support: could not be read"));
+    assert!(details(&s).contains("Effort: could not be read"));
+}
+#[test]
+fn current_route_details_show_sent_effort_and_context() {
+    let mut s = state();
+    s.update(ModelsInput::SessionEvent {
+        session_id: SID.into(),
+        type_name: "session.info".into(),
+        payload: json!({"model":"shared","provider":"a","reasoning_effort":"high",
+            "reasoning_effort_wire":"medium","usage":{"context_max":200000}}),
+    });
+    let d = details(&s);
+    assert!(d.contains("Effort: high requested, sent as medium"), "{d}");
+    assert!(d.contains("Context: 200K tokens"), "{d}");
+    assert_eq!(
+        s.view().unwrap().browse.unwrap().current,
+        Some("Alpha Provider / shared · high")
+    );
+    press(&mut s, PickerKey::Right);
+    let d = details(&s);
+    assert!(
+        d.contains("Effort: xhigh requested; Hermes limits it to what this route accepts"),
+        "a new request is not reported as already sent: {d}"
+    );
+    assert!(d.contains("Context: 200K tokens"), "{d}");
+    press(&mut s, PickerKey::Left);
+    type_filter(&mut s, "beta shared");
+    let d = details(&s);
+    assert!(!d.contains("sent as") && !d.contains("Context"), "{d}");
+}
+/// The picker with `shared` on provider `a` as the route in use and no context size yet.
+fn current_route_without_context() -> ModelsState {
+    let mut s = state();
+    s.update(ModelsInput::SessionEvent {
+        session_id: SID.into(),
+        type_name: "session.info".into(),
+        payload: json!({"model":"shared","provider":"a","reasoning_effort":"high"}),
+    });
+    assert!(!details(&s).contains("Context"), "{}", details(&s));
+    s
+}
+#[test]
+fn context_size_is_read_from_every_event_shape_hermes_sends() {
+    // The shapes are the ones in the recorded frames: `session.info` has only a top-level
+    // `context_length`, `message.complete` only `usage.context_max`, `session.usage` both.
+    for (type_name, payload) in [
+        (
+            "session.info",
+            json!({"model":"shared","provider":"a","reasoning_effort":"high","context_length":200000}),
+        ),
+        (
+            "message.complete",
+            json!({"status":"complete","text":"ok","usage":{"context_max":200000}}),
+        ),
+        (
+            "session.usage",
+            json!({"context_length":200000,"usage":{"context_max":200000}}),
+        ),
+    ] {
+        let mut s = current_route_without_context();
+        s.update(ModelsInput::SessionEvent {
+            session_id: SID.into(),
+            type_name: type_name.into(),
+            payload,
+        });
+        let d = details(&s);
+        assert!(d.contains("Context: 200K tokens"), "{type_name}: {d}");
+    }
+    // An unrelated event's `context_length` is not taken as the route's context size.
+    let mut s = current_route_without_context();
+    s.update(ModelsInput::SessionEvent {
+        session_id: SID.into(),
+        type_name: "tool.complete".into(),
+        payload: json!({"context_length":200000,"usage":{"context_max":200000}}),
+    });
+    assert!(!details(&s).contains("Context"), "{}", details(&s));
+}
+#[test]
+fn a_route_switch_forgets_the_old_routes_context_and_sent_effort() {
+    let mut s = state();
+    s.update(ModelsInput::SessionEvent {
+        session_id: SID.into(),
+        type_name: "session.info".into(),
+        payload: json!({"model":"shared","provider":"a","reasoning_effort":"high",
+            "reasoning_effort_wire":"medium","usage":{"context_max":200000}}),
+    });
+    s.update(ModelsInput::SessionEvent {
+        session_id: SID.into(),
+        type_name: "session.updated".into(),
+        payload: json!({"operation":"model","model":"shared","provider":"b"}),
+    });
+    type_filter(&mut s, "beta shared");
+    let rows = &s.view().unwrap().rows;
+    assert!(
+        rows.iter()
+            .any(|row| row.text.contains('●') && row.text.contains("shared")),
+        "the switched-to route is current"
+    );
+    let d = details(&s);
+    assert!(!d.contains("sent as") && !d.contains("Context"), "{d}");
+}
+#[test]
+fn setup_hints_from_unconfigured_providers_are_not_a_partial_catalogue() {
+    let mut result = catalog();
+    result.providers[2].warning =
+        Some("run `hermes model` to configure (oauth_device_code)".into());
+    let mut s = open_loaded(result, Some("high"), starred());
+    assert_eq!(s.view().unwrap().banner, None);
+    type_filter(&mut s, "setup provider");
+    let d = details(&s);
+    assert!(
+        d.contains("Setup: run `hermes model` to configure (oauth_device_code)"),
+        "{d}"
+    );
+    assert!(d.contains("Status: needs setup"), "{d}");
+    assert!(
+        !d.contains("Selected:") && !d.contains("Partial catalogue"),
+        "{d}"
+    );
+}
+#[test]
+fn a_signed_in_provider_warning_shows_only_on_its_own_rows() {
+    let mut result = catalog();
+    result.providers[0].warning = Some("checking plan".into());
+    let mut s = open_loaded(result, Some("high"), starred());
+    assert_eq!(s.view().unwrap().banner, None);
+    type_filter(&mut s, "alpha shared");
+    assert!(
+        details(&s).contains("Warning: checking plan"),
+        "{}",
+        details(&s)
+    );
+    press(&mut s, PickerKey::ClearFilter);
+    type_filter(&mut s, "beta shared");
+    assert!(!details(&s).contains("checking plan"), "{}", details(&s));
+}
+#[test]
+fn footer_names_left_right_effort_and_save_scope() {
+    let s = state();
+    let view = s.view().unwrap();
+    for text in [
+        "Enter switch",
+        "←→ effort",
+        "Ctrl+G save for new sessions",
+        "F2 details",
+        "effort: high",
+    ] {
+        assert!(view.hints.contains(text), "{text}: {}", view.hints);
+    }
+    assert_eq!(ListScope::SetUp.label(), "Needs setup");
 }
 #[test]
 fn details_layer_never_confirms() {
@@ -394,7 +576,7 @@ fn deferred_request_is_marked_pending() {
         session_id: Some(SID.into()),
         profile: "example".into(),
     });
-    assert!(details(&s).contains("Requested: high; pending turn end"));
+    assert!(details(&s).contains("Switch: pending turn end"));
     s.update(ModelsInput::SessionEvent { session_id: SID.into(), type_name: "session.updated".into(), payload: json!({"operation":"model","model":"quiet","provider":"a","revision":13,"execution_generation":5}) });
     assert!(!details(&s).contains("pending turn end"));
     assert!(
@@ -678,9 +860,9 @@ mod independent {
             (false, false, true, Some(false), "not listed"),
             (true, false, true, Some(false), "unavailable"),
             (true, true, true, Some(false), "rate-limited"),
-            (true, true, false, Some(false), "not offered"),
-            (true, true, false, Some(true), "effort ?"),
-            (true, true, false, None, "effort ?"),
+            (true, true, false, Some(false), "effort not offered"),
+            (true, true, false, Some(true), "current"),
+            (true, true, false, None, "current"),
         ] {
             let mut provider = json!({
                 "slug": "example-00", "name": "Example provider 00", "authenticated": true,
@@ -727,25 +909,27 @@ mod independent {
     fn details_keep_requested_support_and_applied_distinct() {
         let mut state = open();
         let detail = state.view().unwrap().browse.unwrap().details.join("\n");
-        for required in [
-            "Requested: high",
-            "Support: unverified for this route",
-            "Applied: unknown",
-            "Context: unknown",
-        ] {
-            assert!(detail.contains(required), "{required}: {detail}");
-        }
+        assert!(
+            detail.contains("Effort: high requested; Hermes limits it to what this route accepts"),
+            "{detail}"
+        );
+        assert!(!detail.contains("unknown"), "{detail}");
         assert!(!detail.contains("supports high"));
         drive::type_filter(&mut state, "chat-wide");
         let view = state.view().unwrap();
-        assert_eq!(view.rows[view.selected.unwrap()].badges, ["not offered"]);
+        assert_eq!(
+            view.rows[view.selected.unwrap()].badges,
+            ["effort not offered"]
+        );
         assert!(
             view.browse
                 .unwrap()
                 .details
                 .join("\n")
-                .contains("Catalogue: reasoning not advertised")
+                .contains("Reasoning effort: not offered")
         );
+        drive::press(&mut state, PickerKey::ClearFilter);
+        drive::press(&mut state, PickerKey::Home);
         state.update(ModelsInput::EffortReadFailed {
             session_id: drive::SID.into(),
             reason: "unavailable".into(),
@@ -759,7 +943,7 @@ mod independent {
                 .unwrap()
                 .details
                 .join("\n")
-                .contains("Support: could not be read")
+                .contains("Effort: could not be read")
         );
     }
 

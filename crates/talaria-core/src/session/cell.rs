@@ -68,6 +68,73 @@ impl Cell {
             Self::Background(_) => true,
         }
     }
+
+    /// Whether this cell opens a turn: a prompt the person sent, or the notice that stands for a
+    /// turn Hermes started itself (a notice that keeps what Hermes handed the agent as its body).
+    #[must_use]
+    pub fn starts_turn(&self) -> bool {
+        match self {
+            Self::User(_) => true,
+            Self::Notice(notice) => notice.body.is_some(),
+            _ => false,
+        }
+    }
+}
+
+/// Mark the reasoning that ends each completed turn among `cells` without a reply: in every
+/// turn (a run of cells up to the next one that starts a turn) that wrote no reply text, its
+/// last reasoning block, unless a tool ran after it.
+pub(crate) fn mark_unanswered_reasoning(cells: &mut [Cell]) {
+    let mut end = cells.len();
+    while end > 0 {
+        let start = cells[..end]
+            .iter()
+            .rposition(Cell::starts_turn)
+            .unwrap_or(0);
+        let turn = &mut cells[start..end];
+        let replied = turn
+            .iter()
+            .any(|cell| matches!(cell, Cell::Assistant(reply) if !reply.text.trim().is_empty()));
+        if !replied
+            && let Some(last) = turn
+                .iter()
+                .rposition(|cell| matches!(cell, Cell::Reasoning(_)))
+            && !turn[last..]
+                .iter()
+                .any(|cell| matches!(cell, Cell::Tool(_)))
+            && let Cell::Reasoning(reasoning) = &mut turn[last]
+        {
+            reasoning.no_reply = true;
+        }
+        end = start;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cell, NoticeCell, UserCell};
+    use crate::session::{CellId, NoticeKind};
+
+    fn notice(body: Option<&str>) -> Cell {
+        Cell::Notice(NoticeCell {
+            id: CellId::new(1),
+            kind: NoticeKind::Automation,
+            text: "Subagent results returned to the agent".to_owned(),
+            detail: None,
+            body: body.map(str::to_owned),
+        })
+    }
+
+    #[test]
+    fn a_prompt_and_a_turn_hermes_started_open_a_turn_and_a_plain_notice_does_not() {
+        let user = Cell::User(UserCell {
+            id: CellId::new(1),
+            text: "a question".to_owned(),
+        });
+        assert!(user.starts_turn());
+        assert!(notice(Some("synthetic result")).starts_turn());
+        assert!(!notice(None).starts_turn());
+    }
 }
 
 /// A user cell is final as soon as it exists.
@@ -103,6 +170,14 @@ pub struct ReasoningCell {
     pub text: String,
     /// Set when a later event seals the run.
     pub sealed: bool,
+    /// Hermes's end-of-turn reasoning for a turn that ran tools. It is the latest step's
+    /// thinking, shown once after that step was already drawn.
+    pub latest_step: bool,
+    /// The turn completed with this block as its last output: it wrote no reply text, and no
+    /// tool ran after the block. The block is then all the turn has to show, so the main screen
+    /// draws it in full even when reasoning is collapsed. A block committed before its turn
+    /// ended, such as one sealed by an approval request, keeps the form it was committed in.
+    pub no_reply: bool,
 }
 
 /// Outcome of a tool cell.
@@ -190,6 +265,10 @@ pub struct NoticeCell {
     pub text: String,
     /// Raw `error_surface` object, when the completion had one.
     pub detail: Option<Value>,
+    /// What Hermes handed the agent, when the notice stands for a turn Hermes wrote; a resumed
+    /// snapshot draws such a notice again. The main screen shows only its line count; the
+    /// transcript view shows it whole. A body that only repeats the text shows nowhere.
+    pub body: Option<String>,
 }
 
 /// Approval or clarification.

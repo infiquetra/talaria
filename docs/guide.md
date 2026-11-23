@@ -5,6 +5,9 @@ to toggle it, and `/layout menu` to focus it temporarily. Use arrows, Tab and En
 navigate, and Esc to return to the composer. Disabled items explain their refusal. Narrow
 screens collapse the headings, and short screens use a temporary menu.
 
+The model's thinking shows as one line per block. Ctrl+O opens the transcript view, where it
+shows in full, and `/thinking full` shows it in full on the main screen for this view.
+
 ## What Talaria is
 
 Talaria is a terminal client for the Hermes agent gateway. It presents sessions and terminal input. Hermes owns the agent logic and session authority.
@@ -47,7 +50,7 @@ talaria --resume <id>
 
 ## Working in a session
 
-Use the [keybinding reference](keybindings.md) for composer editing, approvals and question cards. The transcript shows tool calls and diffs. Queue prompts behind a running turn, steer it when available, and use rewind to return to an earlier checkpoint. Use the model picker for the current session, `@` mentions for files, `!` for shell commands, and the transcript pager to search earlier output. Inspect commands before confirming an approval. `/copy` copies the newest finished assistant reply, and `/copy N` copies the Nth newest, with 1 being the newest. `/copy link` copies the newest sign-in link and the newest sign-in code.
+Use the [keybinding reference](keybindings.md) for composer editing, approvals and question cards. The transcript shows tool calls and diffs. Queue prompts behind a running turn, steer it when available, stop it by tapping Esc twice (holding it alone does nothing, and Ctrl+C stops it at once), and use rewind to return to an earlier checkpoint. Use the model picker for the current session, `@` mentions for files, `!` for shell commands, and the transcript pager to search earlier output. Inspect commands before confirming an approval. `/copy` copies the newest finished assistant reply, and `/copy N` copies the Nth newest, with 1 being the newest. `/copy link` copies the newest sign-in link and the newest sign-in code.
 
 ### Rewind
 

@@ -22,7 +22,7 @@ const PROVIDER: &str = "ollama-cloud";
 fn profile_name() -> String {
     hermes_contract::pinned::live_profile()
 }
-const PROMPT: &str = "This is an interactive workflow control exercise. Use the search tool to find information about workflow testing. If a later steer asks you to name one file only, then stop, print exactly one filename first, but continue this exercise afterward: that steer's 'then stop' means stop naming files, not finish the turn. Immediately after the filename, perform eight separate sequential search tool calls, one word per call, in this order: workflow, journal, runner, progress, staffing, worktree, builtins, ultracode. Do not combine or parallelize those calls. Then count from 1 to 2000, one number per line, without abbreviation or skipping numbers. Keep doing that work until the client interrupts you. Do not run shell commands or change files.";
+const PROMPT: &str = "This is an interactive workflow control exercise. Use the search tool to find information about workflow testing. If a later steer asks you to name one file only, then stop, print exactly one filename first, but continue this exercise afterward: that steer's 'then stop' means stop naming files, not finish the turn. Immediately after the filename, perform eight separate sequential search tool calls, one word per call, in this order: workflow, journal, runner, progress, staffing, worktree, builtins, hivecode. Do not combine or parallelize those calls. Then count from 1 to 2000, one number per line, without abbreviation or skipping numbers. Keep doing that work until the client interrupts you. Do not run shell commands or change files.";
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -435,6 +435,7 @@ impl<G: Gateway> Consumer<G> {
                             CallOutcome::Completed {
                                 value: Some(json!("completed")),
                                 value_ref: None,
+                                cut_short: None,
                             }
                         } else {
                             CallOutcome::Failed {
@@ -466,6 +467,8 @@ impl<G: Gateway> Consumer<G> {
                         skipped: counts.skipped,
                         parked: 0,
                         unfinished: 0,
+                        refused: 0,
+                        stopped: 0,
                     },
                 })
                 .await?;

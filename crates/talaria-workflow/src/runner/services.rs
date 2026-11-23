@@ -8,14 +8,72 @@ use tokio::sync::mpsc;
 
 use crate::{
     hermes::{
-        Cursor, HermesPort, LinkWireFactory, PortConfig, Wire, WireError, WireEvent, WireFactory,
+        AgentFeedReceiver, Cursor, HermesPort, LinkWireFactory, PortConfig, Wire, WireError,
+        WireEvent, WireFactory,
     },
     staffing::{Clock, LinkRosterSource, RosterCache, RosterSource, SystemClock},
 };
 
+/// Reads a profile's effective Hermes configuration, so a run can warn about settings that
+/// break workflow agents. A read that fails adds no warning and never stops a run.
+pub trait ConfigSource: Send + Sync {
+    fn effective(&self, profile: &str) -> BoxFuture<'static, Result<Value, String>>;
+}
+/// The source used when a caller supplies none: the configuration cannot be read.
+struct NoConfig;
+impl ConfigSource for NoConfig {
+    fn effective(&self, _profile: &str) -> BoxFuture<'static, Result<Value, String>> {
+        Box::pin(async { Err("no configuration source".into()) })
+    }
+}
+/// Reads the configuration over the gateway's REST route, the way the `/config` screens do, so it
+/// also works against a gateway on another machine. It never reads `config.yaml` from disk.
+pub struct RestConfigSource {
+    home: std::path::PathBuf,
+}
+impl RestConfigSource {
+    pub fn new(home: std::path::PathBuf) -> Self {
+        Self { home }
+    }
+}
+impl ConfigSource for RestConfigSource {
+    fn effective(&self, profile: &str) -> BoxFuture<'static, Result<Value, String>> {
+        use hermes_client::rest::{NativeHttpMinter, RestClient, RestOptions};
+        use hermes_client::{DiscoverOptions, EnsurePolicy, discover_with};
+        let home = self.home.clone();
+        let profile = profile.to_owned();
+        Box::pin(async move {
+            let endpoint = Arc::new(
+                discover_with(
+                    &home,
+                    &DiscoverOptions {
+                        ensure: EnsurePolicy::Never,
+                        ..DiscoverOptions::default()
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())?,
+            );
+            let served = endpoint
+                .resolve_profile(&profile)
+                .map_err(|e| e.to_string())?;
+            let rest = RestClient::new(
+                endpoint.api_origin(),
+                Arc::new(NativeHttpMinter::new(home, endpoint.clone(), served)),
+                RestOptions::default(),
+            )
+            .map_err(|e| e.to_string())?;
+            hermes_client::config_api::config_read(&rest, true)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct RunnerServices {
     pub wires: Arc<dyn WireFactory>,
+    pub config: Arc<dyn ConfigSource>,
     pub rosters: RosterCache,
     pub clock: Arc<dyn Clock>,
     pub port_config: PortConfig,
@@ -31,10 +89,17 @@ impl RunnerServices {
         Self {
             wires: Arc::new(ReceiptOptionsFactory(wires)),
             rosters: RosterCache::new(source, clock.clone(), Duration::from_secs(30)),
+            config: Arc::new(NoConfig),
             clock,
             port_config,
             recording: None,
         }
+    }
+    /// The same services with a configuration source, for the warnings before a run.
+    #[must_use]
+    pub fn with_config(mut self, config: Arc<dyn ConfigSource>) -> Self {
+        self.config = config;
+        self
     }
     pub(crate) fn finish_recording(&self) -> Result<(), String> {
         if let Some(recording) = &self.recording {
@@ -42,13 +107,14 @@ impl RunnerServices {
         }
         Ok(())
     }
-    pub(crate) async fn port(&self, profile: &str) -> Result<HermesPort, String> {
-        let (port, feed) =
-            HermesPort::with_wires(self.port_config.clone(), self.wires.clone(), profile)
-                .await
-                .map_err(|e| e.to_string())?;
-        drop(feed);
-        Ok(port)
+    /// The gateway port and its agent event feed, which carries live usage for the budget.
+    pub(crate) async fn port(
+        &self,
+        profile: &str,
+    ) -> Result<(HermesPort, AgentFeedReceiver), String> {
+        HermesPort::with_wires(self.port_config.clone(), self.wires.clone(), profile)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -79,6 +145,9 @@ impl Wire for ReceiptOptionsWire {
     }
     fn track(&self, session_id: &str, cursor: Cursor) {
         self.0.track(session_id, cursor);
+    }
+    fn untrack(&self, session_id: &str) {
+        self.0.untrack(session_id);
     }
     fn resync(&self, session_id: &str, cursor: Cursor) {
         self.0.resync(session_id, cursor);
@@ -122,7 +191,9 @@ pub(crate) fn production_recording(
     }
     let wires: Arc<dyn WireFactory> = Arc::new(factory);
     let source = Arc::new(LinkRosterSource::new(wires.clone()));
-    let mut services = RunnerServices::new(wires, source, Arc::new(SystemClock), config);
+    let home = config.home.clone();
+    let mut services = RunnerServices::new(wires, source, Arc::new(SystemClock), config)
+        .with_config(Arc::new(RestConfigSource::new(home)));
     services.recording = recording;
     Ok(services)
 }

@@ -479,6 +479,34 @@ pub async fn auxiliary_models(rest: &RestClient) -> Result<AuxiliaryModels, Rest
     )
 }
 
+/// How long Hermes may take to build the route list. On a cold cache it fetches provider
+/// catalogues first, which can pass the usual read deadline.
+const MODEL_OPTIONS_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The route list of the profile the client's ticket is bound to: every provider, set up or
+/// not, with its curated models. `refresh` asks Hermes to fetch the catalogues again.
+pub async fn model_options(
+    rest: &RestClient,
+    refresh: bool,
+) -> Result<hermes_contract::schemas::ModelOptionsResult, RestError> {
+    let mut path = "/api/model/options?explicit_only=true&include_unconfigured=true".to_owned();
+    if refresh {
+        path.push_str("&refresh=true");
+    }
+    let bytes = rest
+        .request_bytes(
+            Method::Get,
+            &path,
+            None,
+            RequestOpts {
+                ticket: true,
+                deadline: Some(MODEL_OPTIONS_DEADLINE),
+            },
+        )
+        .await?;
+    decode_bytes(&bytes, "model options")
+}
+
 pub async fn moa_config(rest: &RestClient) -> Result<MoaConfig, RestError> {
     let bytes = rest
         .request_bytes(Method::Get, "/api/model/moa", None, RequestOpts::default())

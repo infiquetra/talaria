@@ -5,12 +5,14 @@ use super::{
     wire::{Cursor, LinkWireFactory, Wire, WireError, WireFactory},
 };
 use crate::journal::{
-    AdmissionState, CreateSession, GatewayPort, PortError, Receipt, SessionBound, SubmitTurn,
+    AdmissionState, CreateSession, GatewayPort, PortError, Receipt, RouteSweep, SessionBound,
+    SubmitTurn,
 };
 use futures::future::BoxFuture;
+use hermes_contract::methods::canonical::session_detach;
 use hermes_contract::schemas::{
     AdmissionStatus, CanonicalSessionHandle, CanonicalSnapshot, PromptReceiptResult,
-    RuntimeDescribeResult,
+    RuntimeDescribeResult, SessionDetachResult,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -24,6 +26,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 #[path = "state.rs"]
 mod state;
 use state::{Binding, Command, Key, View};
+/// The end reason a finished agent's session is left with; Hermes stores it on the session row.
+const END_REASON: &str = "workflow_agent_done";
 
 #[derive(Clone, Debug)]
 pub struct PollConfig {
@@ -429,6 +433,18 @@ impl HermesPort {
         session_id: &str,
         resync: bool,
     ) -> Result<(), PortError> {
+        self.resume_inner(profile, session_id, resync)
+            .await
+            .map(|_| ())
+    }
+    /// Resume the session and bind its snapshot; `None` when the port already followed it on
+    /// this connection and no fresh read was asked for.
+    async fn resume_inner(
+        &self,
+        profile: &str,
+        session_id: &str,
+        resync: bool,
+    ) -> Result<Option<CanonicalSnapshot>, PortError> {
         let key = (profile.into(), session_id.into());
         let gate = self
             .request(|reply| Command::Gate(key.clone(), reply))
@@ -443,7 +459,7 @@ impl HermesPort {
                 .as_ref()
                 .is_some_and(|s| s.resumed_on == wire.generation())
         {
-            return Ok(());
+            return Ok(None);
         }
         let _pending = self.pending(profile).await?;
         let value = self
@@ -484,12 +500,12 @@ impl HermesPort {
             let _ = self.inner.feed.send(AgentFeedItem::Resynced {
                 profile: profile.into(),
                 session_id: session_id.into(),
-                snapshot: Box::new(snapshot),
+                snapshot: Box::new(snapshot.clone()),
             });
         } else {
             wire.track(session_id, position);
         }
-        Ok(())
+        Ok(Some(snapshot))
     }
     pub fn session_info(&self, session_id: &str) -> Option<SessionInfo> {
         self.inner
@@ -586,6 +602,15 @@ fn parse_receipt(method: &str, value: Value, submit: bool) -> Result<Receipt, Po
         if let Some(v) = value["usage"].get(key) {
             usage.insert(key.into(), v.clone());
         }
+    }
+    // The turn's own usage folds cache reads into its input count and does not split them out.
+    // The settled result carries the session's running cache read total; the journal keeps it
+    // so a replay can take each turn's share the way the live run did.
+    if let Some(running) = result
+        .as_ref()
+        .and_then(|r| r["cache_read_tokens"].as_u64())
+    {
+        usage.insert(crate::tokens::SESSION_CACHE_READ_KEY.into(), running.into());
     }
     let mut cost = Map::new();
     if let Some(result) = &result {
@@ -741,6 +766,182 @@ impl GatewayPort for HermesPort {
             port.save_receipt(&profile, receipt, false).await
         })
     }
+    /// Leave the session with an end reason: Hermes ends it once no other viewer holds it. The
+    /// session socket serves no `session.close`. An ended session is no longer followed, so a
+    /// reconnect does not resume it and open it again.
+    fn close_session(
+        &self,
+        profile: String,
+        session_id: String,
+    ) -> BoxFuture<'static, Result<(), PortError>> {
+        let port = self.clone();
+        Box::pin(async move {
+            let subscription = port
+                .inner
+                .view
+                .borrow()
+                .sessions
+                .get(&(profile.clone(), session_id.clone()))
+                .map(|s| s.subscription_id.clone())
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| {
+                    refusal(
+                        "not_attached",
+                        None,
+                        Some("session.detach: this connection holds no subscription".into()),
+                    )
+                })?;
+            let wire = port.wire(&profile).await?;
+            let value = port
+                .call(
+                    &wire,
+                    session_detach::NAME,
+                    json!({"session_id":session_id,"subscription_id":subscription,"end_reason":END_REASON})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                    port.inner.cfg.timeouts.cancel,
+                )
+                .await?;
+            let result: SessionDetachResult = decode(session_detach::NAME, value)?;
+            if !result.detached {
+                return Err(refusal(
+                    "not_detached",
+                    None,
+                    Some("session.detach: the gateway holds another subscription".into()),
+                ));
+            }
+            wire.untrack(&session_id);
+            port.request(|reply| Command::Forget((profile, session_id), reply))
+                .await
+        })
+    }
+    fn sweep_route(
+        &self,
+        profile: String,
+        session_id: String,
+        stored_session_id: String,
+    ) -> BoxFuture<'static, Result<RouteSweep, PortError>> {
+        let port = self.clone();
+        Box::pin(async move { port.sweep(&profile, &session_id, &stored_session_id).await })
+    }
+}
+/// How many times a sweep reads the route again while something there is still stopping.
+const SWEEP_ROUNDS: u32 = 20;
+/// The pause between those reads.
+const SWEEP_PAUSE: Duration = Duration::from_millis(500);
+impl HermesPort {
+    /// Read the session as Hermes holds it now and stop whatever runs there that this run did
+    /// not start. Hermes keeps a local session's owner when it resets the conversation, so the
+    /// session id stays the same while its stored session changes; a notice that was queued
+    /// behind the failed turn then starts on the fresh stored session. A viewer can cancel
+    /// queued and started admissions (`prompt.cancel`) and interrupt a turn
+    /// (`session.interrupt`); nothing here ends a stored session directly, but the detach that
+    /// follows ends an idle one.
+    async fn sweep(
+        &self,
+        profile: &str,
+        session_id: &str,
+        stored: &str,
+    ) -> Result<RouteSweep, PortError> {
+        let mut sweep = RouteSweep::default();
+        let mut cancelled = std::collections::BTreeSet::new();
+        let mut round = 0;
+        // Reads in a row that found the session running with no admission to cancel.
+        let mut unexplained = 0;
+        loop {
+            let Some(snapshot) = self.resume_inner(profile, session_id, true).await? else {
+                break;
+            };
+            if snapshot.stored_session_id != stored {
+                sweep.moved_to = Some(snapshot.stored_session_id.clone());
+            }
+            let live: Vec<_> = snapshot
+                .pending
+                .iter()
+                .filter(|p| {
+                    matches!(
+                        p.status,
+                        hermes_contract::schemas::Status::Queued
+                            | hermes_contract::schemas::Status::Started
+                    )
+                })
+                .collect();
+            if live.is_empty() && !snapshot.running {
+                sweep.still_active = false;
+                break;
+            }
+            if round >= SWEEP_ROUNDS {
+                sweep.still_active = true;
+                break;
+            }
+            round += 1;
+            let wire = self.wire(profile).await?;
+            for admission in &live {
+                let params = json!({"session_id":session_id,"admission_id":admission.admission_id})
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default();
+                match self
+                    .call(
+                        &wire,
+                        "prompt.cancel",
+                        params,
+                        self.inner.cfg.timeouts.cancel,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        if cancelled.insert(admission.admission_id.clone()) {
+                            sweep.cancelled += 1;
+                        }
+                    }
+                    Err(e) => sweep.problems.push(format!(
+                        "could not cancel admission {}: {e}",
+                        admission.admission_id
+                    )),
+                }
+            }
+            // A turn that just settled can read as running for an instant; only a session that
+            // stays running with nothing queued behind it is interrupted.
+            unexplained = if live.is_empty() { unexplained + 1 } else { 0 };
+            if unexplained > 2
+                && let Err(e) = self
+                    .interrupt(profile, session_id, snapshot.execution_generation)
+                    .await
+            {
+                sweep
+                    .problems
+                    .push(format!("could not interrupt the running turn: {e}"));
+            }
+            tokio::time::sleep(SWEEP_PAUSE).await;
+        }
+        // Failures along the way that ended with the route quiet and nothing found are noise.
+        if !sweep.still_active && sweep.cancelled == 0 && sweep.moved_to.is_none() {
+            sweep.problems.clear();
+        }
+        if sweep.moved_to.is_some() {
+            let wire = self.wire(profile).await?;
+            let stats = self
+                .call(
+                    &wire,
+                    "session.stats",
+                    json!({"session_id":session_id})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                    self.inner.cfg.timeouts.poll,
+                )
+                .await;
+            let reading = stats
+                .ok()
+                .and_then(|v| crate::tokens::Reading::from_stats(&v))
+                .filter(|r| r.total > 0);
+            sweep.moved_tokens = reading.map(|r| r.total);
+            sweep.moved_cache_read_tokens = reading.and_then(|r| r.cache_read);
+        }
+        Ok(sweep)
+    }
 }
 impl HermesPort {
     async fn interrupt(
@@ -853,5 +1054,50 @@ impl HermesPort {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The settled receipt of a recorded turn: its usage folds cache reads into the input count,
+    /// and the result beside it carries the session's running cache read total.
+    #[test]
+    fn a_recorded_settled_receipt_keeps_the_running_cache_read_total() {
+        let text =
+            include_str!("../../tests/data/hermes/recorded/live_text_agent_on_fixture.jsonl");
+        let settled = text
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .map(|v| v["frame"]["result"].clone())
+            .find(|r| r["status"] == "terminal" && r["result"].is_object())
+            .expect("a recorded settled receipt");
+        let receipt = parse_receipt("prompt.receipt", settled, false).unwrap();
+        let usage = receipt.usage.unwrap();
+        assert_eq!(usage["total_tokens"], 3170);
+        assert_eq!(usage["input_tokens"], 3168);
+        assert_eq!(usage[crate::tokens::SESSION_CACHE_READ_KEY], 1601);
+        let split = crate::tokens::CacheTracker::new()
+            .settle("agent", &usage)
+            .unwrap();
+        assert_eq!(split.tokens.counted, 1569);
+        assert_eq!(split.tokens.cache_read, 1601);
+    }
+
+    #[test]
+    fn a_receipt_whose_result_has_no_cache_read_total_journals_none() {
+        let value = json!({
+            "admission_id": "a", "authority_epoch": 1, "execution_generation": 1,
+            "outcome": "completed", "ref": {"profile_id": "p", "session_id": "s"},
+            "sequence": 1, "status": "terminal",
+            "result": {"final_response": "ok"},
+            "usage": {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6}
+        });
+        let usage = parse_receipt("prompt.receipt", value, false)
+            .unwrap()
+            .usage
+            .unwrap();
+        assert!(usage.get(crate::tokens::SESSION_CACHE_READ_KEY).is_none());
     }
 }

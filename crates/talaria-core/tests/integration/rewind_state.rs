@@ -7,12 +7,13 @@
 use serde_json::{Value, json};
 use talaria_core::rewind::{
     Call, CallFailure, Checkpoint, CheckpointList, DOUBLE_ESC_WINDOW_MS, DiffDoc, DiffSource,
-    DoubleEsc, LineStyle, MutateOutcome, Reply, RestoreOutcome, RewindEffect, RewindInput,
-    RewindKey, RewindScreen, RewindState, SessionRead, ViewLine, update,
+    DoubleEsc, INTERRUPT_CONFIRM_WINDOW_MS, INTERRUPT_SETTLE_MS, InterruptConfirm, InterruptPress,
+    LineStyle, MutateOutcome, Reply, RestoreOutcome, RewindEffect, RewindInput, RewindKey,
+    RewindScreen, RewindState, SessionRead, ViewLine, update,
 };
 use talaria_core::session::NoticeKind;
 
-const T1: &str = "A reply is running. Stop it with Esc, then rewind.";
+const T1: &str = "A reply is running. Stop it with Esc twice, then rewind.";
 const T3: &str = "There is nothing to rewind: this conversation has no prompts yet.";
 const T9: &str = "Talaria lost Hermes's reply, but the rewind went through.";
 const T10: &str = "Talaria lost Hermes's reply. The rewind did not happen; nothing was changed.";
@@ -2246,6 +2247,196 @@ fn double_esc_window() {
     assert!(esc.press(100, true));
     assert!(!esc.press(100, true));
     assert!(esc.press(100, true));
+}
+
+#[test]
+fn interrupt_confirm_one_press_arms_and_does_not_interrupt() {
+    assert_eq!(INTERRUPT_CONFIRM_WINDOW_MS, 2_000);
+    assert_eq!(INTERRUPT_SETTLE_MS, 110);
+    let mut confirm = InterruptConfirm::default();
+    assert!(!confirm.is_armed(0));
+    assert_eq!(confirm.next_deadline(), None);
+    assert_eq!(confirm.press(100), InterruptPress::Armed);
+    assert!(confirm.is_armed(100));
+    assert_eq!(confirm.next_deadline(), Some(2_100));
+    assert!(!confirm.tick(2_099), "an armed press never interrupts");
+    assert!(confirm.is_armed(2_099));
+}
+
+#[test]
+fn interrupt_confirm_second_press_inside_the_window_is_pending_until_it_settles() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    assert_eq!(confirm.press(1_999), InterruptPress::Pending);
+    assert!(confirm.is_armed(1_999), "the hint still says again");
+    assert_eq!(confirm.next_deadline(), Some(1_999 + INTERRUPT_SETTLE_MS));
+    assert!(!confirm.tick(1_999), "no interrupt at the press itself");
+    assert!(
+        !confirm.tick(1_999 + INTERRUPT_SETTLE_MS - 1),
+        "nor before it settles"
+    );
+    assert!(
+        confirm.tick(1_999 + INTERRUPT_SETTLE_MS),
+        "the settled press interrupts"
+    );
+    assert!(
+        !confirm.tick(1_999 + INTERRUPT_SETTLE_MS),
+        "and exactly once"
+    );
+    assert!(!confirm.is_armed(2_200));
+    assert_eq!(confirm.next_deadline(), None);
+    assert_eq!(
+        confirm.press(2_300),
+        InterruptPress::Armed,
+        "the next press starts over"
+    );
+}
+
+#[test]
+fn interrupt_confirm_a_press_read_late_while_one_is_pending_still_cancels_it() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    assert_eq!(confirm.press(400), InterruptPress::Pending);
+    // No tick ran at the settle time; the next press of a held key is read late.
+    assert_eq!(
+        confirm.press(400 + INTERRUPT_SETTLE_MS + 50),
+        InterruptPress::Held
+    );
+    assert!(!confirm.tick(400 + 3 * INTERRUPT_SETTLE_MS));
+    assert_eq!(confirm.next_deadline(), None);
+}
+
+#[test]
+fn interrupt_confirm_second_press_outside_the_window_arms_again() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    assert!(!confirm.is_armed(2_000));
+    assert_eq!(confirm.press(2_000), InterruptPress::Armed);
+    // The late press became the new first press, with a fresh window.
+    assert_eq!(confirm.next_deadline(), Some(4_000));
+    assert_eq!(confirm.press(3_999), InterruptPress::Pending);
+    assert!(confirm.tick(3_999 + INTERRUPT_SETTLE_MS));
+}
+
+#[test]
+fn interrupt_confirm_window_restarts_after_it_expires() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(500), InterruptPress::Armed);
+    assert!(!confirm.tick(2_000));
+    assert!(confirm.is_armed(2_499));
+    assert!(
+        !confirm.tick(2_500),
+        "expiring an armed press never interrupts"
+    );
+    assert_eq!(confirm.next_deadline(), None);
+    assert!(!confirm.is_armed(2_500));
+    assert_eq!(confirm.press(2_600), InterruptPress::Armed);
+    assert!(confirm.is_armed(4_599));
+    assert!(!confirm.is_armed(4_600));
+}
+
+#[test]
+fn interrupt_confirm_reset_when_the_turn_ends() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    confirm.reset();
+    assert!(!confirm.is_armed(1));
+    assert_eq!(confirm.press(10), InterruptPress::Armed);
+}
+
+#[test]
+fn interrupt_confirm_reset_clears_pending_and_held() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    assert_eq!(confirm.press(300), InterruptPress::Pending);
+    confirm.reset();
+    assert!(
+        !confirm.tick(300 + INTERRUPT_SETTLE_MS),
+        "a reset pending press is dropped"
+    );
+    assert_eq!(confirm.next_deadline(), None);
+    assert_eq!(confirm.press(400), InterruptPress::Armed);
+    assert_eq!(confirm.press(440), InterruptPress::Pending);
+    assert_eq!(confirm.press(480), InterruptPress::Held);
+    confirm.reset();
+    assert_eq!(confirm.next_deadline(), None);
+    assert_eq!(
+        confirm.press(500),
+        InterruptPress::Armed,
+        "a reset held key starts over"
+    );
+}
+
+/// Presses every 40 ms from `start` for `length` ms: an auto-repeat stream.
+fn hold(confirm: &mut InterruptConfirm, start: u64, length: u64) -> u64 {
+    let mut at = start;
+    while at <= start + length {
+        assert!(
+            !confirm.tick(at),
+            "no tick may interrupt while the key is held"
+        );
+        let _ = confirm.press(at);
+        at += 40;
+    }
+    at - 40
+}
+
+#[test]
+fn interrupt_confirm_a_held_key_never_interrupts_and_ends_idle() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    // The operating system starts repeating after a gap of 400 ms.
+    assert_eq!(confirm.press(400), InterruptPress::Pending);
+    assert_eq!(confirm.press(440), InterruptPress::Held);
+    assert!(!confirm.is_armed(440), "a held key shows the normal hint");
+    assert_eq!(confirm.press(480), InterruptPress::Ignored);
+    let last = hold(&mut confirm, 520, 1_000);
+    assert_eq!(confirm.next_deadline(), Some(last + INTERRUPT_SETTLE_MS));
+    assert!(!confirm.tick(last + INTERRUPT_SETTLE_MS - 1));
+    assert!(
+        !confirm.tick(last + INTERRUPT_SETTLE_MS),
+        "the held state ends, no interrupt"
+    );
+    assert_eq!(confirm.next_deadline(), None);
+    assert!(!confirm.is_armed(last + INTERRUPT_SETTLE_MS));
+}
+
+#[test]
+fn interrupt_confirm_a_hold_with_a_first_gap_past_the_window_never_interrupts() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    // The first repeat comes after the confirm window: it is a new first press.
+    assert_eq!(confirm.press(2_500), InterruptPress::Armed);
+    let last = hold(&mut confirm, 2_540, 1_000);
+    assert!(!confirm.tick(last + INTERRUPT_SETTLE_MS));
+    assert_eq!(confirm.next_deadline(), None);
+}
+
+#[test]
+fn interrupt_confirm_tap_tap_interrupts_after_a_hold_ends() {
+    let mut confirm = InterruptConfirm::default();
+    let _ = confirm.press(0);
+    let _ = confirm.press(400);
+    let last = hold(&mut confirm, 440, 400);
+    assert!(!confirm.tick(last + INTERRUPT_SETTLE_MS));
+    let base = last + INTERRUPT_SETTLE_MS + 500;
+    assert_eq!(confirm.press(base), InterruptPress::Armed);
+    assert_eq!(confirm.press(base + 300), InterruptPress::Pending);
+    assert!(!confirm.tick(base + 300 + INTERRUPT_SETTLE_MS - 1));
+    assert!(confirm.tick(base + 300 + INTERRUPT_SETTLE_MS));
+}
+
+#[test]
+fn interrupt_confirm_a_press_after_a_held_key_went_quiet_arms_again() {
+    let mut confirm = InterruptConfirm::default();
+    let _ = confirm.press(0);
+    let _ = confirm.press(300);
+    assert_eq!(confirm.press(340), InterruptPress::Held);
+    // No tick ran, yet the held state is over once the settle time has passed.
+    assert_eq!(
+        confirm.press(340 + INTERRUPT_SETTLE_MS),
+        InterruptPress::Armed
+    );
 }
 
 #[test]

@@ -51,7 +51,7 @@ fn put(buffer: &mut Buffer, area: Rect, row: usize, text: &str, style: Style) {
     );
 }
 
-fn wrapped(text: &str, width: usize) -> Vec<String> {
+pub(super) fn wrapped(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return Vec::new();
     }
@@ -93,6 +93,11 @@ fn list_height(view: &ProfilesView, area: Rect) -> usize {
     }
 }
 
+/// The row the narrow layout keeps under the list for a progress line.
+fn progress_height(view: &ProfilesView, area: Rect) -> usize {
+    usize::from(area.width < 100 && matches!(view.panel, Panel::Progress(_)))
+}
+
 pub(super) fn notice_height(view: &ProfilesView, area: Rect) -> usize {
     view.confirm
         .as_ref()
@@ -109,7 +114,9 @@ pub fn list_page_size(view: &ProfilesView, area: Rect) -> usize {
     }
     let height = list_height(view, area);
     let below_list = usize::from(area.height).saturating_sub(1 + height);
-    height.saturating_sub(notice_height(view, area).saturating_sub(below_list))
+    height.saturating_sub(
+        notice_height(view, area).saturating_sub(below_list) + progress_height(view, area),
+    )
 }
 
 fn detail(detail: &DetailView, area: Rect, buffer: &mut Buffer) {
@@ -138,6 +145,8 @@ fn list(
                 &format!("No profile matches \"{filter}\"."),
                 Style::default(),
             );
+        } else if let Some(empty) = &view.empty {
+            put(buffer, area, 0, empty, Style::default());
         }
         return;
     }
@@ -261,7 +270,7 @@ impl ProfilesRenderer {
         }
         if !narrow_detail {
             let mut header = cut(&view.header, width);
-            let hints = ["r refresh", "R rescan", "n new", "e describe", "s soul"];
+            let hints = &view.hints;
             let right = if let Some(filter) = &view.filter {
                 format!("/{filter}")
             } else if width >= 40 {
@@ -312,7 +321,9 @@ impl ProfilesRenderer {
             if let Panel::NarrowDetail(d) = &view.panel {
                 detail(d, area, buffer);
             }
-        } else if view.filter.is_some() && view.rows.is_empty() && matches!(view.panel, Panel::None)
+        } else if (view.filter.is_some() || view.empty.is_some())
+            && view.rows.is_empty()
+            && matches!(view.panel, Panel::None)
         {
             list(
                 view,
@@ -339,7 +350,11 @@ impl ProfilesRenderer {
             );
             let panel_open = matches!(
                 view.panel,
-                Panel::Form(_) | Panel::Review(_) | Panel::DescriptionInput { .. }
+                Panel::Form(_)
+                    | Panel::Review(_)
+                    | Panel::DescriptionInput { .. }
+                    | Panel::Delete(_)
+                    | Panel::Rename(_)
             );
             if area.width >= 100 || !panel_open {
                 list(
@@ -375,8 +390,25 @@ impl ProfilesRenderer {
             };
             match &view.panel {
                 Panel::Detail(d) if area.width >= 100 => detail(d, panel_area, buffer),
-                Panel::Form(_) | Panel::Review(_) | Panel::DescriptionInput { .. } => {
-                    let lines = form::lines(&view.panel);
+                Panel::Progress(line) if area.width >= 100 => {
+                    put(buffer, panel_area, 0, line, Style::default());
+                }
+                // Narrow: the line sits under the rows the list keeps free for it.
+                Panel::Progress(line) => {
+                    put(
+                        buffer,
+                        area,
+                        1 + list_page_size(view, area),
+                        line,
+                        Style::default(),
+                    );
+                }
+                Panel::Form(_)
+                | Panel::Review(_)
+                | Panel::DescriptionInput { .. }
+                | Panel::Delete(_)
+                | Panel::Rename(_) => {
+                    let lines = form::lines(&view.panel, width);
                     for (i, line) in lines
                         .iter()
                         .enumerate()

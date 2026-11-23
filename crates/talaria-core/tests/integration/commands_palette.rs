@@ -517,3 +517,29 @@ fn esc_closes_until_draft_changes() {
     let _ = world.apply(&mut state, draft("/hex", 4));
     assert!(state.open);
 }
+
+#[test]
+fn recalled_draft_keeps_the_palette_closed_until_edited() {
+    let world = World::ready(search_catalog());
+    let mut state = PaletteState::closed();
+    let _ = world.apply(
+        &mut state,
+        PaletteInput::Recalled {
+            text: "/plan".into(),
+        },
+    );
+    assert!(!state.open, "a recalled slash entry does not open the list");
+    let _ = world.apply(&mut state, draft("/plan", 2));
+    assert!(!state.open, "moving the caret is not an edit");
+    let _ = world.apply(&mut state, draft("/plan x", 7));
+    assert!(state.open, "an edit opens the list again");
+
+    let _ = world.apply(
+        &mut state,
+        PaletteInput::Recalled {
+            text: "/version".into(),
+        },
+    );
+    assert!(!state.open, "recalling over an open list closes it");
+    assert_eq!(state.draft, "/version");
+}

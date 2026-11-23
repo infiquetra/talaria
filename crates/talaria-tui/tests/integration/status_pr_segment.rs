@@ -20,7 +20,7 @@ fn pr_segment_priority() {
     for segment in Segment::ALL {
         if segment != Segment::External
             && segment != Segment::PullRequest
-            && segment != Segment::Ultracode
+            && segment != Segment::Hivecode
         {
             assert!(
                 segment.priority() < Segment::PullRequest.priority(),
@@ -28,8 +28,8 @@ fn pr_segment_priority() {
             );
         }
     }
-    assert!(Segment::Ultracode.priority() > Segment::External.priority());
-    assert_eq!(Segment::ALL.last(), Some(&Segment::Ultracode));
+    assert!(Segment::Hivecode.priority() > Segment::External.priority());
+    assert_eq!(Segment::ALL.last(), Some(&Segment::Hivecode));
     let adjacent = Segment::ALL
         .windows(2)
         .any(|pair| pair == [Segment::PullRequest, Segment::External]);

@@ -30,7 +30,11 @@ fn command_reply_respects_the_resolved_color_policy_and_palette() {
             motion: (Motion::Full, MotionSource::Default),
             terminal: TerminalColors::default(),
         });
-        let lines = ThemedCells { theme: &theme }.lines(&command, 80);
+        let lines = ThemedCells {
+            theme: &theme,
+            transcript_key: None,
+        }
+        .lines(&command, 80);
         for line in &lines {
             assert!(
                 line.style.fg.is_none()
@@ -58,7 +62,11 @@ fn command_reply_respects_the_resolved_color_policy_and_palette() {
         terminal: TerminalColors::default(),
     });
     theme.markdown.inline_code = Style::default().fg(Color::Magenta);
-    let lines = ThemedCells { theme: &theme }.lines(&command, 80);
+    let lines = ThemedCells {
+        theme: &theme,
+        transcript_key: None,
+    }
+    .lines(&command, 80);
     assert!(
         lines
             .iter()
@@ -234,6 +242,7 @@ fn inline_user_and_notice_use_theme_colours() {
 
     let drawer = ThemedCells {
         theme: &resolution.theme,
+        transcript_key: None,
     };
 
     let painted_styles = |cell: &Cell| -> Vec<(String, Vec<Style>)> {
@@ -286,6 +295,7 @@ fn inline_user_and_notice_use_theme_colours() {
             kind,
             text: text.to_owned(),
             detail: None,
+            body: None,
         });
         let lines = painted_styles(&cell);
         assert_eq!(lines.len(), 1);
@@ -302,6 +312,7 @@ fn inline_user_and_notice_use_theme_colours() {
         kind: NoticeKind::Error,
         text: "broke".to_owned(),
         detail: None,
+        body: None,
     });
     let error_lines = painted_styles(&error_cell);
     assert_eq!(error_lines.len(), 1);
@@ -316,6 +327,8 @@ fn inline_user_and_notice_use_theme_colours() {
         id: CellId::new(8),
         text: "the route".to_owned(),
         sealed: true,
+        latest_step: false,
+        no_reply: false,
     });
     let reasoning_lines = painted_styles(&reasoning);
     assert!(reasoning_lines.len() >= 2);
@@ -331,5 +344,33 @@ fn inline_user_and_notice_use_theme_colours() {
         .expect("reasoning body must contain 'the route'");
     for style in &body_line.1 {
         assert_eq!(style.fg, Some(reasoning_fg));
+    }
+
+    // Long user prompts and notices wrap at spaces exactly as the plain drawer wraps them.
+    let long_user = Cell::User(UserCell {
+        id: CellId::new(9),
+        text: "please check the second draft before lunch".to_owned(),
+    });
+    let long_notice = Cell::Notice(NoticeCell {
+        id: CellId::new(10),
+        kind: NoticeKind::System,
+        text: "the gateway restarted while the model was still answering".to_owned(),
+        detail: None,
+        body: None,
+    });
+    for (cell, style) in [(&long_user, user_text_style), (&long_notice, notice_style)] {
+        let themed = drawer.lines(cell, 24);
+        let plain = talaria_tui::history::PlainCellLines.lines(cell, 24);
+        let text = |lines: &[ratatui::text::Line<'_>]| -> Vec<String> {
+            lines
+                .iter()
+                .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+                .collect()
+        };
+        assert!(themed.len() > 1, "{:?}", text(&themed));
+        assert_eq!(text(&themed), text(&plain));
+        for line in &themed {
+            assert_eq!(line.style.fg, style.fg);
+        }
     }
 }

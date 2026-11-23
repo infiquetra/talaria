@@ -384,6 +384,20 @@ fn snapshot_compact_160x48() {
 }
 
 #[test]
+fn latest_step_reasoning_heading_names_the_step() {
+    let plain = PlainCellLines;
+    let renderer: PagerCellLines<'_> = lines_for(Details::Expanded, 80, &plain);
+    let mut late = reasoning(1, "Kept the shorter route.");
+    if let Cell::Reasoning(cell) = &mut late {
+        cell.latest_step = true;
+    }
+    let late_lines = renderer.lines(&late, 80);
+    assert_eq!(late_lines[0].to_string(), "∴ thinking (latest step)");
+    let plain_lines = renderer.lines(&reasoning(2, "Kept the shorter route."), 80);
+    assert_eq!(plain_lines[0].to_string(), "∴ thinking");
+}
+
+#[test]
 fn tool_cell_without_output_says_so() {
     let plain = PlainCellLines;
     let renderer: PagerCellLines<'_> = lines_for(Details::Expanded, 80, &plain);

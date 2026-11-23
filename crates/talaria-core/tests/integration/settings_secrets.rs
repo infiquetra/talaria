@@ -49,7 +49,7 @@ fn read_only_fields() {
         "agent.reasoning_effort",
         "delegation.base_url",
         "auxiliary.vision.api_key",
-        "moa.enabled",
+        "moa.default_preset",
         "providers",
         "custom_providers",
     ] {

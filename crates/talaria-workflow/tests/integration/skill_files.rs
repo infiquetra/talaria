@@ -1,5 +1,8 @@
 use std::path::Path;
-use talaria_workflow::skill::render;
+use talaria_workflow::skill::{
+    COMMAND_ALLOWANCE, PROFILE_ALLOWANCE, RENDER_HEADROOM, SKILL_FILES, TOTAL_BUDGET,
+    budgeted_size, file_budget, render,
+};
 fn files() -> Vec<(String, String)> {
     render("fixture", "talaria", Path::new("/h"))
         .unwrap()
@@ -36,14 +39,52 @@ fn no_preprocessing_or_injection_tokens() {
 }
 #[test]
 fn size_budgets() {
-    let all = files();
+    // The budget is counted on the embedded templates, each placeholder at a fixed allowance, so
+    // it does not depend on the machine's Hermes folder path.
     let mut total = 0;
-    for (name, text) in all {
-        assert!(!text.is_empty());
-        assert!(text.len() <= if name == "SKILL.md" { 8192 } else { 24576 });
-        total += text.len();
+    for (name, template) in SKILL_FILES {
+        let counted = budgeted_size(template);
+        assert!(counted > 0);
+        assert!(counted <= file_budget(name), "{name}: {counted} bytes");
+        total += counted;
     }
-    assert!(total <= 65536);
+    assert!(total <= TOTAL_BUDGET, "{total} bytes in all");
+    assert_eq!(file_budget("SKILL.md"), 8192);
+    assert_eq!(file_budget("references/commands.md"), 24576);
+}
+#[test]
+fn the_budget_counts_placeholders_at_their_allowance() {
+    assert_eq!(budgeted_size("abc"), 3);
+    assert_eq!(
+        budgeted_size("a @@TALARIA_COMMAND@@ b"),
+        4 + COMMAND_ALLOWANCE
+    );
+    assert_eq!(
+        budgeted_size("@@TALARIA_PROFILE@@\r\n@@TALARIA_PROFILE@@"),
+        1 + 2 * PROFILE_ALLOWANCE
+    );
+}
+#[test]
+fn a_skill_renders_for_any_realistic_hermes_folder_path() {
+    for length in [1_usize, 20, 80, 300, 600] {
+        let root = format!("/{}", "h".repeat(length - 1));
+        let files = render("fixture", "talaria", Path::new(&root))
+            .unwrap_or_else(|e| panic!("path of {length} bytes: {e}"));
+        assert!(
+            files[0].bytes.len() <= 8192 + RENDER_HEADROOM,
+            "SKILL.md is {} bytes",
+            files[0].bytes.len()
+        );
+    }
+}
+#[test]
+fn a_very_long_path_is_refused_by_naming_its_length() {
+    let root = format!("/{}", "h".repeat(1000));
+    let error = render("fixture", "talaria", Path::new(&root))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Hermes folder path (1001 bytes)"), "{error}");
+    assert!(error.contains("over the limit of"), "{error}");
 }
 #[test]
 fn statements_s1_to_s12_present() {
@@ -271,5 +312,77 @@ fn render_is_deterministic_and_substitutes() {
     }
     for root in ["relative", "/bad'root", "/bad\nroot"] {
         assert!(render("fixture", "talaria", Path::new(root)).is_err());
+    }
+}
+#[test]
+fn the_lead_plans_and_never_builds_the_deliverable_itself() {
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    for marker in [
+        "Never write the deliverable in this session",
+        "first phase",
+        "after a background completion",
+        "workflow resume --json <run-id>",
+    ] {
+        assert!(s.contains(marker), "missing {marker}");
+    }
+    for (name, text) in &all {
+        let lower = text.to_lowercase();
+        for forbidden in ["runnable slice", "vertical slice", "scaffold first"] {
+            assert!(!lower.contains(forbidden), "{name}: {forbidden}");
+        }
+    }
+}
+#[test]
+fn drafts_use_an_extension_hermes_does_not_lint() {
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    assert!(
+        s.contains(".workflow`"),
+        "the skill names the draft extension"
+    );
+    for (name, text) in &all {
+        for js in ["relative.js", "<script.js>"] {
+            assert!(!text.contains(js), "{name} still names a .js draft");
+        }
+    }
+}
+#[test]
+fn waiting_follows_the_hermes_wait_cap_and_never_loops() {
+    let all = files();
+    for (name, text) in &all {
+        for part in text.split("timeout=").skip(1) {
+            let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
+            let seconds: u32 = digits.parse().unwrap_or(0);
+            assert!(seconds <= 180, "{name}: wait timeout {seconds} exceeds 180");
+        }
+        assert!(
+            !text.to_lowercase().contains("repeat the wait"),
+            "{name}: still tells the lead to repeat the wait"
+        );
+    }
+    let s = file(&all, "SKILL.md");
+    assert!(s.contains("timeout=180"));
+    assert!(s.contains("the completion notice resumes you"));
+}
+#[test]
+fn the_new_project_and_worker_folder_rules_are_stated() {
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    for marker in [
+        "not inside",
+        "git init",
+        "first agent unisolated",
+        "committed HEAD",
+        "git switch -c",
+        "never `cd` or `git -C`",
+        "absolute path",
+        "`rm` on any absolute path",
+        "`sh -c` or `bash -c`",
+        "workflow list --json",
+        "agents_finished",
+        "never drop it silently",
+    ] {
+        assert!(s.contains(marker), "missing {marker}");
     }
 }

@@ -240,3 +240,20 @@ fn projection_reads_timestamps_from_the_journal() {
         100
     );
 }
+
+#[test]
+fn token_counts_read_in_thousands_and_millions() {
+    for (n, shown) in [
+        (0, "0"),
+        (950, "950"),
+        (999, "999"),
+        (1_000, "1.0k"),
+        (412_345, "412.3k"),
+        (999_949, "999.9k"),
+        (999_950, "1.0M"),
+        (5_812_345, "5.8M"),
+        (1_250_000_000, "1250.0M"),
+    ] {
+        assert_eq!(format_tokens(n), shown, "{n}");
+    }
+}

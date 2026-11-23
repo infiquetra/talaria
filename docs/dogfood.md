@@ -32,9 +32,9 @@ When something gets in the way, file an issue in the infiquetra/talaria reposito
 
 The Talaria version is the full line printed by `talaria --version`.
 
-The Hermes version is the text after `Hermes version` on that row of `talaria doctor`. Copy that text. Do not copy the status word in front of the name, and do not copy a `Fix:` line. Do not copy the `Talaria` row. That row names the Hermes release Talaria was built for.
+The Hermes version is the version on the `Hermes version` row of `talaria doctor`. That row reads `Hermes <version>; this Talaria was tested against <tag>`. Copy only `<version>`. Do not copy the status word in front of the name, the part after the semicolon, or a `Fix:` line. Do not copy the `Talaria` row. That row names the Hermes release Talaria was tested against.
 
-Copy that text when it is `needs an answer from the gateway`, when it is `the gateway did not report a version Talaria can read`, and in every other case. The text can start with the word `unknown` when the gateway sent no version string and its commit matches the pin. Keep that word. Do not invent a version.
+Copy that text when it is `needs an answer from the gateway`, when it is `the gateway did not report a version Talaria can read`, and in every other case. The version can be the word `unknown` when the gateway sent no version string and its commit matches the tested-against record. Keep that word. Do not invent a version.
 
 ## Intake
 

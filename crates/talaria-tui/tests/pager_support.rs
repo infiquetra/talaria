@@ -60,6 +60,8 @@ pub fn reasoning(id: u64, text: &str) -> Cell {
         id: CellId::new(id),
         text: text.to_string(),
         sealed: true,
+        latest_step: false,
+        no_reply: false,
     })
 }
 
@@ -69,6 +71,7 @@ pub fn notice(id: u64, text: &str) -> Cell {
         kind: NoticeKind::Error,
         text: text.to_string(),
         detail: None,
+        body: None,
     })
 }
 

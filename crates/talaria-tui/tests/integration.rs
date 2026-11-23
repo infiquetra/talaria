@@ -18,6 +18,8 @@ mod view_colours_support;
 
 #[path = "integration/acp_fleet_render.rs"]
 mod acp_fleet_render;
+#[path = "integration/activity_line.rs"]
+mod activity_line;
 #[path = "integration/alert_bytes.rs"]
 mod alert_bytes;
 #[path = "integration/attention_keys.rs"]
@@ -36,6 +38,8 @@ mod checklist_keys;
 mod checklist_render;
 #[path = "integration/checklist_replay.rs"]
 mod checklist_replay;
+#[path = "integration/choice_render.rs"]
+mod choice_render;
 #[path = "integration/comfort_keys.rs"]
 mod comfort_keys;
 #[path = "integration/comforts_pty.rs"]
@@ -66,6 +70,8 @@ mod context_render;
 mod cron_render;
 #[path = "integration/doctor_view.rs"]
 mod doctor_view;
+#[path = "integration/effort_scale_render.rs"]
+mod effort_scale_render;
 #[path = "integration/fleet_alert_bytes.rs"]
 mod fleet_alert_bytes;
 #[path = "integration/fleet_external_launch.rs"]
@@ -84,6 +90,10 @@ mod herdr_peek;
 mod history_search;
 #[path = "integration/history_text.rs"]
 mod history_text;
+#[path = "integration/hivecode_status.rs"]
+mod hivecode_status;
+#[path = "integration/injected_notice.rs"]
+mod injected_notice;
 #[path = "integration/inline_setup.rs"]
 mod inline_setup;
 #[path = "integration/kanban_view.rs"]
@@ -182,6 +192,8 @@ mod queue_preview;
 mod reasoning_label;
 #[path = "integration/replay_commit.rs"]
 mod replay_commit;
+#[path = "integration/reply_commit.rs"]
+mod reply_commit;
 #[path = "integration/resize_anchor.rs"]
 mod resize_anchor;
 #[path = "integration/review_render.rs"]
@@ -220,6 +232,8 @@ mod status_notice;
 mod status_pr_segment;
 #[path = "integration/status_probe.rs"]
 mod status_probe;
+#[path = "integration/status_profile_segment.rs"]
+mod status_profile_segment;
 #[path = "integration/status_record.rs"]
 mod status_record;
 #[path = "integration/subagent_view.rs"]
@@ -250,8 +264,6 @@ mod theme_snapshots;
 mod tmux_scrollback;
 #[path = "integration/tool_cells.rs"]
 mod tool_cells;
-#[path = "integration/ultracode_status.rs"]
-mod ultracode_status;
 #[path = "integration/view_chrome.rs"]
 mod view_chrome;
 #[path = "integration/view_colours_default.rs"]
@@ -264,6 +276,8 @@ mod view_colours_themed;
 mod voice_view;
 #[path = "integration/work_panel_content.rs"]
 mod work_panel_content;
+#[path = "integration/workflow_dock.rs"]
+mod workflow_dock;
 #[path = "integration/workflow_view.rs"]
 mod workflow_view;
 #[path = "integration/workspace_keys.rs"]

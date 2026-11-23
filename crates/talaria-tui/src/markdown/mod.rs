@@ -200,6 +200,45 @@ impl MarkdownStream {
     }
 }
 
+/// How many leading bytes of a streaming Markdown text are whole top-level blocks that later
+/// text cannot change. A block counts once the next block has started on a later line, or when
+/// it is a code fence whose closing line has arrived; the open last block never counts, so a
+/// table, a list or a fence is always counted whole. The length ends at the start of a line, so
+/// what follows starts with the open block, and rendering the two parts apart gives the rows of
+/// one rendering with a blank row between them. Zero when no block is closed yet.
+#[must_use]
+pub fn closed_blocks_len(text: &str) -> usize {
+    // Scan what will be rendered, and only whole lines: a partial line is no evidence yet.
+    let clean = sanitize_untrusted(text);
+    let complete_end = clean.rfind('\n').map_or(0, |pos| pos + 1);
+    let blocks = blocks::scan(&clean[..complete_end]);
+    let closed = blocks
+        .iter()
+        .enumerate()
+        .take_while(|(index, block)| index + 1 < blocks.len() || block.closed_fence)
+        .count();
+    if closed == 0 {
+        return 0;
+    }
+    let boundary = match blocks.get(closed) {
+        Some(open) => clean[..open.range.start]
+            .rfind('\n')
+            .map_or(0, |pos| pos + 1),
+        None => {
+            let end = blocks[closed - 1].range.end;
+            clean[end..].find('\n').map_or(end, |pos| end + pos + 1)
+        }
+    };
+    // Sanitizing keeps every line break, so the same count of them ends the raw prefix.
+    match clean[..boundary].matches('\n').count() {
+        0 => 0,
+        lines => text
+            .match_indices('\n')
+            .nth(lines - 1)
+            .map_or(0, |(at, _)| at + 1),
+    }
+}
+
 #[must_use]
 pub fn render_markdown(text: &str, options: &MarkdownOptions) -> Vec<Line<'static>> {
     render_markdown_with_theme(text, options, &ViewStyles::default())

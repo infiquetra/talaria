@@ -97,6 +97,30 @@ fn envelope_golden_with_fixture_roster() {
     }
 }
 #[test]
+fn a_changed_skill_is_named_in_the_warnings() {
+    let dir = tempfile::tempdir().unwrap();
+    let warned = |state: SkillState| {
+        let mut parts = local(dir.path());
+        parts.warnings.clear();
+        parts.skill = Some(SkillInspection {
+            state,
+            installed_version: Some("1.0.0".into()),
+            changed_files: vec!["changed:SKILL.md".into(), "added:notes.md".into()],
+        });
+        let (envelope, _) = build_envelope("fixture", parts, Ok(report(vec![])));
+        envelope.warnings
+    };
+    let warnings = warned(SkillState::Modified);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].contains("talaria-workflows skill in profile fixture")
+            && warnings[0].contains("2 files")
+            && warnings[0].contains("talaria workflow skill install --force --profile fixture"),
+        "{warnings:?}"
+    );
+    assert!(warned(SkillState::Current).is_empty());
+}
+#[test]
 fn check_problems_exit_2_with_full_report() {
     let dir = tempfile::tempdir().unwrap();
     let expected = report(vec!["model is not authenticated"]);

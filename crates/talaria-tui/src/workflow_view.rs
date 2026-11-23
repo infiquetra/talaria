@@ -1,17 +1,22 @@
 //! Windowed alternate-screen progress presentation. Untrusted content stays literal.
-use crate::history::sanitize;
+use crate::{activity::FRAME_MS, checklist::cut_to_width, history::sanitize, theme::Motion};
 use ratatui::{
     Frame,
     layout::Rect,
     style::Style,
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Paragraph, Widget},
 };
+use talaria_core::background::format_elapsed;
 pub use talaria_workflow::progress::live::ProgressKey;
 use talaria_workflow::progress::{
-    format_money, format_tokens,
+    RunState, format_money, format_tokens,
     live::{NodeKey, ProgressState, WaitView},
 };
+use talaria_workflow::tokens::tokens_text;
+/// The failed agents a finished run lists above its rows before the rest are counted.
+const FAILED_LISTED: usize = 5;
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Debug)]
 pub struct WorkflowTheme {
@@ -25,6 +30,280 @@ impl Default for WorkflowTheme {
         crate::theme::legacy::workflow_theme()
     }
 }
+/// One line above the composer while a workflow run of the foreground session is active.
+pub struct WorkflowDock<'a> {
+    name: &'a str,
+    status: &'a str,
+    finished: u32,
+    total: u32,
+    open_hint: Option<&'a str>,
+    header: Style,
+    hint: Style,
+    clock: Option<RunClock>,
+}
+
+/// What shows that a running workflow is alive: a spinner frame, the time since the run
+/// started, or both. A run that is not running has none, and its line holds still.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RunClock {
+    /// The spinner frame, under full motion. Under reduced motion the glyph stays still.
+    pub frame: Option<usize>,
+    /// Whole milliseconds since the run started, when its start time is known.
+    pub elapsed_ms: Option<u64>,
+}
+
+impl RunClock {
+    /// The clock of a run at `wall_now_ms` (Unix milliseconds) whose records say it started at
+    /// `started_at_ms`. `tick_ms` is any millisecond count that rises with time and picks the
+    /// spinner frame. A run that is not running has no clock. A start time that is missing (not
+    /// above zero) or in the future gives no elapsed time rather than a wrong one.
+    #[must_use]
+    pub fn of_run(
+        running: bool,
+        started_at_ms: i64,
+        wall_now_ms: u64,
+        tick_ms: u64,
+        motion: Motion,
+    ) -> Option<Self> {
+        if !running {
+            return None;
+        }
+        let elapsed_ms = u64::try_from(started_at_ms)
+            .ok()
+            .filter(|started| *started > 0)
+            .and_then(|started| wall_now_ms.checked_sub(started));
+        let frame = (motion == Motion::Full).then(|| {
+            usize::try_from(tick_ms / FRAME_MS).unwrap_or(0) % crate::launch_dialog::SPINNER.len()
+        });
+        Some(Self { frame, elapsed_ms })
+    }
+
+    /// How long until the line next changes: a spinner frame under full motion, the next whole
+    /// second of the run under reduced motion, and never when nothing on the line moves.
+    #[must_use]
+    pub fn wake_after_ms(&self) -> Option<u64> {
+        if self.frame.is_some() {
+            return Some(FRAME_MS);
+        }
+        self.elapsed_ms.map(|elapsed| 1_000 - elapsed % 1_000)
+    }
+}
+
+impl<'a> WorkflowDock<'a> {
+    pub fn new(
+        name: &'a str,
+        status: &'a str,
+        finished: u32,
+        total: u32,
+        open_hint: Option<&'a str>,
+        header: Style,
+        hint: Style,
+    ) -> Self {
+        Self {
+            name,
+            status,
+            finished,
+            total,
+            open_hint,
+            header,
+            hint,
+            clock: None,
+        }
+    }
+    /// Show the spinner and the elapsed time of a running run.
+    #[must_use]
+    pub fn with_clock(mut self, clock: Option<RunClock>) -> Self {
+        self.clock = clock;
+        self
+    }
+    pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return vec![];
+        }
+        let clock = self.clock.unwrap_or_default();
+        let glyph = clock.frame.map_or("⚙", |frame| {
+            crate::launch_dialog::SPINNER[frame % crate::launch_dialog::SPINNER.len()]
+        });
+        let line = |with_time: bool| {
+            let time = clock
+                .elapsed_ms
+                .filter(|_| with_time)
+                .map(|ms| format!(" {}", format_elapsed(ms / 1_000)))
+                .unwrap_or_default();
+            sanitize(&format!(
+                "{glyph} Workflow {} · {}{time} · {}/{} agents",
+                self.name.replace(['\r', '\n', '\t'], " "),
+                self.status.replace('_', " "),
+                self.finished,
+                self.total
+            ))
+            .into_owned()
+        };
+        let hint = format!(
+            " · {} to open",
+            self.open_hint
+                .map_or_else(|| "/workflows".to_owned(), |key| sanitize(key).into_owned())
+        );
+        let room = usize::from(width);
+        let with_time = line(true);
+        if with_time.width() + hint.width() <= room {
+            return vec![Line::from(vec![
+                Span::styled(with_time, self.header),
+                Span::styled(hint, self.hint),
+            ])];
+        }
+        // Short of room, the hint goes first, then the time, and the agent count stays.
+        if with_time.width() <= room {
+            return vec![Line::styled(with_time, self.header)];
+        }
+        vec![Line::styled(cut_to_width(&line(false), width), self.header)]
+    }
+}
+impl crate::live::LiveSection for WorkflowDock<'_> {
+    fn height(&self, width: u16) -> u16 {
+        u16::try_from(self.lines(width).len()).unwrap_or(u16::MAX)
+    }
+    fn render(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        for (y, line) in (0..area.height).zip(self.lines(area.width)) {
+            buf.set_line(area.x, area.y + y, &line, area.width);
+        }
+    }
+}
+
+/// One line above the composer while the open session is a workflow agent's: which agent, how
+/// the run's journal records it, and the key that opens the run.
+pub struct WorkflowAgentDock<'a> {
+    text: &'a str,
+    open_hint: Option<&'a str>,
+    back_key: Option<&'a str>,
+    header: Style,
+    hint: Style,
+}
+impl<'a> WorkflowAgentDock<'a> {
+    pub fn new(text: &'a str, open_hint: Option<&'a str>, header: Style, hint: Style) -> Self {
+        Self {
+            text,
+            open_hint,
+            back_key: None,
+            header,
+            hint,
+        }
+    }
+    /// Offer the key that goes back to the session the person came from. `key` is the label
+    /// from the key map; the Left arrow is drawn as an arrow.
+    #[must_use]
+    pub fn with_back_key(mut self, key: Option<&'a str>) -> Self {
+        self.back_key = key;
+        self
+    }
+    pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return vec![];
+        }
+        let base =
+            sanitize(&format!("⚙ {}", self.text.replace(['\r', '\n', '\t'], " "))).into_owned();
+        let open = format!(
+            " · {} opens the run",
+            self.open_hint
+                .map_or_else(|| "/workflows".to_owned(), |key| sanitize(key).into_owned())
+        );
+        let back = self.back_key.map(|key| {
+            let key = if key == "Left" {
+                "←".to_owned()
+            } else {
+                sanitize(key).into_owned()
+            };
+            format!(" · {key} back to the run")
+        });
+        let room = usize::from(width);
+        // The key that goes back is dropped last of the two hints: it is the one a person who
+        // just pressed Enter on an agent needs.
+        let hints = match &back {
+            Some(back) => [format!("{open}{back}"), back.clone(), open],
+            None => [open.clone(), open, String::new()],
+        };
+        for hint in hints {
+            if !hint.is_empty() && base.width() + hint.width() <= room {
+                return vec![Line::from(vec![
+                    Span::styled(base, self.header),
+                    Span::styled(hint, self.hint),
+                ])];
+            }
+        }
+        vec![Line::styled(cut_to_width(&base, width), self.header)]
+    }
+}
+impl crate::live::LiveSection for WorkflowAgentDock<'_> {
+    fn height(&self, width: u16) -> u16 {
+        u16::try_from(self.lines(width).len()).unwrap_or(u16::MAX)
+    }
+    fn render(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        for (y, line) in (0..area.height).zip(self.lines(area.width)) {
+            buf.set_line(area.x, area.y + y, &line, area.width);
+        }
+    }
+}
+
+/// The block in the workflow dock's place while a routed turn builds a workflow: what it is,
+/// how long it has run, and the step it is on. It holds still: only the seconds change.
+pub struct AuthoringDock<'a> {
+    view: &'a talaria_core::hivecode::authoring::AuthoringView,
+    max_rows: u16,
+    header: Style,
+    hint: Style,
+}
+impl<'a> AuthoringDock<'a> {
+    /// `max_rows` is 1 on a short screen, which draws the block as one row.
+    pub fn new(
+        view: &'a talaria_core::hivecode::authoring::AuthoringView,
+        max_rows: u16,
+        header: Style,
+        hint: Style,
+    ) -> Self {
+        Self {
+            view,
+            max_rows,
+            header,
+            hint,
+        }
+    }
+    pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        use talaria_core::hivecode::{authoring::elapsed_text, notice};
+        if width == 0 || self.max_rows == 0 {
+            return vec![];
+        }
+        let progress = &self.view.progress;
+        let row = |text: String| sanitize(&text).into_owned();
+        if self.max_rows == 1 {
+            let short = row(format!(
+                "⚙ {}",
+                notice::authoring_short(progress, self.view.elapsed_ms)
+            ));
+            return vec![Line::styled(cut_to_width(&short, width), self.header)];
+        }
+        let title = row(format!(
+            "⚙ {} · {}",
+            notice::AUTHORING_TITLE,
+            elapsed_text(self.view.elapsed_ms)
+        ));
+        let step = row(format!("  {}", notice::authoring_step(progress)));
+        vec![
+            Line::styled(cut_to_width(&title, width), self.header),
+            Line::styled(cut_to_width(&step, width), self.hint),
+        ]
+    }
+}
+impl crate::live::LiveSection for AuthoringDock<'_> {
+    fn height(&self, width: u16) -> u16 {
+        u16::try_from(self.lines(width).len()).unwrap_or(u16::MAX)
+    }
+    fn render(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        for (y, line) in (0..area.height).zip(self.lines(area.width)) {
+            buf.set_line(area.x, area.y + y, &line, area.width);
+        }
+    }
+}
+
 pub struct WorkflowView;
 impl WorkflowView {
     pub fn render_picker(
@@ -55,9 +334,22 @@ impl WorkflowView {
         let inner = block.inner(area);
         block.render(area, buf);
         if let Some(message) = picker.empty_message() {
-            Paragraph::new(message)
-                .style(theme.muted)
-                .render(inner, buf);
+            let lines = [
+                message,
+                "Turn Hivecode on with /hivecode on.",
+                "With Hivecode on, a plain prompt goes to the talaria-workflows skill,",
+                "and the agent proposes a workflow and asks before starting it.",
+            ];
+            for (y, text) in (inner.y..inner.bottom()).zip(lines) {
+                Paragraph::new(text)
+                    .style(theme.muted)
+                    .render(Rect::new(inner.x, y, inner.width, 1), buf);
+            }
+            if inner.height > 0 {
+                Paragraph::new("esc close")
+                    .style(theme.muted)
+                    .render(Rect::new(inner.x, inner.bottom() - 1, inner.width, 1), buf);
+            }
             return;
         }
         let room = inner.height.saturating_sub(1) as usize;
@@ -65,23 +357,7 @@ impl WorkflowView {
             .selected_index()
             .saturating_sub(room.saturating_sub(1));
         for (i, row) in picker.rows().iter().enumerate().skip(start).take(room) {
-            let text = format!(
-                "{}  {}  {}  agents {}/{}  parked {}  tokens {}  money {}{}",
-                row.run_id,
-                row.name,
-                row.status.as_str(),
-                row.agents_finished,
-                row.agents_total_known,
-                row.parked,
-                row.tokens_spent
-                    .map_or_else(|| "-".into(), |n| n.to_string()),
-                row.money_spent_usd
-                    .map_or_else(|| "-".into(), |n| format!("{n:.4}")),
-                row.warning
-                    .as_ref()
-                    .map_or_else(String::new, |w| format!("  {w}")),
-            );
-            Paragraph::new(sanitize(&text).into_owned())
+            Paragraph::new(sanitize(&picker_row(row)).into_owned())
                 .style(if i == picker.selected_index() {
                     theme.selected
                 } else {
@@ -152,6 +428,33 @@ impl WorkflowView {
             );
             y += 1;
         }
+        // A run that completed with failures names its failed agents first, before any row.
+        if state.progress.run.state == RunState::CompletedWithFailures {
+            let failed: Vec<_> = state
+                .progress
+                .agents()
+                .iter()
+                .filter(|a| a.last_outcome.as_deref() == Some("failed") && !a.stopped)
+                .collect();
+            let shown = failed.len().min(FAILED_LISTED);
+            for a in failed.iter().take(shown) {
+                if y >= inner.bottom() {
+                    break;
+                }
+                let reason = a.failure.as_deref().unwrap_or("no reason given");
+                put(y, format!("✗ {} · {reason}", a.label), theme.warning, buf);
+                y += 1;
+            }
+            if failed.len() > shown && y < inner.bottom() {
+                put(
+                    y,
+                    format!("… and {} more failed agents", failed.len() - shown),
+                    theme.warning,
+                    buf,
+                );
+                y += 1;
+            }
+        }
         if state.progress.last_seq == 0 && y < inner.bottom() {
             put(
                 y,
@@ -177,7 +480,16 @@ impl WorkflowView {
             .unwrap_or(0);
         let start = selection.saturating_sub(room.saturating_sub(1));
         if nodes.len() == 1 && !state.progress.agents.is_empty() && y < inner.bottom() {
-            put(y, "no agents match this filter".into(), theme.muted, buf);
+            // Name the real cause and the key that brings the rows back.
+            let text = if state.collapsed.contains(&NodeKey::Run) {
+                "everything is collapsed · → expands".to_owned()
+            } else {
+                format!(
+                    "no agents match the {} filter · f changes it",
+                    state.filter.as_str()
+                )
+            };
+            put(y, text, theme.muted, buf);
             y += 1;
         }
         for node in nodes.iter().skip(start).take(room) {
@@ -234,9 +546,14 @@ impl WorkflowView {
                     a.admission_status.as_deref().unwrap_or("none")
                 ),
                 format!(
-                    "settled {} · displayed {} tokens · {}",
-                    format_tokens(a.settled_tokens),
-                    format_tokens(a.tokens),
+                    "settled {} · displayed {} · {}",
+                    tokens_text(
+                        a.settled.counted,
+                        a.settled.cache_read,
+                        a.cache_unknown_turns,
+                        format_tokens
+                    ),
+                    tokens_text(a.tokens, a.cache_read, a.cache_unknown_turns, format_tokens),
                     format_money(a.money)
                 ),
             ];
@@ -260,7 +577,7 @@ impl WorkflowView {
             }
         }
         if inner.height >= 2 {
-            let footer=state.confirmation_text().map(str::to_owned).or_else(||state.footer.clone()).unwrap_or_else(||"↑↓ select · enter open · s steer · x stop · r restart · p pause · f filter · esc close".into());
+            let footer=state.confirmation_text().map(str::to_owned).or_else(||state.footer.clone()).unwrap_or_else(||"↑↓ select · ← fold · → unfold · enter open · s steer · x stop · r restart · p pause · f filter · esc close".into());
             put(inner.bottom() - 2, footer, theme.muted, buf);
         }
         if let Some(text) = &state.steer_input {
@@ -331,8 +648,18 @@ fn node_line(s: &ProgressState, node: &NodeKey) -> String {
                 if a.attempt > 0 {
                     state.push_str(&format!(" · attempt {}", a.attempt));
                 }
+                if a.overflow_restarts > 0 {
+                    state.push_str(&format!(
+                        " · restarted {} of {} after a context overflow",
+                        a.overflow_restarts,
+                        talaria_workflow::journal::MAX_OVERFLOW_RESTARTS
+                    ));
+                }
                 if let Some(cause) = &a.attention {
                     state.push_str(&format!(" · {cause}"));
+                }
+                if let Some(note) = a.progress_note() {
+                    state.push_str(&format!(" · {note}"));
                 }
                 if a.state == talaria_workflow::progress::AgentState::Ended {
                     state.push_str(" · ended without a journal outcome");
@@ -347,14 +674,14 @@ fn node_line(s: &ProgressState, node: &NodeKey) -> String {
                     state.push_str(&format!(" · {}", wait_text(wait)));
                 }
                 format!(
-                    "{} {} · {model}{provider} · {state} · {:.1}s · {} tokens · {} · {}",
+                    "{} {} · {model}{provider} · {state} · {:.1}s · {} · {} · {}",
                     a.state.glyph(),
                     a.label,
                     a.duration_ms(s.now_ms) as f64 / 1000.0,
                     if a.tokens_unknown {
-                        "unknown".into()
+                        "unknown tokens".into()
                     } else {
-                        format_tokens(a.tokens)
+                        tokens_text(a.tokens, a.cache_read, a.cache_unknown_turns, format_tokens)
                     },
                     format_money(a.money),
                     a.last_tool
@@ -434,6 +761,33 @@ pub fn key_input(
             Action::ProgressConfirm => K::Confirm,
             _ => return None,
         },
+    )
+}
+
+/// One run in the run list, before it is cleaned for the screen.
+pub fn picker_row(row: &talaria_workflow::runner::RunSummary) -> String {
+    format!(
+        "{}  {}  {}  agents {}/{}  parked {}  {}  money {}{}",
+        row.run_id,
+        row.name,
+        row.status.label(),
+        row.agents_finished,
+        row.agents_total_known,
+        row.parked,
+        row.tokens_spent.map_or_else(
+            || "tokens -".into(),
+            |n| tokens_text(
+                n,
+                row.cache_read_tokens.unwrap_or_default(),
+                row.cache_unknown_turns,
+                format_tokens
+            )
+        ),
+        row.money_spent_usd
+            .map_or_else(|| "-".into(), |n| format!("{n:.4}")),
+        row.warning
+            .as_ref()
+            .map_or_else(String::new, |w| format!("  {w}")),
     )
 }
 

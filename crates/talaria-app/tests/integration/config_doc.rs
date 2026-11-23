@@ -43,6 +43,21 @@ fn menu_bar_is_in_the_documented_ui_defaults_and_table() {
 }
 
 #[test]
+fn reasoning_is_in_the_documented_ui_defaults_and_table() {
+    let document = read_document();
+    assert!(
+        document.contains("reasoning = \"collapsed\""),
+        "document the collapsed default"
+    );
+    assert!(
+        document
+            .lines()
+            .any(|line| line.starts_with('|') && line.contains("`reasoning`")),
+        "document the ui setting in the table"
+    );
+}
+
+#[test]
 fn pane_settings_accept_each_option_and_fall_back_independently() {
     use talaria_app::panes::{DirectionSetting, MultiplexerSetting, PaneSettings};
     for (name, expected) in [
@@ -140,6 +155,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("doctor_left", &["left"][..]),
         ("doctor_right", &["right"][..]),
         ("voice_record", &["alt+r"][..]),
+        ("workflow_agent_back", &["left"][..]),
         ("layout_panel", &["alt+d"][..]),
         ("toggle_menu_bar", &["alt+i"][..]),
         ("menu_left", &["left"][..]),
@@ -263,6 +279,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("fleet_new", &["n"][..]),
         ("fleet_new_worktree", &["w"][..]),
         ("attention_next", &["alt+a"][..]),
+        ("workflow_view", &["alt+w"][..]),
         ("fleet_review", &["v"][..]),
         ("review_up", &["up", "k"][..]),
         ("review_down", &["down", "j"][..]),
@@ -332,8 +349,12 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("profiles_refresh", &["r"][..]),
         ("profiles_rescan", &["R"][..]),
         ("profiles_new", &["n"][..]),
+        ("profiles_delete", &["d"][..]),
+        ("profiles_rename", &["N"][..]),
         ("profiles_description", &["e"][..]),
         ("profiles_soul", &["s"][..]),
+        ("profiles_models", &["m"][..]),
+        ("profiles_connect", &["c"][..]),
         ("profiles_back", &["esc"][..]),
         ("model_roles_section_main", &["1"][..]),
         ("model_roles_section_fallbacks", &["2"][..]),

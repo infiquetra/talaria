@@ -2,6 +2,420 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-23 — The second press of the interrupt key waits 110 ms
+
+**Decision.** A second press of the interrupt key inside the 2 second window does not interrupt at
+once. It waits a settle time of 110 ms. With no further press of the key in that time, the turn is
+interrupted by a timer. A further press, read at any time before the interrupt is sent, means the
+key is held: the pending interrupt is cancelled and presses are ignored until they stop for the
+settle time. The timer does not settle while input is still waiting to be read. Ctrl+C interrupts
+at once.
+
+**Rationale.** A terminal sends a held key as a stream of ordinary presses, so holding Esc for
+half a second armed on the first and confirmed on the second. A stream from auto-repeat is fast
+and regular; two deliberate taps are not followed by a third within a tenth of a second.
+
+**Rejected.** Asking the terminal to mark repeats (not every terminal can, and it changes every
+key event the application reads). A longer settle time (it delays every interrupt). Treating a
+late press as a third tap (a busy application reads queued presses late, and that would let a held
+key through).
+
+**Revisit when.** People with a slow key repeat rate, more than 110 ms between repeats, report
+that holding the key interrupts; or the delay before an interrupt is noticed.
+
+## 2026-11-23 — The interrupt key must be pressed twice
+
+**Decision.** While a turn runs, the first press of the key bound to `interrupt` (Esc by default)
+arms a confirmation for 2 seconds and the working row says so; a second press inside that time
+interrupts. Ctrl+C interrupts at once. Everything else Esc does is unchanged: closing a view or a
+menu, the voice cutoff, and the double Esc on an idle composer that opens rewind, with its own 600
+ms window.
+
+**Rationale.** A person who had opened a workflow agent's session pressed Esc to leave it and
+stopped the agent's turn. One stray key should not end a long turn.
+
+**Rejected.** Holding the key for a time. Asking twice for Ctrl+C as well (it is a deliberate
+chord). A setting for the window.
+
+**Revisit when.** People report the second press as friction, or want the window configurable.
+
+## 2026-11-23 — Left arrow leaves a workflow agent's session the way Enter entered it
+
+**Decision.** Opening an agent from the workflow view remembers the session that was open. In the
+agent's session the action `workflow_agent_back` (Left by default) is live only on an empty
+composer with nothing else open; it switches back to the remembered session and reopens the run
+view with that agent selected. The line above the composer shows the key while it is live. The
+memory is keyed to the stored session id, confirmed when the switch lands, and dropped on any
+other switch. A session with no stored id of its own is never remembered. The action has its own
+key context, so it cannot collide with the composer's cursor key.
+
+**Rationale.** Enter moved the whole window into the agent's session and nothing led back except
+the session picker.
+
+**Rejected.** Hard-coding Left. A history of every session visited. Returning by runtime id (it
+could reach the wrong session).
+
+**Revisit when.** Agent sessions need more keys of their own.
+
+## 2026-11-23 — A workflow process line is hidden only when its run is confirmed
+
+**Decision.** While a run is running, the Workflow line above the composer shows a spinner and the
+time since the run started, from the run's own records. The line for the background process that
+is that run is not drawn when the process is confirmed to carry the run the Workflow line shows: a
+`resume` command names its run, and a `run` prints the run first. A workflow process that cannot
+be confirmed keeps its line, named after the workflow command, with a JSON output line shortened
+to its event name. Other processes are unchanged.
+
+**Rationale.** The two lines said the same thing, one of them as the first command of a shell line
+and a raw JSON event, and neither moved. Guessing which process is which run from start times
+could hide a live process.
+
+**Rejected.** Matching a process to a run by start time.
+
+**Revisit when.** The runner puts the run id on every line it prints, or in something the
+gateway's process list carries; then a window that attached late can confirm the link too.
+
+## 2026-11-23 — The token budget counts tokens except cache reads
+
+**Decision.** A run's token budget, `spend.tokens`, `tokens_spent` in `workflow list` and
+`budget.spent()` in a script all leave cache reads out. Cache reads are reported beside them as
+`cache_read_tokens`, and text output reads "N tokens + M cache reads". Cache writes stay counted.
+A turn whose cache reads Hermes did not report is counted in full and the output says for how many
+turns that happened (`cache_unknown_turns`). Journals written before this change have no figure,
+so every one of their turns shows as unknown.
+
+**Rationale.** In a real run cache reads were about 95% of the total and cost a fraction of other
+tokens, so a budget that counted them measured mostly cache reads.
+
+**Rejected.** Estimating the split when it is unknown. A `session.stats` call after every turn.
+Keeping `tokens` as the folded total and adding a second field for the counted part (the budget's
+own messages compare against `tokens`).
+
+**Revisit when.** Hermes reports per-turn cache reads in a settled turn's usage, or a provider
+bills cache reads at a rate worth budgeting.
+
+## 2026-11-23 — An ignored build folder is deleted only when it is verified
+
+**Decision.** `workflow worktrees remove` without `--force` treats an ignored folder as build
+output only when its name is on the list and a marker on disk confirms it: `CACHEDIR.TAG` or
+`.rustc_info.json` in `target`; `CACHEDIR.TAG` in `.pytest_cache`, `.mypy_cache` and
+`.ruff_cache`; `pyvenv.cfg` in `.venv`; only compiled files in `__pycache__`; `package.json`
+beside `node_modules`; a project manifest beside `dist` or `build`. A symbolic link is never build
+output. A listed name that fails its check keeps the worktree, and the output says why.
+
+**Rationale.** A name says nothing about contents. A hand-made folder called `build` would have
+been deleted without a word.
+
+**Rejected.** Reading the marker's contents. Walking the folder (too slow for `node_modules` and
+`target`).
+
+**Revisit when.** A tool changes its marker, or a real build folder is refused (a monorepo whose
+manifest is a link, for example).
+
+## 2026-11-23 — A run that completes with failures exits 5
+
+**Decision.** `workflow run` and `workflow resume` exit 5 when the script returned but at least
+one agent failed. The result and the failed agents are printed exactly as before. The other codes
+are unchanged: 0 completed, 1 failed, 2 refused, 3 aborted, 4 budget exhausted.
+
+**Rationale.** With exit 0 a caller that reads only the exit code, a shell chain or the gateway's
+"process finished" notice, took a run with a failed agent for a clean one.
+
+**Rejected.** Reusing 1 (it means the run itself failed and has no result).
+
+**Revisit when.** A caller is found that starts a run again on any non-zero code.
+
+## 2026-11-23 — No job follows Hermes releases
+
+**Decision.** The daily `Hermes sync` workflow is deleted, with its tests. It compared the newest
+Hermes release with the tested-against record, regenerated the contract on a branch and opened an
+issue for each release. Nothing replaces it. The contract is regenerated by hand
+(`tools/contract-gen/contract_gen.py bump`) when Talaria is next tested against a newer Hermes.
+The weekly drift report in the `Hermes contract` workflow stays: it writes a summary and cannot
+fail.
+
+**Rationale.** Talaria does not pin Hermes, and Hermes ships a release every few days. A job that
+opens an issue per release produces work nobody intends to do: it had left two open "needs a
+manual sync" issues in six days. Talaria either works with the gateway a person runs or gets fixed
+when it does not.
+
+**Rejected.** Keeping the job on manual dispatch only (a second way to do what one command does).
+Deleting the weekly drift report too (it costs nothing and nobody has to act on it).
+
+**Revisit when.** A gateway change breaks Talaria without anyone noticing for long enough to
+matter.
+
+## 2026-11-23 — Worktrees a run keeps are removed by a command, never automatically
+
+**Decision.** `talaria workflow worktrees list` and `remove <run>` are the whole feature. Without
+`--force`, `remove` acts only on a run that has reached a final state and only on worktrees that
+hold nothing: no changed files, no ignored files other than known build output folders such as `target`,
+no commits the source checkout lacks. It deletes their branches with git's own merged check. Everything else is kept and
+listed with the reason. With `--force` the run's worktrees and branches go, and the output says
+what was discarded and each branch's last commit. The command works only from the run's own
+records, inside the run's own worktrees folder and branch prefix, and refuses a run whose runner
+holds its lock.
+
+**Rationale.** Runs left dozens of worktrees and branches behind because nothing in the product
+acted as their owner. A finished run's folders can hold work nobody has integrated, and an
+interrupted run's agents may still be working at the gateway, so removal has to be a deliberate
+act that says what it would lose.
+
+**Rejected.** Removing clean worktrees when a run completes. Changing the existing `remove` so it
+deletes branches. Trusting git's worktree list in place of the run's records.
+
+**Revisit when.** Automatic removal is wanted, or branches with no record in the run folder turn
+up.
+
+## 2026-11-23 — A workflow agent's session is named in the window, and the first prompt into it warns
+
+**Decision.** When the open session belongs to a workflow agent, a line above the composer names
+the agent, its state from the run journal, whether the run follows this conversation, and the run.
+A session is recognised by its working folder under a run's worktrees folder, or by a session id a
+loaded run recorded. The first prompt into such a session returns to the composer with one line of
+warning; a second submit sends it. The existing workflow key opens that agent's run.
+
+**Rationale.** An agent's session looked like any other. A person reading a failed, untracked
+conversation could be invited to commit work the run never asked for, with nothing on screen to
+say so.
+
+**Rejected.** A confirmation on every prompt. Carrying "came from the workflow view" along with
+the session, which misses a session reached any other way. Guessing a state when the journal
+cannot be read; the line says that it cannot tell.
+
+**Revisit when.** People want `/steer` gated too, or a key that returns to the previous session
+exists.
+
+## 2026-11-23 — `workflow check` runs the script against stand-in agents
+
+**Decision.** `talaria workflow check <script>` reads the header and imports, compiles the body
+without calling it, then runs the script in the engine against agents that answer at once with
+made-up values. It contacts no gateway, starts no agent, writes no run folder. Findings that
+cannot depend on an agent's answer are errors; anything else the probe trips on is a warning.
+
+**Rationale.** A lead model built its own syntax checker because Talaria offered none. A syntax
+check alone misses what the engine refuses at run time: an unknown option, a tier that is not in
+the staffing table, a clock or random call. The probe finds those before any token is spent.
+
+**Rejected.** The mock backend already in the crate (behind a feature, and it needs a rules file).
+A scan of the source text (it cannot see options built while the script runs).
+
+**Revisit when.** Scripts appear whose agent calls can only be reached with real answers.
+
+## 2026-11-23 — The skill's size budget is measured on the template
+
+**Decision.** Each skill file is measured as written, with each command placeholder counted as 64
+bytes and each profile placeholder as 24. The budgets stay 8192 bytes for `SKILL.md`, 24576 for a
+reference and 65536 in total. The rendered text has only a generous upper bound, and passing it
+fails with a message that names the Hermes folder path as the cause.
+
+**Rationale.** The limit was checked after the command placeholder had been replaced with a
+command that carries the user's Hermes folder path. Whether the skill installed depended on how
+long that path was.
+
+**Rejected.** Raising the budget (it is a cost in the lead model's context, not a gateway limit).
+
+**Revisit when.** `SKILL.md` needs to grow: it has about 130 bytes left.
+
+## 2026-11-22 — Talaria does not pin Hermes; it records what it was tested against
+
+**Decision.** Talaria states which Hermes release its contract was generated from and tested
+against, and nothing more. A gateway newer than that is an ok row in `talaria doctor`, gets no
+connect notice, and never gates or refuses anything. A gateway older than the oldest tested
+release gets one plain warning that some methods may be missing. `talaria --version` says "tested
+against". The weekly contract drift job reports without failing.
+
+**Rationale.** Hermes ships a release every few days. Talaria works with the gateway the user
+runs, or it gets fixed. A warning for every newer release is noise that teaches people to ignore
+doctor, and it implies a compatibility promise nobody is keeping. The file
+`crates/hermes-contract/PINNED` stays because the contract generator needs exactly one revision to
+generate from; it is a record, not a policy.
+
+**Rejected.** Keeping the pin and warning on drift (noise every few days). Renaming the file, the
+`hermes_contract::pinned` module and the `pinned_*` compatibility fields in the same pass (a
+mechanical change across some sixty files, left for a later pass).
+
+**Revisit when.** A Hermes change breaks Talaria silently often enough that a visible
+compatibility signal would pay for itself, or when the internal names are renamed to match.
+
+## 2026-11-22 — Workflow runs get no artificial limits; failures are reported and recovered
+
+**Decision.** A workflow agent runs with no step cap unless the script sets `maxTurns`: Talaria
+sends Hermes the no-cap value on `session.create` instead of leaving the profile's setting to
+apply. No wall-clock limit and no per-agent token ceiling were added. The run's token budget
+remains the only limit. Talaria checks the profile's Hermes configuration and warns, in doctor, in
+one session notice and before a workflow run, when `compression.in_place` is false or
+`agent.max_turns` is a finite number.
+
+**Rationale.** A run lost an agent to a context overflow and another to a step cap. Both came from
+two old profile settings, not from the agents: with `compression.in_place: false` Hermes
+compresses by publishing a child session, and its lineage check refuses that for sessions created
+with source `tool`, which is what a workflow agent is; and a profile step cap applied to every
+agent because Talaria sent a cap only when a script set one. A time limit would have hidden both
+causes behind another moving part.
+
+**Rejected.** A per-agent wall-clock limit passed as Hermes's `run_budget`. A per-agent input
+token ceiling. Sending the no-cap value for ordinary interactive sessions too (it would make the
+profile's own setting and the `/config` entry for it silently do nothing; the warning covers that
+case instead).
+
+**Revisit when.** A provider or model produces runaway agents that the token budget stops too late
+to be useful.
+
+## 2026-11-22 — An agent that overflows its context is restarted, at most three times, and only on a quiet route
+
+**Decision.** When an agent's turn fails with `failure_reason: context_overflow`, Talaria starts
+the same call again in a fresh Hermes session, with the same brief and working folder and a note
+that the folder holds the earlier attempt's work. A call gets at most three restarts, counted from
+the journal so a killed and resumed run cannot exceed it. A restart needs budget room, is refused
+once a stop was requested, and happens only when the sweep of the session's route found nothing
+still running there. Otherwise the call fails with a reason that names the session and the folder.
+
+**Rationale.** The agent's files survive an overflow; only its conversation is lost, so a restart
+recovers most of the work. The count must survive a kill, and only the journal does. After an
+overflow Hermes may start a turn of its own on the same route; a restart beside it would put two
+agents in one folder.
+
+**Rejected.** An in-memory counter. A new journal record type (the existing retry-finish record
+carries it). Resetting the count on resume. Restarting regardless of what the sweep found.
+
+**Revisit when.** Operators want a fresh set of restarts on an explicit resume, or Hermes offers a
+call that pauses automation for a route.
+
+## 2026-11-22 — A cut short agent keeps its result; a run with failed agents says so
+
+**Decision.** An agent that Hermes stopped at a step cap is marked cut short and its reply is
+kept. It is not failed and gets no continuation turn. The mark is a field on the completed journal
+record, a hidden `cutShort` property on object and array replies, and a `cutShort()` function in
+the script. A run whose script returned while at least one agent failed ends
+`completed_with_failures`, exit code 0, with the failed and cut short agents listed before the
+result. A resume replays it like a completed run.
+
+**Rationale.** A reply written at the cap is usable, and the script and the reader must both be
+able to see that it may be incomplete. A run that reports `completed` while an agent failed hides
+the one fact the reader needs first. Exit code 0 keeps resume and replay identical to a completed
+run.
+
+**Rejected.** Failing a cut short agent. A continuation turn (it spends more steps nobody asked
+for). A new journal record kind (older readers could not read the journal). A non-zero exit code
+for a run with failed agents. Reusing `failed` for such a run (it loses the result).
+
+**Revisit when.** Callers need an exit code that distinguishes a run with failed agents.
+
+## 2026-11-22 — One list of Hermes events that are known but not drawn
+
+**Decision.** `hermes-contract` holds the names of events Talaria receives on purpose and does not
+draw (`agent.step`, `session.updated`, `session.tools_changed`, `request.cancel` and the
+`subagent.` family). The session reducer and the workflow view both ask that list.
+
+**Rationale.** The two handlers had drifted: one silenced `agent.step` by name and the other
+logged it as an event type this build does not read, which reads like a contract mismatch.
+
+**Rejected.** A second copy of the list in the workflow crate. Keeping it in `talaria-core`, which
+the workflow crate would then have to reach into.
+
+**Revisit when.** The generated contract gains a typed `agent.step`.
+
+## 2026-11-22 — Call the multi-agent mode Hivecode
+
+**Decision.** The mode that handles a plain prompt as a multi-agent workflow is named
+Hivecode: the `/hivecode` command, the `--hivecode` flag, the status word, the notices, the
+built-in workflow and the docs page. The earlier flag name `--ultracode` stays as an unlisted
+alias so an existing launcher keeps starting. The earlier slash command is not kept. Release
+notes, handoff documents and earlier journal entries keep the name they were written with.
+
+**Rationale.** The earlier name is another product's name for a similar feature, and the user
+asked for one of Talaria's own. A hidden flag alias costs one attribute and prevents a launch
+failure; a hidden slash alias would show in the command menu, so it was left out. The rename was
+done in one pass after every other change of the batch had merged, because it touches most
+files the batch touched.
+
+**Rejected.** Keeping both names (two words for one thing in notices and docs). Renaming the
+`talaria-workflows` skill as well (the skill is installed into Hermes profiles; a second name
+would strand existing installs and the setup check that compares them).
+
+**Revisit when.** The unlisted flag alias can be removed once a tagged release has carried the
+new name for one minor version.
+
+## 2026-11-22 — A workflow's token budget is a ceiling, not an admission rule
+
+**Decision.** The runner counts the usage agent sessions stream while they run. When counted
+spend reaches the budget it admits no new agent and stops the running ones through the existing
+cancel path. Each refused or stopped agent is journaled, the outcome is `budget_exhausted` (exit
+code 4) whether or not the script catches the error, and a resumed run keeps its stored budget
+unless a new one is given.
+
+**Rationale.** A run with a budget of four million tokens spent nearly twenty million, because
+the budget was read only when an agent started and usage was added only when a turn settled.
+The agents it then refused left no record, and the run was reported as completed. A number the
+operator sets as a limit must limit spending, and a run that stopped for its budget must say so
+everywhere a run is listed.
+
+**Rejected.** Refusing new agents only, and reporting the overshoot afterwards (the overshoot is
+unbounded when agents start together). Estimating an agent's cost before it starts (there is
+no basis for the estimate). Mapping the uncaught budget error to a failed run (it reads as a
+script defect).
+
+**Revisit when.** A provider streams no usage before a turn settles for a common model; the
+runner then falls back to the admission check for that agent and journals the fact once, and a
+per-agent limit may be needed.
+
+## 2026-11-22 — Draw reasoning as one line per block by default
+
+**Decision.** `[ui] reasoning` defaults to `collapsed`: each reasoning block is one row with its
+line count and, when it streamed, its duration, and names the key that opens the transcript view
+where the full text is. `/thinking full` and `reasoning = "full"` restore the earlier display. A
+completed turn whose only output is reasoning is still drawn in full.
+
+**Rationale.** One session held 93 reasoning blocks and about 440,000 characters, all written
+into scrollback. Rows in the terminal's own scrollback cannot be folded later, so the quiet form
+has to be chosen when the row is written. The transcript view already shows reasoning in full,
+searchable, so no new viewer was needed.
+
+**Rejected.** Hiding reasoning entirely (a turn that ends on reasoning alone would show nothing).
+Asking Hermes not to send it (that setting also stops other frames Talaria draws). Expanding in
+place (impossible once a row has left the live region).
+
+**Revisit when.** Users ask for a third value that hides the row as well.
+
+## 2026-11-22 — Keep the `/config` choice lists in Talaria, proved against the pinned Hermes
+
+**Decision.** `/config` offers a chooser for every key with a closed set of values. The live
+schema stays the base; a table in `talaria-core` adds the sets the schema lacks and replaces the
+schema lists the runtime does not accept. `tools/contract-gen` extracts the same sets from the
+pinned Hermes source into a committed `config-choices.json`, and a parity test compares the two
+without needing a Hermes checkout. Settings proposed by the agent are checked by the same
+function the chooser uses.
+
+**Rationale.** The gateway's schema types only about two dozen keys as selects, its save route
+does not validate values, and several of its lists differ from what the runtime reads. No
+gateway method describes the closed sets of plain-text keys, so they cannot be fetched.
+
+**Rejected.** Trusting the schema alone (most keys stay typed text, and three lists are wrong).
+Reading the sets from the Hermes checkout at run time (a client must not depend on the gateway's
+source being present). A second validation list for agent proposals (the two lists disagreed
+within a day).
+
+**Revisit when.** Hermes serves a schema with validated enumerations; the parity test fails when
+a corrected list is fixed upstream, and that entry can then be dropped.
+
+## 2026-11-22 — Reinstalling a changed workflow skill is a command, not a question
+
+**Decision.** When the installed `talaria-workflows` skill differs from the copy Talaria
+installed, Talaria says so in one notice that names `/hivecode reinstall`. No line the user
+submits is read as an answer. The yes-or-no offer remains only for a skill that is missing.
+
+**Rationale.** Hermes's background review rewrites skills it has used, and the rewritten text
+changed how the agent behaved. The first fix asked "reinstall? [y/N]" and read the next
+submitted line as the answer, which could take a "yes" the user meant for the agent's own
+question. A missing skill cannot route a prompt, so that offer has no such collision.
+
+**Rejected.** Reinstalling silently (it overwrites a file another program changed, without
+consent). Locking the skill against Hermes's review from Talaria (the lock lives in Hermes's own
+state; Talaria prints the command instead).
+
+**Revisit when.** Hermes offers a marker inside a skill's own folder that exempts it from review.
+
 ## 2026-11-20 — Explain `--resume` in the long help
 
 **Context.** `--resume` already selects a session, while the long help is silent about it.

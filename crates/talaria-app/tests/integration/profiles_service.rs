@@ -8,10 +8,12 @@ use std::sync::Arc;
 
 use client_support::mock_rest::{CountingMinter, MockRest};
 use client_support::{ControlReply, Home, WsPlan, serve};
-use mock_gateway::MockGateway;
+use mock_gateway::{MockGateway, StandaloneGateway};
 use serde_json::{Value, json};
 use talaria_app::profiles::{ProfilesService, parse_topology};
-use talaria_core::profiles::{CreateRequest, ProfilesEffect, ProfilesInput, Section};
+use talaria_core::profiles::{
+    CreateRequest, DeleteOutcome, ProfilesEffect, ProfilesInput, RegistryFailure, Section,
+};
 
 /// The keys the profiles calls must never send with a value. The soul rides on
 /// configure only; every other surface refuses it too.
@@ -612,4 +614,135 @@ async fn opening_the_screen_never_starts_a_gateway() {
             .is_none(),
         "discovery wrote nothing"
     );
+}
+
+/// Delete and rename ride a registry ticket for the one profile they change, over the same
+/// control socket as every other ticket, and report Hermes's own words.
+#[tokio::test]
+async fn delete_and_rename_use_a_registry_ticket_for_that_profile() {
+    let temp = tempfile::tempdir().expect("a home");
+    let gateway = StandaloneGateway::start(temp.path());
+    let home = gateway.home().to_path_buf();
+    let fixture = home.join("profiles").join("fixture");
+    let fixture = fixture.to_string_lossy().into_owned();
+
+    // Through the service, as the screen sends it.
+    let (_socket, client, _inbound) = MockGateway::start().await;
+    let service = ProfilesService::new(client, home.clone(), "default".to_owned());
+    let input = service
+        .execute(ProfilesEffect::Delete {
+            name: "fixture".to_owned(),
+        })
+        .await;
+    match input {
+        Some(ProfilesInput::DeleteAnswered(name, Ok(DeleteOutcome::Deleted))) => {
+            assert_eq!(name, "fixture");
+        }
+        other => panic!("a delete of a served profile succeeds: {other:?}"),
+    }
+    let seen = gateway.profile_registry_requests();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert_eq!(seen[0].method, "DELETE");
+    assert_eq!(seen[0].target, "/api/profiles/fixture");
+    let ticket = seen[0].ticket.clone().expect("a ticket the gateway minted");
+    assert_eq!(ticket.purpose, "native-profile-registry");
+    assert_eq!(ticket.scope, "profile");
+    assert_eq!(
+        ticket.profile_id, fixture,
+        "bound to the profile it deletes"
+    );
+
+    // Identity cleanup still pending: the profile is gone and Hermes names the retry.
+    gateway.script_profile_registry(
+        200,
+        json!({"ok": true, "path": fixture.clone(), "identity_settled": false,
+               "settlement_pending": true,
+               "retry_command": "hermes profile purge-identity fixture"}),
+    );
+    assert_eq!(
+        talaria_app::profiles::delete_profile(&home, "fixture").await,
+        Ok(DeleteOutcome::SettlementPending {
+            retry_command: "hermes profile purge-identity fixture".to_owned()
+        })
+    );
+
+    // A server failure keeps Hermes's own words, with the home folder scrubbed.
+    gateway.script_profile_registry(
+        500,
+        json!({"detail": format!("Could not remove profile directory {fixture}: a running gateway still owns this profile; retry the delete once it settles")}),
+    );
+    assert_eq!(
+        talaria_app::profiles::delete_profile(&home, "fixture").await,
+        Err(RegistryFailure::Refused(
+            "Could not remove profile directory <home>/profiles/fixture: a running gateway still owns this profile; retry the delete once it settles".to_owned()
+        ))
+    );
+
+    // A refusal keeps its words too.
+    gateway.script_profile_registry(
+        400,
+        json!({"detail": "Cannot delete the default profile (~/.hermes).\nTo remove everything, use: hermes uninstall"}),
+    );
+    assert_eq!(
+        talaria_app::profiles::delete_profile(&home, "fixture").await,
+        Err(RegistryFailure::Refused(
+            "Cannot delete the default profile (~/.hermes). To remove everything, use: hermes uninstall".to_owned()
+        ))
+    );
+
+    // Hermes refuses the profile its gateway runs from, whatever the ticket says.
+    gateway.script_profile_registry(200, json!({"ok": true, "path": "x"}));
+    match talaria_app::profiles::delete_profile(&home, "default").await {
+        Err(RegistryFailure::Refused(words)) => {
+            assert!(words.starts_with("profile_scope_mismatch"), "{words}");
+            assert!(
+                words.contains("never the profile the gateway was started from"),
+                "{words}"
+            );
+        }
+        other => panic!("the launch profile is refused: {other:?}"),
+    }
+
+    // A profile the gateway does not serve gets no ticket and no request, and the list is
+    // read again because it is out of date.
+    let before = gateway.profile_registry_requests().len();
+    assert_eq!(
+        talaria_app::profiles::delete_profile(&home, "fixture-z").await,
+        Err(RegistryFailure::Gone(
+            "the gateway no longer serves it".to_owned()
+        ))
+    );
+    assert_eq!(gateway.profile_registry_requests().len(), before);
+
+    // A profile Hermes no longer has is gone too, in Hermes's own words.
+    gateway.script_profile_registry(404, json!({"detail": "Profile 'fixture' does not exist."}));
+    assert_eq!(
+        talaria_app::profiles::delete_profile(&home, "fixture").await,
+        Err(RegistryFailure::Gone(
+            "Profile 'fixture' does not exist".to_owned()
+        ))
+    );
+
+    // Rename sends the new name on the same grant and reads the name Hermes kept.
+    gateway.script_profile_registry(200, json!({"ok": true, "name": "fixture-r", "path": "x"}));
+    let input = service
+        .execute(ProfilesEffect::Rename {
+            name: "fixture".to_owned(),
+            new_name: "fixture-r".to_owned(),
+        })
+        .await;
+    match input {
+        Some(ProfilesInput::RenameAnswered(name, Ok(new_name))) => {
+            assert_eq!((name.as_str(), new_name.as_str()), ("fixture", "fixture-r"));
+        }
+        other => panic!("a rename of a served profile succeeds: {other:?}"),
+    }
+    let seen = gateway.profile_registry_requests();
+    let last = seen.last().expect("the rename request");
+    assert_eq!(last.method, "PATCH");
+    assert_eq!(last.target, "/api/profiles/fixture");
+    assert_eq!(last.body, json!({"new_name": "fixture-r"}));
+    let ticket = last.ticket.clone().expect("a ticket the gateway minted");
+    assert_eq!(ticket.purpose, "native-profile-registry");
+    assert_eq!(ticket.profile_id, fixture);
 }

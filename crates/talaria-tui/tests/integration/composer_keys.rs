@@ -255,6 +255,21 @@ fn history_rules_and_inner_rows() {
 }
 
 #[test]
+fn remembered_line_is_recalled_by_up() {
+    let mut rig = Rig::with_history(vec!["first prompt".into()]);
+    rig.composer.remember("/theme dark  ");
+    rig.composer.remember("/");
+    assert_eq!(
+        rig.composer.history(),
+        ["first prompt".to_string(), "/theme dark".to_string()]
+    );
+    rig.press("up");
+    assert_eq!(rig.composer.text(), "/theme dark");
+    rig.press("up");
+    assert_eq!(rig.composer.text(), "first prompt");
+}
+
+#[test]
 fn esc_interrupts_only_a_running_turn() {
     let mut rig = Rig::new();
     rig.set_running(true);

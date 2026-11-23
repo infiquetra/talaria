@@ -31,9 +31,19 @@ append has passed `sync_data`. Concurrent requests share syncs. Any write failur
 | `run_finished` | outcome, summary | Final counts for encountered keys; closes this execution. |
 
 Call outcomes are tagged objects: `{"kind":"completed","value":...}` (or `value_ref`),
-`{"kind":"failed","reason":...}` or `{"kind":"skipped"}`. Null completed values are preserved.
+`{"kind":"failed","reason":...}`, `{"kind":"skipped"}` or `{"kind":"stopped","reason":...}`.
+Null completed values are preserved. A stopped call was ended by the run's budget; the grammar
+treats it as a failed finish, so the next execution runs it again. A call the budget refuses
+before it starts has no key; it is an `agent_refused` engine event with label, phase,
+workflow_path and reason. The `run_finished` summary adds `refused` (this execution's
+refusals) and `stopped` when either is non-zero, and its outcome is `budget_exhausted` when the
+script returned after any refusal or stop. Its outcome is `completed_with_failures` when the script
+returned and at least one agent failed (and the budget refused or stopped none). A call that
+Hermes stopped at its step cap finishes as `completed` with a `cut_short` object (`steps` and
+`limit`) in its `call_finished` outcome, and an `agent_finished` event of kind `cut_short`; its
+reply is kept, so a resume reuses it.
 Absent final text means the terminal admission saved no response. Result metadata copies only
-completed, failed, interrupted, turn_exit_reason, model and provider. Metadata strings are cut to
+completed, failed, interrupted, turn_exit_reason, model, provider, failure_reason and error. Metadata strings are cut to
 1,024 Unicode scalar values; reasons and attention details to 4,096, with no added marker.
 
 Payloads whose JSON encoding exceeds 256 KiB move to immutable blobs. Text blobs contain exact

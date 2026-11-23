@@ -29,7 +29,9 @@ pub(crate) fn externalize(dir: &Path, record: &mut Record) -> Result<(), Journal
             ..
         } => external_text(dir, final_text, final_text_ref)?,
         Record::CallFinished {
-            outcome: CallOutcome::Completed { value, value_ref },
+            outcome: CallOutcome::Completed {
+                value, value_ref, ..
+            },
             ..
         } => {
             if let Some(v) = value.as_ref() {
@@ -104,7 +106,11 @@ pub(crate) fn outcome(
 ) -> Result<crate::engine::AgentOutcome, JournalError> {
     use crate::engine::AgentOutcome;
     match outcome {
-        CallOutcome::Completed { value, value_ref } => {
+        CallOutcome::Completed {
+            value,
+            value_ref,
+            cut_short,
+        } => {
             let value = match value_ref {
                 Some(r) => serde_json::from_slice::<Value>(&load(dir, r, line)?)
                     .map_err(|e| corrupt(line, e))?,
@@ -112,12 +118,21 @@ pub(crate) fn outcome(
                     .clone()
                     .ok_or_else(|| corrupt(line, "missing completed value"))?,
             };
-            Ok(AgentOutcome::Completed(value))
+            Ok(match cut_short {
+                Some(cut_short) => AgentOutcome::CutShort {
+                    value,
+                    cut_short: *cut_short,
+                },
+                None => AgentOutcome::Completed(value),
+            })
         }
         CallOutcome::Failed { reason } => Ok(AgentOutcome::Failed {
             reason: reason.clone(),
         }),
         CallOutcome::Skipped => Ok(AgentOutcome::Skipped),
+        CallOutcome::Stopped { reason } => Ok(AgentOutcome::Stopped {
+            reason: reason.clone(),
+        }),
     }
 }
 pub(crate) fn event(
@@ -133,5 +148,51 @@ pub(crate) fn event(
             None => Ok(event.clone()),
         },
         _ => Ok(None),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{AgentOutcome, CutShort};
+    use serde_json::json;
+
+    #[test]
+    fn a_cut_short_call_is_stored_as_completed_with_the_mark_and_replays_marked() {
+        let cut_short = CutShort {
+            steps: Some(60),
+            limit: Some(60),
+        };
+        let stored = CallOutcome::from_agent(AgentOutcome::CutShort {
+            value: json!("partial"),
+            cut_short,
+        });
+        assert_eq!(
+            serde_json::to_value(&stored).unwrap(),
+            json!({"kind": "completed", "value": "partial", "cut_short": {"steps": 60, "limit": 60}})
+        );
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            outcome(dir.path(), &stored, 1).unwrap(),
+            AgentOutcome::CutShort {
+                value: json!("partial"),
+                cut_short
+            }
+        );
+    }
+
+    #[test]
+    fn a_completed_call_has_no_mark_and_an_older_record_reads_as_completed() {
+        let plain = CallOutcome::from_agent(AgentOutcome::Completed(json!("whole")));
+        assert_eq!(
+            serde_json::to_value(&plain).unwrap(),
+            json!({"kind": "completed", "value": "whole"})
+        );
+        let older: CallOutcome =
+            serde_json::from_value(json!({"kind": "completed", "value": "whole"})).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            outcome(dir.path(), &older, 1).unwrap(),
+            AgentOutcome::Completed(json!("whole"))
+        );
     }
 }

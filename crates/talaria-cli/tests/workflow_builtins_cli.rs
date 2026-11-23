@@ -110,12 +110,7 @@ fn run_installs_missing_builtins_first() {
     let t = tempfile::tempdir().unwrap();
     let o = run(&["workflow", "run", "review-branch"], t.path());
     assert!(String::from_utf8_lossy(&o.stderr).contains("installed built-in workflows into"));
-    for n in [
-        "review-branch",
-        "research",
-        "fix-failing-tests",
-        "ultracode",
-    ] {
+    for n in ["review-branch", "research", "fix-failing-tests", "hivecode"] {
         assert!(
             t.path()
                 .join("cfg/workflows")

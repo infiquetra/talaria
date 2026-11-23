@@ -5,7 +5,9 @@ use std::borrow::Cow;
 use ratatui::buffer::CellWidth;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use talaria_core::session::{Cell, PromptCell, PromptState, Settlement, ToolCell, ToolStatus};
+use talaria_core::session::{
+    Cell, NoticeCell, PromptCell, PromptState, Settlement, ToolCell, ToolStatus,
+};
 pub use talaria_core::text::{is_neutralized, sanitize};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -22,12 +24,15 @@ impl CellLines for PlainCellLines {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let dim = Style::default().add_modifier(Modifier::DIM);
         match cell {
-            Cell::User(user) => prefixed("> ", &user.text, bold),
+            Cell::User(user) => prefixed_wrapped("> ", &user.text, bold, width),
             Cell::Assistant(assistant) => prefixed("", &assistant.text, Style::default()),
             Cell::Reasoning(reasoning) => prefixed("", &reasoning.text, dim),
             Cell::Tool(tool) => vec![Line::from(tool_line(tool))],
-            Cell::Notice(notice) => prefixed("\u{b7} ", &notice.text, dim),
-            Cell::Prompt(prompt) => vec![Line::styled(prompt_line(prompt), dim)],
+            Cell::Notice(notice) => {
+                prefixed_wrapped("\u{b7} ", &notice_text(notice, None), dim, width)
+            }
+            // Word-wrapped like a notice, so a long question and its answer are never cut.
+            Cell::Prompt(prompt) => prefixed_wrapped("? ", &prompt_line(prompt), dim, width),
             Cell::Shell(shell) => {
                 crate::side::shell_cell_lines(shell, width, &crate::side::SideTheme::default())
             }
@@ -51,6 +56,36 @@ impl CellLines for PlainCellLines {
     }
 }
 
+/// What a notice shows on the main screen: its text and, when it carries what Hermes handed the
+/// agent, how many lines of that the transcript view holds. `transcript_key` is the label of the
+/// key that opens the transcript view, when one is bound; without it the hint names the view. The
+/// body itself never prints here.
+pub(crate) fn notice_text<'a>(
+    notice: &'a NoticeCell,
+    transcript_key: Option<&str>,
+) -> Cow<'a, str> {
+    match notice_body(notice) {
+        Some(body) => {
+            let count = split_lines(body).count();
+            let noun = if count == 1 { "line" } else { "lines" };
+            let place = transcript_key.map_or_else(
+                || " in transcript view".to_owned(),
+                |key| format!(", {key} to view"),
+            );
+            Cow::Owned(format!("{} (+{count} {noun}{place})", notice.text))
+        }
+        None => Cow::Borrowed(notice.text.as_str()),
+    }
+}
+
+/// What Hermes handed the agent, as a notice shows it: nothing when it only repeats the text.
+pub(crate) fn notice_body(notice: &NoticeCell) -> Option<&str> {
+    notice
+        .body
+        .as_deref()
+        .filter(|body| body.trim() != notice.text)
+}
+
 /// The text split into one line per source line, the prefix on the first, all in one style.
 fn prefixed(prefix: &str, text: &str, style: Style) -> Vec<Line<'static>> {
     split_lines(text)
@@ -64,6 +99,111 @@ fn prefixed(prefix: &str, text: &str, style: Style) -> Vec<Line<'static>> {
             Line::styled(text, style)
         })
         .collect()
+}
+
+/// The text word-wrapped to `width`, the two-column prefix on the first row and a two-space
+/// hanging indent on every other row, all in one style. Rows break after a space; a token longer
+/// than a row, such as a path, still breaks mid-token. Spacing inside a row is kept as typed.
+pub(crate) fn prefixed_wrapped(
+    prefix: &str,
+    text: &str,
+    style: Style,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let inner = usize::from(width).saturating_sub(2).max(1);
+    let mut lines = Vec::new();
+    for piece in split_lines(text) {
+        let piece = sanitize(piece);
+        let rows = crate::composer::wrap::wrap(&piece, inner);
+        let last = rows.len().saturating_sub(1);
+        for (index, row) in rows.iter().enumerate() {
+            let mut body = &piece[row.start..row.end];
+            if index > 0 {
+                body = body.trim_start_matches(' ');
+            }
+            if index < last {
+                body = body.trim_end_matches(' ');
+            }
+            // Only an empty source line keeps an empty row; a row left empty by trimming,
+            // such as trailing spaces pushed onto a row of their own, is dropped.
+            if body.is_empty() && last > 0 {
+                continue;
+            }
+            let row = match (lines.is_empty(), body.is_empty()) {
+                (true, _) => format!("{prefix}{body}"),
+                (false, true) => String::new(),
+                (false, false) => format!("  {body}"),
+            };
+            lines.push(Line::styled(row, style));
+        }
+    }
+    lines
+}
+
+/// The text word-wrapped to `width` with no prefix or indent, one entry per row. Rows break
+/// after a space; a token longer than a row still breaks mid-token. An empty source line keeps
+/// one empty row.
+pub(crate) fn word_wrapped(text: &str, width: u16) -> Vec<String> {
+    let width = usize::from(width).max(1);
+    let mut lines = Vec::new();
+    for piece in split_lines(text) {
+        let piece = sanitize(piece);
+        let rows = crate::composer::wrap::wrap(&piece, width);
+        let last = rows.len().saturating_sub(1);
+        let before = lines.len();
+        for (index, row) in rows.iter().enumerate() {
+            let mut body = &piece[row.start..row.end];
+            if index > 0 {
+                body = body.trim_start_matches(' ');
+            }
+            if index < last {
+                body = body.trim_end_matches(' ');
+            }
+            if !body.is_empty() {
+                lines.push(body.to_owned());
+            }
+        }
+        if lines.len() == before {
+            lines.push(String::new());
+        }
+    }
+    lines
+}
+
+/// Plain text lines the app commits, such as connect, switch and branch notices, as rows for
+/// `width`.
+///
+/// A line that fits is kept as it is. A longer line that starts with the notice marker `· ` is
+/// word-wrapped with a two-space hanging indent, like a notice cell; any other longer line is
+/// word-wrapped with no indent. A line whose shape carries meaning is left to the plain hard
+/// wrap: one that starts with whitespace, one whose text under the marker starts with whitespace,
+/// one that holds a box-drawing character (a table or a rule), and one that holds a control
+/// character.
+pub fn committed_text_rows(lines: Vec<String>, width: u16) -> Vec<Line<'static>> {
+    const MARKER: &str = "\u{b7} ";
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    for line in lines {
+        let columns: usize = line
+            .graphemes(true)
+            .map(|grapheme| usize::from(grapheme_width(grapheme)))
+            .sum();
+        let preformatted = line.starts_with(char::is_whitespace)
+            || line
+                .strip_prefix(MARKER)
+                .is_some_and(|text| text.starts_with(char::is_whitespace))
+            || line
+                .chars()
+                .any(|c| c.is_control() || ('\u{2500}'..='\u{257f}').contains(&c));
+        if columns <= usize::from(width) || preformatted {
+            rows.extend(wrap_lines(vec![Line::from(line)], width));
+        } else if let Some(text) = line.strip_prefix(MARKER) {
+            rows.extend(prefixed_wrapped(MARKER, text, Style::default(), width));
+        } else {
+            rows.extend(word_wrapped(&line, width).into_iter().map(Line::from));
+        }
+    }
+    rows
 }
 
 /// Split on `\n`, with `\r\n` counting as one break. A lone `\r` stays in the text.
@@ -94,7 +234,7 @@ fn prompt_line(prompt: &PromptCell) -> String {
         .or(prompt.question.as_deref())
         .or(prompt.description.as_deref())
         .unwrap_or("");
-    let mut line = format!("? {asked}");
+    let mut line = asked.to_owned();
     match &prompt.state {
         PromptState::Settled(Settlement::Answered(answer)) => {
             line.push_str(" \u{2192} ");

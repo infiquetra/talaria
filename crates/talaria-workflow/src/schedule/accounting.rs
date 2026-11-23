@@ -1,11 +1,21 @@
 use super::{MoneySource, Spend};
-use crate::{journal::ResolvedLaunch, staffing::PriceBook};
+use crate::{
+    journal::ResolvedLaunch,
+    staffing::PriceBook,
+    tokens::{CacheTracker, Reading, Tokens},
+};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 #[derive(Default)]
 pub(super) struct Accounting {
     pub spend: Spend,
     pub launches: BTreeMap<(String, u32), ResolvedLaunch>,
+    pub labels: BTreeMap<(String, u32), String>,
+    pub sessions: BTreeMap<(String, u32), String>,
+    /// Settled tokens and the latest cumulative live reading, per Hermes session.
+    settled: BTreeMap<String, Tokens>,
+    pub live: BTreeMap<String, Reading>,
+    cache: CacheTracker<(String, u32)>,
     last: BTreeMap<(String, u32), f64>,
     seen: BTreeSet<(String, u32, u32)>,
     hermes: bool,
@@ -26,11 +36,18 @@ impl Accounting {
         let u = usage.unwrap_or(&Value::Null);
         let input = u["input_tokens"].as_u64();
         let output = u["output_tokens"].as_u64();
-        let tokens = u["total_tokens"]
-            .as_u64()
-            .or_else(|| input.zip(output).map(|(i, o)| i.saturating_add(o)));
-        if let Some(n) = tokens {
-            self.spend.tokens = self.spend.tokens.saturating_add(n);
+        if let Some(turn_tokens) = self.cache.settle((key.into(), attempt), u) {
+            let n = turn_tokens.tokens;
+            self.spend.tokens = self.spend.tokens.saturating_add(n.counted);
+            self.spend.cache_read_tokens =
+                self.spend.cache_read_tokens.saturating_add(n.cache_read);
+            if !turn_tokens.cache_known {
+                self.spend.cache_unknown_turns = self.spend.cache_unknown_turns.saturating_add(1);
+            }
+            if let Some(session) = self.sessions.get(&(key.into(), attempt)) {
+                let settled = self.settled.entry(session.clone()).or_default();
+                *settled = settled.plus(n);
+            }
         } else {
             self.spend.tokens_unknown_turns = self.spend.tokens_unknown_turns.saturating_add(1);
         }
@@ -78,6 +95,31 @@ impl Accounting {
             (false, true) => MoneySource::Pricing,
             _ => MoneySource::None,
         };
+    }
+    /// Keep the highest cumulative reading; returns whether the tokens the budget counts grew.
+    pub fn observe(&mut self, session: &str, reading: Reading) -> bool {
+        let old = self.live.get(session).copied();
+        let kept = Reading::latest(old, reading);
+        self.live.insert(session.into(), kept);
+        kept.tokens().counted > old.map_or(0, |r| r.tokens().counted)
+    }
+    /// Settled spend plus each session's live reading beyond what has settled. A session's
+    /// readings are cumulative, so a settled turn replaces its live share instead of adding to it.
+    /// `tokens` leaves out cache reads, which are counted in `cache_read_tokens`.
+    pub fn current(&self) -> Spend {
+        let live = self
+            .live
+            .iter()
+            .map(|(s, r)| {
+                r.tokens()
+                    .beyond(self.settled.get(s).copied().unwrap_or_default())
+            })
+            .fold(Tokens::default(), Tokens::plus);
+        Spend {
+            tokens: self.spend.tokens.saturating_add(live.counted),
+            cache_read_tokens: self.spend.cache_read_tokens.saturating_add(live.cache_read),
+            ..self.spend.clone()
+        }
     }
     fn add(&mut self, amount: f64) {
         self.spend.money_usd = (self.spend.money_usd + amount).min(f64::MAX);

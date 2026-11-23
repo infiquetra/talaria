@@ -378,6 +378,12 @@ impl Composer {
         self.recall.forget_last(text);
     }
 
+    /// Add a line that ran without being typed as it stands, such as a command picked from the
+    /// slash list, to Up-arrow recall. Blank lines and a bare `/` are skipped.
+    pub fn remember(&mut self, text: &str) {
+        self.recall.add(text.trim_end().to_owned());
+    }
+
     /// Forget only the newest recalled submission when it is exactly this line.
     pub fn forget_newest_history(&mut self, text: &str) {
         self.recall.forget_last(text);
@@ -721,7 +727,9 @@ impl Composer {
             | Action::ComposerSendNow
             | Action::ComposerSteer
             // The jump key never edits the draft; it opens the fleet view.
-            | Action::AttentionNext => {}
+            | Action::AttentionNext
+            // The workflow key never edits the draft; it opens the run's view.
+            | Action::WorkflowView => {}
             // Panel actions never edit the draft; the panel owns them. Issue #242.
             Action::AgentsPanel
             | Action::AgentsUp
@@ -822,8 +830,12 @@ impl Composer {
             | Action::ProfilesRefresh
             | Action::ProfilesRescan
             | Action::ProfilesNew
+            | Action::ProfilesDelete
+            | Action::ProfilesRename
             | Action::ProfilesDescription
             | Action::ProfilesSoul
+            | Action::ProfilesModels
+            | Action::ProfilesConnect
             | Action::ProfilesBack
             | Action::ProvidersNextTab
             | Action::ProvidersPrevTab
@@ -853,6 +865,7 @@ impl Composer {
             | Action::ToggleMenuBar
             | Action::MenuLeft | Action::MenuRight | Action::MenuUp | Action::MenuDown
             | Action::MenuOpen | Action::MenuActivate | Action::MenuNext | Action::MenuPrev | Action::MenuClose
+            | Action::WorkflowAgentBack
             | Action::VoiceRecord => {}
         }
         false

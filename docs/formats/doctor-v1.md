@@ -2,11 +2,22 @@
 
 `talaria doctor --json` writes one `talaria-doctor-v1` object on one line, followed by a newline.
 `overall` is `ok`, `warn`, or `fail`; `profile` is the selected profile. `talaria` contains
-`version`, `hermes_tag`, and the full pinned `hermes_commit`.
+`version`, `hermes_tag`, and the full `hermes_commit`. The last two name the Hermes release this
+Talaria was tested against; the field names are kept for existing consumers. The gateway's own
+version appears only in the `hermes_version` check, and a gateway newer than the tested release
+is reported as `ok`.
 
 `checks` contains seven objects in order: `talaria`, `gateway`, `hermes_version`, `capabilities`,
 `profiles`, `attach`, and `runtime_health`. Each has `id`, `severity` (`ok`, `warn`, `fail`,
 `skip`, or `info`), `summary`, an array of `details`, and a nullable `fix`.
+
+When the gateway is ready and the selected profile is served, Talaria also reads that profile's
+Hermes settings and may append rows after those seven. `compression` (warning) appears when
+`compression.in_place` is `false`: workflow agents cannot compress their conversations and a
+long-running one fails with a context overflow. `step_cap` (warning) appears when
+`agent.max_turns` is a finite number: sessions on the profile stop after that many steps.
+`settings` (`info`) appears instead when the settings could not be read. A profile whose settings
+are fine adds no row.
 
 `restart` is null unless a restart was requested. Otherwise it contains `outcome`, `seconds`,
 `http_status`, and `text`. Outcomes are `restarted`, `refused`, `changed`, `did_not_restart`,
@@ -16,5 +27,5 @@ After a successful restart, `checks` describes the new report; otherwise it is t
 
 Displayed identities and commits use eight characters. Paths become `<path>`, and contiguous
 runs of at least 40 letters, digits, underscores or hyphens become `<redacted>` before text is
-trimmed to its display limit. The trusted pinned commit in `talaria.hermes_commit` is the sole
+trimmed to its display limit. The tested-against commit in `talaria.hermes_commit` is the sole
 full-commit exception. Tickets, session keys and the gateway's per-install identity are omitted.

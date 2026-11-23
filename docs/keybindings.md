@@ -20,6 +20,12 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Workflow close | Esc | Close this view. | `workflow_close` |
 | Workflow confirm | Y | Confirm the pending action. | `workflow_confirm` |
 
+## Agent session keys
+
+| Action | Default keys | What it does | Config name |
+|---|---|---|---|
+| Workflow agent back | Left | In a workflow agent's session opened from the run view, with an empty draft and nothing else open: go back to the session you came from and open the run view again with that agent selected. | `workflow_agent_back` |
+
 ## Doctor keys
 
 | Action | Default keys | What it does | Config name |
@@ -42,7 +48,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 |---|---|---|---|
 | Submit | Enter | Submit the draft. | `submit` |
 | Newline | Shift+Enter, Alt+Enter, Ctrl+J | Insert a newline. | `newline` |
-| Interrupt | Esc | Interrupt the running turn. | `interrupt` |
+| Interrupt | Esc | Interrupt the running turn. Press it twice within two seconds: the first press only asks for confirmation, and the turn is interrupted a moment (110 ms) after the second press if no further press follows, so holding the key does not interrupt (a hold that starts within two seconds of a tap counts as that tap's second press). Ctrl+C interrupts on one press. | `interrupt` |
 | Cancel | Ctrl+C | Clear the draft, interrupt, or exit on a second press. | `cancel` |
 | Move left | Left | Move the caret left. | `move_left` |
 | Move right | Right | Move the caret right. | `move_right` |
@@ -64,7 +70,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | History search | Ctrl+R | Search saved prompt history. | `history_search` |
 | Suspend | Ctrl+Z | Suspend Talaria to the shell. | `suspend` |
 | Attach clipboard image | Ctrl+V, Alt+V | Attach an image from the clipboard. | `attach_clipboard_image` |
-| Transcript open | Ctrl+O | Open or close the transcript pager. | `transcript_open` |
+| Transcript open | Ctrl+O | Open or close the transcript pager, where reasoning shows in full. | `transcript_open` |
 | Toggle tasks | Ctrl+T | Show or hide the task checklist. | `toggle_tasks` |
 | Layout panel | Alt+D | Toggle the work panel, or reopen its dismissed overlay. | `layout_panel` |
 | Toggle menu bar | Alt+I | Toggle and focus the menu bar. | `toggle_menu_bar` |
@@ -74,6 +80,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Session picker open | none | Open the session picker. | `session_picker_open` |
 | Fleet view open | none | Open the fleet view. | `fleet_view_open` |
 | Agents panel | Alt+S | Open the subagent panel. | `agents_panel` |
+| Workflow view | Alt+W | Open the latest workflow run this window saw start after a Hivecode-routed prompt in the foreground session, or the run list when it saw none. | `workflow_view` |
 | Attention next | Alt+A | Jump to the next waiting request. | `attention_next` |
 | Voice record | Alt+R | Start or stop push-to-talk; in fleet view, record for the selected row and press Enter to send. | `voice_record` |
 | Toggle Vim editing | none | Turn Vim editing on or off in the composer. | `toggle_vim` |
@@ -103,7 +110,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 
 ## Slash command palette
 
-Typing `/` in the composer opens the slash command palette under the composer. A one-line slash command opens it too. A draft with a newline does not. A caret inside a word that starts with `@` does not. Down and Ctrl+N move to the next row. Up and Ctrl+P move to the previous row. Tab accepts the selected row. Esc closes the palette. Those four chords are the Completion keys above (`completion_next`, `completion_prev`, `completion_accept`, `completion_close`). Ctrl+P is the previous row. It does not open a command palette. The top menu is a different surface. Alt+I toggles and focuses it (`toggle_menu_bar`).
+Typing `/` in the composer opens the slash command palette under the composer. A one-line slash command opens it too. A draft with a newline does not. A caret inside a word that starts with `@` does not. A slash command recalled from history with Up or Down does not open it until you edit the text, so Up and Down keep walking history. Down and Ctrl+N move to the next row. Up and Ctrl+P move to the previous row. Tab accepts the selected row. Esc closes the palette. Those four chords are the Completion keys above (`completion_next`, `completion_prev`, `completion_accept`, `completion_close`). Ctrl+P is the previous row. It does not open a command palette. The top menu is a different surface. Alt+I toggles and focuses it (`toggle_menu_bar`).
 
 ## Pager keys
 
@@ -249,13 +256,17 @@ Typing `/` in the composer opens the slash command palette under the composer. A
 | Profiles page down | PageDown | Move the selection down. | `profiles_page_down` |
 | Profiles first | Home | Use profiles first. | `profiles_first` |
 | Profiles last | End | Use profiles last. | `profiles_last` |
-| Profiles open | Enter | Open the selected item. | `profiles_open` |
+| Profiles open | Enter | Open the selected profile's models page, as M does; in a narrow window the first press shows the profile's details. | `profiles_open` |
 | Profiles filter | / | Filter the list. | `profiles_filter` |
 | Profiles refresh | R | Refresh the view. | `profiles_refresh` |
 | Profiles rescan | Shift+R | Use profiles rescan. | `profiles_rescan` |
 | Profiles new | N | Use profiles new. | `profiles_new` |
+| Profiles delete | D | Delete the selected profile after you type its name. | `profiles_delete` |
+| Profiles rename | Shift+N | Rename the selected profile. | `profiles_rename` |
 | Profiles description | E | Use profiles description. | `profiles_description` |
 | Profiles soul | S | Use profiles soul. | `profiles_soul` |
+| Profiles models | M | Open the selected profile's models page; Enter does the same. | `profiles_models` |
+| Profiles connect | C | Start a session on the selected profile, after a confirmation. | `profiles_connect` |
 | Profiles back | Esc | Return to the previous view. | `profiles_back` |
 
 ## Providers keys

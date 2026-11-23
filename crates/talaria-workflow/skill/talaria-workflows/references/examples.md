@@ -1,6 +1,6 @@
 # Complete workflow examples
 
-Use tiers only after roster validation. Each reader is told not to edit, and every code worker gets a separate worktree. Missing or failed agent results are handled explicitly.
+Use tiers only after roster validation. Each reader is told not to edit, and every code worker gets a separate worktree. A null result means that agent failed: name it in the final result or retry it, and never drop it silently. A new project folder outside a git repository first needs one unisolated agent that runs `git init` and an initial commit; see SKILL.md.
 
 ## Review through three lenses
 
@@ -11,11 +11,12 @@ const findingSchema = {type:'object',properties:{findings:{type:'array',items:{t
 phase('Review');
 const lenses = ['correctness','security','simplicity'];
 const reviews = await parallel(lenses.map(lens => () => agent(`Review ${input.target ?? 'the change'} for ${lens}. Do not edit files.`,{label:`review:${lens}`,tier:'survey',schema:findingSchema,toolsets:['file'],isolation:'worktree'})));
+const failedLenses = lenses.filter((_, i) => reviews[i] == null);
 const findings = reviews.flatMap(result => Array.isArray(result?.findings) ? result.findings : []);
 phase('Verify');
 const verified = await pipeline(findings, finding => agent(`Verify this finding without editing files: ${JSON.stringify(finding)}`,{label:`verify:${finding.id}`,tier:'judge',schema:{type:'object',properties:{verdict:{type:'string'},reason:{type:'string'}},required:['verdict','reason']},toolsets:['file'],isolation:'worktree'}));
 phase('Synthesize');
-return await agent(`Summarize the findings and verification results: ${JSON.stringify({findings,verified})}`,{label:'synthesize',tier:'judge',schema:{type:'object',properties:{summary:{type:'string'}},required:['summary']},toolsets:['todo']});
+return await agent(`Summarize the findings and verification results, and say plainly which lenses failed (${JSON.stringify(failedLenses)}) and which verifications are null: ${JSON.stringify({findings,verified})}`,{label:'synthesize',tier:'judge',schema:{type:'object',properties:{summary:{type:'string'}},required:['summary']},toolsets:['todo']});
 ```
 
 ## Research and deduplicate leads
@@ -42,5 +43,5 @@ const plan = await agent(`Plan independent tasks for ${input.goal ?? 'the reques
 phase('Build');
 const builds = await pipeline(Array.isArray(plan?.tasks) ? plan.tasks : [], task => agent(`Implement ${task.goal}. Run the tests and commit on your branch. Report your commit; do not merge other branches.`,{label:`build:${task.id}`,tier:'builder',schema:{type:'object',properties:{status:{type:'string'},commit:{type:'string'}},required:['status','commit']},toolsets:['file','terminal'],isolation:'worktree'}));
 phase('Review');
-return await agent(`Review these branch results without editing files: ${JSON.stringify(builds)}. Identify what still needs integration.`,{label:'review',tier:'judge',schema:{type:'object',properties:{summary:{type:'string'}},required:['summary']},toolsets:['file'],isolation:'worktree'});
+return await agent(`Review these branch results without editing files (a null entry is a build that failed; report it): ${JSON.stringify(builds)}. Identify what still needs integration.`,{label:'review',tier:'judge',schema:{type:'object',properties:{summary:{type:'string'}},required:['summary']},toolsets:['file'],isolation:'worktree'});
 ```

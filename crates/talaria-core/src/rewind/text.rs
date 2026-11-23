@@ -111,7 +111,7 @@ pub enum DiffDoc {
 // Fixed texts. Each doc comment names its text id.
 
 /// Text T1. A turn is running, so a rewind cannot open.
-pub const TURN_RUNNING: &str = "A reply is running. Stop it with Esc, then rewind.";
+pub const TURN_RUNNING: &str = "A reply is running. Stop it with Esc twice, then rewind.";
 /// Text T2. Overlay body while the conversation loads.
 pub const LOADING_CONVERSATION: &str = "Loading the conversation…";
 /// Text T3. The conversation has no eligible prompt.
@@ -493,7 +493,7 @@ const NO_SESSION: &str = "This session no longer exists on the gateway.";
 
 fn unknown_method_text(method: &str) -> String {
     format!(
-        "This Hermes gateway does not offer {method}. Talaria needs the Hermes release it was built for, or later."
+        "This Hermes gateway does not offer {method}. It may differ from the Hermes release Talaria was tested against."
     )
 }
 

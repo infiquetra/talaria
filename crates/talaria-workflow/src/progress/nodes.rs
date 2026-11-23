@@ -1,4 +1,5 @@
 use super::blobs::BlobRef;
+use crate::tokens::{CacheTracker, Reading, Tokens};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use talaria_core::subagents::SubagentTree;
@@ -56,6 +57,9 @@ pub enum RunState {
     #[default]
     Running,
     Completed,
+    /// The script returned, but at least one agent failed.
+    CompletedWithFailures,
+    BudgetExhausted,
     Failed,
     Aborted,
 }
@@ -64,6 +68,8 @@ impl RunState {
         match self {
             Self::Running => "running",
             Self::Completed => "completed",
+            Self::CompletedWithFailures => "completed with failures",
+            Self::BudgetExhausted => "budget exhausted",
             Self::Failed => "failed",
             Self::Aborted => "aborted",
         }
@@ -97,16 +103,26 @@ impl Counts {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RunNode {
     pub name: String,
+    pub run_id: String,
     pub state: RunState,
     pub previous_execution: Option<RunState>,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
     pub counts: Counts,
+    /// Tokens the budget counts: everything except cache reads.
     pub tokens: u64,
+    /// Cache reads Hermes reported, kept apart from `tokens`.
+    pub cache_read: u64,
+    /// Settled turns whose cache reads were not reported; their tokens are all in `tokens`.
+    pub cache_unknown_turns: u32,
     pub tokens_unknown: bool,
     pub money: Option<f64>,
     pub unpriced: usize,
     pub logs: VecDeque<String>,
+    /// Calls the budget refused before they started, in this execution.
+    pub refused: usize,
+    /// Agents the budget ended after they started; their rows show as failed.
+    pub budget_stopped: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhaseNode {
@@ -140,11 +156,24 @@ pub struct AgentNode {
     pub execution_generation: Option<i64>,
     pub started_at_ms: i64,
     pub finished_at_ms: Option<i64>,
-    pub settled_tokens: u64,
+    /// What this agent's settled turns used.
+    pub settled: Tokens,
+    /// Tokens the budget counts, settled plus streamed so far: everything except cache reads.
     pub tokens: u64,
+    /// Cache reads Hermes reported, settled plus streamed so far.
+    pub cache_read: u64,
+    /// Settled turns whose cache reads were not reported; their tokens are all in `tokens`.
+    pub cache_unknown_turns: u32,
     pub tokens_unknown: bool,
     pub money: Option<f64>,
     pub last_outcome: Option<String>,
+    /// Why the agent failed, from its journaled outcome.
+    pub failure: Option<String>,
+    /// Set when Hermes stopped the agent at its step cap and its reply was kept: "cut short
+    /// (60 of 60 steps)".
+    pub cut_short: Option<String>,
+    /// The step Hermes last reported for the running agent.
+    pub step: Option<u32>,
     pub attention: Option<String>,
     pub last_tool: Option<String>,
     pub prompt: Option<String>,
@@ -152,16 +181,21 @@ pub struct AgentNode {
     pub tail: VecDeque<String>,
     pub subagents: SubagentTree,
     pub restart_requested: bool,
+    /// How many times Talaria started this agent again after it ran out of context. Kept
+    /// across attempts, unlike the rest of an attempt's state.
+    pub overflow_restarts: u32,
     pub stopped: bool,
     pub controls_disabled: bool,
+    pub(crate) failure_reason: Option<String>,
     pub(crate) timeout_seq: Option<u64>,
     pub(crate) ended: bool,
     pub(crate) live_active: bool,
     pub(crate) stopping: bool,
     pub(crate) prompts: HashSet<(String, String, i64)>,
     pub(crate) settlements: HashSet<String>,
-    pub(crate) settled_sessions: HashMap<String, u64>,
-    pub(crate) live_sessions: HashMap<String, u64>,
+    pub(crate) settled_sessions: HashMap<String, Tokens>,
+    pub(crate) live_sessions: HashMap<String, Reading>,
+    pub(crate) cache: CacheTracker<u64>,
 }
 impl AgentNode {
     pub(crate) fn new(key: String, at_ms: i64) -> Self {
@@ -185,11 +219,16 @@ impl AgentNode {
             execution_generation: None,
             started_at_ms: at_ms,
             finished_at_ms: None,
-            settled_tokens: 0,
+            settled: Tokens::default(),
             tokens: 0,
+            cache_read: 0,
+            cache_unknown_turns: 0,
             tokens_unknown: false,
             money: None,
             last_outcome: None,
+            failure: None,
+            cut_short: None,
+            step: None,
             attention: None,
             last_tool: None,
             prompt: None,
@@ -197,8 +236,10 @@ impl AgentNode {
             tail: VecDeque::new(),
             subagents: SubagentTree::new(),
             restart_requested: false,
+            overflow_restarts: 0,
             stopped: false,
             controls_disabled: false,
+            failure_reason: None,
             timeout_seq: None,
             ended: false,
             live_active: false,
@@ -207,6 +248,7 @@ impl AgentNode {
             settlements: HashSet::new(),
             settled_sessions: HashMap::new(),
             live_sessions: HashMap::new(),
+            cache: CacheTracker::new(),
         }
     }
     pub fn duration_ms(&self, now_ms: i64) -> i64 {
@@ -229,12 +271,28 @@ impl AgentNode {
             }
             _ => AgentState::Queued,
         };
-        self.tokens = self.settled_tokens.saturating_add(
-            self.live_sessions
-                .iter()
-                .map(|(s, n)| n.saturating_sub(*self.settled_sessions.get(s).unwrap_or(&0)))
-                .sum::<u64>(),
-        );
+        let live = self
+            .live_sessions
+            .iter()
+            .map(|(s, r)| {
+                r.tokens()
+                    .beyond(self.settled_sessions.get(s).copied().unwrap_or_default())
+            })
+            .fold(Tokens::default(), Tokens::plus);
+        let shown = self.settled.plus(live);
+        self.tokens = shown.counted;
+        self.cache_read = shown.cache_read;
+    }
+    /// What a row says about the agent beyond its state: the kept mark of a cut short agent, or
+    /// the step a running agent is on.
+    pub fn progress_note(&self) -> Option<String> {
+        if let Some(cut_short) = &self.cut_short {
+            return Some(cut_short.clone());
+        }
+        if self.state == AgentState::Running {
+            return self.step.map(|step| format!("step {step}"));
+        }
+        None
     }
     pub(crate) fn push_tail(&mut self, text: &str) {
         for line in text.lines().filter(|s| !s.is_empty()) {
@@ -245,13 +303,19 @@ impl AgentNode {
         }
     }
 }
+/// A token count as people read it: whole below a thousand, then thousands and millions with
+/// one decimal ("950", "412.3k", "5.8M"). Every screen that shows a count uses this.
 pub fn format_tokens(n: u64) -> String {
+    let n = u128::from(n);
     if n < 1000 {
-        n.to_string()
-    } else {
-        let tenths = (u128::from(n) * 10 + 500) / 1000;
-        format!("{}.{}k", tenths / 10, tenths % 10)
+        return n.to_string();
     }
+    let thousands = (n * 10 + 500) / 1000;
+    if thousands < 10_000 {
+        return format!("{}.{}k", thousands / 10, thousands % 10);
+    }
+    let millions = (n * 10 + 500_000) / 1_000_000;
+    format!("{}.{}M", millions / 10, millions % 10)
 }
 pub fn format_money(n: Option<f64>) -> String {
     n.map_or_else(|| "cost unknown".into(), |n| format!("${n:.2}"))

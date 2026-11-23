@@ -260,3 +260,26 @@ fn new_preset_and_field_edits() {
         "leaving the picker keeps the empty reference row"
     );
 }
+
+#[test]
+fn leaving_the_picker_of_a_new_reference_drops_the_empty_slot() {
+    let alpha = preset("alpha", vec![slot("public", "a")], slot("public", "b"));
+    let mut state = loaded_moa(vec![alpha], "alpha", "");
+    state.update(RolesInput::Key(RolesKey::Right));
+    let before = view_text(&state);
+    state.update(RolesInput::Key(RolesKey::Add));
+    assert!(
+        state.view().picker.is_some(),
+        "adding a reference opens the picker"
+    );
+    state.update(RolesInput::Key(RolesKey::Escape));
+    assert!(state.view().picker.is_none());
+    let after = view_text(&state);
+    assert_eq!(after, before, "the reference list is as it was");
+    assert!(!after.contains("needs at least one complete reference model"));
+    assert!(!after.contains("Unapplied changes"));
+    // With nothing pending, leaving the page closes it without a prompt.
+    state.update(RolesInput::Key(RolesKey::Left));
+    let effects = state.update(RolesInput::Key(RolesKey::Escape));
+    assert_eq!(effects, vec![talaria_core::model_roles::RolesEffect::Close]);
+}

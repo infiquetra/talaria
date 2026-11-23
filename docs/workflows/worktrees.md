@@ -81,6 +81,72 @@ keeps the branch unless forced, and removes the sidecar. A Git or branch-deletio
 failure leaves provenance for recovery. Only a sidecar-backed canonical path can be
 removed; even a Git-known worktree from the same repository is refused without it.
 
+## Cleaning up from the command line
+
+Nothing removes a run's worktrees or branches automatically. Two commands do it on request:
+
+```bash
+talaria workflow worktrees list [<run-id>] [--json]
+talaria workflow worktrees remove <run-id> [--force] [--dry-run] [--json]
+```
+
+Both take `--runs-dir`. The run's own sidecar records name the worktrees and `launch.json`
+names the source checkout; labels come from the journal when it gives them. `list` covers one
+run, or every run in the runs directory when no id is given, and shows each agent worktree's
+run id, agent label, folder, branch, whether the folder still exists, how many files `git
+status` reports as changed, and how many commits on the branch (or checked out in the folder)
+the source checkout's current `HEAD` does not contain. It only reads, so it works on a running
+run.
+
+`remove` refuses a run whose runner holds `run.lock`, even with `--force`, and it holds that
+lock itself while it works. It also looks at the run's status, derived the way `workflow
+list` derives it. Without `--force` it proceeds only when the run reached a recorded end
+(completed, completed_with_failures, budget_exhausted, failed or aborted). A running, parked,
+interrupted or unreadable run is refused with nothing changed, because its agents may still
+be working at Hermes in those folders, or the run may be resumed. With `--force` a parked or
+interrupted run is cleaned anyway and the output says the run did not finish; `--dry-run`
+follows the same rules. Without `--force` it removes a worktree, its branch and its sidecar only when the folder
+is clean and everything it holds is already contained in the source checkout's `HEAD`; the
+branch goes with `git branch -d`, which refuses unmerged work a second time. A folder that holds ignored
+files is also kept, because removal deletes them, unless every ignored entry is verified
+build output: a folder with one of the names `target`, `node_modules`, `__pycache__`,
+`.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `dist`, `build` or `.venv` whose contents
+or neighbours confirm what it is. A name alone is not enough, because a hand-made folder
+can be called `build`. The evidence is: `target` holds `CACHEDIR.TAG` or `.rustc_info.json`
+(Cargo writes both); `.pytest_cache`, `.mypy_cache` and `.ruff_cache` hold `CACHEDIR.TAG`;
+`.venv` holds `pyvenv.cfg`; `node_modules` has a `package.json` in the folder that holds
+it; `dist` and `build` have a project manifest beside them (`package.json`,
+`pyproject.toml`, `setup.py`, `setup.cfg`, `Cargo.toml`, `CMakeLists.txt`, `build.gradle`,
+`build.gradle.kts`, `pom.xml`, `Makefile` or `meson.build`); `__pycache__` holds only
+`.pyc` and `.pyo` files. A symbolic link with one of these names is never build output,
+and the checks never follow a link or read file contents. Verified folders are deleted with
+the worktree and the output says so. A listed name that fails its check is an ordinary
+ignored entry: it keeps the worktree, and the reason names the folder and what is missing,
+for example "build/ was not accepted as build output: it has no project manifest beside it".
+For `dist` and `build` the manifest shows only that the folder sits in a project that builds;
+Talaria does not look inside, so hand-made files in an ignored `dist` or `build` beside a
+manifest are deleted with it.
+`list` shows the ignored count, how many are verified build output and how many are not;
+`--json` adds `ignored_unverified` and an `ignored_details` list whose entries carry a
+`path`, a `kind` (`build_output`, `unverified_build_output` or `other`) and, for an
+unverified entry, the `reason`. Every worktree
+with uncommitted changes or unmerged commits is kept and listed with the reason, and so is a
+folder that no longer sits on its recorded branch. With `--force` it removes everything for
+that run and prints what was discarded: the changed-file count, the ignored entries, the
+unmerged commit count, and always the branch tip (and the folder's own commit when it is
+not the branch tip), which `git branch <name> <tip>` can restore until Git collects it. If
+the folder could not be examined it says "could not tell what is lost" with the reason. `--dry-run` prints the same decisions and changes nothing.
+
+When a folder is already gone, only that worktree's own registration is dropped (with
+`git worktree remove <path>`); other stale registrations in the source repository are left
+alone, and `git worktree prune` finishes any that remain.
+
+Only a folder that resolves to the run's own `worktrees` directory and a branch under
+`talaria/wf/<run-id>/` are ever touched. A folder that is a link leading elsewhere is kept
+without any git command running in it, and a `worktrees` directory that is itself a link is
+refused. Git runs through the same hardened runner as the provider (`core.fsmonitor` and
+`core.untrackedCache` off, no optional locks).
+
 ## Offline demonstration
 
 ```bash
