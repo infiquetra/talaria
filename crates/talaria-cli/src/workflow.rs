@@ -208,6 +208,29 @@ fn agent_attention_text(failed: &Value, cut_short: &Value) -> String {
     }
     text
 }
+/// What the run left behind in agent folders, as plain lines, or nothing when there is none:
+/// untracked work found on an agent's route, and folders with uncommitted changes.
+fn leftovers_text(untracked: &Value, leftover: &Value) -> String {
+    let mut text = String::new();
+    if let Some(list) = untracked.as_array().filter(|list| !list.is_empty()) {
+        text.push_str("Untracked work found on agent routes:\n");
+        for note in list {
+            text.push_str(&format!("  {}\n", safe(note.as_str().unwrap_or_default())));
+        }
+    }
+    if let Some(list) = leftover.as_array().filter(|list| !list.is_empty()) {
+        text.push_str("Uncommitted changes left in agent working folders:\n");
+        for folder in list {
+            let count = folder["changed_files"].as_u64().unwrap_or(0);
+            text.push_str(&format!(
+                "  {}: {count} changed file{}\n",
+                safe(folder["path"].as_str().unwrap_or("unknown folder")),
+                if count == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    text
+}
 pub fn safe(text: &str) -> String {
     let mut prepared = String::with_capacity(text.len());
     for character in text.chars() {
@@ -447,7 +470,13 @@ impl Renderer {
         // Agents that failed or were cut short come first, before the result they qualify.
         let failed_agents = &saved["failed_agents"];
         let cut_short_agents = &saved["cut_short_agents"];
-        let attention = agent_attention_text(failed_agents, cut_short_agents);
+        let untracked_work = &saved["untracked_work"];
+        let leftover_edits = &saved["leftover_edits"];
+        let attention = format!(
+            "{}{}",
+            agent_attention_text(failed_agents, cut_short_agents),
+            leftovers_text(untracked_work, leftover_edits)
+        );
         #[derive(Serialize)]
         struct Completed<'a> {
             event: &'static str,
@@ -455,6 +484,10 @@ impl Renderer {
             outcome: &'a str,
             #[serde(skip_serializing_if = "is_unlisted")]
             cut_short_agents: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            untracked_work: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            leftover_edits: &'a Value,
             result: &'a Value,
             spend: &'a SpendView,
         }
@@ -467,6 +500,10 @@ impl Renderer {
             failed_agents: &'a Value,
             #[serde(skip_serializing_if = "is_unlisted")]
             cut_short_agents: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            untracked_work: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            leftover_edits: &'a Value,
             result: &'a Value,
             summary: &'a Value,
             spend: &'a SpendView,
@@ -477,6 +514,10 @@ impl Renderer {
             run_id: &'a str,
             outcome: &'a str,
             error: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            untracked_work: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            leftover_edits: &'a Value,
             spend: &'a SpendView,
         }
         #[derive(Serialize)]
@@ -485,6 +526,10 @@ impl Renderer {
             run_id: &'a str,
             outcome: &'a str,
             reason: &'a str,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            untracked_work: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            leftover_edits: &'a Value,
             spend: &'a SpendView,
         }
         match outcome {
@@ -496,6 +541,8 @@ impl Renderer {
                         run_id,
                         outcome,
                         cut_short_agents,
+                        untracked_work,
+                        leftover_edits,
                         result,
                         spend,
                     });
@@ -518,6 +565,8 @@ impl Renderer {
                         reason,
                         failed_agents,
                         cut_short_agents,
+                        untracked_work,
+                        leftover_edits,
                         result,
                         summary: &saved["summary"],
                         spend,
@@ -541,6 +590,10 @@ impl Renderer {
                     failed_agents: &'a Value,
                     #[serde(skip_serializing_if = "is_unlisted")]
                     cut_short_agents: &'a Value,
+                    #[serde(skip_serializing_if = "is_unlisted")]
+                    untracked_work: &'a Value,
+                    #[serde(skip_serializing_if = "is_unlisted")]
+                    leftover_edits: &'a Value,
                     result: &'a Value,
                     reason: &'a str,
                     summary: &'a Value,
@@ -555,6 +608,8 @@ impl Renderer {
                         outcome,
                         failed_agents,
                         cut_short_agents,
+                        untracked_work,
+                        leftover_edits,
                         result,
                         reason,
                         summary: &saved["summary"],
@@ -577,17 +632,20 @@ impl Renderer {
                         run_id,
                         outcome,
                         error: &saved["error"],
+                        untracked_work,
+                        leftover_edits,
                         spend,
                     });
                 } else {
                     self.text(&format!(
-                        "Failed: {}: {}\n",
+                        "Failed: {}: {}\n{}",
                         safe(saved["error"]["name"].as_str().unwrap_or("Error")),
                         safe(
                             saved["error"]["message"]
                                 .as_str()
                                 .unwrap_or("workflow failed")
-                        )
+                        ),
+                        leftovers_text(untracked_work, leftover_edits)
                     ));
                 }
             }
@@ -599,10 +657,16 @@ impl Renderer {
                         run_id,
                         outcome,
                         reason,
+                        untracked_work,
+                        leftover_edits,
                         spend,
                     });
                 } else {
-                    self.text(&format!("Aborted: {}\n", safe(reason)));
+                    self.text(&format!(
+                        "Aborted: {}\n{}",
+                        safe(reason),
+                        leftovers_text(untracked_work, leftover_edits)
+                    ));
                 }
             }
         }
@@ -900,5 +964,27 @@ pub fn resolve_run_script(arg: &str, dir: &std::path::Path) -> Result<PathBuf, (
                 )),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod leftover_text_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn leftovers_are_plain_lines_and_absent_when_empty() {
+        assert_eq!(leftovers_text(&json!([]), &Value::Null), "");
+        let text = leftovers_text(
+            &json!(["agent a, session s, working folder /w: moved"]),
+            &json!([
+                {"path": "/w/one", "changed_files": 1},
+                {"path": "/w/two", "changed_files": 3}
+            ]),
+        );
+        assert_eq!(
+            text,
+            "Untracked work found on agent routes:\n  agent a, session s, working folder /w: moved\nUncommitted changes left in agent working folders:\n  /w/one: 1 changed file\n  /w/two: 3 changed files\n"
+        );
     }
 }
