@@ -165,7 +165,7 @@ pub fn refusal_text(reason: &str, field: Option<&str>, sid: &str) -> String {
         }
         "session_busy" => {
             "Hermes cannot compact while the agent is working. Wait for the reply to finish, or \
-             press Esc to stop it, then run /compact again."
+             press Esc twice to stop it, then run /compact again."
                 .to_owned()
         }
         "unknown_execution" => {

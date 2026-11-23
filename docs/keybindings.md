@@ -20,6 +20,12 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Workflow close | Esc | Close this view. | `workflow_close` |
 | Workflow confirm | Y | Confirm the pending action. | `workflow_confirm` |
 
+## Agent session keys
+
+| Action | Default keys | What it does | Config name |
+|---|---|---|---|
+| Workflow agent back | Left | In a workflow agent's session opened from the run view, with an empty draft and nothing else open: go back to the session you came from and open the run view again with that agent selected. | `workflow_agent_back` |
+
 ## Doctor keys
 
 | Action | Default keys | What it does | Config name |
@@ -42,7 +48,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 |---|---|---|---|
 | Submit | Enter | Submit the draft. | `submit` |
 | Newline | Shift+Enter, Alt+Enter, Ctrl+J | Insert a newline. | `newline` |
-| Interrupt | Esc | Interrupt the running turn. | `interrupt` |
+| Interrupt | Esc | Interrupt the running turn. Press it twice within two seconds: the first press only asks for confirmation. Ctrl+C interrupts on one press. | `interrupt` |
 | Cancel | Ctrl+C | Clear the draft, interrupt, or exit on a second press. | `cancel` |
 | Move left | Left | Move the caret left. | `move_left` |
 | Move right | Right | Move the caret right. | `move_right` |

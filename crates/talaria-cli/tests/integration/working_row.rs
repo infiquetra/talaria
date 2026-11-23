@@ -90,13 +90,18 @@ fn working_row_sits_above_the_composer_until_the_turn_completes() {
         "the composer's top border sits directly under the working row, not {next:?}:\n{screen}"
     );
 
+    // Esc asks for a second press: the first only arms the confirmation.
+    terminal.type_keys("\x1b");
+    wait_row_text(&terminal, "Esc again to interrupt");
+    std::thread::sleep(Duration::from_millis(300));
     terminal.type_keys("\x1b");
     assert!(
         gateway
             .wait_request("session.interrupt", 0, Duration::from_secs(10))
             .is_some(),
-        "the interrupt key sent no interrupt"
+        "the second press sent no interrupt"
     );
+    assert_eq!(gateway.requests("session.interrupt").len(), 1);
     assert!(
         wait_for(&terminal, Duration::from_secs(10), |screen| {
             !screen.contains("✻ Working")
@@ -122,6 +127,17 @@ fn working_row_sits_above_the_composer_until_the_turn_completes() {
 /// Whether the working row on screen offers the interrupt key. `None` without a working row.
 fn row_offers_interrupt(screen: &str) -> Option<bool> {
     working_row_and_next(screen).map(|(row, _)| row.contains("to interrupt"))
+}
+
+/// Wait until the working row on screen contains `text`.
+fn wait_row_text(terminal: &support::Terminal, text: &str) {
+    assert!(
+        wait_for(terminal, Duration::from_secs(10), |screen| {
+            working_row_and_next(screen).is_some_and(|(row, _)| row.contains(text))
+        }),
+        "the working row never said {text:?}:\n{}",
+        terminal.screen_text()
+    );
 }
 
 fn wait_row(terminal: &support::Terminal, offers: bool, what: &str) {
@@ -238,6 +254,9 @@ fn working_row_offers_esc_only_when_esc_interrupts() {
         "an Esc meant for a list or a selector interrupted the turn"
     );
 
+    terminal.type_keys("\x1b");
+    wait_row_text(&terminal, "Esc again to interrupt");
+    std::thread::sleep(Duration::from_millis(300));
     terminal.type_keys("\x1b");
     assert!(
         gateway
@@ -425,5 +444,53 @@ fn working_row_leaves_when_the_gateway_loses_the_session() {
     assert!(terminal.wait_for_text("/quit", Duration::from_secs(10)));
     std::thread::sleep(Duration::from_millis(250));
     terminal.type_keys("\r");
+    let _ = terminal.finish(Duration::from_secs(10));
+}
+
+/// One Esc during a running turn sends nothing and changes the row's hint; a second inside two
+/// seconds interrupts once; with no second press the hint returns on its own and the next
+/// press arms again. Ctrl+C interrupts on a single press.
+#[test]
+fn esc_asks_for_a_second_press_and_the_hint_returns_on_time() {
+    let home = temp_home();
+    let gateway = StandaloneGateway::start(home.path());
+    let id = format!("local-5ee5a123{}", "0".repeat(56));
+    let mut snapshot = mock_gateway::recorded_resume_snapshot();
+    snapshot["session_id"] = json!(id);
+    snapshot["stored_session_id"] = json!(id);
+    snapshot["prompts"] = json!([]);
+    snapshot["running"] = json!(true);
+    gateway.set_resume_snapshot(snapshot);
+
+    let mut terminal = Launch::new(home.path())
+        .args(&["attach", &id, "--profile", "fixture"])
+        .answer_queries()
+        .spawn();
+    assert!(
+        terminal.wait_for_text("── Resumed: ", Duration::from_secs(10)),
+        "the running session never opened"
+    );
+    wait_row_text(&terminal, "Esc twice to interrupt");
+
+    terminal.type_keys("\x1b");
+    wait_row_text(&terminal, "Esc again to interrupt");
+    assert!(
+        gateway.requests("session.interrupt").is_empty(),
+        "one Esc interrupted the turn"
+    );
+    // No second press: the hint comes back with no key pressed.
+    wait_row_text(&terminal, "Esc twice to interrupt");
+    assert!(gateway.requests("session.interrupt").is_empty());
+
+    // The next press arms again, then Ctrl+C interrupts at once.
+    terminal.type_keys("\x1b");
+    wait_row_text(&terminal, "Esc again to interrupt");
+    terminal.type_keys("\x03");
+    assert!(
+        gateway
+            .wait_request("session.interrupt", 0, Duration::from_secs(10))
+            .is_some(),
+        "Ctrl+C sent no interrupt"
+    );
     let _ = terminal.finish(Duration::from_secs(10));
 }

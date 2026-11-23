@@ -122,6 +122,9 @@ fn a_tall_reply_scrolls_up_into_scrollback_while_it_streams() {
         );
     }
 
+    // Esc asks for a second press before it interrupts.
+    terminal.type_keys("\x1b");
+    std::thread::sleep(Duration::from_millis(300));
     terminal.type_keys("\x1b");
     assert!(
         gateway

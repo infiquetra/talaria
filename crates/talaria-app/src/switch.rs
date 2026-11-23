@@ -15,7 +15,7 @@ use super::mutation::MutationClient;
 use super::sessions::{OpenError, OpenedSession, SessionService};
 
 /// The line a branch gets while the agent is working.
-pub const BRANCH_BUSY_TEXT: &str = "Hermes cannot branch while the agent is working. Wait for the reply to finish, or press Esc to stop it, then run /branch again.";
+pub const BRANCH_BUSY_TEXT: &str = "Hermes cannot branch while the agent is working. Wait for the reply to finish, or press Esc twice to stop it, then run /branch again.";
 /// The line a branch gets while the conversation is being compacted.
 pub const BRANCH_COMPRESSING_TEXT: &str = "Hermes is already compacting this conversation. Wait for it to finish, then run /branch again.";
 /// The line a branch gets when the last turn's outcome is unknown.

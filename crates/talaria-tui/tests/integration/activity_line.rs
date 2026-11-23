@@ -43,6 +43,7 @@ fn line<'a>(
         activity,
         elapsed_ms,
         interrupt: Some("Esc"),
+        interrupt_armed: false,
         style,
     }
 }
@@ -82,8 +83,26 @@ fn row_names_activity_elapsed_and_interrupt_key() {
     assert_eq!(section.height(80), 1);
     assert_eq!(
         text(&render(&section, 80)),
-        "✻ (o_o) pondering... · 12s · Esc to interrupt"
+        "✻ (o_o) pondering... · 12s · Esc twice to interrupt"
     );
+}
+
+#[test]
+fn armed_row_says_the_key_again_and_keeps_a_short_form_on_a_narrow_row() {
+    let style = style(ColorDepth::TrueColor, Motion::Full);
+    let mut section = line(Some("pondering"), 12_000, &style);
+    section.interrupt_armed = true;
+    assert_eq!(
+        text(&render(&section, 80)),
+        "✻ pondering · 12s · Esc again to interrupt"
+    );
+    // Too narrow for the whole hint: the short form stays, because it is the only sign that
+    // the first press registered.
+    assert_eq!(text(&render(&section, 30)), "✻ pondering · 12s · Esc again");
+    // Too narrow for either: the hint goes, as it does for the plain row.
+    assert_eq!(text(&render(&section, 20)), "✻ pondering · 12s");
+    section.interrupt_armed = false;
+    assert_eq!(text(&render(&section, 30)), "✻ pondering · 12s");
 }
 
 #[test]
@@ -93,13 +112,13 @@ fn row_falls_back_to_working_without_activity() {
         let section = line(activity, 3_000, &style);
         assert_eq!(
             text(&render(&section, 80)),
-            "✻ Working · 3s · Esc to interrupt"
+            "✻ Working · 3s · Esc twice to interrupt"
         );
     }
     let multi = line(Some("first line\nwaiting on provider\n"), 0, &style);
     assert_eq!(
         text(&render(&multi, 80)),
-        "✻ waiting on provider · 0s · Esc to interrupt"
+        "✻ waiting on provider · 0s · Esc twice to interrupt"
     );
     let hostile = line(Some("bad\u{1b}[2Jtext"), 0, &style);
     assert!(!text(&render(&hostile, 80)).contains('\u{1b}'));
@@ -117,7 +136,7 @@ fn elapsed_switches_to_minutes_after_sixty_seconds() {
         let section = line(None, elapsed_ms, &style);
         assert_eq!(
             text(&render(&section, 80)),
-            format!("✻ Working · {shown} · Esc to interrupt")
+            format!("✻ Working · {shown} · Esc twice to interrupt")
         );
     }
 }
@@ -127,7 +146,7 @@ fn narrow_widths_drop_the_hint_then_cut_the_activity() {
     let style = style(ColorDepth::TrueColor, Motion::Full);
     let section = line(Some("(o_o) pondering..."), 12_000, &style);
     for (width, shown) in [
-        (80, "✻ (o_o) pondering... · 12s · Esc to interrupt"),
+        (80, "✻ (o_o) pondering... · 12s · Esc twice to interrupt"),
         (30, "✻ (o_o) pondering... · 12s"),
         (12, "✻ (o_… · 12s"),
         (5, "✻ 12s"),
@@ -341,7 +360,7 @@ fn reduced_motion_is_identical_at_any_time_within_a_second() {
     assert_eq!(early, late, "nothing moves within a second");
     let next = render(&line(None, 2_000, &style), 80);
     let changed: Vec<u16> = (0..80).filter(|&x| next[(x, 0)] != early[(x, 0)]).collect();
-    assert_eq!(text(&next), "✻ Working · 2s · Esc to interrupt");
+    assert_eq!(text(&next), "✻ Working · 2s · Esc twice to interrupt");
     assert_eq!(
         changed.len(),
         1,

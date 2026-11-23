@@ -175,6 +175,7 @@ impl crate::live::LiveSection for WorkflowDock<'_> {
 pub struct WorkflowAgentDock<'a> {
     text: &'a str,
     open_hint: Option<&'a str>,
+    back_key: Option<&'a str>,
     header: Style,
     hint: Style,
 }
@@ -183,9 +184,17 @@ impl<'a> WorkflowAgentDock<'a> {
         Self {
             text,
             open_hint,
+            back_key: None,
             header,
             hint,
         }
+    }
+    /// Offer the key that goes back to the session the person came from. `key` is the label
+    /// from the key map; the Left arrow is drawn as an arrow.
+    #[must_use]
+    pub fn with_back_key(mut self, key: Option<&'a str>) -> Self {
+        self.back_key = key;
+        self
     }
     pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
         if width == 0 {
@@ -193,16 +202,33 @@ impl<'a> WorkflowAgentDock<'a> {
         }
         let base =
             sanitize(&format!("⚙ {}", self.text.replace(['\r', '\n', '\t'], " "))).into_owned();
-        let hint = format!(
+        let open = format!(
             " · {} opens the run",
             self.open_hint
                 .map_or_else(|| "/workflows".to_owned(), |key| sanitize(key).into_owned())
         );
-        if base.width() + hint.width() <= usize::from(width) {
-            return vec![Line::from(vec![
-                Span::styled(base, self.header),
-                Span::styled(hint, self.hint),
-            ])];
+        let back = self.back_key.map(|key| {
+            let key = if key == "Left" {
+                "←".to_owned()
+            } else {
+                sanitize(key).into_owned()
+            };
+            format!(" · {key} back to the run")
+        });
+        let room = usize::from(width);
+        // The key that goes back is dropped last of the two hints: it is the one a person who
+        // just pressed Enter on an agent needs.
+        let hints = match &back {
+            Some(back) => [format!("{open}{back}"), back.clone(), open],
+            None => [open.clone(), open, String::new()],
+        };
+        for hint in hints {
+            if !hint.is_empty() && base.width() + hint.width() <= room {
+                return vec![Line::from(vec![
+                    Span::styled(base, self.header),
+                    Span::styled(hint, self.hint),
+                ])];
+            }
         }
         vec![Line::styled(cut_to_width(&base, width), self.header)]
     }

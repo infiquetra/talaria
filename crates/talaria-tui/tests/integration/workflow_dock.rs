@@ -346,6 +346,50 @@ fn agent_dock_names_the_agent_its_state_and_the_key_to_the_run() {
 }
 
 #[test]
+fn agent_dock_offers_the_key_that_goes_back_and_drops_the_open_hint_first() {
+    let lines = |dock: &WorkflowAgentDock<'_>, width: u16| -> Vec<String> {
+        dock.lines(width)
+            .into_iter()
+            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    };
+    let banner = "Workflow agent review:gameplay · running";
+    let dock = WorkflowAgentDock::new(banner, Some("Alt+W"), Style::new(), Style::new())
+        .with_back_key(Some("Left"));
+    assert_eq!(
+        lines(&dock, 200),
+        [format!(
+            "⚙ {banner} · Alt+W opens the run · ← back to the run"
+        )]
+    );
+    // A narrower line keeps the way back and drops the other hint.
+    let base = format!("⚙ {banner}");
+    let width = u16::try_from(base.chars().count() + " · ← back to the run".chars().count())
+        .expect("width");
+    assert_eq!(lines(&dock, width), [format!("{base} · ← back to the run")]);
+    // No room for either: the agent and its state stay, inside the width.
+    let tight = lines(&dock, 45);
+    assert_eq!(tight.len(), 1);
+    assert!(tight[0].chars().count() <= 45, "{tight:?}");
+    // A rebound key shows as the key map names it.
+    let rebound = WorkflowAgentDock::new(banner, None, Style::new(), Style::new())
+        .with_back_key(Some("Alt+B"));
+    assert_eq!(
+        lines(&rebound, 200),
+        [format!(
+            "⚙ {banner} · /workflows opens the run · Alt+B back to the run"
+        )]
+    );
+    // Without the key the line is as it was.
+    let plain = WorkflowAgentDock::new(banner, Some("Alt+W"), Style::new(), Style::new())
+        .with_back_key(None);
+    assert_eq!(
+        lines(&plain, 200),
+        [format!("⚙ {banner} · Alt+W opens the run")]
+    );
+}
+
+#[test]
 fn agent_dock_text_from_the_journal_cannot_inject_escape_sequences() {
     let dock = WorkflowAgentDock::new(
         "Workflow agent \u{1b}[31mred\nline",

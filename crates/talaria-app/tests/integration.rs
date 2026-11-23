@@ -434,6 +434,9 @@ mod tool_replay;
 #[path = "integration/hivecode_app.rs"]
 mod hivecode_app;
 
+#[path = "integration/interrupt_confirm.rs"]
+mod interrupt_confirm;
+
 #[path = "integration/vim_routing.rs"]
 mod vim_routing;
 

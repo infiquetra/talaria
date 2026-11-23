@@ -155,6 +155,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("doctor_left", &["left"][..]),
         ("doctor_right", &["right"][..]),
         ("voice_record", &["alt+r"][..]),
+        ("workflow_agent_back", &["left"][..]),
         ("layout_panel", &["alt+d"][..]),
         ("toggle_menu_bar", &["alt+i"][..]),
         ("menu_left", &["left"][..]),

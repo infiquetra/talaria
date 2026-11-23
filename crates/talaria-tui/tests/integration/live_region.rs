@@ -280,6 +280,7 @@ fn activity_sweep_frame_writes_only_changed_cells() {
         activity: None,
         elapsed_ms,
         interrupt: Some("Esc"),
+        interrupt_armed: false,
         style: &style,
     };
 

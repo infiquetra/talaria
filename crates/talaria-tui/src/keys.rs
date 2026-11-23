@@ -246,6 +246,8 @@ static CONFIGURE_BINDINGS: [(ConfigureKey, &str, &[&str]); 14] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
     WorkflowProgress,
+    /// A workflow agent's session opened from the run view: the key that goes back.
+    AgentSession,
     Menu,
     /// The draft box at the bottom of the screen.
     Composer,
@@ -984,6 +986,9 @@ pub enum Action {
     McpCopy,
     McpPasteRedirect,
     VoiceRecord,
+    /// In a workflow agent's session opened from the run view, go back to the session the
+    /// person came from and open the run view again.
+    WorkflowAgentBack,
     /// Turn vim editing on or off. No default chord.
     ToggleVim,
 }
@@ -1017,7 +1022,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 211] = [
+    pub const ALL: [Self; 212] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1228,6 +1233,7 @@ impl Action {
         Self::McpCopy,
         Self::McpPasteRedirect,
         Self::VoiceRecord,
+        Self::WorkflowAgentBack,
         Self::ToggleVim,
     ];
 
@@ -1447,6 +1453,7 @@ impl Action {
             Self::McpPasteRedirect => "mcp_paste_redirect",
             Self::ToggleVim => "toggle_vim",
             Self::VoiceRecord => "voice_record",
+            Self::WorkflowAgentBack => "workflow_agent_back",
         }
     }
 
@@ -1484,6 +1491,7 @@ impl Action {
             | Self::CycleFilter
             | Self::CloseView
             | Self::ProgressConfirm => KeyContext::WorkflowProgress,
+            Self::WorkflowAgentBack => KeyContext::AgentSession,
             Self::CompletionNext
             | Self::CompletionPrev
             | Self::CompletionAccept
@@ -1897,6 +1905,7 @@ impl Action {
             Self::McpPasteRedirect => &["p"],
             Self::ToggleVim => &[],
             Self::VoiceRecord => &["alt+r"],
+            Self::WorkflowAgentBack => &["left"],
         }
     }
 }
@@ -2951,7 +2960,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 211);
+        assert_eq!(Action::ALL.len(), 212);
         for (index, action) in Action::ALL.iter().enumerate() {
             assert_eq!(action.index(), index, "{}", action.config_name());
         }
@@ -2979,6 +2988,7 @@ mod tests {
                 | Action::CycleFilter
                 | Action::CloseView
                 | Action::ProgressConfirm => KeyContext::WorkflowProgress,
+                Action::WorkflowAgentBack => KeyContext::AgentSession,
                 Action::CompletionNext
                 | Action::CompletionPrev
                 | Action::CompletionAccept
@@ -3157,6 +3167,7 @@ mod tests {
                 | Action::CycleFilter
                 | Action::CloseView
                 | Action::ProgressConfirm => KeyContext::WorkflowProgress,
+                Action::WorkflowAgentBack => KeyContext::AgentSession,
                 Action::CompletionNext
                 | Action::CompletionPrev
                 | Action::CompletionAccept
@@ -3567,7 +3578,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 211);
+        assert_eq!(Action::ALL.len(), 212);
     }
 
     #[test]

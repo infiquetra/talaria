@@ -1,6 +1,7 @@
 //! The working row above the composer while a turn runs. Pure.
 //!
-//! The row reads `✻ <activity> · <elapsed> · <key> to interrupt`. Under full motion a soft glow
+//! The row reads `✻ <activity> · <elapsed> · <key> twice to interrupt`; after one press of the key
+//! it reads `<key> again to interrupt` until the confirmation window ends. Under full motion a soft glow
 //! travels across its words and back, eased at both ends, and fades the colours around it on
 //! either side; under reduced motion the row is static and only its seconds change.
 
@@ -171,6 +172,8 @@ pub struct ActivityLine<'a> {
     pub elapsed_ms: u64,
     /// The interrupt key's label, if one is bound.
     pub interrupt: Option<&'a str>,
+    /// One press of the interrupt key is waiting for a second.
+    pub interrupt_armed: bool,
     /// The resolved colours.
     pub style: &'a ActivityStyle,
 }
@@ -183,9 +186,21 @@ impl ActivityLine<'_> {
         let elapsed = elapsed_label(self.elapsed_ms);
         let short = format!("{GLYPH} {activity}{SEPARATOR}{elapsed}");
         if let Some(key) = self.interrupt {
-            let full = format!("{short}{SEPARATOR}{key} to interrupt");
+            let (full, brief) = if self.interrupt_armed {
+                (
+                    format!("{short}{SEPARATOR}{key} again to interrupt"),
+                    Some(format!("{short}{SEPARATOR}{key} again")),
+                )
+            } else {
+                (format!("{short}{SEPARATOR}{key} twice to interrupt"), None)
+            };
             if columns(&full) <= width {
                 return full;
+            }
+            // The armed hint is the only sign that the first press registered: keep a
+            // shorter form of it before dropping it.
+            if let Some(brief) = brief.filter(|brief| columns(brief) <= width) {
+                return brief;
             }
         }
         if columns(&short) <= width {
