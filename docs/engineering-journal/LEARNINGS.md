@@ -2,6 +2,23 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — A test fixture gave a session two ids the real gateway never sends
+
+**Evidence.** Left arrow never went back from a workflow agent's session on a real gateway.
+`origin_row` (`crates/talaria-app/src/workflow_origin.rs`) remembered the session a person came
+from only when its stored id differed from its runtime id. The Hermes session authority returns
+one id in both fields (`gateway/session_controls.py`, the resume result builds both from
+`ref.session_id`; 8 of 8 sessions in a run journal of that day had equal ids). Every test passed
+because the fixtures used `runtime-origin` and `stored-origin`. Test:
+`an_origin_whose_runtime_and_stored_ids_are_equal_is_remembered`.
+
+**Mechanism.** The fixture's shape was invented, then a rule was written against the fixture.
+The rule ("no stored id of its own") described a state the gateway does not produce, and it
+excluded the only state it does produce.
+
+**Generalizable rule.** Take the shape of gateway data in a fixture from a recorded reply of the
+gateway the user runs, and include that shape in the tests of any rule that compares its fields.
+
 ## 2026-11-23 — The journal wrote a record before checking it
 
 **Evidence.** A restart request for an agent waiting on a retry made the resume append a

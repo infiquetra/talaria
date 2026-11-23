@@ -190,7 +190,9 @@ agent's session the action `workflow_agent_back` (Left by default) is live only 
 composer with nothing else open; it switches back to the remembered session and reopens the run
 view with that agent selected. The line above the composer shows the key while it is live. The
 memory is keyed to the stored session id, confirmed when the switch lands, and dropped on any
-other switch. A session with no stored id of its own is never remembered. The action has its own
+other switch. A session whose stored id equals its runtime id is remembered, because that is
+what the Hermes session authority sends (corrected the same day; the first version refused it
+and so never worked on a real gateway). The action has its own
 key context, so it cannot collide with the composer's cursor key.
 
 **Rationale.** Enter moved the whole window into the agent's session and nothing led back except

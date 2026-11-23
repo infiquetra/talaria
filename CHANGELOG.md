@@ -131,6 +131,9 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ### Fixed
 
+- Left arrow now goes back from a workflow agent's session to the session you came from. It
+  never worked against a real gateway: Talaria did not remember the session, because Hermes
+  gives a session the same runtime and stored id.
 - A failed workflow agent now shows the reason Hermes gave. Before, the reason was dropped and the
   run said "no reason given".
 - The workflow view no longer logs Hermes's `agent.step` event as an unknown event type.

@@ -23504,14 +23504,40 @@ mod workflow_agent_session_tests {
     }
 
     #[test]
-    fn an_origin_with_no_stored_id_of_its_own_is_not_offered() {
-        let (temp, mut state, run) = from_origin("fixture");
-        // A brand new session: Hermes has not given it a stored id yet.
+    fn an_origin_whose_runtime_and_stored_ids_are_equal_is_remembered() {
+        let (_temp, mut state, run) = from_origin("fixture");
+        // The shape the Hermes session authority sends: one id in both fields, for the
+        // person's session and for the agent's.
         let _ = opened_session(
             &mut state,
-            session("runtime-new-origin", "runtime-new-origin", None),
+            session("local-origin", "local-origin", None),
             None,
         );
+        let entered = press_enter(&mut state, &run, "runtime-bound");
+        assert_eq!(
+            switch_target(&entered),
+            Some(("fixture".into(), "runtime-bound".into()))
+        );
+        let _ = land(&mut state, session("runtime-bound", "runtime-bound", None));
+        assert!(state.view().workflow_agent.is_some());
+        assert!(state.view().agent_back, "the key is offered");
+
+        let sent = back(&mut state);
+        assert_eq!(
+            switch_target(&sent),
+            Some(("fixture".into(), "local-origin".into())),
+            "{sent:?}"
+        );
+        let _ = land(&mut state, session("local-origin", "local-origin", None));
+        assert_eq!(state.workflow_views.active.as_deref(), Some(run.as_path()));
+        assert!(state.workflow_return.is_none());
+        assert!(!state.view().agent_back);
+    }
+
+    #[test]
+    fn an_origin_with_no_id_at_all_is_not_offered() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = opened_session(&mut state, session("runtime-new-origin", "", None), None);
         let _ = press_enter(&mut state, &run, "runtime-bound");
         let _ = land(&mut state, agent_session(temp.path()));
         assert!(state.workflow_origin.is_none());

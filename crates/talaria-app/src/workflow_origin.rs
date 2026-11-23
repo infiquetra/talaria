@@ -135,13 +135,13 @@ impl WorkflowReturn {
     }
 }
 
-/// The place to return to for the session now open: its profile and stored id. `None` when the
-/// session has no stored id of its own yet, because resuming it by its runtime id would not be
-/// the same session; the key is then not offered.
+/// The place to return to for the session now open: its profile and stored id. The Hermes
+/// session authority reports one id for a session as both its runtime and its stored id, so an
+/// equal pair is the normal case and is remembered. `None` only when there is no id at all.
 #[must_use]
 pub fn origin_row(opened: &OpenedSession, profile: &str) -> Option<RowKey> {
     let stored = opened.stored_session_id.as_str();
-    (!stored.is_empty() && stored != opened.session_id).then(|| RowKey {
+    (!stored.is_empty()).then(|| RowKey {
         profile: profile.to_owned(),
         session_id: stored.to_owned(),
     })

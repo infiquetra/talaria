@@ -18,8 +18,7 @@ composer then names the key that goes back (Left by default, `workflow_agent_bac
 empty draft and nothing else open, it returns to the session you were in and opens the run view
 again with that agent selected; Esc then closes the view as usual. Going back sends nothing to the
 agent, and its turn keeps running. The way back is forgotten once you reach a different session
-by any other route, after you use it, and when the session you came from cannot be opened. It is
-not offered when you came from a session that has no stored id of its own yet.
+by any other route, after you use it, and when the session you came from cannot be opened.
 
 ```sh
 talaria workflow run review.js --profile fixture --args '{"branch":"main"}'
