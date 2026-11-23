@@ -704,6 +704,16 @@ impl Renderer {
         }
     }
 }
+/// Why a run's money is unknown, as far as the finished run can say. Money is unknown when no
+/// finished turn had a cost from Hermes or a price for its model; that is a fact about Hermes's
+/// price list, so the text does not suggest that setting tiers would fix it.
+fn unknown_money_text(spend: &SpendView) -> String {
+    if spend.tokens == 0 && spend.cache_read_tokens == 0 {
+        "unknown (no agent turn has finished)".to_owned()
+    } else {
+        "unknown (Hermes reported no cost and has no price for the models used)".to_owned()
+    }
+}
 /// The short plain-text line printed after the `run_finished` object in JSON mode. Hermes keeps the
 /// last 2,000 characters of a background command's output and then cuts back to the first newline,
 /// so a single very long final line reached the lead as nothing; this line is always short.
@@ -718,7 +728,7 @@ fn closing_line(
 ) -> String {
     let money = match spend.money_usd {
         Some(usd) => format!("${usd:.4} ({})", safe(&spend.money_source)),
-        None => "unknown".to_owned(),
+        None => unknown_money_text(spend),
     };
     format!(
         "run {} {}: {}, money {}. Full result: talaria workflow resume --json{} {}",

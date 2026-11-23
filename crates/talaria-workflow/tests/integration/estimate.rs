@@ -47,14 +47,26 @@ fn range_unknown_and_free() {
 }
 
 #[test]
-fn no_tiers_means_no_price_list_and_no_dangling_sentence() {
+fn no_tiers_says_why_there_is_no_price_and_does_not_promise_tiers_would_help() {
     // A script that names models directly leaves the table with no tiers.
     let mut t = table();
     t.tiers.clear();
+    // Hermes lists no price for any model: the cost of directly named models will be unknown, and
+    // the text must not suggest that setting tiers would change that.
     let text = estimate_run_cost(&t, &roster(&data()), None).to_string();
     assert_eq!(
         text,
-        "no estimate without a token budget; no tiers are set, so there is no price list"
+        "no estimate without a token budget; no tiers are set, so there are no tier prices. Hermes lists no price for any model on the configured providers, so the cost of agents that name a model directly will be unknown"
     );
     assert!(!text.contains("per million"), "{text}");
+    assert!(!text.contains("no price list"), "{text}");
+    // Hermes does list a price: a directly named model is priced when it is on that list.
+    let mut priced = data();
+    priced["providers"][0]["pricing"] =
+        json!({"m-small":{"input":"$3.00","output":"$15.00","free":false}});
+    let text = estimate_run_cost(&t, &roster(&priced), None).to_string();
+    assert_eq!(
+        text,
+        "no estimate without a token budget; no tiers are set, so there are no tier prices. An agent that names a model directly is priced only if Hermes lists a price for that model on its provider"
+    );
 }

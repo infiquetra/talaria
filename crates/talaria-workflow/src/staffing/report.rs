@@ -108,6 +108,8 @@ pub enum CostEstimate {
     Unknown,
     NeedsTokenBudget {
         tier_prices: Vec<(String, Price)>,
+        /// How many models, across the roster's providers, Hermes lists a price for.
+        priced_models: usize,
     },
 }
 impl std::fmt::Display for CostEstimate {
@@ -132,10 +134,25 @@ impl std::fmt::Display for CostEstimate {
                 }
                 Ok(())
             }
-            Self::NeedsTokenBudget { tier_prices } if tier_prices.is_empty() => f.write_str(
-                "no estimate without a token budget; no tiers are set, so there is no price list",
-            ),
-            Self::NeedsTokenBudget { tier_prices } => write!(
+            Self::NeedsTokenBudget {
+                tier_prices,
+                priced_models,
+            } if tier_prices.is_empty() => {
+                // Without tiers there are no tier prices to list, and setting tiers would not
+                // create a price Hermes does not have. What decides the cost of an agent that
+                // names its model is whether Hermes lists a price for that model.
+                f.write_str("no estimate without a token budget; no tiers are set, so there are no tier prices. ")?;
+                if *priced_models == 0 {
+                    f.write_str(
+                        "Hermes lists no price for any model on the configured providers, so the cost of agents that name a model directly will be unknown",
+                    )
+                } else {
+                    f.write_str(
+                        "An agent that names a model directly is priced only if Hermes lists a price for that model on its provider",
+                    )
+                }
+            }
+            Self::NeedsTokenBudget { tier_prices, .. } => write!(
                 f,
                 "no estimate without a token budget; tier prices: {}",
                 tier_prices
@@ -169,6 +186,7 @@ pub fn estimate_run_cost(
     let Some(tokens) = tokens else {
         return CostEstimate::NeedsTokenBudget {
             tier_prices: entries,
+            priced_models: roster.priced_model_count(),
         };
     };
     let mut unknown = vec![];

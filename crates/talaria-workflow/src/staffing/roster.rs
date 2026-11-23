@@ -274,6 +274,14 @@ impl Roster {
         }
         Availability::Ready
     }
+    /// How many models, across every provider, Hermes lists a usable price for.
+    pub fn priced_model_count(&self) -> usize {
+        self.providers
+            .iter()
+            .flat_map(|p| p.prices.values())
+            .filter(|price| price.known())
+            .count()
+    }
     pub fn price(&self, provider: &str, model: &str) -> Option<&Price> {
         self.providers
             .iter()

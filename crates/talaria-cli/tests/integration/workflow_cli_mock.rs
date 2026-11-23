@@ -830,6 +830,11 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
         assert!(last.contains(part), "{part} missing from {last}");
     }
     assert_eq!(named(last), resolved_runs, "{last}");
+    // Unknown money says why: it is Hermes's price list, not a missing tier setting.
+    assert!(
+        last.contains("money unknown (Hermes reported no cost and has no price for the models used)"),
+        "{last}"
+    );
     // With the default runs folder the command stays as short as it was.
     let default_run = output(
         command(temp.path(), "failed-wire.json")
