@@ -186,15 +186,21 @@ an explicit warning; unrelated folders are ignored. Unreadable top-level directo
 instead of appearing to be empty histories.
 
 The JSON array always includes `run_id`, `name`, `profile`, `started_at_ms`, `status`,
-`agents_finished`, `agents_total_known`, `parked`, `tokens_spent`, `money_spent_usd`, `run_dir`,
-and `warning` (including null). Token spend comes from settled usage. Money sums each
+`agents_finished`, `agents_total_known`, `parked`, `tokens_spent`, `cache_read_tokens`,
+`cache_unknown_turns`, `money_spent_usd`, `run_dir`, and `warning` (including null). Token spend
+comes from settled usage. `tokens_spent` leaves out cache reads, which `cache_read_tokens` gives
+on their own; `cache_unknown_turns` counts settled turns whose cache reads Hermes did not report,
+which are counted in full inside `tokens_spent` (every turn of a run journaled before cache
+reads were kept apart). `cache_read_tokens` is null when no turn reported tokens. See
+[Staffing and budgets](staffing.md#spend-and-budgets). Money sums each
 attempt's last settled session cost; any missing or unknown settled cost makes the total
 unknown. File-only discovery never reprices tokens.
 
 Foreground output names the run folder, shows phases, logs, agents, and scheduler events,
 then prints the result. `--json` emits compact JSON lines and one final `run_finished`
 object. That object has exactly one of `result`, `error`, or `reason`, together with token
-and money spend; a `budget_exhausted` object has both `result` and `reason`, plus the
+and money spend (`spend.tokens` leaves out cache reads, with `spend.cache_read_tokens` and
+`spend.cache_unknown_turns` beside it); a `budget_exhausted` object has both `result` and `reason`, plus the
 journal's finish `summary` with its `refused` and `stopped` counts. A `completed_with_failures` object
 (the script returned, but at least one agent failed) has `reason`, then `failed_agents`, then
 `cut_short_agents` when any, then `result` and `summary`; a plain `completed` object lists

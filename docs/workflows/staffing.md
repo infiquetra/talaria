@@ -103,8 +103,29 @@ spend for the progress view. These APIs contain no terminal presentation state.
 ## Spend and budgets
 
 The scheduler folds the journal at start, on each permit release and on budget
-reads at least 250 milliseconds apart. Total tokens use `total_tokens`, otherwise
+reads at least 250 milliseconds apart. A turn's tokens use `total_tokens`, otherwise
 input plus output when both are known. Missing token counts remain visible.
+
+Cache reads are counted apart from the other tokens, and the token budget does not count
+them. Hermes folds a turn's cache reads into the turn's token total, so a run that re-reads a
+long context can be mostly cache reads, which cost a fraction of other tokens. Cache writes are
+billed at or above the input rate and stay in the counted tokens. Hermes gives a settled turn's
+tokens for that turn but its cache reads as the session's running total (`cache_read_tokens` in
+the settled result), so Talaria journals that running total with each turn
+(`session_cache_read_tokens` in the turn's usage) and takes the difference from the same
+attempt's previous turn. A running total that went down started again, as after a gateway
+restart, and counts as that turn's own. A turn's cache reads never exceed its tokens. Because
+the journal holds what the split needs, a resumed run, `workflow list` and a replayed result
+give the split the live run showed.
+
+When a settled turn reports no cache read figure, the whole turn is counted toward the budget
+and the output says so: "cache reads unknown for N turns, counted in full". Journals written
+before cache reads were kept apart have no such figure, so every turn in them is unknown.
+Spend therefore has these numbers: `tokens` (everything except cache reads, the budget's
+measure), `cache_read_tokens` and `cache_unknown_turns`. In the `run_finished` JSON object,
+`spend.tokens` used to include cache reads and no longer does; `cache_read_tokens` and
+`cache_unknown_turns` are new beside it. `workflow list --json` rows carry the same three
+numbers as `tokens_spent`, `cache_read_tokens` and `cache_unknown_turns`.
 
 Hermes reports session cost cumulatively. Known `actual`, `estimated` and
 `included` readings contribute only their increase within the attempt; a lower
@@ -122,7 +143,9 @@ the provider. Estimates with token budgets show the cheapest-to-dearest known
 range plus any unpriced tiers; an all-unpriced roster is `unknown`.
 
 Token spend also counts work in progress. Hermes streams a `session.usage` event
-with each agent session's cumulative token count after every model call. The
+with each agent session's cumulative token count after every model call, with its cache
+reads (`cache_read_tokens`) beside the total; the reading counts without them. An event
+that does not give cache reads counts whole. The
 runner adds each session's latest reading beyond what that session has already
 settled, so a settled turn replaces its live share instead of adding to it, and a
 lower reading never takes spend back. Money is counted only when a turn settles.
