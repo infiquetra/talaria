@@ -36,11 +36,10 @@ impl TurnPolicy for SchemaTurnPolicy {
         if turn.outcome == "failed"
             || turn.outcome == "completed" && turn.result_meta["failed"] == true
         {
-            let reason = turn.result_meta["error"]
-                .as_str()
-                .or_else(|| turn.result_meta["turn_exit_reason"].as_str())
-                .unwrap_or("no reason given");
-            return failed(format!("agent failed: {reason}"));
+            return failed(super::failure::failure_reason(
+                &turn.result_meta,
+                turn.final_text.as_deref(),
+            ));
         }
         match turn.outcome.as_str() {
             "completed" => {}
