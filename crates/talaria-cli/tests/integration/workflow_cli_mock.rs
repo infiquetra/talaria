@@ -721,6 +721,81 @@ fn run_finished(stdout: &[u8]) -> Value {
 }
 
 #[test]
+fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let run = |args: &[&str], target: &Path| {
+        output(
+            command(temp.path(), "failed-wire.json")
+                .args(args)
+                .arg("--runs-dir")
+                .arg(&runs)
+                .arg(target),
+        )
+    };
+    let out = run(&["workflow", "run", "--json", "--profile", "fixture"], &fixture("scripts/one.js"));
+    // The run used a custom runs folder, so the printed command names it. The same folder can be
+    // spelled two ways (/var and /private/var on macOS), so compare the resolved folders.
+    let named = |line: &str| -> PathBuf {
+        let rest = line.split("--runs-dir ").nth(1).expect("--runs-dir in the hint");
+        fs::canonicalize(rest.split(' ').next().unwrap()).unwrap()
+    };
+    let resolved_runs = fs::canonicalize(&runs).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    let lines: Vec<&str> = shown.lines().collect();
+    let last = *lines.last().unwrap();
+    // The run_finished object is unchanged and is the last JSON object; the last line is plain text.
+    let finished = run_finished(&out.stdout);
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+    assert!(serde_json::from_str::<Value>(last).is_err(), "{last}");
+    let before = lines[lines.len() - 2];
+    assert_eq!(serde_json::from_str::<Value>(before).unwrap(), finished);
+    assert!(last.len() < 300, "{last}");
+    // Hermes folds cache reads into the input count, so the total says it includes them.
+    assert!(last.contains("tokens (including cache reads)"), "{last}");
+    for part in [
+        id.as_str(),
+        "completed_with_failures",
+        &format!("{} tokens", finished["spend"]["tokens"]),
+        &format!("talaria workflow resume --json --runs-dir "),
+    ] {
+        assert!(last.contains(part), "{part} missing from {last}");
+    }
+    assert_eq!(named(last), resolved_runs, "{last}");
+    // With the default runs folder the command stays as short as it was.
+    let default_run = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture"])
+            .arg(fixture("scripts/one.js")),
+    );
+    let default_text = text(&default_run.stdout);
+    let default_last = default_text.lines().last().unwrap();
+    let default_id = run_finished(&default_run.stdout)["run_id"].as_str().unwrap().to_owned();
+    assert!(
+        default_last.ends_with(&format!("Full result: talaria workflow resume --json {default_id}")),
+        "{default_last}"
+    );
+    // A replay prints the same shape, and the plain-text mode adds nothing.
+    let replay = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "resume", "--json", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    let replay_last = text(&replay.stdout).lines().last().unwrap().to_owned();
+    assert!(replay_last.ends_with(&format!(" {id}")), "{replay_last}");
+    assert_eq!(named(&replay_last), resolved_runs, "{replay_last}");
+    let plain = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "resume", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    assert!(!text(&plain.stdout).contains("Full result:"), "{}", text(&plain.stdout));
+}
+
+#[test]
 fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
     let temp = tempfile::tempdir().unwrap();
     let runs = temp.path().join("runs");
@@ -758,6 +833,18 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
     );
     let rows: Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert_eq!(rows[0]["status"], "completed_with_failures");
+    // The text listing says it in words; only JSON keeps the underscores.
+    let plain_list = text(
+        &output(
+            command(temp.path(), "failed-wire.json")
+                .args(["workflow", "list", "--runs-dir"])
+                .arg(&runs),
+        )
+        .stdout,
+    );
+    assert!(plain_list.contains("  completed with failures  agents "), "{plain_list}");
+    assert!(!plain_list.contains("completed_with_failures"), "{plain_list}");
+    assert!(plain_list.contains("(including cache reads)"), "{plain_list}");
     let replay = output(
         command(temp.path(), "failed-wire.json")
             .env_remove("TALARIA_WORKFLOW_MOCK")

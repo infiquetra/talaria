@@ -65,7 +65,7 @@ impl<'a> WorkflowDock<'a> {
         let base = sanitize(&format!(
             "⚙ Workflow {} · {} · {}/{} agents",
             self.name.replace(['\r', '\n', '\t'], " "),
-            self.status,
+            self.status.replace('_', " "),
             self.finished,
             self.total
         ))
@@ -617,7 +617,7 @@ pub fn picker_row(row: &talaria_workflow::runner::RunSummary) -> String {
         "{}  {}  {}  agents {}/{}  parked {}  {}  money {}{}",
         row.run_id,
         row.name,
-        row.status.as_str(),
+        row.status.label(),
         row.agents_finished,
         row.agents_total_known,
         row.parked,

@@ -10,7 +10,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde_json::{Map, Value};
 use talaria_core::session::{
-    AskedQuestion, Cell, CellId, OutcomeView, ToolCell, ToolStatus, ToolView, tool_view,
+    AskedQuestion, Cell, CellId, OutcomeView, ToolCell, ToolStatus, ToolView, shorten_middle,
+    tool_view,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -313,6 +314,8 @@ struct Header<'a> {
     subject: Option<String>,
     /// Edit cells show `title subject` with no parentheses.
     edit: bool,
+    /// The subject is a file path: a cut keeps its end, where the file name is.
+    path: bool,
     mark: Option<(char, Style)>,
     label: Option<(String, Style)>,
     stat: Option<String>,
@@ -400,7 +403,14 @@ impl Header<'_> {
             && columns > 8
         {
             let target = columns.saturating_sub(self.width() - width).max(8);
-            self.subject = self.subject.take().map(|text| cut_to(&text, target));
+            let path = self.path;
+            self.subject = self.subject.take().map(|text| {
+                if path {
+                    shorten_middle(&text, target, text_width)
+                } else {
+                    cut_to(&text, target)
+                }
+            });
         }
         if self.width() > width
             && let Some((label, _)) = self.label.as_mut()
@@ -435,11 +445,18 @@ fn is_shell(cell: &ToolCell) -> bool {
 }
 
 fn stat_text(view: &ToolView) -> Option<String> {
-    let stats = view.diff.as_ref()?.stats();
-    Some(if stats.files > 1 {
+    let diff = view.diff.as_ref()?;
+    let stats = diff.stats();
+    let counts = if stats.files > 1 {
         format!("{} files +{} -{}", stats.files, stats.added, stats.removed)
     } else {
         format!("+{} -{}", stats.added, stats.removed)
+    };
+    // Hermes cut the diff it sent: the counts are what it showed, not what the call changed.
+    Some(if diff.is_partial() {
+        format!("{counts} partial")
+    } else {
+        counts
     })
 }
 
@@ -455,6 +472,7 @@ fn header<'a>(
         None => clean(text),
     };
     let stat = stat_text(view);
+    let path = matches!(view.title.as_str(), "Read" | "Write" | "Edit");
     let duration = view.duration.as_deref().map(limit);
     let (glyph, mark, label, stat, tail, dim) = match &view.outcome {
         OutcomeView::Running => {
@@ -510,8 +528,12 @@ fn header<'a>(
         theme,
         glyph,
         title: limit(&view.title),
-        subject: view.subject.as_deref().map(limit),
+        subject: view
+            .subject
+            .as_deref()
+            .map(|text| if path { clean(text) } else { limit(text) }),
         edit: view.diff.is_some(),
+        path,
         mark,
         label,
         stat,

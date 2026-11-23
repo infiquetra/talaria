@@ -286,7 +286,7 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
         };
         let tokens = run
             .tokens_spent
-            .map_or_else(|| "-".into(), |v| v.to_string());
+            .map_or_else(|| "-".into(), |v| format!("{v} (including cache reads)"));
         let money = run
             .money_spent_usd
             .map_or_else(|| "-".into(), |v| format!("${v:.2}"));
@@ -302,7 +302,7 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
             "{}  {}  {}  agents {}/{}{}  tokens {}  money {}  {}  {}\n",
             safe(&run.run_id),
             safe(&run.name),
-            run.status.as_str(),
+            run.status.label(),
             run.agents_finished,
             run.agents_total_known,
             parked,
@@ -670,6 +670,60 @@ impl Renderer {
                 }
             }
         }
+        if self.json {
+            let runs_dir = self.dir.as_deref().and_then(std::path::Path::parent);
+            self.text(&format!(
+                "{}\n",
+                closing_line(run_id, outcome, spend, runs_dir)
+            ));
+        }
+    }
+}
+/// The short plain-text line printed after the `run_finished` object in JSON mode. Hermes keeps the
+/// last 2,000 characters of a background command's output and then cuts back to the first newline,
+/// so a single very long final line reached the lead as nothing; this line is always short.
+///
+/// `runs_dir` is the folder holding the run's own folder. When it is not the default one, the
+/// printed `resume` command names it, so the command works as printed.
+fn closing_line(
+    run_id: &str,
+    outcome: &str,
+    spend: &SpendView,
+    runs_dir: Option<&std::path::Path>,
+) -> String {
+    let money = match spend.money_usd {
+        Some(usd) => format!("${usd:.4} ({})", safe(&spend.money_source)),
+        None => "unknown".to_owned(),
+    };
+    format!(
+        "run {} {}: {} tokens (including cache reads), money {}. Full result: talaria workflow resume --json{} {}",
+        safe(run_id),
+        safe(outcome),
+        spend.tokens,
+        money,
+        custom_runs_dir_flag(runs_dir),
+        safe(run_id)
+    )
+}
+/// ` --runs-dir <path>` when `runs_dir` is not the default runs folder, else nothing.
+fn custom_runs_dir_flag(runs_dir: Option<&std::path::Path>) -> String {
+    let Some(used) = runs_dir.and_then(|dir| absolute(dir.to_path_buf()).ok()) else {
+        return String::new();
+    };
+    // The run's folder is reported in its resolved form, so compare resolved forms.
+    let resolved = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
+    let default = absolute(runner::runs_dir(None)).map(resolved);
+    if default.is_ok_and(|default| default == resolved(used.clone())) {
+        return String::new();
+    }
+    let text = safe(&used.to_string_lossy());
+    if text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._-+=:@%".contains(c))
+    {
+        format!(" --runs-dir {text}")
+    } else {
+        format!(" --runs-dir '{}'", text.replace('\'', "'\\''"))
     }
 }
 

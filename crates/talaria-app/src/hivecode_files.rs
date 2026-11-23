@@ -115,6 +115,24 @@ pub fn read_setup(profile: &str, hermes_home: &Path, talaria_home: &Path) -> Set
     }
 }
 
+/// Install the built-in workflows that are missing from `talaria_home`, the same install
+/// `talaria workflow builtins install` makes. A copy that is already there, edited or not, is
+/// kept as it is. Returns the names of the workflows created.
+pub fn install_missing_builtins(talaria_home: &Path) -> Result<Vec<String>, String> {
+    builtins::install(
+        &talaria_home.join("workflows"),
+        builtins::InstallMode::MissingOnly,
+    )
+    .map(|reports| {
+        reports
+            .into_iter()
+            .filter(|report| report.action == builtins::InstallAction::Created)
+            .map(|report| report.name)
+            .collect()
+    })
+    .map_err(|error| error.to_string())
+}
+
 fn read_skill(profile: &str, hermes_home: &Path, talaria_home: &Path) -> SkillCheck {
     let Ok(target) = skill::SkillTarget::resolve_local(profile, hermes_home) else {
         return SkillCheck::Unknown;

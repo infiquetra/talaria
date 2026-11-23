@@ -32,5 +32,6 @@ pub use state::{
     TurnOutcome, TurnState, Usage,
 };
 pub use tool_view::{
-    AskedQuestion, OutcomeView, OutputView, ToolView, format_duration, format_progress, tool_view,
+    AskedQuestion, OutcomeView, OutputView, ToolView, format_duration, format_progress,
+    shorten_middle, tool_view,
 };

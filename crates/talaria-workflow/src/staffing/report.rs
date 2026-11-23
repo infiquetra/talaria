@@ -129,6 +129,9 @@ impl std::fmt::Display for CostEstimate {
                 }
                 Ok(())
             }
+            Self::NeedsTokenBudget { tier_prices } if tier_prices.is_empty() => f.write_str(
+                "no estimate without a token budget; no tiers are set, so there is no price list",
+            ),
             Self::NeedsTokenBudget { tier_prices } => write!(
                 f,
                 "no estimate without a token budget; tier prices: {}",

@@ -179,3 +179,44 @@ fn install_target_does_not_wait_for_the_profile_roster() {
     assert!(!all.contains("gateway not running"), "{all}");
     assert!(gateway.requests("profiles.list").is_empty());
 }
+
+#[test]
+fn the_roster_warns_when_no_builtin_workflow_is_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("hermes");
+    let config = tmp.path().join("talaria");
+    std::fs::create_dir_all(home.join("profiles/fixture")).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_talaria"))
+            .args(args)
+            .env("HERMES_HOME", &home)
+            .env("TALARIA_CONFIG_DIR", &config)
+            .output()
+            .unwrap()
+    };
+    let warnings = |args: &[&str]| -> Vec<String> {
+        let output = run(args);
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        value["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w.as_str().unwrap().to_owned())
+            .collect()
+    };
+    let roster = ["workflow", "roster", "--profile", "fixture", "--json"];
+    let before = warnings(&roster);
+    assert!(
+        before
+            .iter()
+            .any(|w| w.contains("no built-in workflows are installed")
+                && w.contains("talaria workflow builtins install")),
+        "{before:?}"
+    );
+    assert!(run(&["workflow", "builtins", "install"]).status.success());
+    let after = warnings(&roster);
+    assert!(
+        !after.iter().any(|w| w.contains("no built-in workflows")),
+        "{after:?}"
+    );
+}

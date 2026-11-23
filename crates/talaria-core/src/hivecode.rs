@@ -751,11 +751,15 @@ pub mod notice {
     pub fn lock_command(profile: &str) -> String {
         format!("hermes -p {profile} curator lock talaria-workflows")
     }
+    /// The same lock typed inside a Hermes session, where `/curator` runs the curator for that
+    /// session's own profile (`gateway/slash_commands.py::_handle_curator_command`).
+    pub const LOCK_SLASH_COMMAND: &str = "/curator lock talaria-workflows";
     /// The second notice after a changed skill: how to stop Hermes changing it again.
     pub fn skill_lock(profile: &str) -> String {
         format!(
-            "To stop Hermes changing the skill again, run: {}",
-            lock_command(profile)
+            "To stop Hermes changing the skill again, run: {} (or, in a session on that profile, type {})",
+            lock_command(profile),
+            LOCK_SLASH_COMMAND
         )
     }
     /// How many changed files a notice names before it counts the rest.
@@ -812,6 +816,20 @@ pub mod notice {
             ),
             None => format!("Installed Talaria's talaria-workflows skill in profile {profile}."),
         }
+    }
+    /// `/hivecode reinstall` also installed the built-in workflows that were missing.
+    pub fn builtins_installed(names: &[String]) -> String {
+        format!(
+            "Installed built-in workflows: {}.",
+            clipped_reason(&names.join(", "))
+        )
+    }
+    /// The skill went in but the built-in workflows did not.
+    pub fn builtins_failed(reason: &str) -> String {
+        format!(
+            "Could not install the built-in workflows: {} Try: talaria workflow builtins install",
+            clipped_reason(reason)
+        )
     }
     pub fn reinstall_failed(reason: &str) -> String {
         format!(

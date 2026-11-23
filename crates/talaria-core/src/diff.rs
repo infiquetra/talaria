@@ -93,6 +93,13 @@ impl DiffModel {
         stats
     }
 
+    /// True when Hermes cut the diff before showing every row, so the counts are a floor, not a
+    /// total. Hermes words the note in the user's language but always starts it with `… `.
+    #[must_use]
+    pub fn is_partial(&self) -> bool {
+        self.notes.iter().any(|note| note.starts_with("\u{2026} "))
+    }
+
     /// True when there is no file and no note.
     #[must_use]
     pub fn is_empty(&self) -> bool {

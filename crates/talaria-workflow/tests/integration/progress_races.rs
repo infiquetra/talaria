@@ -286,7 +286,10 @@ fn dump_rows_include_launch_duration_and_keep_unknown_cost_explicit() {
     let row = agent_line(agent, 99_000);
     assert!(row.contains("minimax-m3.1-flash on ollama-cloud"), "{row}");
     assert!(row.contains("done · 1.2s"), "{row}");
-    assert!(row.contains("tokens · $0.10"), "{row}");
+    assert!(
+        row.contains("tokens (including cache reads) · $0.10"),
+        "{row}"
+    );
     let unknown = RunProgress::from_records(&lines::manifest(), &lines::cost_lines("unknown"));
     for agent in &unknown.agents {
         let row = agent_line(agent, 99_000);
