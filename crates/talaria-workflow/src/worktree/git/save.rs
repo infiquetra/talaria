@@ -181,8 +181,9 @@ fn unreadable_paths(stderr: &str) -> Vec<String> {
     found
 }
 
-/// Configuration that switches off every clean filter the repository's own configuration
-/// (local, worktree or an included file) names, as `GIT_CONFIG_COUNT` entries added after any
+/// Configuration that switches off every filter driver the repository's own configuration
+/// (local, worktree or an included file) sets any key of, clean, process and required alike,
+/// as `GIT_CONFIG_COUNT` entries added after any
 /// the caller's environment already has. Filters from the user's global or system
 /// configuration, such as Git LFS, still run: they are the user's own programs, and without
 /// them every file they manage would be saved in its raw form. A repository filter is not run,
@@ -197,7 +198,8 @@ fn filter_overrides(folder: &Folder) -> Result<Vec<(String, OsString)>, String> 
             "--show-scope".as_ref(),
             "-z".as_ref(),
             "--get-regexp".as_ref(),
-            r"^filter\..*\.(clean|process)$".as_ref(),
+            // Any setting names a driver: one that sets only `required` still stops the save.
+            r"^filter\.".as_ref(),
         ]),
         &all,
     )?;
@@ -759,5 +761,24 @@ mod tests {
         );
         // The repository's settings are as the agent left them.
         assert_eq!(git(&repo, &["config", "filter.agentfilter.clean"]), program);
+    }
+
+    #[test]
+    fn a_required_filter_with_no_clean_command_does_not_stop_the_save() {
+        let (_temp, repo, tree) = fixture();
+        // Git refuses to add a file whose required filter has no clean command, even with
+        // --ignore-errors, so the whole save would fail.
+        git(&repo, &["config", "filter.x.required", "true"]);
+        git(&repo, &["config", "filter.x.smudge", "cat"]);
+        fs::write(tree.join(".gitattributes"), "* filter=x\n").unwrap();
+        fs::write(tree.join("new.txt"), "raw\n").unwrap();
+        let folder = Folder {
+            path: &tree,
+            env: &[],
+        };
+        let saved = save_in(&folder, "agent-saved", "m").unwrap();
+        let branch = saved.branch.expect("the work is saved");
+        assert!(saved.skipped.is_empty(), "{:?}", saved.skipped);
+        assert_eq!(git(&repo, &["show", &format!("{branch}:new.txt")]), "raw");
     }
 }
