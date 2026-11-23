@@ -73,7 +73,7 @@ const STARTED: i64 = (NOW - 351_000) as i64;
 
 fn clocked(status: &str, clock: Option<RunClock>) -> WorkflowDock<'_> {
     WorkflowDock::new(
-        "galaga-forge",
+        "sample-forge",
         status,
         1,
         4,
@@ -89,13 +89,13 @@ fn a_running_run_shows_a_spinner_and_the_time_since_it_started() {
     let clock = RunClock::of_run(true, STARTED, NOW, 200, Motion::Full);
     assert_eq!(
         text(&clocked("running", clock), 100),
-        ["⠹ Workflow galaga-forge · running 5m51s · 1/4 agents · Alt+W to open"]
+        ["⠹ Workflow sample-forge · running 5m51s · 1/4 agents · Alt+W to open"]
     );
     // The spinner moves with the tick and the time with the wall clock.
     let later = RunClock::of_run(true, STARTED, NOW + 2_000, 280, Motion::Full);
     assert_eq!(
         text(&clocked("running", later), 100),
-        ["⠸ Workflow galaga-forge · running 5m53s · 1/4 agents · Alt+W to open"]
+        ["⠸ Workflow sample-forge · running 5m53s · 1/4 agents · Alt+W to open"]
     );
 }
 
@@ -104,12 +104,12 @@ fn reduced_motion_keeps_the_glyph_still_and_the_seconds_counting() {
     let clock = RunClock::of_run(true, STARTED, NOW, 200, Motion::Reduced);
     assert_eq!(
         text(&clocked("running", clock), 100),
-        ["⚙ Workflow galaga-forge · running 5m51s · 1/4 agents · Alt+W to open"]
+        ["⚙ Workflow sample-forge · running 5m51s · 1/4 agents · Alt+W to open"]
     );
     let later = RunClock::of_run(true, STARTED, NOW + 1_000, 99_999, Motion::Reduced);
     assert_eq!(
         text(&clocked("running", later), 100),
-        ["⚙ Workflow galaga-forge · running 5m52s · 1/4 agents · Alt+W to open"]
+        ["⚙ Workflow sample-forge · running 5m52s · 1/4 agents · Alt+W to open"]
     );
 }
 
@@ -119,7 +119,7 @@ fn an_unknown_start_time_shows_no_time_rather_than_a_wrong_one() {
         let clock = RunClock::of_run(true, started, NOW, 200, Motion::Full);
         assert_eq!(
             text(&clocked("running", clock), 100),
-            ["⠹ Workflow galaga-forge · running · 1/4 agents · Alt+W to open"],
+            ["⠹ Workflow sample-forge · running · 1/4 agents · Alt+W to open"],
             "start {started}"
         );
     }
@@ -145,7 +145,7 @@ fn a_run_that_is_not_running_holds_still() {
         assert_eq!(
             shown,
             [format!(
-                "⚙ Workflow galaga-forge · {} · 1/4 agents · Alt+W to open",
+                "⚙ Workflow sample-forge · {} · 1/4 agents · Alt+W to open",
                 status.replace('_', " ")
             )]
         );
@@ -156,12 +156,12 @@ fn a_run_that_is_not_running_holds_still() {
 fn a_narrow_line_drops_the_hint_then_the_time_and_keeps_the_agent_count() {
     let clock = RunClock::of_run(true, STARTED, NOW, 200, Motion::Full);
     let dock = clocked("running", clock);
-    let full = "⠹ Workflow galaga-forge · running 5m51s · 1/4 agents";
+    let full = "⠹ Workflow sample-forge · running 5m51s · 1/4 agents";
     let width = u16::try_from(full.chars().count()).unwrap();
     assert_eq!(text(&dock, width), [full]);
     assert_eq!(
         text(&dock, width - 1),
-        ["⠹ Workflow galaga-forge · running · 1/4 agents"]
+        ["⠹ Workflow sample-forge · running · 1/4 agents"]
     );
     let tiny = text(&dock, 12);
     assert_eq!(tiny.len(), 1);
