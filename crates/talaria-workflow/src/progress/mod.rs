@@ -1,4 +1,5 @@
 //! Journal-owned rows with optional, non-authoritative live enrichment.
+pub mod agent_session;
 pub mod blobs;
 pub mod control;
 pub mod live;
@@ -87,6 +88,16 @@ impl RunProgress {
     pub fn for_session_mut(&mut self, session: &str) -> Option<&mut AgentNode> {
         let i = *self.sessions.get(session)?;
         self.agents.get_mut(i)
+    }
+    /// The agent whose current attempt is bound to this session id, stored or runtime.
+    pub fn for_session(&self, session: &str) -> Option<&AgentNode> {
+        self.sessions.get(session).map(|i| &self.agents[*i])
+    }
+    /// The agent the journal recorded for a call: its digest and which repeat of it this is.
+    pub fn for_call(&self, digest: &str, occurrence: u32) -> Option<&AgentNode> {
+        self.calls
+            .get(&format!("{digest}#{occurrence}"))
+            .map(|i| &self.agents[*i])
     }
     pub fn bind_runtime(&mut self, stored: &str, runtime: &str) {
         if let Some(i) = self.sessions.get(stored).copied() {

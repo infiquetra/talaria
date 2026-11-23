@@ -96,6 +96,54 @@ impl crate::live::LiveSection for WorkflowDock<'_> {
     }
 }
 
+/// One line above the composer while the open session is a workflow agent's: which agent, how
+/// the run's journal records it, and the key that opens the run.
+pub struct WorkflowAgentDock<'a> {
+    text: &'a str,
+    open_hint: Option<&'a str>,
+    header: Style,
+    hint: Style,
+}
+impl<'a> WorkflowAgentDock<'a> {
+    pub fn new(text: &'a str, open_hint: Option<&'a str>, header: Style, hint: Style) -> Self {
+        Self {
+            text,
+            open_hint,
+            header,
+            hint,
+        }
+    }
+    pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return vec![];
+        }
+        let base =
+            sanitize(&format!("⚙ {}", self.text.replace(['\r', '\n', '\t'], " "))).into_owned();
+        let hint = format!(
+            " · {} opens the run",
+            self.open_hint
+                .map_or_else(|| "/workflows".to_owned(), |key| sanitize(key).into_owned())
+        );
+        if base.width() + hint.width() <= usize::from(width) {
+            return vec![Line::from(vec![
+                Span::styled(base, self.header),
+                Span::styled(hint, self.hint),
+            ])];
+        }
+        vec![Line::styled(cut_to_width(&base, width), self.header)]
+    }
+}
+impl crate::live::LiveSection for WorkflowAgentDock<'_> {
+    fn height(&self, width: u16) -> u16 {
+        u16::try_from(self.lines(width).len()).unwrap_or(u16::MAX)
+    }
+    fn render(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        for (y, line) in (0..area.height).zip(self.lines(area.width)) {
+            buf.set_line(area.x, area.y + y, &line, area.width);
+        }
+    }
+}
+
 /// The block in the workflow dock's place while a routed turn builds a workflow: what it is,
 /// how long it has run, and the step it is on. It holds still: only the seconds change.
 pub struct AuthoringDock<'a> {

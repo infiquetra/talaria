@@ -1542,7 +1542,8 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         profile: (view.profile != "default").then(|| view.profile.to_owned()),
         workflow_run: view
             .workflow_run
-            .map(|run| format!("{}/{} agents", run.agents_finished, run.agents_total_known)),
+            .map(|run| format!("{}/{} agents", run.agents_finished, run.agents_total_known))
+            .or_else(|| view.workflow_agent.map(|note| note.status_text())),
         connection: match view.link {
             LinkView::Connecting => Connection::Connecting,
             LinkView::Connected => Connection::Connected,
@@ -4907,6 +4908,15 @@ impl Screen for TuiScreen {
                 subagent_style.hint,
             )
         });
+        let agent_banner = view.workflow_agent.map(|note| note.banner());
+        let agent_dock = agent_banner.as_deref().map(|text| {
+            talaria_tui::workflow_view::WorkflowAgentDock::new(
+                text,
+                workflow_hint.as_deref(),
+                subagent_style.header,
+                subagent_style.hint,
+            )
+        });
         let workflow = view.workflow_run.map(|run| {
             talaria_tui::workflow_view::WorkflowDock::new(
                 &run.name,
@@ -5031,6 +5041,9 @@ impl Screen for TuiScreen {
             }
             if let Some(workflow) = &workflow {
                 sections.push(workflow);
+            }
+            if let Some(agent_dock) = &agent_dock {
+                sections.push(agent_dock);
             }
             if let Some(side) = &side {
                 sections.push(side);
@@ -6340,6 +6353,26 @@ mod tests {
         let inputs = status_inputs(&state.view(), None);
         assert_eq!(inputs.subagents_active, 9);
         assert_eq!(inputs.subagents_terminal, 0);
+    }
+
+    #[test]
+    fn status_names_the_workflow_agent_when_its_session_is_open() {
+        use talaria_workflow::progress::agent_session::{AgentPhase, AgentSessionNote, Tracking};
+        let note = AgentSessionNote {
+            run_id: "01JB2X9Q4M8Z7K3T5V6W8Y0A1C".into(),
+            run_name: Some("review-branch".into()),
+            label: Some("review:gameplay".into()),
+            phase: Some(AgentPhase::Failed),
+            tracking: Tracking::NotFollowed,
+        };
+        let state = AppState::new("agent-status");
+        let mut view = state.view();
+        assert_eq!(status_inputs(&view, None).workflow_run, None);
+        view.workflow_agent = Some(&note);
+        assert_eq!(
+            status_inputs(&view, None).workflow_run.as_deref(),
+            Some("agent review:gameplay failed (untracked)")
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 pub mod choice;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::future::Future;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -495,6 +495,8 @@ pub struct View<'a> {
     pub hivecode: bool,
     /// The foreground session's active workflow run, for the dock line and the status bar.
     pub workflow_run: Option<&'a talaria_workflow::runner::RunSummary>,
+    /// What the journal says about the foreground session, when it is a workflow agent's.
+    pub workflow_agent: Option<&'a talaria_workflow::progress::agent_session::AgentSessionNote>,
     /// The building block, while a routed turn builds a workflow and no run it started shows.
     pub authoring: Option<talaria_core::hivecode::authoring::AuthoringView>,
 }
@@ -834,6 +836,12 @@ pub struct AppState {
     voice_submissions: BTreeMap<String, String>,
     remembered_notes: BTreeMap<String, String>,
     pub workflow_views: crate::workflow_progress::ProgressViews,
+    /// The open session, when it belongs to a workflow agent.
+    pub(crate) workflow_agent: Option<crate::workflow_agent::WorkflowAgentSession>,
+    /// Stored ids of workflow agent sessions the person has been warned about.
+    workflow_agent_warned: HashSet<String>,
+    /// Where workflow runs live, for finding the run a session's folder names.
+    pub(crate) workflow_runs_dir: PathBuf,
     pub hivecode: crate::hivecode::HivecodeService,
     hivecode_requests: std::collections::HashMap<SessionId, u64>,
     /// Where the per-session switch is saved; none in tests.
@@ -1350,6 +1358,9 @@ impl AppState {
             kanban: None,
             kanban_service: None,
             workflow_views: crate::workflow_progress::ProgressViews::default(),
+            workflow_agent: None,
+            workflow_agent_warned: HashSet::new(),
+            workflow_runs_dir: talaria_workflow::runner::runs_dir(None),
             subagents_usage_active: 0,
             attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
             caret: 0,
@@ -1554,6 +1565,11 @@ impl AppState {
                 self.hivecode
                     .active_run(&SessionId::new(opened.session_id.clone()))
             }),
+            workflow_agent: self
+                .opened
+                .as_ref()
+                .and(self.workflow_agent.as_ref())
+                .map(crate::workflow_agent::WorkflowAgentSession::note),
             authoring: self.opened.as_ref().and_then(|opened| {
                 self.hivecode.authoring_view(
                     &SessionId::new(opened.session_id.clone()),
@@ -4419,6 +4435,11 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects.extend(review_tick(state));
             effects.extend(workflow_tick(state));
+            if let Some(agent) = state.workflow_agent.as_mut()
+                && agent.tick(now_ms)
+            {
+                redraw = true;
+            }
             effects.extend(hivecode_scan(state));
             effects.extend(kanban_input(
                 state,
@@ -7065,11 +7086,20 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             )
         }
         UserAction::WorkflowView => {
-            let run = state.opened.as_ref().and_then(|opened| {
-                state
-                    .hivecode
-                    .tracked(&SessionId::new(opened.session_id.clone()))
-                    .map(|run| run.run_dir.clone())
+            // An agent's own session opens its run's view; the lead session opens the run it
+            // started; any other session opens the run list.
+            let agent_run = state
+                .workflow_agent
+                .as_ref()
+                .filter(|_| state.opened.is_some())
+                .map(|agent| agent.run_dir().to_string_lossy().into_owned());
+            let run = agent_run.or_else(|| {
+                state.opened.as_ref().and_then(|opened| {
+                    state
+                        .hivecode
+                        .tracked(&SessionId::new(opened.session_id.clone()))
+                        .map(|run| run.run_dir.clone())
+                })
             });
             workflow_command(state, run.as_deref().unwrap_or_default())
         }
@@ -9574,6 +9604,12 @@ fn submit_prose(state: &mut AppState, text: String) -> Vec<AppEffect> {
             Err(notice) => vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
         };
     }
+    // A workflow agent's session is not an ordinary conversation: say so once, keep the text.
+    if let Some(agent) = state.workflow_agent.as_mut()
+        && let Some(warning) = agent.first_send_warning(&mut state.workflow_agent_warned)
+    {
+        return vec![notice_lines(&warning), AppEffect::LoadDraft(text)];
+    }
     send_text(state, text)
 }
 
@@ -10579,6 +10615,12 @@ fn opened_session(
         .cd_ledger
         .fences_mut(&session_id)
         .adopt(Some(opened.revision), Some(opened.execution_generation));
+    state.workflow_agent = crate::workflow_agent::WorkflowAgentSession::identify(
+        &opened,
+        &state.workflow_views,
+        &state.workflow_runs_dir,
+        state.now_ms,
+    );
     state.opened = Some(opened);
     if state.client_voice_config.backend == "client-bridge" {
         if !same_session {
@@ -12560,6 +12602,10 @@ fn workflow_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     [
         state.workflow_views.next_tick_ms(),
         state.hivecode.next_scan_ms(),
+        state
+            .workflow_agent
+            .as_ref()
+            .and_then(crate::workflow_agent::WorkflowAgentSession::next_refresh_ms),
     ]
     .into_iter()
     .flatten()
@@ -22362,5 +22408,236 @@ mod background_client_log_tests {
         assert_eq!(seen, "legacy\nsecret\n");
         assert_ne!(disk.metadata().unwrap().ino(), old_ino);
         assert_eq!(mode(&path) & 0o777, 0o600);
+    }
+}
+
+#[cfg(test)]
+mod workflow_agent_session_tests {
+    use super::*;
+    use talaria_workflow::progress::agent_session::{AgentPhase, Tracking};
+
+    const RUN: &str = "01JB2X9Q4M8Z7K3T5V6W8Y0A1C";
+
+    fn digest() -> String {
+        "a".repeat(64)
+    }
+
+    /// A run folder under `runs` whose one agent, `review:gameplay`, is bound to
+    /// `stored-bound` and has failed.
+    fn run_folder(runs: &Path) -> PathBuf {
+        let dir = runs.join(RUN);
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = json!({
+            "v":1,"run_id":RUN,"created_at_ms":1000,
+            "workflow":{"name":"review-branch","script_sha256":"a".repeat(64)},
+            "args":null,"started_at_ms":1,"seed":4242,"profile":"fixture",
+            "on_unknown":"wait","talaria_version":env!("CARGO_PKG_VERSION"), "hermes":{},
+            "roster":{},"approval_policy":{}
+        });
+        std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
+        let key = "8".repeat(32);
+        let records = [
+            json!({"t":"run_started","run_id":RUN,"script_sha256":"a".repeat(64)}),
+            json!({"t":"call_intent","key":key,"attempt":0,
+                "call_id":{"digest":digest(),"occurrence":0},"label":"review:gameplay",
+                "phase":"Verify","workflow_path":[],
+                "launch":{"profile":"fixture","model":"fixture-model","provider":null,
+                "effort":null,"toolsets":[],"skills":[],"max_turns":null,"isolation":null,
+                "cwd":null},"request_id":"wf:fixture"}),
+            json!({"t":"session_bound","key":key,"attempt":0,
+                "session_id":"runtime-bound","stored_session_id":"stored-bound"}),
+            json!({"t":"call_finished","key":key,"attempt":0,
+                "outcome":{"kind":"failed","reason":"context too long"},"turns":1}),
+        ];
+        let mut text = String::new();
+        for (i, mut record) in records.into_iter().enumerate() {
+            record["v"] = 1.into();
+            record["seq"] = (i as u64 + 1).into();
+            record["at_ms"] = (1000 + i as i64).into();
+            text.push_str(&format!("{record}\n"));
+        }
+        std::fs::write(dir.join("journal.jsonl"), text).unwrap();
+        dir
+    }
+
+    fn session(runtime: &str, stored: &str, cwd: Option<String>) -> OpenedSession {
+        OpenedSession {
+            state: SessionState::empty(SessionId::new(runtime)),
+            session_id: runtime.into(),
+            stored_session_id: stored.into(),
+            subscription_id: "subscription".into(),
+            title: None,
+            revision: 0,
+            execution_generation: 0,
+            launch_notices: Vec::new(),
+            effort: None,
+            info: SessionInfoSummary {
+                model: None,
+                provider: None,
+                cwd,
+                branch: None,
+            },
+            cursor: Cursor {
+                replay_epoch: "epoch".into(),
+                last_sequence: 0,
+            },
+        }
+    }
+
+    fn open(state: &mut AppState, runs: &Path, runtime: &str, stored: &str, in_worktree: bool) {
+        state.profile = "fixture".into();
+        state.workflow_runs_dir = runs.to_owned();
+        let cwd = in_worktree.then(|| {
+            runs.join(RUN)
+                .join("worktrees")
+                .join(format!("{}-0", digest()))
+                .to_string_lossy()
+                .into_owned()
+        });
+        let _ = opened_session(state, session(runtime, stored, cwd), None);
+    }
+
+    fn sent(effects: &[AppEffect]) -> bool {
+        effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Send(Effect::SendPrompt { .. })))
+    }
+
+    #[test]
+    fn a_follow_on_session_in_a_run_worktree_is_labelled_untracked() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        let note = state.view().workflow_agent.cloned().expect("labelled");
+        assert_eq!(note.label.as_deref(), Some("review:gameplay"));
+        assert_eq!(note.phase, Some(AgentPhase::Failed));
+        assert_eq!(note.tracking, Tracking::NotFollowed);
+    }
+
+    #[test]
+    fn the_bound_session_is_followed_even_without_a_worktree_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let run = run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        // The folder is not a worktree, so only the loaded run can say whose session this is.
+        let manifest = talaria_workflow::journal::RunDir::open(&run).unwrap();
+        let (lines, offset) = talaria_workflow::journal::JournalReader::read_from(&run, 0).unwrap();
+        let opened_run = crate::workflow_progress::OpenedRun {
+            path: run.clone(),
+            profile: "fixture".into(),
+            state: talaria_workflow::progress::live::ProgressState::new(
+                talaria_workflow::progress::RunProgress::from_records(manifest.manifest(), &lines),
+            ),
+            offset,
+        };
+        workflow_opened(&mut state, Ok(opened_run));
+        open(
+            &mut state,
+            temp.path(),
+            "runtime-bound",
+            "stored-bound",
+            false,
+        );
+        let note = state.view().workflow_agent.cloned().expect("labelled");
+        assert_eq!(note.tracking, Tracking::Followed);
+        assert_eq!(note.phase, Some(AgentPhase::Failed));
+    }
+
+    #[test]
+    fn an_ordinary_session_shows_no_banner_and_sends_at_once() {
+        let mut state = AppState::new("agent-banner");
+        state.profile = "fixture".into();
+        let _ = opened_session(&mut state, session("runtime-1", "stored-1", None), None);
+        assert!(state.view().workflow_agent.is_none());
+        assert!(sent(&submit(&mut state, "hello".into())));
+    }
+
+    #[test]
+    fn the_first_prompt_into_an_agent_session_warns_and_keeps_the_text_then_the_second_sends() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        let first = submit(&mut state, "yes, commit it".into());
+        assert!(!sent(&first), "{first:?}");
+        assert!(
+            first.iter().any(
+                |effect| matches!(effect, AppEffect::LoadDraft(text) if text == "yes, commit it")
+            ),
+            "the typed text must come back: {first:?}"
+        );
+        let warning: Vec<String> = first
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::CommitLines(lines) => Some(lines.join("\n")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(warning.len(), 1, "{first:?}");
+        assert!(warning[0].contains("review:gameplay"), "{warning:?}");
+        assert!(
+            warning[0].contains("does not track this conversation"),
+            "{warning:?}"
+        );
+        assert!(warning[0].contains("Submit again to send."), "{warning:?}");
+        let second = submit(&mut state, "yes, commit it".into());
+        assert!(sent(&second), "{second:?}");
+        let third = submit(&mut state, "and push".into());
+        assert!(sent(&third), "once per session: {third:?}");
+    }
+
+    #[test]
+    fn leaving_and_returning_to_the_session_does_not_warn_again() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(!sent(&submit(&mut state, "one".into())));
+        let _ = opened_session(&mut state, session("runtime-1", "stored-1", None), None);
+        assert!(state.view().workflow_agent.is_none());
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(state.view().workflow_agent.is_some());
+        assert!(sent(&submit(&mut state, "two".into())));
+    }
+
+    #[test]
+    fn the_workflow_key_in_an_agent_session_opens_that_runs_view() {
+        let temp = tempfile::tempdir().unwrap();
+        let run = run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        let effects = update(&mut state, AppMessage::User(UserAction::WorkflowView));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::WorkflowOpen(path) if *path == run)),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn the_banner_follows_the_journal_while_the_agent_runs() {
+        let temp = tempfile::tempdir().unwrap();
+        let run = run_folder(temp.path());
+        // Take the failure back out: the agent is bound and has not finished.
+        let journal = std::fs::read_to_string(run.join("journal.jsonl")).unwrap();
+        let unfinished: Vec<&str> = journal.lines().take(3).collect();
+        std::fs::write(run.join("journal.jsonl"), unfinished.join("\n") + "\n").unwrap();
+        let mut state = AppState::new("agent-banner");
+        state.now_ms = 1_000;
+        open(
+            &mut state,
+            temp.path(),
+            "runtime-bound",
+            "stored-bound",
+            true,
+        );
+        let note = state.view().workflow_agent.cloned().unwrap();
+        assert_eq!(note.phase, Some(AgentPhase::Queued));
+        std::fs::write(run.join("journal.jsonl"), journal).unwrap();
+        let _ = update(&mut state, AppMessage::Tick { now_ms: 4_000 });
+        let note = state.view().workflow_agent.cloned().unwrap();
+        assert_eq!(note.phase, Some(AgentPhase::Failed));
     }
 }
