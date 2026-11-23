@@ -251,7 +251,8 @@ impl GitWorktrees {
         }
     }
 
-    fn prune_if_registered(repo: &Path, folder: &Path) -> Result<(), String> {
+    /// Whether Git's worktree inventory has an entry for `folder` (which may no longer exist).
+    fn registered(repo: &Path, folder: &Path) -> Result<bool, String> {
         let output = run(
             repo,
             &[
@@ -276,7 +277,7 @@ impl GitWorktrees {
             )?;
             legacy_paths(&lines, folder)?
         };
-        let registered = paths.iter().any(|bytes| {
+        Ok(paths.iter().any(|bytes| {
             #[cfg(unix)]
             let path = {
                 use std::os::unix::ffi::OsStringExt;
@@ -285,8 +286,11 @@ impl GitWorktrees {
             #[cfg(not(unix))]
             let path = PathBuf::from(String::from_utf8_lossy(bytes).as_ref());
             canonical(&path).as_deref() == Ok(folder)
-        });
-        if registered {
+        }))
+    }
+
+    fn prune_if_registered(repo: &Path, folder: &Path) -> Result<(), String> {
+        if Self::registered(repo, folder)? {
             checked(repo, &["worktree".as_ref(), "prune".as_ref()])?;
         }
         Ok(())
