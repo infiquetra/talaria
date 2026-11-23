@@ -152,3 +152,89 @@ fn escape_sequences_in_a_stored_line_do_not_reach_the_terminal() {
     let text = talaria(&["workflow", "lessons"], t.path());
     assert!(!out(&text).contains('\u{1b}'), "{:?}", out(&text));
 }
+
+#[test]
+fn lesson_text_may_name_flags() {
+    let t = tempfile::tempdir().unwrap();
+    for args in [
+        &["--run", "r1", "pass", "--cwd", "to", "check", "too"][..],
+        &["--run", "r1", "--budget-usd", "needs", "a", "yes"][..],
+        &["--run", "r1", "the", "--run", "flag", "names", "a", "run"][..],
+        &["--run", "r1", "--", "-x", "is", "not", "a", "flag"][..],
+    ] {
+        let mut full = vec!["workflow", "lessons", "add"];
+        full.extend(args);
+        let add = talaria(&full, t.path());
+        assert!(add.status.success(), "{args:?}: {}", err(&add));
+    }
+    let stored = fs::read_to_string(t.path().join("cfg/lessons.txt")).unwrap();
+    let texts: Vec<_> = stored
+        .lines()
+        .map(|l| l.split_once(": ").unwrap().1)
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "pass --cwd to check too",
+            "--budget-usd needs a yes",
+            "the --run flag names a run",
+            "-x is not a flag"
+        ]
+    );
+}
+
+#[test]
+fn a_long_notes_file_shows_the_newest_fifty_and_counts_the_rest() {
+    let t = tempfile::tempdir().unwrap();
+    fs::create_dir_all(t.path().join("cfg")).unwrap();
+    let text: String = (1..=53)
+        .map(|n| format!("2026-11-23 run r{n}: lesson {n}\n"))
+        .collect();
+    fs::write(t.path().join("cfg/lessons.txt"), text).unwrap();
+    let shown = out(&talaria(&["workflow", "lessons"], t.path()));
+    let lines: Vec<_> = shown.lines().collect();
+    assert_eq!(lines.len(), 52, "{shown}");
+    assert_eq!(
+        lines[1],
+        "3 older entries are not shown; `workflow lessons --all` prints every entry."
+    );
+    assert!(lines[2].ends_with("lesson 4"), "{shown}");
+    assert!(lines[51].ends_with("lesson 53"), "{shown}");
+    let every = out(&talaria(&["workflow", "lessons", "--all"], t.path()));
+    assert_eq!(every.lines().count(), 54, "{every}");
+    assert!(!every.contains("older"), "{every}");
+    let json: Value =
+        serde_json::from_str(&out(&talaria(&["workflow", "lessons", "--json"], t.path()))).unwrap();
+    assert_eq!(json["entries"].as_array().unwrap().len(), 50);
+    assert_eq!(json["older_entries"], 3);
+    assert_eq!(json["entries"][0]["run"], "r4");
+    let json: Value = serde_json::from_str(&out(&talaria(
+        &["workflow", "lessons", "--json", "--all"],
+        t.path(),
+    )))
+    .unwrap();
+    assert_eq!(json["entries"].as_array().unwrap().len(), 53);
+    assert_eq!(json["older_entries"], 0);
+}
+
+#[test]
+fn a_relative_configuration_folder_is_refused_and_writes_nothing() {
+    let t = tempfile::tempdir().unwrap();
+    for config in [None, Some("relative-cfg")] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_talaria"));
+        command
+            .args(["workflow", "lessons", "add", "--run", "r1", "x"])
+            .env_clear()
+            .env("HERMES_HOME", t.path().join("no-hermes"))
+            .current_dir(t.path());
+        if let Some(config) = config {
+            command.env("TALARIA_CONFIG_DIR", config);
+        }
+        let add = command.output().unwrap();
+        assert_eq!(add.status.code(), Some(1), "{config:?}: {}", err(&add));
+        assert!(err(&add).contains("relative path"), "{}", err(&add));
+        assert!(err(&add).contains("nothing was written"), "{}", err(&add));
+    }
+    assert!(!t.path().join(".talaria").exists());
+    assert!(!t.path().join("relative-cfg").exists());
+}
