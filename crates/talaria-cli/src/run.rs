@@ -1247,9 +1247,9 @@ fn agent_back_action(keymap: &KeyMap, key: &Key, gate: AgentBackGate) -> Option<
 /// Plain Esc counts as the interrupt key even when the action is bound elsewhere, because vim
 /// normal mode interrupts on Esc whatever the binding is.
 ///
-/// A repeat the terminal reports as a repeat neither arms nor confirms. A terminal that sends a
-/// held key as plain presses is not covered: there, holding the key past the repeat delay is a
-/// second press.
+/// A repeat the terminal reports as a repeat is dropped here. A terminal that sends a held key as
+/// plain presses reaches the application's timer, which treats a further press within the settle
+/// time of the second as a held key and interrupts nothing.
 fn interrupt_key_actions(keymap: &KeyMap, key: &Key, actions: Vec<UserAction>) -> Vec<UserAction> {
     let plain_esc = key.code == KeyCode::Esc && !key.mods.ctrl && !key.mods.alt;
     if !plain_esc && keymap.resolve(key, KeyContext::Composer) != Some(Action::Interrupt) {

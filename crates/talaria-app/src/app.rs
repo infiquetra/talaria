@@ -4474,7 +4474,7 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             refresh_fleet_warning_count(state);
             let delta = Duration::from_millis(now_ms.saturating_sub(state.voice_last_tick_ms));
             state.voice_last_tick_ms = now_ms;
-            let mut effects = Vec::new();
+            let mut effects = settled_interrupt(state);
             for session in state.voice.session_ids() {
                 effects.extend(voice_input(
                     state,
@@ -7397,17 +7397,17 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             // The voice cutoff and an interrupt already in flight take the key as they always did.
             let voice_cutoff =
                 state.uses_client_voice() && state.client_voice.active() && state.opened.is_some();
-            let confirmed = if turn_running(state) && !state.interrupting && !voice_cutoff {
-                state.interrupt_confirm.press(state.now_ms) == InterruptPress::Confirmed
+            // A second press whose settle time has passed is interrupted before this press counts.
+            let mut effects = settled_interrupt(state);
+            if turn_running(state) && !state.interrupting && !voice_cutoff {
+                // Only the settle tick interrupts: a second press waits to see whether the key
+                // is held.
+                let _: InterruptPress = state.interrupt_confirm.press(state.now_ms);
             } else {
                 state.interrupt_confirm.reset();
-                true
-            };
-            if confirmed {
-                user_action(state, UserAction::Interrupt)
-            } else {
-                Vec::new()
+                effects.extend(user_action(state, UserAction::Interrupt));
             }
+            effects
         }
         UserAction::Quit => {
             state.quitting = true;
@@ -7676,6 +7676,18 @@ fn paste(state: &mut AppState, text: String, draft: String, caret: usize) -> Vec
         })
         .collect();
     attachment_effects(effects)
+}
+
+/// Run the interrupt key's timer at the application clock. When a second press has settled with
+/// no further press, interrupt the turn as the Interrupt action does. The timer is reset when a
+/// turn ends or the open session changes, so a press whose turn or session is gone is dropped
+/// here and nothing else is interrupted.
+fn settled_interrupt(state: &mut AppState) -> Vec<AppEffect> {
+    if state.interrupt_confirm.tick(state.now_ms) && turn_running(state) && !state.interrupting {
+        user_action(state, UserAction::Interrupt)
+    } else {
+        Vec::new()
+    }
 }
 
 /// Keys in the foreground: an open palette takes Enter and Esc before the composer and the
@@ -12725,10 +12737,11 @@ fn notice_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     executor.started.checked_add(Duration::from_millis(due))
 }
 
-/// When the working row's "press again to interrupt" hint ends, so it is drawn plain again on
-/// time with no key pressed.
+/// When the interrupt key's timer next changes: a pending press settles into an interrupt, the
+/// "press again to interrupt" hint ends, or a held key is over. The loop wakes then with no key
+/// pressed.
 fn interrupt_hint_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
-    let due = state.interrupt_confirm.expires_at()?;
+    let due = state.interrupt_confirm.next_deadline()?;
     executor.started.checked_add(Duration::from_millis(due))
 }
 
@@ -16954,7 +16967,8 @@ async fn run_inner<S: Screen>(
         let deadline = earliest_of([deadline, voice_due]);
         let deadline = earliest_of([deadline, state.attachments.next_deadline()]);
         let deadline = earliest_of([deadline, state.automation_deadline]);
-        let deadline = earliest_of([deadline, interrupt_hint_wake(&state, &executor)]);
+        let interrupt_due = interrupt_hint_wake(&state, &executor);
+        let deadline = earliest_of([deadline, interrupt_due]);
         let deadline = earliest_of([deadline, state.configure_tick_at]);
         let provider_deadline = talaria_core::providers::next_deadline(&state.providers);
         let deadline = earliest_of([deadline, provider_deadline]);
@@ -17010,8 +17024,7 @@ async fn run_inner<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
-                state.interrupt_confirm.expire(state.now_ms);
-                if voice_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || notice_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || queue_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
+                if voice_due.is_some_and(|due| due <= now) || interrupt_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || notice_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || queue_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
                     redraw |= apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
