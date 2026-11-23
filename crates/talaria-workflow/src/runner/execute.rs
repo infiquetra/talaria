@@ -1094,6 +1094,8 @@ async fn execute_inner(
         .push(tokio::spawn(count_live_usage(feed, scheduler.clone())));
     drop(tx);
     let mut labels = BTreeMap::<CallId, String>::new();
+    // Calls that run in their own worktree: only theirs can name a branch their work was saved to.
+    let mut isolated = BTreeSet::<CallId>::new();
     let mut engine_outcome = None;
     let mut stopping: Option<futures::future::BoxFuture<'static, Vec<String>>> = None;
     let mut stopped = None;
@@ -1119,6 +1121,7 @@ async fn execute_inner(
                         EngineEvent::Phase{title,..}=>(output.out)(&RunnerEvent::Phase{title}),
                         EngineEvent::Log{message,..}=>(output.out)(&RunnerEvent::Log{message}),
                         EngineEvent::AgentStarted{request,..}=>{
+                            if request.isolation==Some(crate::engine::Isolation::Worktree){isolated.insert(request.call_id.clone());}
                             labels.insert(request.call_id,request.label.clone());
                             (output.out)(&RunnerEvent::AgentStarted{label:request.label,model:request.model.unwrap_or_else(||request.tier.map_or_else(||"profile default".into(),|tier|format!("tier:{tier}"))),provider:request.provider.unwrap_or_else(||"profile default".into())});
                         }
@@ -1130,7 +1133,7 @@ async fn execute_inner(
                         }
                         EngineEvent::AgentFinished{call_id,outcome,..}=>{
                             let label=labels.remove(&call_id).unwrap_or_default();
-                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::CutShort{steps,limit,saved_branch}=>{let reason=CutShort{steps,limit,saved_branch:None}.describe();let kept=saved_branch.as_ref().map(|b|format!("; its uncommitted work was saved to branch {b}")).unwrap_or_default();output.diagnostic(format!("agent {label}: {reason}; its reply was kept{kept}"));cut_short_agents.push(AgentNote{label:label.clone(),reason:reason.clone(),saved_branch});"cut short"},OutcomeKind::Failed{reason}=>{output.diagnostic(reason.clone());let saved_branch=crate::worktree::saved_branch_in(&reason);failed_agents.push(AgentNote{label:label.clone(),reason,saved_branch});"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
+                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::CutShort{steps,limit,saved_branch}=>{let reason=CutShort{steps,limit,saved_branch:None}.describe();let kept=saved_branch.as_ref().map(|b|format!("; its uncommitted work was saved to branch {b}")).unwrap_or_default();output.diagnostic(format!("agent {label}: {reason}; its reply was kept{kept}"));cut_short_agents.push(AgentNote{label:label.clone(),reason:reason.clone(),saved_branch});"cut short"},OutcomeKind::Failed{reason}=>{output.diagnostic(reason.clone());let saved_branch=crate::worktree::own_saved_branch_in(&reason,dir.run_id().as_str(),&call_id,isolated.contains(&call_id));failed_agents.push(AgentNote{label:label.clone(),reason,saved_branch});"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
                             (output.out)(&RunnerEvent::AgentFinished{label,state:state.into()});
                         }
                         _=>{},

@@ -336,24 +336,54 @@ fn unmerged(repo: &Path, tip: &str) -> Result<usize, String> {
     .and_then(|n| n.parse::<usize>().map_err(|e| e.to_string()))
 }
 
-/// When the branch `reference` was created, in seconds, from the oldest entry of its reflog.
-/// `None` when the repository keeps no reflog for it.
-fn reflog_created(repo: &Path, reference: &str) -> Option<i64> {
-    let log = text(
+/// What a branch's reflog says about when the branch was made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Creation {
+    /// The oldest entry records the branch's creation (its old object id is all zeros), at
+    /// this time in seconds.
+    At(i64),
+    /// The oldest entry left records a later update: older entries expired or were removed.
+    Expired,
+    /// The repository keeps no reflog entries for the branch, or reflog files Talaria can read:
+    /// the reftable format keeps no `logs/` files, so its branches land here.
+    Unknown,
+}
+
+/// When the branch `name` was created, from the first line of its reflog file. Only a line
+/// whose old object id is all zeros is a creation; any other first line means the creation
+/// entry is gone, so the branch may be older than any time the reflog still shows.
+fn reflog_creation(repo: &Path, name: &str) -> Creation {
+    let Ok(file) = text(
         repo,
         &[
-            "reflog".as_ref(),
-            "show".as_ref(),
-            "--date=unix".as_ref(),
-            "--format=%gd".as_ref(),
-            reference.as_ref(),
-            "--".as_ref(),
+            "rev-parse".as_ref(),
+            "--path-format=absolute".as_ref(),
+            "--git-path".as_ref(),
+            format!("logs/refs/heads/{name}").as_ref(),
         ],
-    )
-    .ok()?;
-    let oldest = log.lines().last()?;
-    let (_, stamp) = oldest.rsplit_once("@{")?;
-    stamp.strip_suffix('}')?.parse().ok()
+    ) else {
+        return Creation::Unknown;
+    };
+    let Ok(log) = fs::read(&file) else {
+        return Creation::Unknown;
+    };
+    let Some(first) = log
+        .split(|b| *b == b'\n')
+        .find(|line| !line.is_empty())
+        .map(String::from_utf8_lossy)
+    else {
+        return Creation::Unknown;
+    };
+    // `<old> <new> <name> <email> <seconds> <zone>\t<message>`
+    let entry = first.split('\t').next().unwrap_or_default();
+    let old = entry.split(' ').next().unwrap_or_default();
+    let mut fields = entry.rsplit(' ');
+    let seconds = fields.nth(1).and_then(|s| s.parse::<i64>().ok());
+    match seconds {
+        Some(seconds) if !old.is_empty() && old.bytes().all(|b| b == b'0') => Creation::At(seconds),
+        Some(_) => Creation::Expired,
+        None => Creation::Unknown,
+    }
 }
 
 impl GitWorktrees {
@@ -718,26 +748,38 @@ impl GitWorktrees {
             let reference = format!("refs/heads/{agent}");
             // The run's own branch was made when its worktree was; the sidecar file is no
             // older than that.
-            let since = reflog_created(repo, &recorded).or_else(|| {
-                sidecar
+            let since = match reflog_creation(repo, &report.branch) {
+                Creation::At(at) => Some(at),
+                _ => sidecar
                     .metadata()
                     .and_then(|meta| meta.modified())
                     .ok()
                     .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
-                    .and_then(|at| i64::try_from(at.as_secs()).ok())
-            });
-            let made_in_run = since
-                .zip(reflog_created(repo, &reference))
-                .is_some_and(|(since, created)| created >= since);
-            if !made_in_run {
-                plan.kept.push(format!(
-                    "branch {agent} kept: Talaria cannot tell that an agent of this run created it"
-                ));
-            } else {
-                match unmerged(repo, &reference)? {
+                    .and_then(|at| i64::try_from(at.as_secs()).ok()),
+            };
+            // A branch counts as made in the run only when its reflog still holds its creation,
+            // dated no earlier than the run's own branch. Otherwise it may have existed before.
+            let unsure = match (reflog_creation(repo, agent), since) {
+                (Creation::At(created), Some(since)) if created >= since => None,
+                (Creation::At(_), Some(_)) => {
+                    Some("its reflog shows it was created before this run's worktree")
+                }
+                (Creation::At(_), None) => {
+                    Some("Talaria cannot tell when this run's worktree was made")
+                }
+                (Creation::Expired, _) => Some(
+                    "its reflog no longer holds its creation (older entries expired), so Talaria cannot tell that an agent of this run created it",
+                ),
+                (Creation::Unknown, _) => Some(
+                    "Talaria can read no reflog entry for it, so it cannot tell that an agent of this run created it",
+                ),
+            };
+            match unsure {
+                Some(why) => plan.kept.push(format!("branch {agent} kept: {why}")),
+                None => match unmerged(repo, &reference)? {
                     0 => plan.agent_branch = Some(agent.clone()),
                     count => plan.kept.push(kept(agent, count)),
-                }
+                },
             }
         }
         Ok(plan)
@@ -1213,11 +1255,54 @@ mod tests {
             entry
                 .kept_branches
                 .join(" ")
-                .contains("branch older-feature kept: Talaria cannot tell"),
+                .contains("branch older-feature kept: its reflog shows it was created before"),
             "{entry:?}"
         );
         assert!(GitWorktrees::branch_exists(&f.repo, "older-feature").unwrap());
         assert!(!tree.exists() && !f.sidecar(0).exists());
+    }
+
+    #[test]
+    fn a_branch_whose_reflog_expired_before_the_run_is_never_deleted() {
+        let f = fixture();
+        // An old branch whose reflog Git has since expired, so its creation entry is gone.
+        git(&f.repo, &["branch", "old-release"]);
+        git(
+            &f.repo,
+            &["reflog", "expire", "--expire=now", "refs/heads/old-release"],
+        );
+        let tree = f.tree(0);
+        // During the run an agent moves it forward: its only reflog entry is now dated inside
+        // the run, but it records an update, not a creation.
+        git(&tree, &["switch", "old-release"]);
+        commit(&tree, "release-fix.txt");
+        git(&f.repo, &["merge", "--ff-only", "old-release"]);
+        for dry_run in [true, false] {
+            let entry = f.provider.clean_up(false, dry_run).unwrap().remove(0);
+            assert_eq!(
+                entry.deleted_branches,
+                vec![f.branch(0)],
+                "dry run {dry_run}: {entry:?}"
+            );
+            assert!(
+                entry.kept_branches.join(" ").contains(
+                    "branch old-release kept: its reflog no longer holds its creation (older entries expired)"
+                ),
+                "{entry:?}"
+            );
+        }
+        assert!(GitWorktrees::branch_exists(&f.repo, "old-release").unwrap());
+        assert!(!tree.exists());
+        // A branch the agent made during the run still goes, as before.
+        let other = f.tree(1);
+        git(&other, &["switch", "-c", "agent-new"]);
+        commit(&other, "new.txt");
+        git(&f.repo, &["merge", "--ff-only", "agent-new"]);
+        let entry = f.provider.clean_up(false, false).unwrap().remove(0);
+        assert!(
+            entry.deleted_branches.contains(&"agent-new".to_string()),
+            "{entry:?}"
+        );
     }
 
     #[test]

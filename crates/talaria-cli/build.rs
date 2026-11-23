@@ -65,33 +65,46 @@ fn main() {
         "cargo:rustc-env=TALARIA_BUILD_TREE={}",
         tree.unwrap_or("unknown")
     );
-    // Run again when the checked-out commit, the staged state or a source file changes, and
-    // not otherwise. Only paths that exist are named: a missing one would rerun every build.
+    for path in watched(&root, commit.is_some()) {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+/// The paths whose change makes the build script run again: the checked-out commit (`HEAD` and
+/// the branch reference it names, loose or packed) and the source files, and nothing else. Only
+/// paths that exist are named, because a missing one would rerun every build.
+///
+/// The index is not watched. Staging a file changes neither the commit nor whether tracked
+/// files differ from it, and Git and editors rewrite the index for many other reasons. A
+/// change to a tracked file is seen through the source paths; a commit through the reference.
+///
+/// A repository using the reftable reference format keeps no loose reference files or
+/// `packed-refs`, and its `HEAD` file never changes, so a new commit there does not rerun this
+/// script: the recorded commit then stays at the one built before, until a source file changes.
+pub(crate) fn watched(root: &Path, commit_known: bool) -> Vec<PathBuf> {
     let mut watched = vec![
         root.join("crates"),
         root.join("Cargo.toml"),
         root.join("Cargo.lock"),
     ];
-    if commit.is_some() {
-        for args in [
-            &["rev-parse", "--path-format=absolute", "--git-path", "HEAD"][..],
-            &["rev-parse", "--path-format=absolute", "--git-path", "index"][..],
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"][..],
-        ] {
-            if let Some(path) = git(&root, args) {
-                let path = PathBuf::from(path);
-                if args.last() == Some(&"--git-common-dir") {
-                    watched.push(path.join("packed-refs"));
-                    if let Some(reference) = git(&root, &["symbolic-ref", "-q", "HEAD"]) {
-                        watched.push(path.join(reference));
-                    }
-                } else {
-                    watched.push(path);
-                }
+    if commit_known {
+        if let Some(head) = git(
+            root,
+            &["rev-parse", "--path-format=absolute", "--git-path", "HEAD"],
+        ) {
+            watched.push(PathBuf::from(head));
+        }
+        if let Some(common) = git(
+            root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        ) {
+            let common = PathBuf::from(common);
+            watched.push(common.join("packed-refs"));
+            if let Some(reference) = git(root, &["symbolic-ref", "-q", "HEAD"]) {
+                watched.push(common.join(reference));
             }
         }
     }
-    for path in watched.iter().filter(|p| p.exists()) {
-        println!("cargo:rerun-if-changed={}", path.display());
-    }
+    watched.retain(|p| p.exists());
+    watched
 }

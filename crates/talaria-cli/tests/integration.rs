@@ -12,6 +12,8 @@ mod attach_cli;
 mod bench_replay;
 #[path = "integration/bg_cmd.rs"]
 mod bg_cmd;
+#[path = "integration/build_stamp.rs"]
+mod build_stamp;
 #[path = "integration/capabilities_cmd.rs"]
 mod capabilities_cmd;
 #[path = "integration/cli.rs"]

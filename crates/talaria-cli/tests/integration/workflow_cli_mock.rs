@@ -831,7 +831,7 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
         "completed_with_failures",
         &format!("{} tokens", finished["spend"]["tokens"]),
         &format!("{} turn", finished["spend"]["cache_unknown_turns"]),
-        "talaria workflow resume --json --runs-dir ",
+        "talaria workflow result --json --runs-dir ",
     ] {
         assert!(last.contains(part), "{part} missing from {last}");
     }
@@ -846,7 +846,7 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
     let default_last = default_text.lines().last().unwrap();
     let default_id = run_finished(&default_run.stdout)["run_id"].as_str().unwrap().to_owned();
     assert!(
-        default_last.ends_with(&format!("Full result: talaria workflow resume --json {default_id}")),
+        default_last.ends_with(&format!("Full result: talaria workflow result --json {default_id}")),
         "{default_last}"
     );
     // A replay prints the same shape, and the plain-text mode adds nothing.
@@ -957,9 +957,9 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
         )),
         "{shown}"
     );
-    // The agent ran without isolation, so the report says plainly that nothing is missing.
+    // The agent ran without isolation, so the report says nothing was saved and claims no edit.
     assert!(
-        shown.contains("Folders agents edited directly, without worktree isolation (their edits are already there; nothing was saved or lost):\n"),
+        shown.contains("Folders agents ran in without worktree isolation (anything they changed is already there; nothing was saved):\n"),
         "{shown}"
     );
     assert!(shown.contains(": review\nResult:\n"), "{shown}");
@@ -992,7 +992,7 @@ fn work_found_on_a_moved_route_is_printed_live_and_listed_before_the_result() {
     for part in ["agent review", "session session", "new stored session session-2", "cancelled 1 turn(s)"] {
         assert!(entry.contains(part), "{part} missing from {entry}");
     }
-    // The failed agent ran without isolation: its folder is named as edited in place.
+    // The failed agent ran without isolation: its folder is named as one it ran in.
     let leftovers = finished["leftover_edits"].as_array().unwrap();
     assert!(leftovers.iter().all(|f| f["in_place"] == true), "{finished}");
     // After the failed agents, before the result.
@@ -1088,7 +1088,7 @@ fn an_agent_stopped_at_its_step_cap_keeps_its_reply_and_is_marked_everywhere() {
     );
     assert_eq!(plain.status.code(), Some(0));
     assert!(
-        text(&plain.stdout).contains("Cut short agents:\n  review: cut short (60 of 60 steps)\nFolders agents edited directly"),
+        text(&plain.stdout).contains("Cut short agents:\n  review: cut short (60 of 60 steps)\nFolders agents ran in without worktree isolation"),
         "{}",
         text(&plain.stdout)
     );

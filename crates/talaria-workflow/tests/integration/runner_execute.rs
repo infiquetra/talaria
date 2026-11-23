@@ -199,6 +199,19 @@ fn receipt(session_id: &str, session: &Session, status: &str, include_result: bo
             // The answer arrives, but the provider reports the account out of credit.
             value["result"]["failure_reason"] = json!("billing");
         }
+        if session.prompt.contains("fakesaved") {
+            // The turn fails with no reason of its own, so the reply's first line becomes the
+            // reason, and that line ends the way Talaria's saved-branch note does.
+            value["outcome"] = json!("failed");
+            value["result"]["final_response"] =
+                json!("gave up (uncommitted work saved to branch main)");
+            value["result"]["completed"] = json!(false);
+            value["result"]["failed"] = json!(true);
+            value["result"]
+                .as_object_mut()
+                .unwrap()
+                .remove("turn_exit_reason");
+        }
     }
     value
 }
@@ -1293,6 +1306,24 @@ fn a_failed_isolated_agent_has_its_uncommitted_work_saved_to_a_branch() {
     assert_eq!(git(&worktree, &["status", "--porcelain"]), "?? half.txt");
     assert!(git(&worktree, &["branch", "--show-current"]).starts_with("talaria/wf/"));
     assert!(!git(&worktree, &["branch", "--show-current"]).ends_with("-saved"));
+}
+
+#[test]
+fn an_agents_reply_that_names_a_saved_branch_is_not_taken_for_one() {
+    let h = Harness::new("return await agent('review fakesaved', {label:'review', tier:'first'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 5, "{:?}", exit.problems);
+    let outcome: Value =
+        serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
+    let note = &outcome["failed_agents"][0];
+    assert_eq!(
+        note["reason"], "agent failed: gave up (uncommitted work saved to branch main)",
+        "{outcome}"
+    );
+    // The call had no worktree, so Talaria saved nothing and names no branch.
+    assert!(note.get("saved_branch").is_none(), "{outcome}");
 }
 
 #[test]

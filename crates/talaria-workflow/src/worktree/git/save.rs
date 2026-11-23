@@ -73,16 +73,198 @@ fn identity_configured(folder: &Folder) -> bool {
         })
 }
 
+/// What one save did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SavedWork {
+    /// The branch that holds the snapshot, or `None` when nothing git could read differs from
+    /// the folder's HEAD.
+    pub branch: Option<String>,
+    /// Paths git could not read (a file it may not open, a folder it may not list, a nested
+    /// repository with no commit). They are not in the snapshot and stay in the folder.
+    pub skipped: Vec<String>,
+}
+
+/// How many skipped paths a saved commit's message names; the rest are counted.
+const SKIPPED_IN_MESSAGE: usize = 50;
+/// How many skipped paths a journal note names; the rest are counted.
+const SKIPPED_IN_NOTE: usize = 5;
+
+impl SavedWork {
+    /// A plain clause naming the paths git could not read, or `None` when there are none.
+    pub fn skipped_note(&self) -> Option<String> {
+        if self.skipped.is_empty() {
+            return None;
+        }
+        let n = self.skipped.len();
+        Some(format!(
+            "git could not read {n} path{}, which {} not saved and {} still in the worktree: {}",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "is" } else { "are" },
+            if n == 1 { "is" } else { "are" },
+            listed(&self.skipped, SKIPPED_IN_NOTE, ", ")
+        ))
+    }
+}
+
+/// The first `shown` of `paths`, control characters escaped, then a count of the rest.
+fn listed(paths: &[String], shown: usize, separator: &str) -> String {
+    let mut text = paths
+        .iter()
+        .take(shown)
+        .map(|path| {
+            path.chars()
+                .flat_map(|c| {
+                    if c.is_control() {
+                        c.escape_default().collect::<Vec<_>>()
+                    } else {
+                        vec![c]
+                    }
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(separator);
+    if paths.len() > shown {
+        text.push_str(&format!("{separator}and {} more", paths.len() - shown));
+    }
+    text
+}
+
+/// The paths `git add --ignore-errors` reports it could not read, from its untranslated
+/// error output: "error: unable to index file '<path>'" and "warning: could not open directory
+/// '<path>/'". A name can hold a newline, so a path ends at a quote that closes its line and is
+/// followed by the next message or the end.
+fn unreadable_paths(stderr: &str) -> Vec<String> {
+    const OPENINGS: [&str; 2] = [
+        "error: unable to index file '",
+        "warning: could not open directory '",
+    ];
+    let mut found = Vec::new();
+    let mut rest = stderr;
+    while let Some((at, opening)) = OPENINGS
+        .iter()
+        .filter_map(|opening| rest.find(opening).map(|at| (at, *opening)))
+        .min()
+    {
+        let after = &rest[at + opening.len()..];
+        let mut end = None;
+        let mut from = 0;
+        while let Some(quote) = after[from..].find('\'') {
+            let quote = from + quote;
+            let tail = &after[quote + 1..];
+            let line_end = tail.find('\n').unwrap_or(tail.len());
+            let next = tail.get(line_end + 1..).unwrap_or("");
+            // The directory warning goes on after the quote (": Permission denied").
+            let closes = if opening.starts_with("warning") {
+                tail.starts_with(": ")
+            } else {
+                line_end == 0
+            };
+            if closes
+                && (next.is_empty()
+                    || ["error: ", "warning: ", "fatal: "]
+                        .iter()
+                        .any(|p| next.starts_with(p)))
+            {
+                end = Some(quote);
+                break;
+            }
+            from = quote + 1;
+        }
+        let Some(end) = end else { break };
+        let path = after[..end].trim_end_matches('/');
+        if !path.is_empty() && !found.iter().any(|p| p == path) {
+            found.push(path.to_owned());
+        }
+        rest = &after[end..];
+    }
+    found
+}
+
+/// Configuration that switches off every clean filter the repository's own configuration
+/// (local, worktree or an included file) names, as `GIT_CONFIG_COUNT` entries added after any
+/// the caller's environment already has. Filters from the user's global or system
+/// configuration, such as Git LFS, still run: they are the user's own programs, and without
+/// them every file they manage would be saved in its raw form. A repository filter is not run,
+/// so a file it manages is saved as it is in the folder.
+fn filter_overrides(folder: &Folder) -> Result<Vec<(String, OsString)>, String> {
+    let mut all = folder.env.to_vec();
+    all.push(("LC_ALL", OsStr::new("C")));
+    let output = run_with(
+        folder.path,
+        &hardened(&[
+            "config".as_ref(),
+            "--show-scope".as_ref(),
+            "-z".as_ref(),
+            "--get-regexp".as_ref(),
+            r"^filter\..*\.(clean|process)$".as_ref(),
+        ]),
+        &all,
+    )?;
+    // Exit status 1 means no such setting.
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Err(format!(
+            "cannot read the repository's filter settings: {}",
+            reason(&output)
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let fields: Vec<&str> = text.split('\0').collect();
+    let mut drivers: Vec<String> = Vec::new();
+    for pair in fields.chunks(2) {
+        let [scope, entry] = pair else { continue };
+        if matches!(*scope, "global" | "system" | "command") {
+            continue;
+        }
+        let key = entry.split('\n').next().unwrap_or_default();
+        let Some(driver) = key
+            .strip_prefix("filter.")
+            .and_then(|rest| rest.rsplit_once('.'))
+            .map(|(driver, _)| driver.to_owned())
+        else {
+            continue;
+        };
+        if !drivers.contains(&driver) {
+            drivers.push(driver);
+        }
+    }
+    let from = folder
+        .env
+        .iter()
+        .find(|(name, _)| *name == "GIT_CONFIG_COUNT")
+        .map(|(_, value)| value.to_os_string())
+        .or_else(|| std::env::var_os("GIT_CONFIG_COUNT"))
+        .and_then(|value| value.to_str().and_then(|v| v.trim().parse::<usize>().ok()))
+        .unwrap_or(0);
+    let mut env = Vec::new();
+    let mut number = from;
+    for driver in &drivers {
+        for (variable, value) in [("clean", ""), ("process", ""), ("required", "false")] {
+            env.push((
+                format!("GIT_CONFIG_KEY_{number}"),
+                OsString::from(format!("filter.{driver}.{variable}")),
+            ));
+            env.push((format!("GIT_CONFIG_VALUE_{number}"), OsString::from(value)));
+            number += 1;
+        }
+    }
+    if number > from {
+        env.push((
+            "GIT_CONFIG_COUNT".into(),
+            OsString::from(number.to_string()),
+        ));
+    }
+    Ok(env)
+}
+
 /// Save `folder`'s uncommitted changes, tracked and untracked (ignored files stay out), as a
 /// commit on a new branch named `branch` (or `branch-2`, `branch-3` and so on when that name is
-/// taken by other work). Returns the branch name, or `None` when there is nothing to save.
-/// When a branch of that series already holds exactly this work on this HEAD, its name is
-/// returned and nothing new is made.
-pub fn save_uncommitted(
-    folder: &Path,
-    branch: &str,
-    message: &str,
-) -> Result<Option<String>, String> {
+/// taken by other work). The branch is `None` when there is nothing to save. When a branch of
+/// that series already holds exactly this work on this HEAD, its name is returned and nothing
+/// new is made. A path git cannot read is left out, named in the commit's message and in
+/// [`SavedWork::skipped`], and everything else is still saved; only a snapshot that cannot be
+/// written at all fails the save.
+pub fn save_uncommitted(folder: &Path, branch: &str, message: &str) -> Result<SavedWork, String> {
     save_in(
         &Folder {
             path: folder,
@@ -93,7 +275,7 @@ pub fn save_uncommitted(
     )
 }
 
-fn save_in(folder: &Folder, branch: &str, message: &str) -> Result<Option<String>, String> {
+fn save_in(folder: &Folder, branch: &str, message: &str) -> Result<SavedWork, String> {
     let head = git_text(
         folder,
         &[
@@ -120,28 +302,62 @@ fn save_in(folder: &Folder, branch: &str, message: &str) -> Result<Option<String
         ],
         &[],
     )?);
+    let overrides = filter_overrides(folder)?;
+    let mut skipped = Vec::new();
     let tree = (|| {
-        let env = [("GIT_INDEX_FILE", index.as_os_str())];
+        // Every command on the temporary index gets the overrides: writing an index can
+        // re-read a racily clean file through its filter, so write-tree needs them too.
+        let mut env = vec![("GIT_INDEX_FILE", index.as_os_str())];
+        env.extend(overrides.iter().map(|(k, v)| (k.as_str(), v.as_os_str())));
         git_text(folder, &["read-tree".as_ref(), head.as_ref()], &env)?;
-        git_text(
-            folder,
-            &[
+        let mut add_env = folder.env.to_vec();
+        add_env.extend_from_slice(&env);
+        add_env.push(("LC_ALL", OsStr::new("C")));
+        let added = run_with(
+            folder.path,
+            &hardened(&[
                 "add".as_ref(),
                 "--all".as_ref(),
                 "--ignore-errors".as_ref(),
                 "--".as_ref(),
                 ":/".as_ref(),
-            ],
-            &env,
+            ]),
+            &add_env,
         )?;
+        // With --ignore-errors git indexes everything it can read and exits 1 when it could
+        // not read something; the snapshot still holds the rest.
+        skipped = unreadable_paths(&String::from_utf8_lossy(&added.stderr));
+        if !added.status.success() && added.status.code() != Some(1) {
+            let message = reason(&added);
+            return Err(if message.is_empty() {
+                format!("git exited with {}", added.status)
+            } else {
+                message
+            });
+        }
         git_text(folder, &["write-tree".as_ref()], &env)
     })();
     let _ = fs::remove_file(&index);
     let _ = fs::remove_file(index.with_extension("index.lock"));
     let tree = tree.map_err(|e| format!("cannot build a snapshot of the folder: {e}"))?;
     if tree == head_tree {
-        return Ok(None);
+        return Ok(SavedWork {
+            branch: None,
+            skipped,
+        });
     }
+    let message = if skipped.is_empty() {
+        message.to_owned()
+    } else {
+        format!(
+            "{message}\n\nGit could not read these paths, so this commit does not hold them; they are still in the worktree:\n{}",
+            listed(&skipped, SKIPPED_IN_MESSAGE, "\n")
+        )
+    };
+    let saved = |name: String| SavedWork {
+        branch: Some(name),
+        skipped: skipped.clone(),
+    };
     let neutral = [
         ("GIT_AUTHOR_NAME", OsStr::new(NEUTRAL_NAME)),
         ("GIT_AUTHOR_EMAIL", OsStr::new(NEUTRAL_EMAIL)),
@@ -185,7 +401,7 @@ fn save_in(folder: &Folder, branch: &str, message: &str) -> Result<Option<String
             )
             .is_ok_and(|both| both.lines().eq([tree.as_str(), head.as_str()]));
             if same {
-                return Ok(Some(name));
+                return Ok(saved(name));
             }
             continue;
         }
@@ -201,7 +417,7 @@ fn save_in(folder: &Folder, branch: &str, message: &str) -> Result<Option<String
                         "-p".as_ref(),
                         head.as_ref(),
                         "-m".as_ref(),
-                        message.as_ref(),
+                        message.as_str().as_ref(),
                     ],
                     identity,
                 )
@@ -223,7 +439,7 @@ fn save_in(folder: &Folder, branch: &str, message: &str) -> Result<Option<String
             ],
             &[],
         ) {
-            Ok(_) => return Ok(Some(name)),
+            Ok(_) => return Ok(saved(name)),
             Err(_)
                 if git_text(
                     folder,
@@ -293,6 +509,7 @@ mod tests {
         let head_before = git(&tree, &["rev-parse", "HEAD"]);
         let saved = save_uncommitted(&tree, "agent-saved", "saved work")
             .unwrap()
+            .branch
             .unwrap();
         assert_eq!(saved, "agent-saved");
         // The folder, its branch and its index are exactly as they were.
@@ -326,17 +543,18 @@ mod tests {
     #[test]
     fn a_clean_folder_saves_nothing_and_the_same_work_is_not_saved_twice() {
         let (_temp, repo, tree) = fixture();
-        assert_eq!(save_uncommitted(&tree, "agent-saved", "m").unwrap(), None);
+        let branch = |tree: &Path| save_uncommitted(tree, "agent-saved", "m").unwrap().branch;
+        assert_eq!(branch(&tree), None);
         fs::write(tree.join("secret.env"), "only ignored\n").unwrap();
-        assert_eq!(save_uncommitted(&tree, "agent-saved", "m").unwrap(), None);
+        assert_eq!(branch(&tree), None);
         fs::write(tree.join("new.txt"), "one\n").unwrap();
-        let first = save_uncommitted(&tree, "agent-saved", "m").unwrap();
+        let first = branch(&tree);
         assert_eq!(first.as_deref(), Some("agent-saved"));
-        assert_eq!(save_uncommitted(&tree, "agent-saved", "m").unwrap(), first);
+        assert_eq!(branch(&tree), first);
         // Different work later gets the next name; the first branch is untouched.
         let tip = git(&repo, &["rev-parse", "agent-saved"]);
         fs::write(tree.join("new.txt"), "two\n").unwrap();
-        let second = save_uncommitted(&tree, "agent-saved", "m").unwrap();
+        let second = branch(&tree);
         assert_eq!(second.as_deref(), Some("agent-saved-2"));
         assert_eq!(git(&repo, &["rev-parse", "agent-saved"]), tip);
     }
@@ -359,7 +577,10 @@ mod tests {
             env: &env,
         };
         assert!(!identity_configured(&folder));
-        let saved = save_in(&folder, "agent-saved", "m").unwrap().unwrap();
+        let saved = save_in(&folder, "agent-saved", "m")
+            .unwrap()
+            .branch
+            .unwrap();
         assert_eq!(
             git(
                 &repo,
@@ -398,8 +619,145 @@ mod tests {
         assert!(
             save_uncommitted(&tree, "agent-saved", "m")
                 .unwrap()
+                .branch
                 .is_some()
         );
         assert!(!marker.exists(), "a repository hook ran");
+    }
+
+    #[test]
+    fn a_path_git_cannot_read_is_left_out_and_everything_else_is_saved() {
+        let (_temp, repo, tree) = fixture();
+        fs::write(tree.join("work.txt"), "kept\n").unwrap();
+        // A nested repository with no commit cannot be indexed, whoever runs the save.
+        let nested = tree.join("nested");
+        fs::create_dir(&nested).unwrap();
+        git(&nested, &["init", "-q"]);
+        // A file nobody may read, unless the tests run with every permission.
+        let locked = tree.join("locked.txt");
+        fs::write(&locked, "secret\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let unreadable = fs::read(&locked).is_err();
+        let saved = save_uncommitted(&tree, "agent-saved", "saved work").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let branch = saved.branch.clone().expect("the readable work is saved");
+        assert_eq!(git(&repo, &["show", &format!("{branch}:work.txt")]), "kept");
+        let files = git(&repo, &["ls-tree", "-r", "--name-only", &branch]);
+        assert!(!files.contains("nested"), "{files}");
+        let mut expected = vec!["nested".to_string()];
+        if unreadable {
+            assert!(!files.contains("locked.txt"), "{files}");
+            expected.insert(0, "locked.txt".into());
+        }
+        assert_eq!(saved.skipped, expected);
+        // The commit's message and the note both name what was left out.
+        let body = git(&repo, &["log", "-1", "--format=%B", &branch]);
+        assert!(
+            body.starts_with("saved work\n\nGit could not read these paths"),
+            "{body}"
+        );
+        assert!(body.lines().any(|l| l == "nested"), "{body}");
+        let note = saved.skipped_note().unwrap();
+        assert!(
+            note.contains("not saved and are still in the worktree: ")
+                || note.contains("not saved and is still in the worktree: nested"),
+            "{note}"
+        );
+        // When nothing readable changed, no branch is made, but the skipped path is still named.
+        let (_temp, _repo, tree) = fixture();
+        let nested = tree.join("nested");
+        fs::create_dir(&nested).unwrap();
+        git(&nested, &["init", "-q"]);
+        let saved = save_uncommitted(&tree, "agent-saved", "m").unwrap();
+        assert_eq!(saved.branch, None);
+        assert_eq!(saved.skipped, vec!["nested".to_string()]);
+    }
+
+    #[test]
+    fn unreadable_paths_are_read_from_gits_messages_even_with_odd_names() {
+        let stderr = "warning: could not open directory 'locked/': Permission denied\n\
+            error: open(\"we'ird\nname\"): Permission denied\n\
+            error: unable to index file 'we'ird\nname'\n\
+            error: 'sub/' does not have a commit checked out\n\
+            error: unable to index file 'sub/'\n\
+            fatal: adding files failed\n";
+        assert_eq!(
+            unreadable_paths(stderr),
+            vec!["locked", "we'ird\nname", "sub"]
+        );
+        assert!(unreadable_paths("").is_empty());
+        let note = SavedWork {
+            branch: None,
+            skipped: (0..7)
+                .map(|n| format!("f{n}"))
+                .chain(["a\nb".into()])
+                .collect(),
+        }
+        .skipped_note()
+        .unwrap();
+        assert_eq!(
+            note,
+            "git could not read 8 paths, which are not saved and are still in the worktree: f0, f1, f2, f3, f4, and 3 more"
+        );
+        assert_eq!(listed(&["a\nb".into()], 5, ", "), "a\\nb");
+    }
+
+    #[test]
+    fn a_filter_the_repository_configures_does_not_run_but_the_users_own_does() {
+        let (temp, repo, tree) = fixture();
+        let marker = temp.path().join("filter-ran");
+        let script = temp.path().join("filter.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // What an agent could write: a filter for every file, in both forms, required.
+        let program = script.to_str().unwrap();
+        git(&repo, &["config", "filter.agentfilter.clean", program]);
+        git(&repo, &["config", "filter.agentfilter.process", program]);
+        git(&repo, &["config", "filter.agentfilter.required", "true"]);
+        git(&repo, &["config", "filter.spaced name.clean", program]);
+        fs::write(
+            tree.join(".gitattributes"),
+            "* filter=agentfilter\n*.sp filter=spaced\\ name\n*.up filter=upper\n",
+        )
+        .unwrap();
+        // A filter of the user's own configuration, as Git LFS installs one, still runs.
+        let global = temp.path().join("user.gitconfig");
+        fs::write(&global, "[filter \"upper\"]\n\tclean = tr a-z A-Z\n").unwrap();
+        let env = [("GIT_CONFIG_GLOBAL", global.as_os_str())];
+        let folder = Folder {
+            path: &tree,
+            env: &env,
+        };
+        fs::write(tree.join("new.txt"), "raw\n").unwrap();
+        fs::write(tree.join("odd.sp"), "raw\n").unwrap();
+        fs::write(tree.join("shout.up"), "quiet\n").unwrap();
+        let saved = save_in(&folder, "agent-saved", "m").unwrap();
+        assert!(!marker.exists(), "a filter the repository names ran");
+        let branch = saved.branch.expect("the work is saved");
+        assert!(saved.skipped.is_empty(), "{:?}", saved.skipped);
+        assert_eq!(git(&repo, &["show", &format!("{branch}:new.txt")]), "raw");
+        assert_eq!(git(&repo, &["show", &format!("{branch}:odd.sp")]), "raw");
+        assert_eq!(
+            git(&repo, &["show", &format!("{branch}:shout.up")]),
+            "QUIET"
+        );
+        // The repository's settings are as the agent left them.
+        assert_eq!(git(&repo, &["config", "filter.agentfilter.clean"]), program);
     }
 }
