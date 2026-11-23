@@ -228,7 +228,14 @@ async fn other_profile_switch_opens_a_new_link_first() {
         })
         .await;
 
-    let tickets = rig.gateway.ticket_records();
+    // The background look at each profile's Hermes settings mints its own REST ticket; this test
+    // counts the session links only.
+    let tickets: Vec<_> = rig
+        .gateway
+        .ticket_records()
+        .into_iter()
+        .filter(|ticket| ticket.purpose != "native-http")
+        .collect();
     assert_eq!(tickets.len(), 3, "launch, side, and the new profile link");
     assert_eq!(tickets[2].scope, "profile");
     // Quitting detaches the new session afterwards; the old one is let go once, by the switch.
@@ -305,7 +312,14 @@ async fn profile_start_opens_a_new_session_on_a_new_link_first() {
         })
         .await;
 
-    let tickets = rig.gateway.ticket_records();
+    // The background look at each profile's Hermes settings mints its own REST ticket; this test
+    // counts the session links only.
+    let tickets: Vec<_> = rig
+        .gateway
+        .ticket_records()
+        .into_iter()
+        .filter(|ticket| ticket.purpose != "native-http")
+        .collect();
     assert_eq!(tickets.len(), 2, "the launch link and the new profile link");
     assert_ne!(
         tickets[1].profile_id, tickets[0].profile_id,
@@ -610,4 +624,65 @@ async fn target_events_during_delayed_detach_are_replayed_after_the_snapshot() {
     assert!(log.cells.iter().any(|cell| cell.contains("target answer")));
     assert!(!log.cells.iter().any(|cell| cell.contains("old duplicate")));
     assert!(!log.running, "the target turn completed");
+}
+
+#[tokio::test]
+async fn a_profile_with_a_harmful_setting_is_told_once_without_a_new_link() {
+    let rig = drive::Rig::start();
+    rig.gateway.set_config_reply(json!({
+        "compression": {"in_place": false},
+        "agent": {"max_turns": 60}
+    }));
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            driver.line("compression.in_place is false").await;
+            driver.line("agent.max_turns is 60").await;
+            // Later activity in the session does not say it again.
+            driver.submit("hello");
+            settle_short().await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+    let lines = locked(&log).lines.clone();
+    for key in ["compression.in_place is false", "agent.max_turns is 60"] {
+        assert_eq!(
+            lines.iter().filter(|line| line.contains(key)).count(),
+            1,
+            "{key}"
+        );
+    }
+    assert_eq!(
+        gateway.config_requests().len(),
+        1,
+        "read once for the profile"
+    );
+    assert_eq!(
+        gateway.websocket_connections(),
+        1,
+        "the settings read is plain HTTP, not a second link"
+    );
+}
+
+#[tokio::test]
+async fn a_healthy_profile_shows_no_settings_notice() {
+    let rig = drive::Rig::start();
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            settle_short().await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+    assert!(
+        locked(&log)
+            .lines
+            .iter()
+            .all(|line| !line.contains("compression.in_place") && !line.contains("max_turns"))
+    );
+    assert!(gateway.config_requests().len() <= 1);
 }
