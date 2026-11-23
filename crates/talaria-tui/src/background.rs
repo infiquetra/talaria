@@ -90,11 +90,15 @@ impl BackgroundSection<'_> {
         workflow_process(row, self.work.output(&row.id))
     }
 
-    /// Whether the Workflow line above shows the run this process carries.
+    /// Whether the Workflow line above shows the run this process carries. A process that failed,
+    /// was killed or was lost keeps its row: a second resume of a run another runner holds names
+    /// the run too, and its failure must stay in view.
     fn covered(&self, row: &ProcessRow) -> bool {
-        self.workflow_run
-            .zip(self.workflow(row))
-            .is_some_and(|(run, process)| process.carries(run))
+        matches!(row.status, ProcessStatus::Running | ProcessStatus::Done)
+            && self
+                .workflow_run
+                .zip(self.workflow(row))
+                .is_some_and(|(run, process)| process.carries(run))
     }
 
     /// The row's name: a workflow command names itself, any other the first line of its command.
@@ -148,8 +152,8 @@ impl BackgroundSection<'_> {
                 self.theme.dim,
             ));
         }
-        // The Workflow line stands for a process that carries its run; the process stays in the
-        // process view and in every count, and only loses its row here.
+        // The Workflow line stands for a process that carries its run. The process stays in the
+        // process view and in the status bar's count; this line and its count leave it out.
         let rows: Vec<_> = self.work.rows().filter(|row| !self.covered(row)).collect();
         let running: Vec<_> = rows.iter().copied().filter(|row| is_running(row)).collect();
         let (text, style) = if let [row] = running.as_slice() {

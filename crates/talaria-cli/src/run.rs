@@ -1244,9 +1244,15 @@ fn agent_back_action(keymap: &KeyMap, key: &Key, gate: AgentBackGate) -> Option<
 /// A press of the key bound to the interrupt action reaches the application as
 /// [`UserAction::InterruptKey`], which asks for a second press while a turn runs. Every other
 /// route to an interrupt, Ctrl+C among them, keeps [`UserAction::Interrupt`] and acts at once.
-/// A held key's repeats are not presses: they neither arm nor confirm.
+/// Plain Esc counts as the interrupt key even when the action is bound elsewhere, because vim
+/// normal mode interrupts on Esc whatever the binding is.
+///
+/// A repeat the terminal reports as a repeat neither arms nor confirms. A terminal that sends a
+/// held key as plain presses is not covered: there, holding the key past the repeat delay is a
+/// second press.
 fn interrupt_key_actions(keymap: &KeyMap, key: &Key, actions: Vec<UserAction>) -> Vec<UserAction> {
-    if keymap.resolve(key, KeyContext::Composer) != Some(Action::Interrupt) {
+    let plain_esc = key.code == KeyCode::Esc && !key.mods.ctrl && !key.mods.alt;
+    if !plain_esc && keymap.resolve(key, KeyContext::Composer) != Some(Action::Interrupt) {
         return actions;
     }
     actions
@@ -3288,6 +3294,13 @@ impl TuiScreen {
                     let mut actions = flush_draft_actions(&mut self.composer, now);
                     actions.push(UserAction::VoiceRecord);
                     return actions;
+                }
+                // Before vim takes the key: in normal mode the composer would swallow it, and the
+                // line above the composer offers it there too.
+                if let Some(action) =
+                    agent_back_action(&self.keymap, &key, self.agent_back_gate(view))
+                {
+                    return vec![action];
                 }
                 if self
                     .composer
@@ -6997,6 +7010,14 @@ mod tests {
             "",
         );
         assert_eq!((count(&f8, is_key), count(&f8, is_now)), (1, 0));
+        // Vim normal mode interrupts on Esc whatever key the action is bound to, so plain Esc
+        // still asks for a second press there.
+        let vim_esc = super::interrupt_key_actions(
+            &rebound,
+            &Key::from(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            vec![UserAction::Interrupt],
+        );
+        assert_eq!((count(&vim_esc, is_key), count(&vim_esc, is_now)), (1, 0));
         let old = routed(
             &rebound,
             KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),

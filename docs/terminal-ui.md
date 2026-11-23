@@ -35,7 +35,8 @@ keeps the agent count. Nothing redraws for the line while no run is running.
 
 A background process that is the shell command `talaria workflow run` or `talaria workflow
 resume` and carries the run the dock line shows has no row of its own, because the dock line
-covers it; it stays in `/processes` and in every count. Talaria knows which run a process
+covers it; it stays in `/processes` and in the status bar's count, and the line above the
+composer leaves it out of its own count. A process that failed keeps its row. Talaria knows which run a process
 carries from the run id or folder a `resume` command names, or from the `run_started` line a
 `run` prints first (the JSON event with `--json`, `run <id> in <folder>` without); it does not
 guess from names or times. A workflow process whose run is not shown, or whose start line was

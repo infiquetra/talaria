@@ -1122,6 +1122,26 @@ mod workflow_rows {
     }
 
     #[test]
+    fn a_resume_that_failed_keeps_its_row_even_though_it_names_the_shown_run() {
+        // A second resume of a run another runner holds names the run and fails at once.
+        let work = with_processes(
+            vec![ListedProcess {
+                exit_code: Some(1),
+                ..listed(
+                    "wf",
+                    &format!("talaria workflow resume --json {RUN_ID}"),
+                    "exited",
+                    Some(1.0),
+                )
+            }],
+            &[],
+        );
+        let shown = draw(&work, Some(RUN));
+        assert_eq!(shown.len(), 1, "{shown:?}");
+        assert!(shown[0].contains("talaria workflow resume"), "{shown:?}");
+    }
+
+    #[test]
     fn a_workflow_process_with_no_known_run_is_relabelled_and_stays_drawn() {
         // The start line was never seen, so nothing says which run it carries.
         let work = with_processes(
