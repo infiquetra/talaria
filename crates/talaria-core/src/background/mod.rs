@@ -10,6 +10,12 @@ mod output;
 mod process;
 mod schedule;
 mod text;
+mod workflow;
+
+pub use workflow::{
+    RunIdentity, RunLink, WorkflowCommand, WorkflowProcess, WorkflowVerb, last_whole_line,
+    started_run, summarize_event_line, workflow_command, workflow_process,
+};
 
 /// How often a foreground session with a running process is listed, in milliseconds.
 pub const PROCESS_POLL_MS: u64 = 5_000;

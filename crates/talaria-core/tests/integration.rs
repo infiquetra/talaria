@@ -57,6 +57,8 @@ mod background_output;
 mod background_process;
 #[path = "integration/background_schedule.rs"]
 mod background_schedule;
+#[path = "integration/background_workflow.rs"]
+mod background_workflow;
 #[path = "integration/capabilities_props.rs"]
 mod capabilities_props;
 #[path = "integration/capabilities_rows.rs"]

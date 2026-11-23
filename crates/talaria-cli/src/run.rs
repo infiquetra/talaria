@@ -389,6 +389,9 @@ pub struct TuiScreen {
     activity: ActivityClock,
     /// When the building block's seconds next change, while the block is on screen.
     authoring_wake: Option<Instant>,
+    /// When the Workflow line's spinner or seconds next change, while a running run's line is
+    /// on screen.
+    workflow_wake: Option<Instant>,
     tool_theme: ToolTheme,
     /// The settings and start-up decisions the theme is resolved from.
     look: Look,
@@ -3829,9 +3832,13 @@ impl StatusHost for TuiScreen {
             (Some(tick), Some(frame)) => Some(tick.min(frame)),
             (tick, frame) => tick.or(frame),
         };
-        match (tick, self.authoring_wake) {
+        let tick = match (tick, self.authoring_wake) {
             (Some(tick), Some(second)) => Some(tick.min(second)),
             (tick, second) => tick.or(second),
+        };
+        match (tick, self.workflow_wake) {
+            (Some(tick), Some(wake)) => Some(tick.min(wake)),
+            (tick, wake) => tick.or(wake),
         }
     }
 
@@ -4317,6 +4324,7 @@ impl Screen for TuiScreen {
         // Overlays return early, so the working row counts as hidden until it is pushed below.
         self.activity.begin_frame();
         self.authoring_wake = None;
+        self.workflow_wake = None;
         let turn_running = view
             .state
             .is_some_and(|state| matches!(state.turn(), SessionTurn::Running));
@@ -4807,6 +4815,14 @@ impl Screen for TuiScreen {
                 work: state.background(),
                 width_hint: width,
                 theme: &background_theme,
+                // The Workflow line is drawn only when no search takes its place.
+                workflow_run: view
+                    .workflow_run
+                    .filter(|_| self.search.is_none())
+                    .map(|run| talaria_core::background::RunIdentity {
+                        run_id: &run.run_id,
+                        run_dir: &run.run_dir,
+                    }),
             },
             views: &self.theme.views,
         });
@@ -4917,6 +4933,15 @@ impl Screen for TuiScreen {
                 subagent_style.hint,
             )
         });
+        let workflow_clock = view.workflow_run.and_then(|run| {
+            talaria_tui::workflow_view::RunClock::of_run(
+                run.status == talaria_workflow::runner::RunStatus::Running,
+                run.started_at_ms,
+                view.automation_now_ms,
+                view.now_ms,
+                self.theme.motion,
+            )
+        });
         let workflow = view.workflow_run.map(|run| {
             talaria_tui::workflow_view::WorkflowDock::new(
                 &run.name,
@@ -4927,6 +4952,7 @@ impl Screen for TuiScreen {
                 subagent_style.header,
                 subagent_style.hint,
             )
+            .with_clock(workflow_clock)
         });
         let automation_theme = self.theme.views.automation_theme();
         let automation = ThemedAutomation {
@@ -5112,6 +5138,26 @@ impl Screen for TuiScreen {
         {
             let wait = 1_000 - block.elapsed_ms % 1_000;
             self.authoring_wake = Some(Instant::now() + Duration::from_millis(wait));
+        }
+        // A running run's line moves: a spinner frame under full motion, the seconds under reduced
+        // motion. The screen wakes for it only while that line is really on screen.
+        if let (Some(section), Some(wait)) = (
+            &workflow,
+            workflow_clock.and_then(|clock| clock.wake_after_ms()),
+        ) && self.transcript.is_none()
+            && !self.terminal.is_released()
+            && sections
+                .iter()
+                .position(|shown| std::ptr::addr_eq(*shown, section))
+                .is_some_and(|index| {
+                    LiveView {
+                        sections: sections.clone(),
+                    }
+                    .rows_of(index, width, max_live_height(self.rows))
+                        > 0
+                })
+        {
+            self.workflow_wake = Some(Instant::now() + Duration::from_millis(wait));
         }
         if workspace_enabled {
             let empty_agents = talaria_core::subagents::SubagentTree::new();
@@ -5995,6 +6041,7 @@ fn session(
         reasoning,
         activity: ActivityClock::default(),
         authoring_wake: None,
+        workflow_wake: None,
         tool_theme: theme.tool.clone(),
         look,
         startup_theme_files: theme_files,

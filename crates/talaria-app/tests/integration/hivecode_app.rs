@@ -1524,3 +1524,31 @@ fn an_unreadable_builtin_is_named_and_the_rest_still_install() {
     );
     assert_eq!(notice::builtins_outcome(&[], &[]), None);
 }
+
+#[test]
+fn a_running_runs_start_time_is_the_runs_own_and_follows_its_session_across_a_switch() {
+    use talaria_workflow::runner::RunStatus;
+    let id = session();
+    let other = SessionId::new("other-session");
+    let mut service = on();
+    service.arm(&id, "fixture", 1_000, 50);
+    let _ = service.on_runs(
+        &[run_row("run-0001", "fixture", 2_000, RunStatus::Running, 1)],
+        100,
+        None,
+    );
+    let started = |service: &HivecodeService, session: &SessionId| {
+        service.active_run(session).map(|run| run.started_at_ms)
+    };
+    assert_eq!(started(&service, &id), Some(2_000));
+    // The window shows another session, which has no run: its dock has no start time.
+    assert_eq!(started(&service, &other), None);
+    // Later scans, and coming back to the first session, keep the start the run's records give.
+    let _ = service.scan_due(2_100);
+    let _ = service.on_runs(
+        &[run_row("run-0001", "fixture", 2_000, RunStatus::Running, 2)],
+        2_200,
+        None,
+    );
+    assert_eq!(started(&service, &id), Some(2_000));
+}

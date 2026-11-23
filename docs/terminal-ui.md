@@ -18,6 +18,26 @@ also left out while the key would do something else (the focused menu bar, an op
 slash palette, mention list or history search takes it first) and while the link to the gateway is redialling. When the
 gateway reports the session gone, or the link gives up, the turn ends and the row leaves.
 
+While a workflow run of the open session is running, its dock line above the composer shows
+that the run is alive: `⠹ Workflow <name> · running 5m51s · 1/4 agents · Alt+W to open`. The
+spinner moves under full motion and is the still `⚙` under reduced motion, where only the
+seconds change. The time counts from the start time in the run's own records, so it is right
+after switching sessions and coming back; when that time is unknown the line shows none. A run
+that is completed, failed, aborted, out of budget, parked or interrupted has a still line with
+no spinner and no time. A narrow line drops the `Alt+W to open` hint first, then the time, and
+keeps the agent count. Nothing redraws for the line while no run is running.
+
+A background process that is the shell command `talaria workflow run` or `talaria workflow
+resume` and carries the run the dock line shows has no row of its own, because the dock line
+covers it; it stays in `/processes` and in every count. Talaria knows which run a process
+carries from the run id or folder a `resume` command names, or from the `run_started` line a
+`run` prints first (the JSON event with `--json`, `run <id> in <folder>` without); it does not
+guess from names or times. A workflow process whose run is not shown, or whose start line was
+never seen, keeps its row, named `talaria workflow run <script>` or `talaria workflow resume
+<run>` instead of the first command of the shell line, and its last output line, when it is a
+JSON event, reads as the event and its label (`scheduler queued · fix-1`) instead of raw JSON.
+Every other background process row is unchanged.
+
 The model's thinking is drawn as one dim line per reasoning block. While a block streams, the
 line counts its lines in place, for example `∴ thinking… (+12 lines, Ctrl+O to view)`. When it
 ends, the line says how long it took, `∴ thought for 12s (+34 lines, Ctrl+O to view)`, or only
