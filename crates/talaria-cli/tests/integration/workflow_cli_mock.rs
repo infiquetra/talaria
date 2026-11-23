@@ -721,6 +721,56 @@ fn run_finished(stdout: &[u8]) -> Value {
 }
 
 #[test]
+fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let run = |args: &[&str], target: &Path| {
+        output(
+            command(temp.path(), "failed-wire.json")
+                .args(args)
+                .arg("--runs-dir")
+                .arg(&runs)
+                .arg(target),
+        )
+    };
+    let out = run(&["workflow", "run", "--json", "--profile", "fixture"], &fixture("scripts/one.js"));
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    let lines: Vec<&str> = shown.lines().collect();
+    let last = *lines.last().unwrap();
+    // The run_finished object is unchanged and is the last JSON object; the last line is plain text.
+    let finished = run_finished(&out.stdout);
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+    assert!(serde_json::from_str::<Value>(last).is_err(), "{last}");
+    let before = lines[lines.len() - 2];
+    assert_eq!(serde_json::from_str::<Value>(before).unwrap(), finished);
+    assert!(last.len() < 300, "{last}");
+    for part in [
+        id.as_str(),
+        "completed_with_failures",
+        &format!("{} tokens", finished["spend"]["tokens"]),
+        &format!("talaria workflow resume --json {id}"),
+    ] {
+        assert!(last.contains(part), "{part} missing from {last}");
+    }
+    // A replay prints the same shape, and the plain-text mode adds nothing.
+    let replay = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "resume", "--json", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    assert!(text(&replay.stdout).lines().last().unwrap().contains("Full result: talaria workflow resume --json"));
+    let plain = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "resume", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    assert!(!text(&plain.stdout).contains("Full result:"), "{}", text(&plain.stdout));
+}
+
+#[test]
 fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
     let temp = tempfile::tempdir().unwrap();
     let runs = temp.path().join("runs");

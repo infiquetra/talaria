@@ -670,7 +670,27 @@ impl Renderer {
                 }
             }
         }
+        if self.json {
+            self.text(&format!("{}\n", closing_line(run_id, outcome, spend)));
+        }
     }
+}
+/// The short plain-text line printed after the `run_finished` object in JSON mode. Hermes keeps the
+/// last 2,000 characters of a background command's output and then cuts back to the first newline,
+/// so a single very long final line reached the lead as nothing; this line is always short.
+fn closing_line(run_id: &str, outcome: &str, spend: &SpendView) -> String {
+    let money = match spend.money_usd {
+        Some(usd) => format!("${usd:.4} ({})", safe(&spend.money_source)),
+        None => "unknown".to_owned(),
+    };
+    format!(
+        "run {} {}: {} tokens, money {}. Full result: talaria workflow resume --json {}",
+        safe(run_id),
+        safe(outcome),
+        spend.tokens,
+        money,
+        safe(run_id)
+    )
 }
 
 pub async fn run(args: WorkflowArgs) -> u8 {
