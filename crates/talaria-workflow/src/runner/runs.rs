@@ -47,6 +47,8 @@ pub enum RunStatus {
     Running,
     Parked,
     Completed,
+    /// The script returned, but at least one agent failed.
+    CompletedWithFailures,
     /// The script returned, but the budget refused or stopped at least one agent.
     BudgetExhausted,
     Failed,
@@ -60,6 +62,7 @@ impl RunStatus {
             Self::Running => "running",
             Self::Parked => "parked",
             Self::Completed => "completed",
+            Self::CompletedWithFailures => "completed_with_failures",
             Self::BudgetExhausted => "budget_exhausted",
             Self::Failed => "failed",
             Self::Aborted => "aborted",
@@ -345,6 +348,7 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
     };
     let status = match fold.terminal.as_deref() {
         Some("completed") => RunStatus::Completed,
+        Some("completed_with_failures") => RunStatus::CompletedWithFailures,
         Some("budget_exhausted") => RunStatus::BudgetExhausted,
         Some("failed") => RunStatus::Failed,
         Some("aborted") => RunStatus::Aborted,

@@ -104,6 +104,7 @@ fn review_lines() -> Vec<RecordLine> {
             outcome: CallOutcome::Completed {
                 value: Some(serde_json::json!("ok")),
                 value_ref: None,
+                cut_short: None,
             },
             turns: 1,
         },
@@ -266,4 +267,135 @@ fn the_run_list_reads_token_counts_in_thousands_and_millions() {
         let text = talaria_tui::workflow_view::picker_row(&row(tokens));
         assert!(text.contains(&format!("  {shown}  ")), "{text}");
     }
+}
+
+/// A run of three agents: one finished plainly, one failed, one cut short at its step cap.
+fn mixed_lines(run: RunOutcomeKind) -> Vec<RecordLine> {
+    let intent = |key: &str, label: &str| Record::CallIntent {
+        key: key.to_string(),
+        attempt: 0,
+        call_id: CallId {
+            digest: key.to_string(),
+            occurrence: 0,
+        },
+        label: label.to_string(),
+        phase: None,
+        workflow_path: Vec::new(),
+        launch: ResolvedLaunch {
+            profile: "fixture".to_string(),
+            model: "model-a".to_string(),
+            provider: Some("provider-a".to_string()),
+            effort: None,
+            toolsets: Vec::new(),
+            skills: Vec::new(),
+            max_turns: None,
+            isolation: None,
+            cwd: None,
+        },
+        request_id: format!("wf:run:{key}"),
+    };
+    let finished = |key: &str, outcome: CallOutcome| Record::CallFinished {
+        key: key.to_string(),
+        attempt: 0,
+        outcome,
+        turns: 1,
+    };
+    let (a, b, c) = (
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cccccccccccccccccccccccccccccccc",
+    );
+    let completed = |cut_short| CallOutcome::Completed {
+        value: Some(serde_json::json!("ok")),
+        value_ref: None,
+        cut_short,
+    };
+    let records = [
+        Record::RunStarted {
+            run_id: "01JB2X9Q4M8Z7K3T5V6W8Y0A1C".to_string(),
+            script_sha256: "a".repeat(64),
+        },
+        intent(a, "overview"),
+        finished(a, completed(None)),
+        intent(b, "security pass"),
+        finished(
+            b,
+            CallOutcome::Failed {
+                reason: "agent failed: The conversation grew too long. (context_overflow)".into(),
+            },
+        ),
+        intent(c, "style pass"),
+        finished(
+            c,
+            completed(Some(talaria_workflow::engine::CutShort {
+                steps: Some(60),
+                limit: Some(60),
+            })),
+        ),
+        Record::RunFinished {
+            outcome: run,
+            summary: FinishSummary::default(),
+        },
+    ];
+    records
+        .into_iter()
+        .enumerate()
+        .map(|(index, record)| RecordLine {
+            v: 1,
+            seq: u64::try_from(index).expect("seq") + 1,
+            at_ms: 1_000 + i64::try_from(index).expect("time") * 100,
+            record,
+        })
+        .collect()
+}
+
+#[test]
+fn a_run_that_completed_with_failures_lists_the_failed_agent_above_the_rows() {
+    let state = ProgressState::new(RunProgress::from_records(
+        &manifest(),
+        &mixed_lines(RunOutcomeKind::CompletedWithFailures),
+    ));
+    let screen = paint(&state, 140, 24);
+    let rows: Vec<&str> = screen.lines().collect();
+    let position = |needle: &str| {
+        rows.iter()
+            .position(|row| row.contains(needle))
+            .unwrap_or_else(|| panic!("no row with {needle:?}\n{screen}"))
+    };
+    assert!(
+        rows[position("review-branch")].contains("completed with failures"),
+        "{screen}"
+    );
+    assert!(
+        rows[position("review-branch")].contains("1 cut short"),
+        "{screen}"
+    );
+    let failure = position(
+        "✗ security pass · agent failed: The conversation grew too long. (context_overflow)",
+    );
+    // The failed agent is named before any agent row.
+    assert!(failure < position("overview"), "{screen}");
+    // The cut short agent's row carries its mark; the plain one does not.
+    assert!(
+        rows[position("style pass")].contains("cut short (60 of 60 steps)"),
+        "{screen}"
+    );
+    assert!(
+        !rows[position("overview")].contains("cut short"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn a_plain_completed_run_lists_nothing_above_its_rows() {
+    let state = ProgressState::new(RunProgress::from_records(
+        &manifest(),
+        &mixed_lines(RunOutcomeKind::Completed),
+    ));
+    let screen = paint(&state, 140, 24);
+    assert!(
+        !screen.contains("✗ security pass · agent failed"),
+        "{screen}"
+    );
+    assert!(screen.contains("completed ·"), "{screen}");
 }

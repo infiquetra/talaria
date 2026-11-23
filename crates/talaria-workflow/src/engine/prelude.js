@@ -7,6 +7,8 @@
   const send = value => host("send", encode(value));
   const paths = new WeakMap();
   const pending = new Map();
+  // Agents Hermes stopped at their step cap, in the order their results arrived.
+  const stoppedAtCap = [];
   let nextId = 0;
   let rootState = null;
   const ws = /^[\u0009-\u000d \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu;
@@ -149,7 +151,7 @@
         request.phase ??= currentPhase;
         request.workflow_path = path;
         const id = nextId++;
-        const promise = new Promise((resolve, reject) => pending.set(id, {resolve, reject}));
+        const promise = new Promise((resolve, reject) => pending.set(id, {resolve, reject, label: request.label}));
         send({kind: "agent", id, request});
         return promise;
       } catch (e) { return Promise.reject(e); }
@@ -210,7 +212,8 @@
       if (typeof key !== "string" || key.length === 0) bad("random(): a non-empty string key is required");
       return call("random", {path, key});
     }
-    return {agent, parallel, pipeline, phase, log, args, budget, workflow, now: () => config.started_at_ms, random};
+    const cutShort = () => stoppedAtCap.map(entry => ({...entry}));
+    return {agent, parallel, pipeline, phase, log, args, budget, workflow, now: () => config.started_at_ms, random, cutShort};
   }
   const api = instance([], config.has_args ? config.args : undefined, false);
   for (const [name, value] of Object.entries(api)) Object.defineProperty(globalThis, name, {value, writable: false, configurable: false});
@@ -230,7 +233,16 @@
       if (!entry) return;
       pending.delete(value.id);
       if (value.error) entry.reject(error(value.error.name, value.error.message));
-      else entry.resolve(value.value);
+      else {
+        if (value.cut_short) {
+          const mark = {steps: value.cut_short.steps ?? null, limit: value.cut_short.limit ?? null};
+          stoppedAtCap.push({label: entry.label, ...mark});
+          // Hidden from keys, spread and JSON, so a script that ignores the mark sees the value as before.
+          const v = value.value;
+          if (v !== null && typeof v === "object" && !Object.hasOwn(v, "cutShort")) Object.defineProperty(v, "cutShort", {value: Object.freeze(mark)});
+        }
+        entry.resolve(value.value);
+      }
     }
   };
 })

@@ -246,6 +246,7 @@ fn completed() -> CallOutcome {
     CallOutcome::Completed {
         value: Some(json!("ok")),
         value_ref: None,
+        cut_short: None,
     }
 }
 

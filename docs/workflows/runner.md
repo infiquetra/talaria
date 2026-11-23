@@ -42,7 +42,7 @@ Each run folder holds:
 | `journal.jsonl`, `run.lock` | Durable records and the journal's single-writer lock. |
 | `scripts/`, `blobs/`, `resolutions/` | Journal-owned content and parked-call answers. |
 | `launch.json` | Original script path and folder, absolute working folder, and saved-workflow folder. |
-| `outcome.json` | Latest completed execution's result, failure detail, or abort reason; a `budget_exhausted` run keeps its result and the budget reason. |
+| `outcome.json` | Latest completed execution's result, failure detail, or abort reason; a `budget_exhausted` run keeps its result and the budget reason; a `completed_with_failures` run keeps its result and a `failed_agents` list, and any run with agents Hermes stopped at their step cap lists them in `cut_short_agents`. Both lists hold `label` and `reason` and come right after `outcome`. |
 | `runner.json` | Detached child's process id; discovery does not trust it as liveness evidence. |
 | `runner.log` | Detached child's appended human output. |
 | `control/` | Shared pause, stop, and next-resume restart requests. |
@@ -194,11 +194,16 @@ Foreground output names the run folder, shows phases, logs, agents, and schedule
 then prints the result. `--json` emits compact JSON lines and one final `run_finished`
 object. That object has exactly one of `result`, `error`, or `reason`, together with token
 and money spend; a `budget_exhausted` object has both `result` and `reason`, plus the
-journal's finish `summary` with its `refused` and `stopped` counts. Agents the budget
-refused or stopped appear as `agent_finished` lines with state `refused` or `stopped`. Diagnostic and refusal lines go to standard error. Detached children
+journal's finish `summary` with its `refused` and `stopped` counts. A `completed_with_failures` object
+(the script returned, but at least one agent failed) has `reason`, then `failed_agents`, then
+`cut_short_agents` when any, then `result` and `summary`; a plain `completed` object lists
+`cut_short_agents` before `result` when Hermes stopped any agent at its step cap. Foreground
+text prints the same lists above the result. Agents the budget
+refused or stopped appear as `agent_finished` lines with state `refused` or `stopped`, and an
+agent stopped at its step cap with state `cut short`. Diagnostic and refusal lines go to standard error. Detached children
 always write human output to `runner.log`; the parent prints one detached-run object or line.
 
-Exit codes are 0 completed, 1 failed or unconfirmed, 2 usage or refusal, 3 aborted, and 4
+Exit codes are 0 completed or completed with failures, 1 failed or unconfirmed, 2 usage or refusal, 3 aborted, and 4
 budget exhausted (the script returned, but the budget refused or stopped at least one agent).
 
 ## Integration and verification

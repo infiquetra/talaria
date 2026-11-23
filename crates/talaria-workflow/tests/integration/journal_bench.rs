@@ -70,6 +70,7 @@ async fn open_10k_records_under_budget() {
                 outcome: CallOutcome::Completed {
                     value: Some(json!("x".repeat(4096))),
                     value_ref: None,
+                    cut_short: None,
                 },
                 turns: 1,
             },

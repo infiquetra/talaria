@@ -81,6 +81,14 @@ mod tests {
     }
 
     fn reason_after_outcome(outcome: &str, result: Value) -> String {
+        match next_after(outcome, result, request()) {
+            NextStep::Finish(AgentOutcome::Failed { reason }) => reason,
+            other => panic!("expected a failure, got {other:?}"),
+        }
+    }
+
+    /// Settle a receipt the way the journal does, then ask the policy what comes next.
+    fn next_after(outcome: &str, result: Value, request: AgentRequest) -> NextStep {
         let receipt: Receipt = serde_json::from_value(json!({
             "admission_id": "adm-1",
             "session_id": "sess-1",
@@ -109,10 +117,7 @@ mod tests {
             result_meta,
             usage: None,
         };
-        match SchemaTurnPolicy.after_turn(&request(), &[turn]) {
-            NextStep::Finish(AgentOutcome::Failed { reason }) => reason,
-            other => panic!("expected a failure, got {other:?}"),
-        }
+        SchemaTurnPolicy.after_turn(&request, &[turn])
     }
 
     #[test]
@@ -185,5 +190,85 @@ mod tests {
         assert!(!reason.chars().any(char::is_control), "{reason:?}");
         assert!(reason.chars().count() <= "agent failed: ".len() + MESSAGE_LIMIT);
         assert!(reason.ends_with('…'));
+    }
+
+    /// What Hermes sends when it stops a turn at its step cap but still has a reply.
+    fn capped_receipt(reply: &str) -> Value {
+        json!({
+            "final_response": reply,
+            "completed": false,
+            "failed": false,
+            "interrupted": false,
+            "turn_exit_reason": "max_iterations_reached(60/60)",
+            "model": "model-a",
+            "provider": "provider-a",
+            "messages": [],
+        })
+    }
+
+    #[test]
+    fn a_turn_stopped_at_its_step_cap_keeps_its_reply_and_is_marked() {
+        let next = next_after("completed", capped_receipt("Half the review."), request());
+        let NextStep::Finish(AgentOutcome::CutShort { value, cut_short }) = next else {
+            panic!("expected a kept, marked reply, got {next:?}");
+        };
+        assert_eq!(value, json!("Half the review."));
+        assert_eq!(cut_short.describe(), "cut short (60 of 60 steps)");
+    }
+
+    #[test]
+    fn a_cut_short_reply_for_a_schema_is_checked_and_never_sent_a_correction_turn() {
+        let mut with_schema = request();
+        with_schema.schema = Some(json!({
+            "type": "object",
+            "properties": {"verdict": {"type": "string"}},
+            "required": ["verdict"],
+        }));
+        let fits = next_after(
+            "completed",
+            capped_receipt("{\"verdict\": \"ship\"}"),
+            with_schema.clone(),
+        );
+        assert!(
+            matches!(&fits, NextStep::Finish(AgentOutcome::CutShort { value, .. })
+                if value == &json!({"verdict": "ship"})),
+            "{fits:?}"
+        );
+        // A reply that does not fit would get one correction turn if the agent had finished.
+        // A cut short agent is not sent another turn, so it ends as failed instead.
+        let broken = next_after("completed", capped_receipt("not json"), with_schema);
+        let NextStep::Finish(AgentOutcome::Failed { reason }) = broken else {
+            panic!("expected a failure, got {broken:?}");
+        };
+        assert!(
+            reason.starts_with("agent cut short (60 of 60 steps) and its reply does not fit"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn only_a_step_cap_exit_marks_a_turn_cut_short() {
+        for result in [
+            // Finished normally.
+            json!({"final_response": "Done.", "completed": true, "failed": false,
+                "turn_exit_reason": "completed"}),
+            // Incomplete for another reason.
+            json!({"final_response": "Stopped.", "completed": false, "failed": false,
+                "turn_exit_reason": "interrupted_during_api_call"}),
+        ] {
+            let next = next_after("completed", result, request());
+            assert!(
+                matches!(&next, NextStep::Finish(AgentOutcome::Completed(_))),
+                "{next:?}"
+            );
+        }
+        // A failed turn is a failure even when its exit reason names the cap.
+        let mut failed = capped_receipt("Half.");
+        failed["failed"] = json!(true);
+        let next = next_after("completed", failed, request());
+        assert!(
+            matches!(next, NextStep::Finish(AgentOutcome::Failed { .. })),
+            "{next:?}"
+        );
     }
 }

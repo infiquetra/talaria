@@ -435,10 +435,15 @@ fn ctrl_c_graceful_then_resume_and_hard_kill() {
                 .count(),
             1
         );
+        // The interrupt settled the second agent as cancelled, so a resume finishes it as failed
+        // and the run says it completed with a failure. After a hard kill nothing settled, and
+        // the agent runs again to a plain completion.
+        let expected = if graceful { "completed_with_failures" } else { "completed" };
         assert!(
             after
                 .iter()
-                .any(|r| r["t"] == "run_finished" && r["outcome"] == "completed")
+                .any(|r| r["t"] == "run_finished" && r["outcome"] == expected),
+            "graceful={graceful}"
         );
         assert_eq!(
             fs::read_dir(temp.path().join("empty-hermes"))
@@ -704,6 +709,139 @@ fn budget_exhausted_run_reports_its_reason_and_exit_code() {
         ),
         "{}",
         text(&out.stdout)
+    );
+}
+
+fn run_finished(stdout: &[u8]) -> Value {
+    text(stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["event"] == "run_finished")
+        .expect("no run_finished line")
+}
+
+#[test]
+fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let run = |json: bool| {
+        let mut cmd = command(temp.path(), "failed-wire.json");
+        cmd.args(["workflow", "run", "--profile", "fixture"]);
+        if json {
+            cmd.arg("--json");
+        }
+        output(cmd.arg("--runs-dir").arg(&runs).arg(fixture("scripts/one.js")))
+    };
+    let out = run(true);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let finished = run_finished(&out.stdout);
+    assert_eq!(finished["outcome"], "completed_with_failures");
+    assert_eq!(finished["reason"], "1 agent failed");
+    let reason = "agent failed: The provider refused this request and nothing more can be done. (provider_rejected)";
+    assert_eq!(finished["failed_agents"], json!([{"label": "review", "reason": reason}]));
+    // The script finished and kept what it made of the failure.
+    assert_eq!(finished["result"]["first"], Value::Null);
+    // The failed agents come before the result in the printed line.
+    let line = text(&out.stdout)
+        .lines()
+        .find(|l| l.contains("\"run_finished\""))
+        .unwrap()
+        .to_owned();
+    assert!(line.find("failed_agents").unwrap() < line.find("\"result\"").unwrap(), "{line}");
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+
+    // Listed with its own status, and readable again without paid work.
+    let listed = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "list", "--json", "--runs-dir"])
+            .arg(&runs),
+    );
+    let rows: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(rows[0]["status"], "completed_with_failures");
+    let replay = output(
+        command(temp.path(), "failed-wire.json")
+            .env_remove("TALARIA_WORKFLOW_MOCK")
+            .args(["workflow", "resume", "--json", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    assert_eq!(replay.status.code(), Some(0), "{}", text(&replay.stderr));
+    let again = run_finished(&replay.stdout);
+    assert_eq!(again["outcome"], "completed_with_failures");
+    assert_eq!(again["failed_agents"], finished["failed_agents"]);
+    assert_eq!(again["result"], finished["result"]);
+
+    let plain = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "resume", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    let shown = text(&plain.stdout);
+    assert!(
+        shown.contains(&format!(
+            "Completed with failures: 1 agent failed.\nFailed agents:\n  review: {reason}\nResult:\n"
+        )),
+        "{shown}"
+    );
+}
+
+#[test]
+fn an_agent_stopped_at_its_step_cap_keeps_its_reply_and_is_marked_everywhere() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let out = output(
+        command(temp.path(), "capped-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/one.js")),
+    );
+    // The run is a plain success: the reply was kept.
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let finished = run_finished(&out.stdout);
+    assert_eq!(finished["outcome"], "completed");
+    // The script received the reply, and could see the mark through cutShort().
+    assert_eq!(finished["result"]["first"], "PARTIAL ANSWER");
+    assert_eq!(
+        finished["result"]["capped"],
+        json!([{"label": "review", "steps": 60, "limit": 60}])
+    );
+    assert_eq!(
+        finished["cut_short_agents"],
+        json!([{"label": "review", "reason": "cut short (60 of 60 steps)"}])
+    );
+    assert!(finished.get("failed_agents").is_none());
+    // The event that ends the agent says so, and so does the journal record.
+    let agent_state = text(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["event"] == "agent_finished")
+        .map(|v| v["state"].clone());
+    assert_eq!(agent_state, Some(json!("cut short")));
+    let folder = fs::read_dir(&runs).unwrap().next().unwrap().unwrap().path();
+    let finished_call = records(&folder)
+        .into_iter()
+        .find(|r| r["t"] == "call_finished")
+        .unwrap();
+    assert_eq!(finished_call["outcome"]["kind"], "completed");
+    assert_eq!(finished_call["outcome"]["cut_short"], json!({"steps": 60, "limit": 60}));
+    let engine_finished = records(&folder)
+        .into_iter()
+        .find(|r| r["t"] == "engine" && r["event"]["event"] == "agent_finished")
+        .unwrap();
+    assert_eq!(engine_finished["event"]["outcome"]["kind"], "cut_short");
+
+    let plain = output(
+        command(temp.path(), "capped-wire.json")
+            .args(["workflow", "resume", "--runs-dir"])
+            .arg(&runs)
+            .arg(folder.file_name().unwrap()),
+    );
+    assert_eq!(plain.status.code(), Some(0));
+    assert!(
+        text(&plain.stdout).contains("Cut short agents:\n  review: cut short (60 of 60 steps)\nResult:\n"),
+        "{}",
+        text(&plain.stdout)
     );
 }
 

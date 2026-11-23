@@ -12,7 +12,9 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{
-    engine::{self, CallId, EngineEvent, OutcomeKind, ParsedScript, RunOutcome, RunOutcomeKind},
+    engine::{
+        self, CallId, CutShort, EngineEvent, OutcomeKind, ParsedScript, RunOutcome, RunOutcomeKind,
+    },
     hermes::{
         AgentFeedItem, AgentFeedReceiver, ExplicitLaunch, HermesPort, LaunchDefaults,
         SchemaTurnPolicy, StopResult,
@@ -33,7 +35,7 @@ use crate::{
 pub use super::services::RunnerServices;
 use super::{
     control::{self, PausingGate},
-    files::{self, FailureView, LaunchFile, OutcomeFile, RunnerFile},
+    files::{self, AgentNote, FailureView, LaunchFile, OutcomeFile, RunnerFile},
     resolver::FilesystemResolver,
     runs::{self, Fold, LockProbe},
     services,
@@ -531,6 +533,7 @@ async fn resume(
         // with its own budget kept, a new execution could only be refused again.
         let replay = match fold.terminal.as_deref() {
             Some("completed") => Some(("completed", 0)),
+            Some("completed_with_failures") => Some(("completed_with_failures", 0)),
             Some("budget_exhausted") if req.budget_tokens.is_none() && req.budget_usd.is_none() => {
                 Some(("budget_exhausted", 4))
             }
@@ -1058,6 +1061,9 @@ async fn execute_inner(
     // flight or was sent.
     let (mut refused, mut budget_stopped) = (0_usize, 0_usize);
     let mut budget_reason: Option<String> = None;
+    // Agents that failed or were cut short, for the final result.
+    let (mut failed_agents, mut cut_short_agents) =
+        (Vec::<AgentNote>::new(), Vec::<AgentNote>::new());
     let stop_sent = Arc::new(std::sync::Mutex::new(BTreeSet::<String>::new()));
     let outcome = loop {
         tokio::select! {
@@ -1081,7 +1087,7 @@ async fn execute_inner(
                         }
                         EngineEvent::AgentFinished{call_id,outcome,..}=>{
                             let label=labels.remove(&call_id).unwrap_or_default();
-                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::Failed{reason}=>{output.diagnostic(reason);"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
+                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::CutShort{steps,limit}=>{let reason=CutShort{steps,limit}.describe();output.diagnostic(format!("agent {label}: {reason}; its reply was kept"));cut_short_agents.push(AgentNote{label:label.clone(),reason:reason.clone()});"cut short"},OutcomeKind::Failed{reason}=>{output.diagnostic(reason.clone());failed_agents.push(AgentNote{label:label.clone(),reason});"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
                             (output.out)(&RunnerEvent::AgentFinished{label,state:state.into()});
                         }
                         _=>{},
@@ -1158,6 +1164,23 @@ async fn execute_inner(
             reason: gate.budget_stop().or(budget_reason),
             finished_at_ms: 0,
             summary: Value::Null,
+            failed_agents: Vec::new(),
+            cut_short_agents: Vec::new(),
+        },
+        // The script returned normally, but at least one agent failed.
+        RunOutcome::Completed { result } if !failed_agents.is_empty() => OutcomeFile {
+            v: 1,
+            outcome: "completed_with_failures".into(),
+            result: Some(result),
+            error: None,
+            reason: Some(match failed_agents.len() {
+                1 => "1 agent failed".to_owned(),
+                n => format!("{n} agents failed"),
+            }),
+            finished_at_ms: 0,
+            summary: Value::Null,
+            failed_agents: Vec::new(),
+            cut_short_agents: Vec::new(),
         },
         RunOutcome::Completed { result } => OutcomeFile {
             v: 1,
@@ -1167,6 +1190,8 @@ async fn execute_inner(
             reason: None,
             finished_at_ms: 0,
             summary: Value::Null,
+            failed_agents: Vec::new(),
+            cut_short_agents: Vec::new(),
         },
         // The script let the budget error end it: the run ended on its budget, with no result.
         RunOutcome::Failed { error } if exhausted && error.name == "BudgetExhaustedError" => {
@@ -1181,6 +1206,8 @@ async fn execute_inner(
                 reason: gate.budget_stop().or(budget_reason),
                 finished_at_ms: 0,
                 summary: Value::Null,
+                failed_agents: Vec::new(),
+                cut_short_agents: Vec::new(),
             }
         }
         RunOutcome::Failed { error } => OutcomeFile {
@@ -1194,6 +1221,8 @@ async fn execute_inner(
             reason: None,
             finished_at_ms: 0,
             summary: Value::Null,
+            failed_agents: Vec::new(),
+            cut_short_agents: Vec::new(),
         },
         RunOutcome::Aborted { reason } => {
             let reason = if let Some(unsettled) = stopped {
@@ -1221,11 +1250,16 @@ async fn execute_inner(
                 reason: Some(reason),
                 finished_at_ms: 0,
                 summary: Value::Null,
+                failed_agents: Vec::new(),
+                cut_short_agents: Vec::new(),
             }
         }
     };
+    file.failed_agents = failed_agents;
+    file.cut_short_agents = cut_short_agents;
     let kind = match file.outcome.as_str() {
         "completed" => RunOutcomeKind::Completed,
+        "completed_with_failures" => RunOutcomeKind::CompletedWithFailures,
         "budget_exhausted" => RunOutcomeKind::BudgetExhausted,
         "failed" => RunOutcomeKind::Failed,
         _ => RunOutcomeKind::Aborted,
@@ -1249,6 +1283,8 @@ async fn execute_inner(
     Ok(match file.outcome.as_str() {
         "completed" => 0,
         "budget_exhausted" => 4,
+        // The script returned; the failed agents are named in the result, not in the exit code.
+        "completed_with_failures" => 0,
         "failed" => 1,
         _ => 3,
     })

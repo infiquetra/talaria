@@ -179,7 +179,7 @@ pub fn request_stop(runs_dir: &Path, target: &str, timeout: Duration) -> StopExi
             Err(_) => return StopExit::Unconfirmed,
         };
         match fold.terminal.as_deref() {
-            Some("completed" | "budget_exhausted" | "failed") => {
+            Some("completed" | "completed_with_failures" | "budget_exhausted" | "failed") => {
                 return StopExit::AlreadyFinished {
                     outcome: fold.terminal.unwrap_or_default(),
                 };

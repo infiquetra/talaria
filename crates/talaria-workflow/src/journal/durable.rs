@@ -702,8 +702,12 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     let turns = h.turns(self.journal.dir().path())?;
                     let next = self.policy.after_turn(&request, &turns);
                     // A finished answer is kept; anything else would spend past the budget.
-                    if !matches!(next, NextStep::Finish(AgentOutcome::Completed(_)))
-                        && let Some(reason) = self.gate.budget_stop()
+                    if !matches!(
+                        next,
+                        NextStep::Finish(
+                            AgentOutcome::Completed(_) | AgentOutcome::CutShort { .. }
+                        )
+                    ) && let Some(reason) = self.gate.budget_stop()
                     {
                         drop(permit.take());
                         return self

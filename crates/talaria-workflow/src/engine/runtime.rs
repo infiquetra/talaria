@@ -25,7 +25,7 @@ use super::{
 };
 
 const ROOT_PREFIX: &str = "(async function () {\"use strict\";";
-const CHILD_PREFIX: &str = "(async function (agent, parallel, pipeline, phase, log, args, budget, workflow, now, random) {\"use strict\";";
+const CHILD_PREFIX: &str = "(async function (agent, parallel, pipeline, phase, log, args, budget, workflow, now, random, cutShort) {\"use strict\";";
 
 struct NoModules(Arc<AtomicBool>);
 impl Resolver for NoModules {
@@ -408,6 +408,13 @@ impl<'a> State<'a> {
         }
         let (kind, value) = match outcome {
             AgentOutcome::Completed(value) => (OutcomeKind::Completed, value),
+            AgentOutcome::CutShort { value, cut_short } => (
+                OutcomeKind::CutShort {
+                    steps: cut_short.steps,
+                    limit: cut_short.limit,
+                },
+                value,
+            ),
             AgentOutcome::Failed { reason } => (OutcomeKind::Failed { reason }, Value::Null),
             AgentOutcome::Skipped => (OutcomeKind::Skipped, Value::Null),
             AgentOutcome::Stopped { reason } => (OutcomeKind::Stopped { reason }, Value::Null),
@@ -416,6 +423,9 @@ impl<'a> State<'a> {
         let delivery = match &kind {
             OutcomeKind::Stopped { reason } => {
                 json!({"id":pending.id,"error":{"name":"BudgetExhaustedError","message":reason}})
+            }
+            OutcomeKind::CutShort { steps, limit } => {
+                json!({"id":pending.id,"value":value,"cut_short":{"steps":steps,"limit":limit}})
             }
             _ => json!({"id":pending.id,"value":value}),
         };
