@@ -45,6 +45,10 @@ pub struct WorktreeReport {
     pub branch_tip: Option<String>,
     /// The commit the folder has checked out, when it is not the branch tip.
     pub folder_head: Option<String>,
+    /// The branch the folder has checked out, when it is not the recorded one (an agent ran
+    /// `git switch -c`, for example). `None` when the folder is on its recorded branch or on no
+    /// branch at all.
+    pub folder_branch: Option<String>,
     /// Why this worktree could not be examined completely, when that happened.
     pub problem: Option<String>,
 }
@@ -88,6 +92,22 @@ pub struct CleanupEntry {
     pub reasons: Vec<String>,
     /// Exactly what removal discards (or would discard) that exists nowhere else.
     pub discarded: Vec<String>,
+    /// The branches removal deletes (or would delete).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted_branches: Vec<String>,
+    /// Branches a removal keeps, and why: an unmerged branch is never force-deleted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_branches: Vec<String>,
+}
+
+/// What a removal of a folder an agent switched to another branch does with each branch.
+#[derive(Default)]
+struct BranchPlan {
+    /// The agent's own branch, deleted after the folder because it is merged.
+    agent_branch: Option<String>,
+    /// Whether the recorded branch is deleted; it stays when it holds unmerged commits.
+    recorded: bool,
+    kept: Vec<String>,
 }
 
 fn plural(count: usize, noun: &str) -> String {
@@ -301,6 +321,41 @@ fn head_of(folder: &Path) -> Result<String, String> {
     text(folder, &["rev-parse".as_ref(), "HEAD".as_ref()])
 }
 
+/// Commits reachable from `tip` that the source checkout's HEAD does not contain.
+fn unmerged(repo: &Path, tip: &str) -> Result<usize, String> {
+    text(
+        repo,
+        &[
+            "rev-list".as_ref(),
+            "--count".as_ref(),
+            tip.as_ref(),
+            "--not".as_ref(),
+            "HEAD".as_ref(),
+        ],
+    )
+    .and_then(|n| n.parse::<usize>().map_err(|e| e.to_string()))
+}
+
+/// When the branch `reference` was created, in seconds, from the oldest entry of its reflog.
+/// `None` when the repository keeps no reflog for it.
+fn reflog_created(repo: &Path, reference: &str) -> Option<i64> {
+    let log = text(
+        repo,
+        &[
+            "reflog".as_ref(),
+            "show".as_ref(),
+            "--date=unix".as_ref(),
+            "--format=%gd".as_ref(),
+            reference.as_ref(),
+            "--".as_ref(),
+        ],
+    )
+    .ok()?;
+    let oldest = log.lines().last()?;
+    let (_, stamp) = oldest.rsplit_once("@{")?;
+    stamp.strip_suffix('}')?.parse().ok()
+}
+
 impl GitWorktrees {
     /// This run's worktrees folder, refused when a link would point it somewhere else.
     fn worktrees_root(&self) -> Result<PathBuf, String> {
@@ -353,6 +408,7 @@ impl GitWorktrees {
             unmerged_commits: 0,
             branch_tip: None,
             folder_head: None,
+            folder_branch: None,
             problem: None,
         };
         if !contained {
@@ -393,6 +449,10 @@ impl GitWorktrees {
                 }
                 Err(error) => problems.push(format!("cannot read the folder's status: {error}")),
             }
+            report.folder_branch =
+                text(&report.path, &["branch".as_ref(), "--show-current".as_ref()])
+                    .ok()
+                    .filter(|name| !name.is_empty() && *name != side.branch);
             match head_of(&report.path) {
                 Ok(head) => {
                     if report.branch_tip.as_deref() != Some(head.as_str()) {
@@ -467,6 +527,8 @@ impl GitWorktrees {
             action,
             reasons,
             discarded,
+            deleted_branches: Vec::new(),
+            kept_branches: Vec::new(),
         };
         if !contained {
             let why = report.problem.clone().unwrap_or_default();
@@ -478,21 +540,18 @@ impl GitWorktrees {
             return entry(report, CleanupAction::Kept, vec![why], Vec::new());
         }
         let mut reasons = Vec::new();
+        // An agent may have switched the folder to a branch of its own, or to no branch. Such
+        // a folder is judged by what it has checked out, and each branch by its own commits.
+        let mut switched = false;
         if report.folder_exists {
-            let folder_ok = if force {
-                Self::is_repo_worktree(&report.path, repo)
-            } else {
-                self.owns_folder(&report.path, repo, &report.branch)
-            };
-            if !folder_ok {
-                reasons.push(if force {
+            if !Self::is_repo_worktree(&report.path, repo) {
+                reasons.push(
                     "the folder is not a git worktree of the source repository; left untouched"
-                        .to_string()
-                } else {
-                    "the folder is not a worktree on its recorded branch (an agent may have switched branches); use --force to remove it anyway".to_string()
-                });
+                        .to_string(),
+                );
                 return entry(report, CleanupAction::Kept, reasons, Vec::new());
             }
+            switched = !force && !self.owns_folder(&report.path, repo, &report.branch);
         }
         if let Some(problem) = &report.problem {
             reasons.push(problem.clone());
@@ -503,7 +562,23 @@ impl GitWorktrees {
                 plural(report.changed_files, "uncommitted changed file")
             ));
         }
-        if report.unmerged_commits > 0 {
+        if switched {
+            match head_of(&report.path).and_then(|head| unmerged(repo, &head)) {
+                Ok(0) => {}
+                Ok(count) => reasons.push(format!(
+                    "the folder's checked-out commit{} has {} not contained in the source checkout's HEAD",
+                    report
+                        .folder_branch
+                        .as_ref()
+                        .map(|b| format!(" (branch {b})"))
+                        .unwrap_or_default(),
+                    plural(count, "commit")
+                )),
+                Err(error) => reasons.push(format!(
+                    "cannot compare the folder's checked-out commit with the source checkout's HEAD: {error}"
+                )),
+            }
+        } else if report.unmerged_commits > 0 {
             reasons.push(format!(
                 "{} not contained in the source checkout's HEAD",
                 plural(report.unmerged_commits, "commit")
@@ -568,13 +643,145 @@ impl GitWorktrees {
                 plural(report.ignored_build_output, "verified build output folder")
             ));
         }
+        let plan = if switched {
+            match self.branch_plan(repo, sidecar, &report) {
+                Ok(plan) => Some(plan),
+                Err(error) => {
+                    return entry(report, CleanupAction::Failed, vec![error], Vec::new());
+                }
+            }
+        } else {
+            None
+        };
+        let (deleted_branches, kept_branches): (Vec<String>, Vec<String>) = match &plan {
+            Some(plan) => (
+                plan.recorded
+                    .then(|| report.branch.clone())
+                    .into_iter()
+                    .chain(plan.agent_branch.clone())
+                    .collect(),
+                plan.kept.clone(),
+            ),
+            None => (
+                report
+                    .branch_exists
+                    .then(|| report.branch.clone())
+                    .into_iter()
+                    .collect(),
+                Vec::new(),
+            ),
+        };
+        let done = |report, action, reasons, discarded| CleanupEntry {
+            deleted_branches: deleted_branches.clone(),
+            kept_branches: kept_branches.clone(),
+            ..entry(report, action, reasons, discarded)
+        };
         if dry_run {
-            return entry(report, CleanupAction::WouldRemove, Vec::new(), discarded);
+            return done(report, CleanupAction::WouldRemove, Vec::new(), discarded);
         }
-        match self.delete(repo, sidecar, &report, force) {
-            Ok(()) => entry(report, CleanupAction::Removed, Vec::new(), discarded),
+        let result = match &plan {
+            Some(plan) => self.delete_switched(repo, sidecar, &report, plan),
+            None => self.delete(repo, sidecar, &report, force),
+        };
+        match result {
+            Ok(()) => done(report, CleanupAction::Removed, Vec::new(), discarded),
             Err(error) => entry(report, CleanupAction::Failed, vec![error], Vec::new()),
         }
+    }
+
+    /// For a clean folder an agent switched to another branch, whose checked-out commit the
+    /// source checkout's HEAD already contains: which branches go with it. A branch is deleted
+    /// only when HEAD contains it; the agent's branch only when it was made during this run.
+    fn branch_plan(
+        &self,
+        repo: &Path,
+        sidecar: &Path,
+        report: &WorktreeReport,
+    ) -> Result<BranchPlan, String> {
+        let mut plan = BranchPlan::default();
+        let kept = |branch: &str, count: usize| {
+            format!(
+                "branch {branch} kept: {} not contained in the source checkout's HEAD",
+                plural(count, "commit")
+            )
+        };
+        let recorded = format!("refs/heads/{}", report.branch);
+        if report.branch_exists {
+            match unmerged(repo, &recorded)? {
+                0 => plan.recorded = true,
+                count => plan.kept.push(kept(&report.branch, count)),
+            }
+        }
+        if let Some(agent) = &report.folder_branch {
+            let reference = format!("refs/heads/{agent}");
+            // The run's own branch was made when its worktree was; the sidecar file is no
+            // older than that.
+            let since = reflog_created(repo, &recorded).or_else(|| {
+                sidecar
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+                    .and_then(|at| i64::try_from(at.as_secs()).ok())
+            });
+            let made_in_run = since
+                .zip(reflog_created(repo, &reference))
+                .is_some_and(|(since, created)| created >= since);
+            if !made_in_run {
+                plan.kept.push(format!(
+                    "branch {agent} kept: Talaria cannot tell that an agent of this run created it"
+                ));
+            } else {
+                match unmerged(repo, &reference)? {
+                    0 => plan.agent_branch = Some(agent.clone()),
+                    count => plan.kept.push(kept(agent, count)),
+                }
+            }
+        }
+        Ok(plan)
+    }
+
+    /// Remove a switched folder, then the branches its plan names, with the safe forms only.
+    /// The record stays while the run's own branch does, so the branch is still listed.
+    fn delete_switched(
+        &self,
+        repo: &Path,
+        sidecar: &Path,
+        report: &WorktreeReport,
+        plan: &BranchPlan,
+    ) -> Result<(), String> {
+        checked(
+            repo,
+            &[
+                "worktree".as_ref(),
+                "remove".as_ref(),
+                report.path.as_os_str(),
+            ],
+        )
+        .map_err(|e| format!("cannot remove the folder: {e}"))?;
+        let delete = |branch: &str| {
+            checked(
+                repo,
+                &[
+                    "branch".as_ref(),
+                    "-d".as_ref(),
+                    "--".as_ref(),
+                    branch.as_ref(),
+                ],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("the folder is gone but branch {branch} stays: {e}"))
+        };
+        if plan.recorded {
+            delete(&report.branch)?;
+        }
+        if let Some(agent) = &plan.agent_branch {
+            delete(agent)?;
+        }
+        if Self::branch_exists(repo, &report.branch)? {
+            return Ok(());
+        }
+        fs::remove_file(sidecar).map_err(|e| format!("cannot remove the provenance record: {e}"))
     }
 
     /// Folder first, then branch, then the record, so a failure leaves what is needed to retry.
@@ -897,15 +1104,117 @@ mod tests {
         assert!(GitWorktrees::branch_exists(&f.repo, "feature").unwrap());
     }
 
+    /// The agent's own branch in the folder, with one commit the source checkout then merges.
+    fn switch_and_merge(f: &Fixture, tree: &Path) {
+        git(tree, &["switch", "-c", "agent-own"]);
+        commit(tree, "work.txt");
+        git(&f.repo, &["merge", "--ff-only", "agent-own"]);
+    }
+
     #[test]
-    fn a_folder_switched_to_another_branch_is_kept_without_force() {
+    fn a_clean_switched_folder_whose_work_is_merged_is_removed_with_both_branches() {
         let f = fixture();
         let tree = f.tree(0);
-        git(&tree, &["checkout", "-b", "agent-own"]);
+        switch_and_merge(&f, &tree);
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert_eq!(report.folder_branch.as_deref(), Some("agent-own"));
+        // The dry run makes the same decision and changes nothing.
+        let preview = f.provider.clean_up(false, true).unwrap().remove(0);
+        assert_eq!(preview.action, CleanupAction::WouldRemove, "{preview:?}");
+        assert_eq!(
+            preview.deleted_branches,
+            vec![f.branch(0), "agent-own".to_string()]
+        );
+        assert!(tree.exists() && f.has_branch(0));
+        let done = f.provider.clean_up(false, false).unwrap().remove(0);
+        assert_eq!(done.action, CleanupAction::Removed, "{done:?}");
+        assert_eq!(done.deleted_branches, preview.deleted_branches);
+        assert!(done.kept_branches.is_empty());
+        assert!(!tree.exists() && !f.has_branch(0) && !f.sidecar(0).exists());
+        assert!(!GitWorktrees::branch_exists(&f.repo, "agent-own").unwrap());
+    }
+
+    #[test]
+    fn a_switched_folder_with_unmerged_or_uncommitted_work_is_kept() {
+        let f = fixture();
+        let tree = f.tree(0);
+        git(&tree, &["switch", "-c", "agent-own"]);
+        commit(&tree, "work.txt");
+        for dry_run in [true, false] {
+            let entry = f.provider.clean_up(false, dry_run).unwrap().remove(0);
+            assert_eq!(entry.action, CleanupAction::Kept);
+            let said = entry.reasons.join(" ");
+            assert!(said.contains("(branch agent-own) has 1 commit not contained"), "{said}");
+            assert!(!said.contains("recorded branch"), "{said}");
+        }
+        git(&f.repo, &["merge", "--ff-only", "agent-own"]);
+        fs::write(tree.join("new.txt"), "x").unwrap();
         let entry = f.provider.clean_up(false, false).unwrap().remove(0);
         assert_eq!(entry.action, CleanupAction::Kept);
-        assert!(entry.reasons.join(" ").contains("recorded branch"));
-        assert!(tree.exists());
+        assert!(entry.reasons.join(" ").contains("1 uncommitted changed file"));
+        assert!(tree.join("new.txt").exists());
+        assert!(GitWorktrees::branch_exists(&f.repo, "agent-own").unwrap());
+    }
+
+    #[test]
+    fn an_unmerged_recorded_branch_is_kept_when_the_switched_folder_goes() {
+        let f = fixture();
+        let tree = f.tree(0);
+        // Work committed on the run's branch, then the folder moved to a fresh branch at base.
+        commit(&tree, "abandoned.txt");
+        let base = git(&f.repo, &["rev-parse", "HEAD"]);
+        git(&tree, &["switch", "-c", "agent-own", &base]);
+        let entry = f.provider.clean_up(false, false).unwrap().remove(0);
+        assert_eq!(entry.action, CleanupAction::Removed, "{entry:?}");
+        assert_eq!(entry.deleted_branches, vec!["agent-own".to_string()]);
+        let kept = entry.kept_branches.join(" ");
+        assert!(
+            kept.contains(&format!("branch {} kept: 1 commit not contained", f.branch(0))),
+            "{kept}"
+        );
+        assert!(!tree.exists());
+        // Never force-deleted: the branch and its record stay, so it is still listed.
+        assert!(f.has_branch(0) && f.sidecar(0).exists());
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert!(!report.folder_exists && report.unmerged_commits == 1);
+    }
+
+    #[test]
+    fn a_branch_that_existed_before_the_run_is_never_deleted() {
+        let f = fixture();
+        // A branch made long before the run's worktree: its reflog says so.
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&f.repo)
+            .args(["branch", "older-feature"])
+            .env("GIT_COMMITTER_DATE", "@1000000000 +0000")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let tree = f.tree(0);
+        git(&tree, &["switch", "older-feature"]);
+        let entry = f.provider.clean_up(false, false).unwrap().remove(0);
+        assert_eq!(entry.action, CleanupAction::Removed, "{entry:?}");
+        assert_eq!(entry.deleted_branches, vec![f.branch(0)]);
+        assert!(
+            entry
+                .kept_branches
+                .join(" ")
+                .contains("branch older-feature kept: Talaria cannot tell"),
+            "{entry:?}"
+        );
+        assert!(GitWorktrees::branch_exists(&f.repo, "older-feature").unwrap());
+        assert!(!tree.exists() && !f.sidecar(0).exists());
+    }
+
+    #[test]
+    fn a_switched_folder_on_a_detached_head_at_a_merged_commit_is_removed() {
+        let f = fixture();
+        let tree = f.tree(0);
+        git(&tree, &["checkout", "--detach"]);
+        let entry = f.provider.clean_up(false, false).unwrap().remove(0);
+        assert_eq!(entry.action, CleanupAction::Removed, "{entry:?}");
+        assert!(!tree.exists() && !f.has_branch(0));
     }
 
     fn ignore_in_source(f: &Fixture) {
