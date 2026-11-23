@@ -2,6 +2,58 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-23 — The interrupt key must be pressed twice
+
+**Decision.** While a turn runs, the first press of the key bound to `interrupt` (Esc by default)
+arms a confirmation for 2 seconds and the working row says so; a second press inside that time
+interrupts. Ctrl+C interrupts at once. Everything else Esc does is unchanged: closing a view or a
+menu, the voice cutoff, and the double Esc on an idle composer that opens rewind, with its own 600
+ms window.
+
+**Rationale.** A person who had opened a workflow agent's session pressed Esc to leave it and
+stopped the agent's turn. One stray key should not end a long turn.
+
+**Rejected.** Holding the key for a time. Asking twice for Ctrl+C as well (it is a deliberate
+chord). A setting for the window.
+
+**Revisit when.** People report the second press as friction, or want the window configurable.
+
+## 2026-11-23 — Left arrow leaves a workflow agent's session the way Enter entered it
+
+**Decision.** Opening an agent from the workflow view remembers the session that was open. In the
+agent's session the action `workflow_agent_back` (Left by default) is live only on an empty
+composer with nothing else open; it switches back to the remembered session and reopens the run
+view with that agent selected. The line above the composer shows the key while it is live. The
+memory is keyed to the stored session id, confirmed when the switch lands, and dropped on any
+other switch. A session with no stored id of its own is never remembered. The action has its own
+key context, so it cannot collide with the composer's cursor key.
+
+**Rationale.** Enter moved the whole window into the agent's session and nothing led back except
+the session picker.
+
+**Rejected.** Hard-coding Left. A history of every session visited. Returning by runtime id (it
+could reach the wrong session).
+
+**Revisit when.** Agent sessions need more keys of their own.
+
+## 2026-11-23 — A workflow process line is hidden only when its run is confirmed
+
+**Decision.** While a run is running, the Workflow line above the composer shows a spinner and the
+time since the run started, from the run's own records. The line for the background process that
+is that run is not drawn when the process is confirmed to carry the run the Workflow line shows: a
+`resume` command names its run, and a `run` prints the run first. A workflow process that cannot
+be confirmed keeps its line, named after the workflow command, with a JSON output line shortened
+to its event name. Other processes are unchanged.
+
+**Rationale.** The two lines said the same thing, one of them as the first command of a shell line
+and a raw JSON event, and neither moved. Guessing which process is which run from start times
+could hide a live process.
+
+**Rejected.** Matching a process to a run by start time.
+
+**Revisit when.** The runner puts the run id on every line it prints, or in something the
+gateway's process list carries; then a window that attached late can confirm the link too.
+
 ## 2026-11-23 — The token budget counts tokens except cache reads
 
 **Decision.** A run's token budget, `spend.tokens`, `tokens_spent` in `workflow list` and

@@ -2,6 +2,47 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — A rule for one key action is routed by the resolved action, not by the outcome
+
+**Evidence.** The composer returned the same outcome for the interrupt key and for Ctrl+C, so a
+rule for "the interrupt key, pressed twice" could not be applied where the outcome was handled.
+The key is now resolved in the key map and sent as its own action, `UserAction::InterruptKey`
+(`crates/talaria-cli/src/run.rs`, `crates/talaria-app/src/app.rs`); the pure timer is
+`InterruptConfirm` in `crates/talaria-core/src/rewind/esc.rs`.
+
+**Mechanism.** Several keys shared one outcome, and the outcome had forgotten the key.
+
+**Generalizable rule.** When a rule applies to one key action but several keys give the same
+outcome, split the action before the outcome is formed.
+
+## 2026-11-23 — A user's git settings can make a folder that holds work look empty
+
+**Evidence.** With `status.showUntrackedFiles=no` in a user's git configuration, `git status
+--porcelain --ignored` prints nothing for a folder that holds untracked and ignored files. The
+cleanup command read that as clean and would have removed the worktree; a reviewer reproduced the
+loss in a scratch repository. Every status call Talaria makes now passes
+`--untracked-files=normal` (`crates/talaria-workflow/src/worktree/git/manage.rs`,
+`worktree/git.rs`, `runner/leftover.rs`).
+
+**Mechanism.** The command's answer depended on configuration the code did not set.
+
+**Generalizable rule.** When a decision to delete rests on a tool's output, pass every option that
+changes what the tool lists; do not inherit them.
+
+## 2026-11-23 — The cache-read split assumes one agent lives across a session's turns
+
+**Evidence.** Talaria takes a turn's cache reads as the rise in the session's running figure. That
+holds while Hermes keeps one agent for the session. Where Hermes builds a new agent for each turn
+(its managed-worker sessions), the figure is per turn, and a turn Talaria does not settle moves
+its cache reads into the next settled turn. In those cases Talaria gives a turn too few cache
+reads and counts too many tokens, so a budget can stop a run early but is never passed unseen
+(`crates/talaria-workflow/src/tokens.rs`). Not seen on a live gateway.
+
+**Mechanism.** A running total restarts when the thing that keeps it is rebuilt.
+
+**Generalizable rule.** When deriving a share from a running total, decide which way the error
+falls when the total restarts, and make it fall on the safe side.
+
 ## 2026-11-23 — Hermes reports a turn's tokens per turn and its cache reads as a session running total
 
 **Evidence.** A settled turn's `usage` holds that turn's input, output and total tokens, with

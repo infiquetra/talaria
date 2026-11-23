@@ -45,6 +45,10 @@ with the usual caveat that a `0.x` line may break anything between releases.
 - Every `talaria workflow` subcommand has a description in `--help`.
 - `/hivecode reinstall` and the first-time install also install any built-in workflow that is
   missing, and `talaria workflow roster` warns when none is installed.
+- In a workflow agent's session opened from the workflow view, Left arrow on an empty composer
+  returns to the session you came from with the run view open again (`workflow_agent_back`).
+- While a workflow run is running, the Workflow line above the composer shows a spinner and the
+  time since the run started.
 
 ### Changed
 
@@ -74,6 +78,11 @@ with the usual caveat that a `0.x` line may break anything between releases.
 - `workflow worktrees remove` deletes an ignored build folder only after a marker on disk confirms
   what it is; a folder that only has the name keeps the worktree, with the reason.
 - The notice about locking the installed skill also shows the command to type in a session.
+- The interrupt key (Esc) must be pressed twice within 2 seconds to interrupt a running turn; the
+  working row says so. Ctrl+C still interrupts at once.
+- The background process line for a workflow run is not drawn when the Workflow line already shows
+  that run; otherwise it is named after the workflow command and shows a readable event instead of
+  raw JSON.
 
 ### Removed
 
