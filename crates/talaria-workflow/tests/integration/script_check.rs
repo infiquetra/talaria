@@ -207,3 +207,17 @@ async fn literal_model_pairs_are_listed_but_not_judged() {
     assert_eq!(report.named_routes.len(), 1);
     assert_eq!(report.named_routes[0].model, "m1");
 }
+
+#[tokio::test]
+async fn a_syntax_error_on_the_meta_line_has_its_column_in_the_file() {
+    let source = "export const meta = { name: 'a', description: 'x' }; const b = ;\nreturn 1;\n";
+    let report = check_script(source, &options(TIERS)).await;
+    let error = &report.errors[0];
+    assert_eq!(error.kind, "syntax");
+    assert_eq!(error.line, Some(1));
+    assert_eq!(
+        error.column,
+        Some(u32::try_from(source.find(" ;").unwrap() + 2).unwrap()),
+        "{error:?}"
+    );
+}

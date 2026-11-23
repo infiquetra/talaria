@@ -54,11 +54,9 @@ pub async fn check_syntax(parsed: &ParsedScript) -> Result<(), SyntaxIssue> {
                     // The wrapper's first line is also the script's first line, so its
                     // length shifts columns on that line only.
                     let column = match (line, column) {
-                        (Some(1), Some(c)) => Some(
-                            u32::try_from(c.saturating_sub(ROOT_PREFIX.chars().count() as u32))
-                                .unwrap_or(1)
-                                .max(1),
-                        ),
+                        (Some(1), Some(c)) => {
+                            Some(c.saturating_sub(ROOT_PREFIX.chars().count() as u32).max(1))
+                        }
                         (_, c) => c,
                     };
                     Err(SyntaxIssue {
