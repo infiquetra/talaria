@@ -6,8 +6,8 @@
 
 **Decision.** `talaria workflow worktrees list` and `remove <run>` are the whole feature. Without
 `--force`, `remove` acts only on a run that has reached a final state and only on worktrees that
-hold nothing: no changed files, no ignored files that removal would delete, no commits the source
-checkout lacks. It deletes their branches with git's own merged check. Everything else is kept and
+hold nothing: no changed files, no ignored files other than known build output folders such as `target`,
+no commits the source checkout lacks. It deletes their branches with git's own merged check. Everything else is kept and
 listed with the reason. With `--force` the run's worktrees and branches go, and the output says
 what was discarded and each branch's last commit. The command works only from the run's own
 records, inside the run's own worktrees folder and branch prefix, and refuses a run whose runner
