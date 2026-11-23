@@ -107,12 +107,22 @@ be working at Hermes in those folders, or the run may be resumed. With `--force`
 interrupted run is cleaned anyway and the output says the run did not finish; `--dry-run`
 follows the same rules. Without `--force` it removes a worktree, its branch and its sidecar only when the folder
 is clean and everything it holds is already contained in the source checkout's `HEAD`; the
-branch goes with `git branch -d`, which refuses unmerged work a second time. Every worktree
+branch goes with `git branch -d`, which refuses unmerged work a second time. A folder that holds ignored
+files is also kept, because removal deletes them, unless every ignored entry is a folder
+named like regenerable build output (`target`, `node_modules`, `__pycache__`,
+`.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `dist`, `build`, `.venv`); those are deleted
+with the folder and the output says so. `list` shows the ignored count and how many of them
+are build output. Every worktree
 with uncommitted changes or unmerged commits is kept and listed with the reason, and so is a
 folder that no longer sits on its recorded branch. With `--force` it removes everything for
-that run and prints exactly what was discarded: the changed-file count and, for unmerged
-commits, the count and the branch tip, which `git branch <name> <tip>` can restore until Git
-collects it. `--dry-run` prints the same decisions and changes nothing.
+that run and prints what was discarded: the changed-file count, the ignored entries, the
+unmerged commit count, and always the branch tip (and the folder's own commit when it is
+not the branch tip), which `git branch <name> <tip>` can restore until Git collects it. If
+the folder could not be examined it says "could not tell what is lost" with the reason. `--dry-run` prints the same decisions and changes nothing.
+
+When a folder is already gone, only that worktree's own registration is dropped (with
+`git worktree remove <path>`); other stale registrations in the source repository are left
+alone, and `git worktree prune` finishes any that remain.
 
 Only a folder that resolves to the run's own `worktrees` directory and a branch under
 `talaria/wf/<run-id>/` are ever touched. A folder that is a link leading elsewhere is kept

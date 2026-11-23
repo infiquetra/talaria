@@ -130,6 +130,15 @@ fn row_line(row: &WorktreeReport) -> String {
     } else {
         plural(row.changed_files, "changed file")
     };
+    let changes = if row.ignored_entries == 0 {
+        changes
+    } else {
+        format!(
+            "{changes}, {} ({} build output)",
+            plural(row.ignored_entries, "ignored item"),
+            row.ignored_build_output
+        )
+    };
     let commits = if row.unmerged_commits == 0 {
         "all commits in HEAD".to_string()
     } else {
@@ -544,5 +553,11 @@ mod tests {
         assert_eq!(body["changed_files"], 1);
         assert_eq!(body["unmerged_commits"], 0);
         assert!(body["path"].is_string() && body["branch"].is_string());
+        assert_eq!(body["ignored_entries"], 0);
+        let mut ignored = rows[0].clone();
+        ignored.ignored_entries = 3;
+        ignored.ignored_build_output = 2;
+        let line = row_line(&ignored);
+        assert!(line.contains("3 ignored items (2 build output)"), "{line}");
     }
 }

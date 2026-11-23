@@ -25,10 +25,18 @@ pub struct WorktreeReport {
     pub branch_exists: bool,
     /// Entries `git status` reports in the folder: modified, staged and new files.
     pub changed_files: usize,
+    /// Ignored files and folders in the folder (a whole ignored folder counts once). Removal
+    /// deletes them with the folder.
+    pub ignored_entries: usize,
+    /// How many of `ignored_entries` are folders named like regenerable build output
+    /// (see `BUILD_OUTPUT`); they do not stop a removal without `--force`.
+    pub ignored_build_output: usize,
     /// Commits on the branch, or checked out in the folder, that the source checkout's current
     /// HEAD does not contain.
     pub unmerged_commits: usize,
     pub branch_tip: Option<String>,
+    /// The commit the folder has checked out, when it is not the branch tip.
+    pub folder_head: Option<String>,
     /// Why this worktree could not be examined completely, when that happened.
     pub problem: Option<String>,
 }
@@ -57,19 +65,61 @@ fn plural(count: usize, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
-fn changed_files(folder: &Path) -> Result<usize, String> {
+/// Ignored folders with these names are regenerable build output: a removal without `--force`
+/// deletes them and says so, rather than keeping the worktree. Any other ignored entry (an
+/// environment file, a note, an unlisted folder) keeps the worktree until `--force`.
+const BUILD_OUTPUT: &[&str] = &[
+    "target",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "dist",
+    "build",
+    ".venv",
+];
+
+struct FolderStatus {
+    changed: usize,
+    ignored: usize,
+    build_output: usize,
+}
+
+fn is_build_output(path: &[u8]) -> bool {
+    let Ok(path) = std::str::from_utf8(path) else {
+        return false;
+    };
+    let Some(folder) = path.trim_matches('"').strip_suffix('/') else {
+        return false;
+    };
+    BUILD_OUTPUT.contains(&folder.rsplit('/').next().unwrap_or(folder))
+}
+
+fn folder_status(folder: &Path) -> Result<FolderStatus, String> {
     let out = checked(
         folder,
         &[
             "status".as_ref(),
             "--porcelain".as_ref(),
+            "--ignored".as_ref(),
             "--ignore-submodules=all".as_ref(),
         ],
     )?;
-    Ok(out
-        .split(|&b| b == b'\n')
-        .filter(|line| !line.is_empty())
-        .count())
+    let mut status = FolderStatus {
+        changed: 0,
+        ignored: 0,
+        build_output: 0,
+    };
+    for line in out.split(|&b| b == b'\n').filter(|line| !line.is_empty()) {
+        if let Some(path) = line.strip_prefix(b"!! ") {
+            status.ignored += 1;
+            status.build_output += usize::from(is_build_output(path));
+        } else {
+            status.changed += 1;
+        }
+    }
+    Ok(status)
 }
 
 fn head_of(folder: &Path) -> Result<String, String> {
@@ -121,8 +171,11 @@ impl GitWorktrees {
             branch: side.branch.clone(),
             branch_exists: false,
             changed_files: 0,
+            ignored_entries: 0,
+            ignored_build_output: 0,
             unmerged_commits: 0,
             branch_tip: None,
+            folder_head: None,
             problem: None,
         };
         if !contained {
@@ -153,12 +206,21 @@ impl GitWorktrees {
             Err(error) => problems.push(format!("cannot look up the branch: {error}")),
         }
         if report.folder_exists {
-            match changed_files(&report.path) {
-                Ok(count) => report.changed_files = count,
+            match folder_status(&report.path) {
+                Ok(status) => {
+                    report.changed_files = status.changed;
+                    report.ignored_entries = status.ignored;
+                    report.ignored_build_output = status.build_output;
+                }
                 Err(error) => problems.push(format!("cannot read the folder's status: {error}")),
             }
             match head_of(&report.path) {
-                Ok(head) => tips.push(head),
+                Ok(head) => {
+                    if report.branch_tip.as_deref() != Some(head.as_str()) {
+                        report.folder_head = Some(head.clone());
+                    }
+                    tips.push(head);
+                }
                 Err(error) => problems.push(format!("cannot read the folder's HEAD: {error}")),
             }
         }
@@ -268,8 +330,18 @@ impl GitWorktrees {
                 plural(report.unmerged_commits, "commit")
             ));
         }
+        let other_ignored = report.ignored_entries - report.ignored_build_output;
+        if other_ignored > 0 {
+            reasons.push(format!(
+                "holds {} that removal would delete (not known build output such as target or node_modules)",
+                plural(other_ignored, "ignored file or folder")
+            ));
+        }
         let mut discarded = Vec::new();
         if force {
+            if let Some(problem) = &report.problem {
+                discarded.push(format!("could not tell what is lost: {problem}"));
+            }
             if report.changed_files > 0 {
                 discarded.push(format!(
                     "{} in {}",
@@ -279,18 +351,37 @@ impl GitWorktrees {
             }
             if report.unmerged_commits > 0 {
                 discarded.push(format!(
-                    "{} not in the source checkout's HEAD{}",
-                    plural(report.unmerged_commits, "commit"),
-                    report
-                        .branch_tip
-                        .as_ref()
-                        .map(|tip| format!(" (branch {} was at {tip})", report.branch))
-                        .unwrap_or_default()
+                    "{} not in the source checkout's HEAD",
+                    plural(report.unmerged_commits, "commit")
+                ));
+            }
+            if report.ignored_entries > 0 {
+                discarded.push(format!(
+                    "{} in {} ({} of them known build output)",
+                    plural(report.ignored_entries, "ignored file or folder"),
+                    report.path.display(),
+                    report.ignored_build_output
+                ));
+            }
+            if let Some(tip) = &report.branch_tip {
+                discarded.push(format!(
+                    "branch {} is deleted; it was at {tip} (git branch <name> {tip} restores it)",
+                    report.branch
+                ));
+            }
+            if let Some(head) = &report.folder_head {
+                discarded.push(format!(
+                    "the folder had {head} checked out (git branch <name> {head} restores it)"
                 ));
             }
             reasons.clear();
         } else if !reasons.is_empty() {
             return entry(report, CleanupAction::Kept, reasons, Vec::new());
+        } else if report.ignored_build_output > 0 {
+            discarded.push(format!(
+                "{} deleted with the folder",
+                plural(report.ignored_build_output, "ignored build output folder")
+            ));
         }
         if dry_run {
             return entry(report, CleanupAction::WouldRemove, Vec::new(), discarded);
@@ -316,8 +407,15 @@ impl GitWorktrees {
             }
             args.push(report.path.as_os_str());
             checked(repo, &args).map_err(|e| format!("cannot remove the folder: {e}"))?;
-        } else {
-            Self::prune_if_registered(repo, &report.path)?;
+        } else if Self::registered(repo, &report.path)? {
+            // The folder is already gone. `worktree remove` on its path drops only this entry;
+            // a bare `worktree prune` would drop every stale entry in the repository.
+            let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
+            if force {
+                args.push(OsStr::new("--force"));
+            }
+            args.push(report.path.as_os_str());
+            checked(repo, &args).map_err(|e| format!("cannot drop the worktree entry: {e}"))?;
         }
         if Self::branch_exists(repo, &report.branch)? {
             // The safe form refuses a branch whose work HEAD lacks; only --force discards it.
@@ -517,7 +615,11 @@ mod tests {
                 .iter()
                 .all(|e| e.action == CleanupAction::WouldRemove)
         );
-        assert_eq!(forced[1].discarded.len(), 1);
+        assert!(
+            forced[1].discarded[0].contains("1 uncommitted changed file"),
+            "{:?}",
+            forced[1].discarded
+        );
         assert!(clean.exists() && dirty.exists());
         assert!(f.has_branch(0) && f.has_branch(1));
         assert!(f.sidecar(0).exists() && f.sidecar(1).exists());
@@ -607,5 +709,167 @@ mod tests {
         assert_eq!(entry.action, CleanupAction::Kept);
         assert!(entry.reasons.join(" ").contains("recorded branch"));
         assert!(tree.exists());
+    }
+
+    fn ignore_in_source(f: &Fixture) {
+        fs::write(f.repo.join(".gitignore"), "target/\n.env\n").unwrap();
+        git(&f.repo, &["add", ".gitignore"]);
+        git(
+            &f.repo,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "ignore",
+            ],
+        );
+    }
+
+    #[test]
+    fn force_with_an_unreadable_folder_says_it_could_not_tell_what_is_lost() {
+        let f = fixture();
+        let tree = f.tree(0);
+        // Damage the worktree's index so git cannot report its status.
+        let gitdir = fs::read_to_string(tree.join(".git")).unwrap();
+        let gitdir = PathBuf::from(gitdir.trim().strip_prefix("gitdir: ").unwrap());
+        fs::write(gitdir.join("index"), "not an index").unwrap();
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert!(report.problem.is_some(), "{report:?}");
+        let kept = f.provider.clean_up(false, false).unwrap().remove(0);
+        assert_eq!(kept.action, CleanupAction::Kept);
+        assert!(tree.exists());
+        let tip = report.branch_tip.clone().unwrap();
+        let forced = f.provider.clean_up(true, false).unwrap().remove(0);
+        assert_eq!(forced.action, CleanupAction::Removed);
+        let said = forced.discarded.join("\n");
+        assert!(said.contains("could not tell what is lost"), "{said}");
+        assert!(
+            said.contains(&tip),
+            "the branch tip is always printed: {said}"
+        );
+    }
+
+    #[test]
+    fn force_always_prints_the_branch_tip_and_a_detached_folder_head() {
+        let f = fixture();
+        let tree = f.tree(0);
+        let tip = f.provider.inspect().unwrap()[0].branch_tip.clone().unwrap();
+        git(&tree, &["checkout", "--detach"]);
+        commit(&tree, "work.txt");
+        let head = git(&tree, &["rev-parse", "HEAD"]);
+        let said = f
+            .provider
+            .clean_up(true, false)
+            .unwrap()
+            .remove(0)
+            .discarded
+            .join("\n");
+        assert!(said.contains(&tip) && said.contains(&head), "{said}");
+    }
+
+    #[test]
+    fn ignored_files_keep_a_worktree_without_force_but_build_output_does_not() {
+        let f = fixture();
+        ignore_in_source(&f);
+        let build = f.tree(0);
+        fs::create_dir(build.join("target")).unwrap();
+        fs::write(build.join("target").join("out.bin"), "x").unwrap();
+        let secret = f.tree(1);
+        fs::write(secret.join(".env"), "TOKEN=1").unwrap();
+        let rows = f.provider.inspect().unwrap();
+        assert_eq!(
+            (
+                rows[0].changed_files,
+                rows[0].ignored_entries,
+                rows[0].ignored_build_output
+            ),
+            (0, 1, 1)
+        );
+        assert_eq!(
+            (
+                rows[1].changed_files,
+                rows[1].ignored_entries,
+                rows[1].ignored_build_output
+            ),
+            (0, 1, 0)
+        );
+        let preview = f.provider.clean_up(false, true).unwrap();
+        assert_eq!(preview[0].action, CleanupAction::WouldRemove);
+        assert!(
+            preview[0]
+                .discarded
+                .join(" ")
+                .contains("1 ignored build output folder")
+        );
+        assert_eq!(preview[1].action, CleanupAction::Kept);
+        assert!(
+            preview[1]
+                .reasons
+                .join(" ")
+                .contains("1 ignored file or folder")
+        );
+        let rows = f.provider.clean_up(false, false).unwrap();
+        assert_eq!(rows[0].action, CleanupAction::Removed);
+        assert!(!build.exists());
+        assert_eq!(rows[1].action, CleanupAction::Kept);
+        assert!(secret.join(".env").exists());
+        let forced = f.provider.clean_up(true, false).unwrap().remove(0);
+        assert_eq!(forced.action, CleanupAction::Removed);
+        assert!(
+            forced
+                .discarded
+                .join(" ")
+                .contains("1 ignored file or folder")
+        );
+        assert!(!secret.exists());
+    }
+
+    #[test]
+    fn only_listed_folder_names_count_as_build_output() {
+        assert!(is_build_output(b"target/"));
+        assert!(is_build_output(b"crates/app/node_modules/"));
+        assert!(
+            !is_build_output(b"target"),
+            "a file named target is not output"
+        );
+        assert!(!is_build_output(b".env"));
+        assert!(!is_build_output(b"secrets/"));
+    }
+
+    #[test]
+    fn removing_a_worktree_whose_folder_is_gone_leaves_other_stale_entries_alone() {
+        let f = fixture();
+        let tree = f.tree(0);
+        // An unrelated worktree of the same repository whose folder is also gone.
+        let stranger = f.repo.parent().unwrap().join("stranger");
+        git(
+            &f.repo,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "stranger",
+                stranger.to_str().unwrap(),
+            ],
+        );
+        fs::remove_dir_all(&stranger).unwrap();
+        fs::remove_dir_all(&tree).unwrap();
+        let before = git(&f.repo, &["worktree", "list", "--porcelain"]);
+        assert!(before.contains("stranger"));
+        let entry = f.provider.clean_up(false, false).unwrap().remove(0);
+        assert_eq!(entry.action, CleanupAction::Removed, "{entry:?}");
+        let after = git(&f.repo, &["worktree", "list", "--porcelain"]);
+        assert!(
+            after.contains("stranger"),
+            "the other entry survives: {after}"
+        );
+        assert!(
+            !after.contains(&"a".repeat(64)),
+            "this run's entry is gone: {after}"
+        );
+        assert!(!f.has_branch(0) && !f.sidecar(0).exists());
     }
 }
