@@ -98,8 +98,14 @@ status` reports as changed, and how many commits on the branch (or checked out i
 the source checkout's current `HEAD` does not contain. It only reads, so it works on a running
 run.
 
-`remove` refuses a run whose runner holds `run.lock`, and it holds that lock itself while it
-works. Without `--force` it removes a worktree, its branch and its sidecar only when the folder
+`remove` refuses a run whose runner holds `run.lock`, even with `--force`, and it holds that
+lock itself while it works. It also looks at the run's status, derived the way `workflow
+list` derives it. Without `--force` it proceeds only when the run reached a recorded end
+(completed, completed_with_failures, budget_exhausted, failed or aborted). A running, parked,
+interrupted or unreadable run is refused with nothing changed, because its agents may still
+be working at Hermes in those folders, or the run may be resumed. With `--force` a parked or
+interrupted run is cleaned anyway and the output says the run did not finish; `--dry-run`
+follows the same rules. Without `--force` it removes a worktree, its branch and its sidecar only when the folder
 is clean and everything it holds is already contained in the source checkout's `HEAD`; the
 branch goes with `git branch -d`, which refuses unmerged work a second time. Every worktree
 with uncommitted changes or unmerged commits is kept and listed with the reason, and so is a

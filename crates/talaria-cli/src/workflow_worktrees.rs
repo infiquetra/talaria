@@ -8,7 +8,7 @@ use std::{
 use clap::{Args, Subcommand};
 use serde_json::json;
 use talaria_workflow::{
-    runner::{self, FindError, worktrees::CleanupError},
+    runner::{self, FindError, RunStatus, worktrees::CleanupError},
     worktree::{CleanupAction, CleanupEntry, WorktreeReport},
 };
 
@@ -172,8 +172,8 @@ fn remove(args: RemoveArgs) -> u8 {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let entries = match runner::worktrees::clean_up(&dir, args.force, args.dry_run) {
-        Ok(entries) => entries,
+    let outcome = match runner::worktrees::clean_up(&dir, args.force, args.dry_run) {
+        Ok(outcome) => outcome,
         Err(CleanupError::Running) => {
             return fail(
                 format!(
@@ -182,8 +182,12 @@ fn remove(args: RemoveArgs) -> u8 {
                 1,
             );
         }
+        Err(CleanupError::NotFinished(status)) => {
+            return fail(not_finished_message(&run_id, status), 1);
+        }
         Err(CleanupError::Failed(e)) => return fail(format!("run {run_id}: {e}"), 1),
     };
+    let (entries, status) = (outcome.entries, outcome.status);
     let failed = entries
         .iter()
         .any(|entry| entry.action == CleanupAction::Failed);
@@ -192,17 +196,54 @@ fn remove(args: RemoveArgs) -> u8 {
             "run_id": run_id,
             "force": args.force,
             "dry_run": args.dry_run,
+            "run_status": status.as_str(),
+            "run_finished": status.is_finished(),
             "entries": entries,
         });
         let code = print(&format!("{body}\n"));
         return if failed { 1 } else { code };
     }
-    let code = print(&remove_text(&run_id, &entries, args.force, args.dry_run));
+    let code = print(&remove_text(
+        &run_id,
+        status,
+        &entries,
+        args.force,
+        args.dry_run,
+    ));
     if failed { 1 } else { code }
 }
 
-fn remove_text(run_id: &str, entries: &[CleanupEntry], force: bool, dry_run: bool) -> String {
+/// Why a run without a recorded end is not touched, and what to do about it.
+fn not_finished_message(run_id: &str, status: RunStatus) -> String {
+    let why = match status {
+        RunStatus::Interrupted => format!(
+            "run {run_id} was interrupted and its agents may still be working at Hermes; resume or stop it first, or pass --force"
+        ),
+        RunStatus::Parked => format!(
+            "run {run_id} is parked: an agent's outcome is unknown and it may still be working at Hermes; resolve or stop the run first, or pass --force"
+        ),
+        _ => format!(
+            "run {run_id} has no readable record of how it ended, so its agents may still be working; pass --force to remove its worktrees anyway"
+        ),
+    };
+    format!("{why}. Nothing was changed.")
+}
+
+fn remove_text(
+    run_id: &str,
+    status: RunStatus,
+    entries: &[CleanupEntry],
+    force: bool,
+    dry_run: bool,
+) -> String {
     let mut text = String::new();
+    if !status.is_finished() {
+        text.push_str(&format!(
+            "Note: run {} did not finish (status {}); its agents may still be working in these folders.\n",
+            safe(run_id),
+            status.as_str()
+        ));
+    }
     if dry_run {
         text.push_str("Dry run: nothing is changed.\n");
     }
@@ -325,23 +366,63 @@ mod tests {
         assert!(status.success());
     }
 
-    /// A runs directory holding one finished run with two worktrees: one clean, one dirty.
+    const RUN: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    /// A runs directory holding one run with two worktrees: one clean, one dirty. The run
+    /// reached a recorded end unless `records` says otherwise.
     fn runs_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        runs_fixture_with(&["run_started", "run_finished"])
+    }
+
+    fn runs_fixture_with(kinds: &[&str]) -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
         let temp = tempfile::tempdir().unwrap();
         let repo = temp.path().join("repo");
         fs::create_dir(&repo).unwrap();
         git(&repo, &["init", "-b", "main"]);
         git(&repo, &["commit", "--allow-empty", "-m", "base"]);
         let runs = temp.path().join("runs");
-        let run = runs.join("run-one");
+        let run = runs.join(RUN);
         fs::create_dir_all(&run).unwrap();
+        fs::write(
+            run.join("manifest.json"),
+            serde_json::json!({"v":1,"run_id":RUN,"created_at_ms":1000,
+                "workflow":{"name":"fixture","script_sha256":"b".repeat(64)},"args":null,
+                "started_at_ms":1000,"seed":7,"profile":"fixture","on_unknown":"wait",
+                "talaria_version":"0.7.0","hermes":{},"roster":{},"approval_policy":{}})
+            .to_string(),
+        )
+        .unwrap();
+        let record = |kind: &str| match kind {
+            "run_started" => {
+                serde_json::json!({"t":"run_started","run_id":RUN,"script_sha256":"b".repeat(64)})
+            }
+            "run_finished" => serde_json::json!({"t":"run_finished","outcome":"completed",
+                "summary":{"completed":0,"failed":0,"skipped":0,"parked":0,"unfinished":0}}),
+            _ => serde_json::json!({"t":"call_intent","key":"a".repeat(32),"attempt":0,
+                "call_id":{"digest":"1".repeat(64),"occurrence":0},"label":"review",
+                "phase":null,"workflow_path":[],
+                "launch":{"profile":"fixture","model":"model","toolsets":[],"skills":[]},
+                "request_id":"wf:fixture:k"}),
+        };
+        let journal: String = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, kind)| {
+                let mut line = record(kind);
+                line["v"] = 1.into();
+                line["seq"] = (i + 1).into();
+                line["at_ms"] = i.into();
+                format!("{line}\n")
+            })
+            .collect();
+        fs::write(run.join("journal.jsonl"), journal).unwrap();
         fs::write(run.join("run.lock"), "").unwrap();
         fs::write(
             run.join("launch.json"),
             serde_json::json!({"cwd": repo}).to_string(),
         )
         .unwrap();
-        let provider = GitWorktrees::new(run.clone(), repo.clone(), "run-one".into());
+        let provider = GitWorktrees::new(run.clone(), repo.clone(), RUN.into());
         let clean = provider.for_call(&"a".repeat(64), 0).unwrap();
         let dirty = provider.for_call(&"b".repeat(64), 0).unwrap();
         fs::write(dirty.join("note.txt"), "x").unwrap();
@@ -357,7 +438,7 @@ mod tests {
         let (_temp, runs, clean, dirty) = runs_fixture();
         let runs_dir = runs_arg(&runs);
         let remove = |extra: &[&str]| {
-            let mut parts = vec!["workflow", "worktrees", "remove", "run-one", "--runs-dir"];
+            let mut parts = vec!["workflow", "worktrees", "remove", RUN, "--runs-dir"];
             parts.push(&runs_dir);
             parts.extend(extra);
             let WorktreesCommand::Remove(a) = worktrees(&parts) else {
@@ -383,7 +464,7 @@ mod tests {
         let holder = fs::File::options()
             .read(true)
             .write(true)
-            .open(runs.join("run-one").join("run.lock"))
+            .open(runs.join(RUN).join("run.lock"))
             .unwrap();
         holder.try_lock().unwrap();
         let go = |target: &str| {
@@ -403,21 +484,59 @@ mod tests {
                 command: WorktreesCommand::Remove(a),
             })
         };
-        assert_eq!(go("run-one"), 1);
+        assert_eq!(go(RUN), 1);
         assert!(clean.exists());
         assert_eq!(go("no-such-run"), 2);
     }
 
     #[test]
+    fn the_command_refuses_an_unfinished_run_unless_forced_and_says_so() {
+        for kinds in [
+            &["run_started", "call_intent"][..],
+            &["run_started", "call_intent", "call_attention"][..],
+        ] {
+            let (_temp, runs, clean, dirty) = runs_fixture_with(kinds);
+            let runs_dir = runs_arg(&runs);
+            let go = |extra: &[&str]| {
+                let mut parts = vec!["workflow", "worktrees", "remove", RUN, "--runs-dir"];
+                parts.push(&runs_dir);
+                parts.extend(extra);
+                let WorktreesCommand::Remove(a) = worktrees(&parts) else {
+                    panic!()
+                };
+                execute(WorktreesArgs {
+                    command: WorktreesCommand::Remove(a),
+                })
+            };
+            assert_eq!(go(&[]), 1, "{kinds:?}");
+            assert_eq!(go(&["--dry-run"]), 1, "{kinds:?}");
+            assert!(clean.exists() && dirty.exists(), "nothing changed");
+            assert_eq!(go(&["--force"]), 0, "{kinds:?}");
+            assert!(!clean.exists() && !dirty.exists());
+        }
+    }
+
+    #[test]
+    fn the_refusal_text_says_what_to_do() {
+        let interrupted = not_finished_message("r1", RunStatus::Interrupted);
+        assert!(interrupted.contains("interrupted") && interrupted.contains("--force"));
+        assert!(interrupted.contains("Nothing was changed"));
+        let parked = not_finished_message("r1", RunStatus::Parked);
+        assert!(parked.contains("parked") && parked.contains("may still be working"));
+        let note = remove_text("r1", RunStatus::Interrupted, &[], true, false);
+        assert!(
+            note.contains("did not finish (status interrupted)"),
+            "{note}"
+        );
+    }
+
+    #[test]
     fn row_lines_say_what_each_worktree_holds() {
         let (_temp, runs, _clean, _dirty) = runs_fixture();
-        let rows = runner::worktrees::list(&runs.join("run-one")).unwrap();
+        let rows = runner::worktrees::list(&runs.join(RUN)).unwrap();
         assert_eq!(rows.len(), 2);
         let first = row_line(&rows[0]);
-        assert!(
-            first.contains("run-one") && first.contains("clean"),
-            "{first}"
-        );
+        assert!(first.contains(RUN) && first.contains("clean"), "{first}");
         assert!(first.contains("all commits in HEAD"), "{first}");
         let second = row_line(&rows[1]);
         assert!(second.contains("1 changed file"), "{second}");
