@@ -72,7 +72,9 @@ fn main() {
 
 /// The paths whose change makes the build script run again: the checked-out commit (`HEAD` and
 /// the branch reference it names, loose or packed) and the source files, and nothing else. Only
-/// paths that exist are named, because a missing one would rerun every build.
+/// paths that exist are named, because a missing one would rerun every build. For a packed
+/// reference the folder its loose file would be written to is named instead, so the commit that
+/// writes it is seen.
 ///
 /// The index is not watched. Staging a file changes neither the commit nor whether tracked
 /// files differ from it, and Git and editors rewrite the index for many other reasons. A
@@ -101,7 +103,23 @@ pub(crate) fn watched(root: &Path, commit_known: bool) -> Vec<PathBuf> {
             let common = PathBuf::from(common);
             watched.push(common.join("packed-refs"));
             if let Some(reference) = git(root, &["symbolic-ref", "-q", "HEAD"]) {
-                watched.push(common.join(reference));
+                let loose = common.join(&reference);
+                if loose.exists() {
+                    watched.push(loose);
+                } else {
+                    // The reference is packed: the next commit writes the loose file again
+                    // without touching `HEAD` or `packed-refs`, so watch the folder it will
+                    // appear in, the nearest one that exists under `refs/heads`.
+                    let heads = common.join("refs").join("heads");
+                    if let Some(folder) = loose
+                        .ancestors()
+                        .skip(1)
+                        .take_while(|folder| folder.starts_with(&heads))
+                        .find(|folder| folder.is_dir())
+                    {
+                        watched.push(folder.to_path_buf());
+                    }
+                }
             }
         }
     }

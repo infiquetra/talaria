@@ -63,7 +63,17 @@ fn history(
             usage: Some(json!({"input_tokens":7})),
         });
     }
-    if stage >= 2 {
+    if stage == 5 {
+        // A rate-limit retry was due when the runner went away.
+        records.push(Record::CallRetryFinished {
+            key: key.into(),
+            attempt: 0,
+            outcome: CallOutcome::Failed {
+                reason: "rate limited".into(),
+            },
+            turns: 1,
+        });
+    } else if stage >= 2 {
         records.push(Record::CallFinished {
             key: key.into(),
             attempt: 0,
@@ -190,4 +200,70 @@ async fn restart_of_a_budget_stopped_call_reruns_it_without_a_second_finish() {
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn restart_request_survives_a_crash_before_the_next_call() {
     exercise(0, true).await;
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn restart_of_a_call_whose_retry_was_due_writes_nothing_and_the_journal_still_opens() {
+    exercise(5, false).await;
+    exercise(5, true).await;
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn restart_of_a_call_whose_turn_completed_keeps_the_reply_without_a_second_call() {
+    let (_temp, dir) = new_dir();
+    let request = request();
+    let resolver = TestResolver::default();
+    let launch = resolver.resolve(&request).unwrap();
+    let key = journal_key(&request.call_id, &launch);
+    let mut records = vec![start_record(&dir)];
+    records.extend(history(&key, &request, launch, 0));
+    records.push(Record::TurnSettled {
+        key: key.clone(),
+        attempt: 0,
+        turn: 0,
+        admission_id: format!("old-admission-{key}"),
+        outcome: "completed".into(),
+        final_text: Some("kept reply".into()),
+        final_text_ref: None,
+        result_meta: json!({}),
+        usage: Some(json!({"input_tokens":7})),
+    });
+    write_records(&dir, &records);
+    let before = std::fs::read(records_path(&dir)).unwrap();
+    let journal = RunJournal::open(dir.clone(), SCRIPT).await.unwrap().0;
+    let opened = std::fs::read(records_path(&dir)).unwrap();
+    journal
+        .request_restart_keys(std::slice::from_ref(&key))
+        .await
+        .unwrap();
+    // Nothing is written: the paid reply stays the call's latest record.
+    assert_eq!(std::fs::read(records_path(&dir)).unwrap(), opened);
+    assert!(opened.starts_with(&before));
+    let journal = Arc::new(journal);
+    journal
+        .record_engine_event(&EngineEvent::AgentStarted {
+            request: request.clone(),
+            replayed: false,
+        })
+        .await
+        .unwrap();
+    let fake = FakeGateway::new();
+    let backend = JournaledBackend::new(
+        journal.clone(),
+        fake.clone(),
+        TestPolicy,
+        resolver,
+        NoGate,
+        RetryPolicy::default(),
+    );
+    assert_eq!(
+        backend.run_agent(request).await,
+        AgentOutcome::Completed(json!("kept reply"))
+    );
+    assert_eq!((fake.stats().sessions, fake.stats().admissions), (0, 0));
+    let records = JournalReader::read_from(dir.path(), 0).unwrap().0;
+    assert!(
+        !records
+            .iter()
+            .any(|r| r.record.identity().is_some_and(|(k, a)| k == key && a > 0)),
+        "the call ran again"
+    );
 }

@@ -149,12 +149,13 @@ model: whether Hermes lists a price for that model on its provider. If Hermes li
 for any model on the configured providers, the estimate says that the cost of such agents
 will be unknown. Setting tiers does not create a price Hermes does not have, so the text never
 suggests it. The line printed after a run says why money is unknown, in what the code knows at
-that point. After a live run: Hermes reported no cost and no turn could be priced from the price
-list (a price also needs Hermes's input and output token split), or no agent turn had finished.
-After a replayed run (`workflow resume` or `workflow result` on a finished run), the spend comes
-from the journal, which keeps only the costs Hermes reported, so money the live run priced from the
-price list is not shown; the line says that the stored run keeps only costs Hermes reported and at
-least one turn had none, and `money_source` is `unrecorded`.
+that point. After a live run it says `money unknown (Hermes reported no cost; no turn could be
+priced)`: no turn could be priced from the price list (a price also needs Hermes's input and
+output token split). When no agent turn had finished it says so. After a replayed run
+(`workflow resume` or `workflow result` on a finished run), the spend comes from the journal,
+which keeps only the costs Hermes reported, so money the live run priced from the price list is
+not shown; the line says `money unknown (stored runs keep only costs Hermes reported)`, and
+`money_source` is `unrecorded`.
 
 Token spend also counts work in progress. Hermes streams a `session.usage` event
 with each agent session's cumulative token count after every model call, with its cache

@@ -1661,6 +1661,31 @@ fn stop_confirms_settlement() {
 }
 
 #[test]
+fn a_run_stop_that_was_not_sent_leaves_no_note_behind() {
+    // The runner goes away while the turn runs. The next execution cannot attach to the
+    // session, so its run stop never reaches the turn. A note left behind would blame a
+    // person's later stop of that turn on the runner and fail the agent instead of parking it.
+    let h = Harness::new("return await agent('hold sweepfails worker', {label:'worker'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "turn_admitted"));
+    worker.kill();
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let worker = Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true));
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "run_resumed"));
+    let stop = request_stop(&h.runs, &target, Duration::from_secs(5));
+    assert_eq!(stop, StopExit::Unconfirmed);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 3, "{:?}", exit.problems);
+    let key = records(&folder)
+        .iter()
+        .find(|r| r["t"] == "turn_admitted")
+        .and_then(|r| r["key"].as_str().map(str::to_owned))
+        .unwrap();
+    assert_eq!(RunDir::open(&folder).unwrap().agent_stop(&key), None);
+}
+
+#[test]
 fn pause_blocks_new_admissions() {
     let h = Harness::new(
         "return await parallel([() => agent('hold first', {label:'first'}), () => agent('second', {label:'second'})]);",

@@ -1500,13 +1500,20 @@ fn stop_for_budget(
         if fresh {
             // The note goes first, so a settlement a later execution reads is still the budget's.
             note_runner_stop(dir, &target, crate::journal::StopSource::Budget);
-            let (port, sent) = (port.clone(), sent.clone());
+            let (port, sent, dir) = (port.clone(), sent.clone(), dir.to_owned());
             handles.push(tokio::spawn(async move {
                 // `NotRunning` can also mean the port has no receipt yet for a reattached turn.
-                if port.stop(&target.profile, &target.session_id).await != StopResult::Sent
-                    && let Ok(mut set) = sent.lock()
-                {
-                    set.remove(&target.admission_id);
+                let stopped = port.stop(&target.profile, &target.session_id).await;
+                if stopped != StopResult::Sent {
+                    // A stop known not to have gone out must not claim the next settlement;
+                    // the next tick writes the note again before it tries again. An unknown
+                    // answer may still have reached Hermes, so its note stays.
+                    if stopped == StopResult::NotRunning {
+                        clear_runner_stop(&dir, &target.key);
+                    }
+                    if let Ok(mut set) = sent.lock() {
+                        set.remove(&target.admission_id);
+                    }
                 }
             }));
         }
@@ -1557,11 +1564,6 @@ async fn settle_stop(
     };
     let deadline = tokio::time::Instant::now() + bound;
     let mut pending = Vec::new();
-    // Each note goes before its stop, so a settlement that only a later execution reads is
-    // still the run's stop and does not park.
-    for target in &targets {
-        note_runner_stop(&path, target, crate::journal::StopSource::RunStop);
-    }
     for target in targets {
         let attached = tokio::time::timeout_at(
             deadline,
@@ -1569,11 +1571,21 @@ async fn settle_stop(
         )
         .await;
         if !matches!(attached, Ok(Ok(()))) {
+            // No stop goes out for this turn, so it gets no note: a later stop of that turn
+            // by a person must park the call, not fail it as the run's.
             pending.push(target);
             continue;
         }
-        let _ =
+        // Each note goes before its stop, so a settlement that only a later execution reads
+        // is still the run's stop and does not park.
+        note_runner_stop(&path, &target, crate::journal::StopSource::RunStop);
+        let stopped =
             tokio::time::timeout_at(deadline, port.stop(&target.profile, &target.session_id)).await;
+        // A stop known not to have gone out leaves no note. An unknown answer, or one cut off
+        // by the deadline, may still have reached Hermes, so its note stays.
+        if matches!(stopped, Ok(StopResult::NotRunning)) {
+            clear_runner_stop(&path, &target.key);
+        }
         pending.push(target);
     }
     while !pending.is_empty() && tokio::time::Instant::now() < deadline {
@@ -1633,6 +1645,12 @@ fn note_runner_stop(
         admission_id: Some(target.admission_id.clone()),
     };
     let _ = dir.note_stop(&target.key, source, Some(&turn), files::now_ms());
+}
+/// Remove the note for a stop the runner meant to send but did not.
+fn clear_runner_stop(run_dir: &Path, key: &str) {
+    if let Ok(dir) = RunDir::open(run_dir) {
+        let _ = dir.clear_agent_stop(key);
+    }
 }
 /// A turn the run's stop settled, marked as stopped by the runner when it ended stopped, so a
 /// later resume fails it as part of the stop instead of parking it for the operator.

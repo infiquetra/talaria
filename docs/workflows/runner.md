@@ -224,14 +224,13 @@ While it waits, `workflow list` still counts the call in `parked` and shows the 
 turn.
 
 The runner sees the other window's turn through the session's events, whose envelopes name the
-admission that produced them, and through the session's snapshot, which lists the turns still
-queued or running when the runner attaches; Hermes serves the receipt of any admission on the
-session to the same owner. A runner follows a stopped parked call's session from the moment
-the call parks, and a resumed runner attaches to it again as soon as it parks the call again,
-so a reply typed while the call waits for its answer is seen. A turn that started and settled
-while no runner had the run open cannot be seen, because Hermes lists only queued and running
-turns: continue the session again after the resume. If the runner cannot attach to the
-session, it says so in a log line.
+admission that produced them; Hermes serves the receipt of any admission on the session to the
+same owner. A runner follows a stopped parked call's session from the moment the call parks,
+and a resumed runner attaches to it again as soon as it parks the call again, so a reply typed
+while the call waits for its answer is seen. A reply typed while no runner had the run open is
+not used, even one still queued or running when the resumed runner attaches: the runner records
+it as seen before the call parked, so continue the session again after the resume. If the
+runner cannot attach to the session, it says so in a log line.
 
 When the parked agent ran in its own worktree and left uncommitted changes there, the runner
 saves them to a branch as it parks the call, with the same save the end of a failed call uses
