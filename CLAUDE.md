@@ -37,7 +37,8 @@ cargo llvm-cov nextest --workspace --ignore-filename-regex /generated/ --fail-un
 - The domain core never imports terminal libraries.
 - Talaria does not pin Hermes. Verify Hermes facts against the Hermes the user actually runs and
   against the tested-against record in `crates/hermes-contract/PINNED` (the revision the contract
-  was generated from). A newer or older gateway is never a reason to warn, gate or refuse.
+  was generated from). A newer gateway is never a reason to warn, gate or refuse; an older one
+  gets a warning, never a refusal.
 - Only the terminal module of `talaria-tui` writes escape sequences.
 - Keep this public repository free of secrets and private operational context.
 - Update the engineering journal for durable decisions and learnings.

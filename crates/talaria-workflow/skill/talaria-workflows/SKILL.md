@@ -35,15 +35,15 @@ terminal(command="@@TALARIA_COMMAND@@ workflow run --profile @@TALARIA_PROFILE@@
 process_manage(action="wait", session_id="<returned process session_id>", timeout=180)
 ```
 
-Keep the returned process session_id; it differs from the conversation id. Hermes caps a wait at 180 seconds. Wait at most once, post one progress line, then end your turn; do not wait again, the completion notice resumes you. For progress, `workflow list --json` shows `agents_finished` and `agents_total_known`, and the process output has `agent_started` and `agent_finished` events. If the output after a background completion is empty or cut short, find the run's status with `@@TALARIA_COMMAND@@ workflow list --json`. When it is completed or budget_exhausted, `@@TALARIA_COMMAND@@ workflow resume --json <run-id>` prints the stored result without doing paid work again. For any other status, report it and ask the developer: resume would run the unfinished agents again. Never launch a second run for the same task. For work that must outlive this session, add --detach and keep the printed run id; a detached run sends no completion notice.
+Keep the returned process session_id; it differs from the conversation id. Hermes caps a wait at 180 seconds. Wait at most once, post one progress line, then end your turn; do not wait again, the completion notice resumes you. For progress, `workflow list --json` shows `agents_finished` and `agents_total_known`, and the process output has `agent_started` and `agent_finished` events. If the output after a background completion is empty or cut short, find the run's status with `workflow list --json`. When it is completed, completed_with_failures or budget_exhausted, `workflow resume --json <run-id>` (full command below) prints the stored result without doing paid work again. For any other status, report it and ask the developer: resume would run the unfinished agents again. Never launch a second run for the same task. For work that must outlive this session, add --detach and keep the printed run id; a detached run sends no completion notice.
 
-The final foreground line is {"event":"run_finished",...}. Read its `run_id`, `outcome`, `result`, and `spend`. Report the run id, findings or changes, and spend. For a detached run, poll `workflow list --json` the same way: find its run_id until status is completed or budget_exhausted. Then retrieve its saved result without executing work again:
+The final foreground line is {"event":"run_finished",...}. Read its `run_id`, `outcome`, `result`, `spend` and, when present, `failed_agents`, `cut_short_agents`, `untracked_work` and `leftover_edits` (references/commands.md); report those before the result. Report the run id, findings or changes, and spend. For a detached run, poll `workflow list --json` the same way: find its run_id until status is completed, completed_with_failures or budget_exhausted. Then retrieve its saved result without executing work again:
 
 ```sh
 @@TALARIA_COMMAND@@ workflow resume --json <run-id>
 ```
 
-Report failed, aborted, budget_exhausted, or parked status and ask the developer how to proceed. A budget_exhausted run continues only with a larger --budget-usd or --budget-tokens that the developer approves for it. Continue an interrupted run with:
+Report failed, aborted, budget_exhausted, completed_with_failures, or parked status and ask the developer how to proceed. A budget_exhausted run continues only with a larger --budget-usd or --budget-tokens that the developer approves for it. Continue an interrupted run with:
 
 ```sh
 @@TALARIA_COMMAND@@ workflow resume <run-id>
@@ -57,11 +57,11 @@ To request and confirm stopping:
 @@TALARIA_COMMAND@@ workflow stop <run-id>
 ```
 
-Use only these toolsets: ["file"] for code reading, ["file","terminal"] for editing and tests, ["web"] for web research, or ["todo"] for planning and synthesis. The file toolset can write files. Every agent with file or terminal must set isolation: 'worktree'. Tell readers explicitly not to edit. A worktree is a separate checkout, not a sandbox. Workers commit on their own branches; report their commits for integration.
+Use only these toolsets: ["file"] for code reading, ["file","terminal"] for editing and tests, ["web"] for web research, or ["todo"] for planning and synthesis. The file toolset can write files. Every agent with file or terminal must set isolation: 'worktree' (not the new-project bootstrap). Tell readers explicitly not to edit. A worktree is a separate checkout, not a sandbox. Workers commit on their own branches; report their commits for integration.
 
-Check every agent result. A failed or skipped agent gives null: retry a failed reviewer or verifier, or name it in the final result; never drop it silently, for example by filtering nulls out of a list. Start independent phases together, such as a playtest that does not need the reviewers' output.
+Check every agent result. A failed or skipped agent gives null: retry a failed reviewer or verifier, or name it in the final result; never drop it silently (for example by filtering out nulls). Start independent phases together, such as a playtest that does not need the reviewers' output.
 
-Worktrees: a new worktree starts at the source checkout's committed HEAD when that agent starts; uncommitted files are not copied. Tell each isolated worker to work in its own folder with relative paths, create named branches there with `git switch -c` (branches are shared across worktrees, so the integrator merges them by name), and never `cd` or `git -C` into the source checkout or switch branches there. Never paste the source checkout's absolute path into a prompt, and tell workers not to hard-code an absolute checkout path into files they commit.
+Worktrees: a new worktree starts at the source checkout's committed HEAD when that agent starts; uncommitted files are not copied. Tell each isolated worker to work in its own folder with relative paths, create named branches there with `git switch -c` (branches are shared across worktrees, so the integrator merges them by name), and never `cd` or `git -C` into the source checkout or switch branches there. Never paste the source checkout's absolute path into a prompt; workers must not commit absolute checkout paths.
 
 New project: worktree isolation fails outside a git repository. When the target folder is not inside one, create the empty folder, run with `--cwd <that folder>`, and make the script's first agent unisolated (no `isolation`). It does only `git init` and an initial commit (`--allow-empty` without a scaffold), or the shared scaffold. Every later agent uses isolation: 'worktree'.
 

@@ -104,9 +104,16 @@ fn present(path: &Path) -> bool {
 }
 
 fn dirty(path: &Path) -> bool {
-    checked(path, &["status".as_ref(), "--porcelain".as_ref()])
-        .map(|out| !out.is_empty())
-        .unwrap_or(true)
+    checked(
+        path,
+        &[
+            "status".as_ref(),
+            "--porcelain".as_ref(),
+            "--ignore-submodules=all".as_ref(),
+        ],
+    )
+    .map(|out| !out.is_empty())
+    .unwrap_or(true)
 }
 
 impl GitWorktrees {
