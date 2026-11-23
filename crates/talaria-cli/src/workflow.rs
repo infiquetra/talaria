@@ -290,7 +290,7 @@ fn leftovers_text(untracked: &Value, leftover: &Value) -> String {
         }
     }
     if !in_place.is_empty() {
-        text.push_str("Folders agents edited directly, without worktree isolation (their edits are already there; nothing was saved or lost):\n");
+        text.push_str("Folders agents ran in without worktree isolation (anything they changed is already there; nothing was saved):\n");
         for folder in in_place {
             let agents: Vec<String> = folder["agents"]
                 .as_array()
@@ -868,10 +868,11 @@ mod money_text_tests {
 const USE_REPLY_HELP: &str = "continue the agent's Hermes session (for example type \"continue\" into it from a Talaria window); its next reply becomes the agent's result and is checked like any reply. A reply that already came is used at once.";
 /// The short plain-text line printed after the `run_finished` object in JSON mode. Hermes keeps the
 /// last 2,000 characters of a background command's output and then cuts back to the first newline,
-/// so a single very long final line reached the lead as nothing; this line is always short.
+/// so a single very long final line reached the lead as nothing; this line is always short (under
+/// about 600 characters plus a custom runs folder's path), so it arrives whole.
 ///
 /// `runs_dir` is the folder holding the run's own folder. When it is not the default one, the
-/// printed `resume` command names it, so the command works as printed.
+/// printed `result` command names it, so the command works as printed.
 fn closing_line(
     run_id: &str,
     outcome: &str,
@@ -880,11 +881,11 @@ fn closing_line(
     attention: &runner::RunAttention,
 ) -> String {
     let money = match spend.money_usd {
-        Some(usd) => format!("${usd:.4} ({})", safe(&spend.money_source)),
+        Some(usd) => format!("${usd:.4} ({})", short(&spend.money_source, 40)),
         None => unknown_money_text(spend),
     };
     format!(
-        "run {} {}: {}, money {}.{} Full result: talaria workflow resume --json{} {}",
+        "run {} {}: {}, money {}.{}{} Full result: talaria workflow result --json{} {}",
         safe(run_id),
         safe(outcome),
         tokens_text(
@@ -894,6 +895,7 @@ fn closing_line(
             |n| n.to_string()
         ),
         money,
+        script_sentence(attention),
         attention_sentence(attention),
         custom_runs_dir_flag(runs_dir),
         safe(run_id)
@@ -901,28 +903,75 @@ fn closing_line(
 }
 /// The script's own `status` word, made safe and short for one line.
 fn script_status(status: &str) -> String {
-    let status = safe(status);
-    if status.chars().count() > 40 {
-        format!("{}...", status.chars().take(40).collect::<String>())
+    short(status, 30)
+}
+/// `text` made safe, cut to `limit` characters with `...` when longer.
+fn short(text: &str, limit: usize) -> String {
+    let text = safe(text);
+    if text.chars().count() > limit {
+        format!("{}...", text.chars().take(limit).collect::<String>())
     } else {
-        status
+        text
     }
 }
-/// The problems a finished run left, as one short sentence for the closing line, or nothing.
-/// The most important come last, nearest the end a reader that keeps only the tail still sees.
-fn attention_sentence(attention: &runner::RunAttention) -> String {
-    let agents = |n: u32| format!("{n} agent{}", if n == 1 { "" } else { "s" });
-    let mut parts = Vec::new();
-    if let Some(status) = &attention.script_status {
-        parts.push(format!("script's own status \"{}\"", script_status(status)));
+/// How many phases that did not start are named on one line; the rest are counted.
+const PHASES_NAMED: usize = 3;
+/// The phases that did not start, named (the first few, each cut short), or counted when the
+/// names are not known.
+fn phases_not_started(attention: &runner::RunAttention) -> Option<String> {
+    let n = attention.phases_not_started;
+    if n == 0 {
+        return None;
     }
-    if attention.phases_not_started > 0 {
-        let n = attention.phases_not_started;
-        parts.push(format!(
-            "{n} declared phase{} never started",
+    let names = &attention.phases_not_started_names;
+    if names.is_empty() {
+        return Some(format!(
+            "{n} phase{} not started",
             if n == 1 { "" } else { "s" }
         ));
     }
+    let mut listed: Vec<String> = names
+        .iter()
+        .take(PHASES_NAMED)
+        .map(|name| short(name, 20))
+        .collect();
+    let rest = (n as usize).saturating_sub(listed.len());
+    if rest > 0 {
+        listed.push(format!("and {rest} more"));
+    }
+    Some(format!("phases not started: {}", listed.join(", ")))
+}
+/// What the script itself reported, stated neutrally: its own `status` word and the declared
+/// phases that did not start. Neither is a problem by itself (a review with no findings can
+/// end after its first phase), so they stay out of the attention sentence.
+fn script_sentence(attention: &runner::RunAttention) -> String {
+    let mut parts = Vec::new();
+    if let Some(status) = &attention.script_status {
+        parts.push(format!("Script status \"{}\"", script_status(status)));
+    }
+    if let Some(phases) = phases_not_started(attention) {
+        parts.push(if parts.is_empty() {
+            let mut chars = phases.chars();
+            chars
+                .next()
+                .map(|c| c.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        } else {
+            phases
+        });
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" {}.", parts.join("; "))
+    }
+}
+/// The problems a finished run left, as one short sentence for the closing line, or nothing:
+/// agents that failed, were cut short or left uncommitted edits. The most important come last,
+/// nearest the end a reader that keeps only the tail still sees.
+fn attention_sentence(attention: &runner::RunAttention) -> String {
+    let agents = |n: u32| format!("{n} agent{}", if n == 1 { "" } else { "s" });
+    let mut parts = Vec::new();
     let saved = match attention.saved_branches {
         0 => String::new(),
         n => format!(" ({n} saved to a branch)"),
@@ -947,7 +996,8 @@ fn attention_sentence(attention: &runner::RunAttention) -> String {
         format!(" Attention: {}.", parts.join("; "))
     }
 }
-/// Compact marks for a `workflow list` text row, or nothing when the run left no problems.
+/// Compact marks for a `workflow list` text row, or nothing when there is nothing to say: the
+/// problem counts first, then what the script itself reported, stated neutrally.
 fn attention_marks(attention: &runner::RunAttention) -> String {
     let mut marks = String::new();
     for (count, word) in [
@@ -955,7 +1005,6 @@ fn attention_marks(attention: &runner::RunAttention) -> String {
         (attention.cut_short_agents, "cut short"),
         (attention.uncommitted_edits, "uncommitted edits"),
         (attention.saved_branches, "saved branches"),
-        (attention.phases_not_started, "phases not started"),
     ] {
         if count > 0 {
             marks.push_str(&format!("  {word} {count}"));
@@ -963,6 +1012,9 @@ fn attention_marks(attention: &runner::RunAttention) -> String {
     }
     if let Some(status) = &attention.script_status {
         marks.push_str(&format!("  script status \"{}\"", script_status(status)));
+    }
+    if let Some(phases) = phases_not_started(attention) {
+        marks.push_str(&format!("  {phases}"));
     }
     marks
 }
@@ -1456,12 +1508,18 @@ mod leftover_text_tests {
         };
         let quiet = closing_line("r1", "completed", &spend, None, &Default::default());
         assert!(!quiet.contains("Attention"), "{quiet}");
+        assert!(!quiet.contains("Script status"), "{quiet}");
+        assert!(
+            quiet.ends_with(" Full result: talaria workflow result --json r1"),
+            "{quiet}"
+        );
         let attention = runner::RunAttention {
             failed_agents: 2,
             cut_short_agents: 1,
             uncommitted_edits: 1,
             saved_branches: 1,
             phases_not_started: 2,
+            phases_not_started_names: vec!["Verify".into(), "Synthesize".into()],
             script_status: Some("partial".into()),
         };
         let line = closing_line("r1", "completed", &spend, None, &attention);
@@ -1469,28 +1527,121 @@ mod leftover_text_tests {
         let tail = &line[..hint];
         assert!(
             tail.ends_with(
-                " Attention: script's own status \"partial\"; 2 declared phases never started; 1 agent left uncommitted edits (1 saved to a branch); 1 agent cut short; 2 agents failed."
+                " Script status \"partial\"; phases not started: Verify, Synthesize. Attention: 1 agent left uncommitted edits (1 saved to a branch); 1 agent cut short; 2 agents failed."
             ),
+            "{line}"
+        );
+        assert_eq!(
+            &line[hint..],
+            " Full result: talaria workflow result --json r1",
             "{line}"
         );
         // The outcome word itself is unchanged.
         assert!(line.starts_with("run r1 completed: "), "{line}");
-        // What a caller keeping only the last 170 characters still sees.
-        let end: String = line
-            .chars()
-            .rev()
-            .take(170)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        assert!(end.contains("2 agents failed"), "{end}");
         let marks = attention_marks(&attention);
         assert_eq!(
             marks,
-            "  failed 2  cut short 1  uncommitted edits 1  saved branches 1  phases not started 2  script status \"partial\""
+            "  failed 2  cut short 1  uncommitted edits 1  saved branches 1  script status \"partial\"  phases not started: Verify, Synthesize"
         );
         assert_eq!(attention_marks(&Default::default()), "");
+    }
+
+    #[test]
+    fn a_clean_run_that_ended_early_by_its_own_choice_shows_no_attention() {
+        // A review with no findings returns "reviewed" after its first phase.
+        let spend = SpendView {
+            tokens: 10,
+            cache_read_tokens: 0,
+            cache_unknown_turns: 0,
+            money_usd: Some(0.01),
+            money_source: "estimated".into(),
+        };
+        let attention = runner::RunAttention {
+            phases_not_started: 2,
+            phases_not_started_names: vec!["Verify".into(), "Synthesize".into()],
+            script_status: Some("reviewed".into()),
+            ..Default::default()
+        };
+        let line = closing_line("r1", "completed", &spend, None, &attention);
+        assert!(!line.contains("Attention"), "{line}");
+        assert!(
+            line.contains(
+                ". Script status \"reviewed\"; phases not started: Verify, Synthesize. Full result: "
+            ),
+            "{line}"
+        );
+        // Phases alone, many of them: the first few are named and the rest counted.
+        let many = runner::RunAttention {
+            phases_not_started: 5,
+            phases_not_started_names: ["A", "B", "C", "D", "E"].map(String::from).to_vec(),
+            ..Default::default()
+        };
+        assert!(
+            closing_line("r1", "completed", &spend, None, &many)
+                .contains(". Phases not started: A, B, C, and 2 more. Full result: "),
+            "{many:?}"
+        );
+        // A count without names still says how many.
+        let counted = runner::RunAttention {
+            phases_not_started: 1,
+            ..Default::default()
+        };
+        assert!(attention_marks(&counted).contains("1 phase not started"));
+    }
+
+    #[test]
+    fn the_closing_line_stays_short_in_the_worst_case() {
+        // Every text field at its longest (a long status, many long phase names, a long money
+        // source, the longest money and token wording), with `big` tokens and `count` agents.
+        let line = |big: u64, count: u32, money_usd: Option<f64>| {
+            let spend = SpendView {
+                tokens: big,
+                cache_read_tokens: big,
+                cache_unknown_turns: count,
+                money_usd,
+                money_source: "x".repeat(500),
+            };
+            let attention = runner::RunAttention {
+                failed_agents: count,
+                cut_short_agents: count,
+                uncommitted_edits: count,
+                saved_branches: count,
+                phases_not_started: count.max(50),
+                phases_not_started_names: (0..50)
+                    .map(|n| format!("{n}{}", "p".repeat(200)))
+                    .collect(),
+                script_status: Some("s".repeat(500)),
+            };
+            closing_line(
+                &"0".repeat(26),
+                "completed_with_failures",
+                &spend,
+                None,
+                &attention,
+            )
+        };
+        // Realistic extremes: a trillion tokens and up to 999,999 agents or turns.
+        for money in [None, Some(999_999.0)] {
+            let realistic = line(999_999_999_999, 999_999, money);
+            assert!(
+                realistic.chars().count() < 600,
+                "{} {realistic}",
+                realistic.chars().count()
+            );
+        }
+        // Every count at its type's maximum still leaves the line far below what Hermes keeps.
+        let extreme = line(u64::MAX, u32::MAX, None);
+        assert!(
+            extreme.chars().count() < 640,
+            "{} {extreme}",
+            extreme.chars().count()
+        );
+        assert!(!extreme.contains('\n'), "{extreme}");
+        assert!(
+            extreme.ends_with(
+                " Full result: talaria workflow result --json 00000000000000000000000000"
+            )
+        );
     }
 
     #[test]
@@ -1510,9 +1661,10 @@ mod leftover_text_tests {
             "{text}"
         );
         assert!(
-            text.contains("their edits are already there; nothing was saved or lost):\n  /project: writer, checker\n"),
+            text.contains("Folders agents ran in without worktree isolation (anything they changed is already there; nothing was saved):\n  /project: writer, checker\n"),
             "{text}"
         );
+        assert!(!text.contains("edited"), "{text}");
         assert!(!text.contains("/project: 0 changed"), "{text}");
     }
 }

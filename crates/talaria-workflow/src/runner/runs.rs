@@ -129,6 +129,9 @@ pub struct RunAttention {
     pub saved_branches: u32,
     /// Phases the script's `meta.phases` declares that never started.
     pub phases_not_started: u32,
+    /// The titles of those phases, in the order the script declares them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub phases_not_started_names: Vec<String>,
     /// The `status` string at the top of the script's own result object, when it has one. It
     /// is the script's word, not Talaria's outcome.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -172,6 +175,11 @@ impl RunAttention {
                 _ => None,
             })
             .collect();
+        let not_started: Vec<String> = declared
+            .iter()
+            .filter(|phase| !started.contains(phase.title.as_str()))
+            .map(|phase| phase.title.clone())
+            .collect();
         Self {
             failed_agents: count(list("failed_agents").len()),
             cut_short_agents: count(list("cut_short_agents").len()),
@@ -182,12 +190,8 @@ impl RunAttention {
                     .count(),
             ),
             saved_branches: count(saved.len()),
-            phases_not_started: count(
-                declared
-                    .iter()
-                    .filter(|phase| !started.contains(phase.title.as_str()))
-                    .count(),
-            ),
+            phases_not_started: count(not_started.len()),
+            phases_not_started_names: not_started,
             script_status: outcome["result"]["status"].as_str().map(str::to_owned),
         }
     }
@@ -626,8 +630,21 @@ mod attention_tests {
                 uncommitted_edits: 3,
                 saved_branches: 2,
                 phases_not_started: 2,
+                phases_not_started_names: vec!["Build".into(), "Check".into()],
                 script_status: Some("partial".into()),
             }
+        );
+        // A list row carries the names beside the count.
+        let row = serde_json::to_value(&counts).unwrap();
+        assert_eq!(
+            row["phases_not_started_names"],
+            serde_json::json!(["Build", "Check"])
+        );
+        assert!(
+            serde_json::to_value(RunAttention::default())
+                .unwrap()
+                .get("phases_not_started_names")
+                .is_none()
         );
         // A result without a top-level status string, and no outcome file at all.
         fs::write(
