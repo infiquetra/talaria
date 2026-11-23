@@ -115,20 +115,33 @@ pub fn read_setup(profile: &str, hermes_home: &Path, talaria_home: &Path) -> Set
     }
 }
 
+/// What installing the missing built-in workflows did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct BuiltinsInstalled {
+    /// The workflows created.
+    pub created: Vec<String>,
+    /// Existing copies that could not be read, each with the reason. They were left as they are.
+    pub unreadable: Vec<(String, String)>,
+}
+
 /// Install the built-in workflows that are missing from `talaria_home`, the same install
 /// `talaria workflow builtins install` makes. A copy that is already there, edited or not, is
-/// kept as it is. Returns the names of the workflows created.
-pub fn install_missing_builtins(talaria_home: &Path) -> Result<Vec<String>, String> {
+/// kept as it is; one that cannot be read is kept too and named, and the rest still install.
+pub fn install_missing_builtins(talaria_home: &Path) -> Result<BuiltinsInstalled, String> {
     builtins::install(
         &talaria_home.join("workflows"),
         builtins::InstallMode::MissingOnly,
     )
     .map(|reports| {
-        reports
-            .into_iter()
-            .filter(|report| report.action == builtins::InstallAction::Created)
-            .map(|report| report.name)
-            .collect()
+        let mut done = BuiltinsInstalled::default();
+        for report in reports {
+            match (report.action, report.reason) {
+                (builtins::InstallAction::Created, _) => done.created.push(report.name),
+                (_, Some(reason)) => done.unreadable.push((report.name, reason)),
+                _ => {}
+            }
+        }
+        done
     })
     .map_err(|error| error.to_string())
 }

@@ -23,6 +23,10 @@ pub struct InstallReport {
     pub path: PathBuf,
     pub action: InstallAction,
     pub backup: Option<PathBuf>,
+    /// Why the file was kept, when the reason is not that it differs from the built-in copy:
+    /// it could not be read, so nothing was compared or replaced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 #[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -87,6 +91,7 @@ pub fn install(dir: &Path, mode: InstallMode) -> io::Result<Vec<InstallReport>> 
     for builtin in BUILTINS {
         let path = dir.join(format!("{}.js", builtin.name));
         let mut backup = None;
+        let mut reason = None;
         let action = match fs::symlink_metadata(&path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 atomic_write(dir, builtin.name, &path, builtin.source.as_bytes())?;
@@ -94,26 +99,29 @@ pub fn install(dir: &Path, mode: InstallMode) -> io::Result<Vec<InstallReport>> 
             }
             Err(e) => return Err(at(&path, e)),
             Ok(m) if !m.file_type().is_file() => InstallAction::KeptModified,
-            Ok(_) => {
-                let old = fs::read(&path).map_err(|e| at(&path, e))?;
-                if old == builtin.source.as_bytes() {
-                    InstallAction::Unchanged
-                } else if matches!(mode, InstallMode::MissingOnly) {
+            Ok(_) => match fs::read(&path) {
+                // One file that cannot be read is kept, with the reason; the rest still install.
+                Err(e) => {
+                    reason = Some(format!("could not be read: {e}"));
                     InstallAction::KeptModified
-                } else {
+                }
+                Ok(old) if old == builtin.source.as_bytes() => InstallAction::Unchanged,
+                Ok(_) if matches!(mode, InstallMode::MissingOnly) => InstallAction::KeptModified,
+                Ok(old) => {
                     let bak = path.with_extension("js.bak");
                     atomic_write(dir, builtin.name, &bak, &old)?;
                     atomic_write(dir, builtin.name, &path, builtin.source.as_bytes())?;
                     backup = Some(bak);
                     InstallAction::Overwritten
                 }
-            }
+            },
         };
         reports.push(InstallReport {
             name: builtin.name.into(),
             path,
             action,
             backup,
+            reason,
         });
     }
     Ok(reports)

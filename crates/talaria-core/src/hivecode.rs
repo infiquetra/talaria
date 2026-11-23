@@ -824,6 +824,26 @@ pub mod notice {
             clipped_reason(&names.join(", "))
         )
     }
+    /// What `/hivecode reinstall` did to the built-in workflows, said plainly: what it created
+    /// and which existing copies it could not read (left as they are). `None` when there is
+    /// nothing to say.
+    pub fn builtins_outcome(created: &[String], unreadable: &[(String, String)]) -> Option<String> {
+        let mut lines = Vec::new();
+        if !created.is_empty() {
+            lines.push(builtins_installed(created));
+        }
+        if !unreadable.is_empty() {
+            let each: Vec<String> = unreadable
+                .iter()
+                .map(|(name, reason)| format!("{name} ({})", clipped_reason(reason)))
+                .collect();
+            lines.push(format!(
+                "Left as they are, because they could not be read: {}.",
+                each.join(", ")
+            ));
+        }
+        (!lines.is_empty()).then(|| lines.join("\n"))
+    }
     /// The skill went in but the built-in workflows did not.
     pub fn builtins_failed(reason: &str) -> String {
         format!(

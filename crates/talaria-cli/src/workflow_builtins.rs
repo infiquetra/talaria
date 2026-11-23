@@ -129,9 +129,10 @@ fn install(dir: &Path, force: bool, json_output: bool) -> Result<(), (String, u8
                 report.backup.as_deref().unwrap_or(&report.path).display()
             ),
             InstallAction::KeptModified => {
-                let reason = match std::fs::symlink_metadata(&report.path) {
-                    Ok(m) if m.file_type().is_symlink() => "symbolic link; not replaced",
-                    Ok(m) if !m.is_file() => "not a regular file; not replaced",
+                let reason = match (&report.reason, std::fs::symlink_metadata(&report.path)) {
+                    (Some(reason), _) => reason.as_str(),
+                    (None, Ok(m)) if m.file_type().is_symlink() => "symbolic link; not replaced",
+                    (None, Ok(m)) if !m.is_file() => "not a regular file; not replaced",
                     _ => "modified; use --force to replace it",
                 };
                 println!("kept {} ({reason})", report.path.display());

@@ -1455,7 +1455,7 @@ fn the_reinstall_also_installs_the_missing_builtin_workflows_and_keeps_edited_on
             .len(),
         4
     );
-    let mut created = install_missing_builtins(&talaria).unwrap();
+    let mut created = install_missing_builtins(&talaria).unwrap().created;
     created.sort();
     assert_eq!(
         created,
@@ -1469,7 +1469,12 @@ fn the_reinstall_also_installs_the_missing_builtin_workflows_and_keeps_edited_on
     // A second pass creates nothing, and a copy the user edited is left alone.
     let edited = talaria.join("workflows/research.js");
     std::fs::write(&edited, "// mine\n").unwrap();
-    assert!(install_missing_builtins(&talaria).unwrap().is_empty());
+    assert!(
+        install_missing_builtins(&talaria)
+            .unwrap()
+            .created
+            .is_empty()
+    );
     assert_eq!(std::fs::read_to_string(edited).unwrap(), "// mine\n");
     assert_eq!(
         notice::builtins_installed(&["research".to_owned(), "hivecode".to_owned()]),
@@ -1478,4 +1483,42 @@ fn the_reinstall_also_installs_the_missing_builtin_workflows_and_keeps_edited_on
     assert!(
         notice::builtins_failed("disk full").ends_with("Try: talaria workflow builtins install")
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_builtin_is_named_and_the_rest_still_install() {
+    use std::os::unix::fs::PermissionsExt;
+    use talaria_app::hivecode_files::install_missing_builtins;
+    let (_temp, _hermes, talaria) = installed_skill();
+    let workflows = talaria.join("workflows");
+    std::fs::create_dir_all(&workflows).unwrap();
+    // One built-in already exists but cannot be read.
+    let blocked = workflows.join("hivecode.js");
+    std::fs::write(&blocked, "// kept\n").unwrap();
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&blocked).is_ok() {
+        return; // running with rights that ignore permissions
+    }
+    let done = install_missing_builtins(&talaria).unwrap();
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let mut created = done.created.clone();
+    created.sort();
+    assert_eq!(created, ["fix-failing-tests", "research", "review-branch"]);
+    assert_eq!(done.unreadable.len(), 1, "{done:?}");
+    assert_eq!(done.unreadable[0].0, "hivecode");
+    assert!(
+        done.unreadable[0].1.starts_with("could not be read: "),
+        "{done:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&blocked).unwrap(), "// kept\n");
+    let text = notice::builtins_outcome(&done.created, &done.unreadable).unwrap();
+    assert!(text.starts_with("Installed built-in workflows: "), "{text}");
+    assert!(
+        text.contains(
+            "Left as they are, because they could not be read: hivecode (could not be read: "
+        ),
+        "{text}"
+    );
+    assert_eq!(notice::builtins_outcome(&[], &[]), None);
 }
