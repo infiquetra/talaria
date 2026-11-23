@@ -106,4 +106,7 @@ jobs:
           )"
           git clone --depth 1 --branch "$tag" https://github.com/NousResearch/hermes-agent "$RUNNER_TEMP/hermes-contract-source"
       - name: Report drift
+        # A newer Hermes release that changes the contract is information for the maintainer,
+        # not a failure of this repository.
+        continue-on-error: true
         run: python3 -I tools/contract-gen/contract_gen.py drift --tag latest --summary "$GITHUB_STEP_SUMMARY" --hermes-checkout "$RUNNER_TEMP/hermes-contract-source"

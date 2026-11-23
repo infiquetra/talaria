@@ -90,7 +90,7 @@ fn mutate_refusal_texts_exact() {
             "unknown_method",
             None,
             None,
-            "This Hermes gateway does not offer session.mutate. Talaria needs the Hermes release it was built for, or later.",
+            "This Hermes gateway does not offer session.mutate. It may differ from the Hermes release Talaria was tested against.",
         ),
         (
             "storage_unavailable",

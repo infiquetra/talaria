@@ -234,7 +234,7 @@ fn a_background_reply_from_an_older_connection_is_dropped() {
 }
 
 #[test]
-fn connected_gateway_notice_is_shown_once() {
+fn a_newer_gateway_gets_no_connect_notice_and_an_older_one_gets_one_once() {
     let newest_tested = hermes_contract::compat::CURRENT.newest_tested;
     let parts: Vec<u64> = newest_tested
         .strip_prefix('v')
@@ -243,24 +243,12 @@ fn connected_gateway_notice_is_shown_once() {
         .map(|part| part.parse::<u64>().expect("numeric version component"))
         .collect();
     let above = format!("{}.{}.{}", parts[0], parts[1], parts[2] + 1);
+    let floor = hermes_contract::compat::CURRENT.floor;
+    let below = format!("{}.{}.{}", parts[0], parts[1] - 1, 9);
     let expected = format!(
-        "This gateway runs Hermes {above}. This Talaria was tested up to {newest_tested}. See docs/compatibility.md."
+        "This gateway runs Hermes {below}, older than {floor}, the oldest this Talaria was tested against, so some features may not work. See docs/compatibility.md."
     );
 
-    let mut app = AppState::new("launch-connect-notice");
-    app.gateway_version = Some(above);
-    let _ = update(
-        &mut app,
-        AppMessage::Opened {
-            opened: opened_fixture(),
-            notice: None,
-        },
-    );
-
-    let _ = update(
-        &mut app,
-        AppMessage::Link(LinkEvent::State(LinkState::Connected { generation: 1 })),
-    );
     let warnings = |state: &AppState| -> Vec<String> {
         state
             .opened
@@ -277,11 +265,33 @@ fn connected_gateway_notice_is_shown_once() {
             })
             .collect()
     };
-    assert_eq!(warnings(&app), vec![expected.clone()]);
+    let connect = |app: &mut AppState, generation: u64| {
+        let _ = update(
+            app,
+            AppMessage::Link(LinkEvent::State(LinkState::Connected { generation })),
+        );
+    };
+    let open = |version: String, id: &str| {
+        let mut app = AppState::new(id);
+        app.gateway_version = Some(version);
+        let _ = update(
+            &mut app,
+            AppMessage::Opened {
+                opened: opened_fixture(),
+                notice: None,
+            },
+        );
+        app
+    };
 
-    let _ = update(
-        &mut app,
-        AppMessage::Link(LinkEvent::State(LinkState::Connected { generation: 2 })),
-    );
-    assert_eq!(warnings(&app), vec![expected]);
+    let mut newer = open(above, "launch-connect-newer");
+    connect(&mut newer, 1);
+    connect(&mut newer, 2);
+    assert_eq!(warnings(&newer), Vec::<String>::new());
+
+    let mut older = open(below, "launch-connect-older");
+    connect(&mut older, 1);
+    assert_eq!(warnings(&older), vec![expected.clone()]);
+    connect(&mut older, 2);
+    assert_eq!(warnings(&older), vec![expected]);
 }

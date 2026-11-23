@@ -129,14 +129,17 @@ pub fn render_usage(error: &clap::Error) -> (String, u8) {
     match error.kind() {
         ErrorKind::DisplayVersion => {
             let current = &hermes_contract::compat::CURRENT;
+            let newest = if current.newest_tested == current.pinned_tag {
+                String::new()
+            } else {
+                format!(", newest tested {}", current.newest_tested)
+            };
             (
                 format!(
-                    "talaria {}\nhermes: pinned {} ({}), supported from {}, tested to {}\n",
+                    "talaria {}\nhermes: tested against {} ({}){newest}\n",
                     env!("CARGO_PKG_VERSION"),
                     current.pinned_tag,
                     current.pinned_commit[..8].to_ascii_lowercase(),
-                    current.floor,
-                    current.newest_tested,
                 ),
                 0,
             )

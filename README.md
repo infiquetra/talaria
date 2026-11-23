@@ -6,7 +6,7 @@ It owns the terminal experience; Hermes owns agent execution and durable session
 The last Python release is v0.6.5, preserved at [python-final](https://github.com/infiquetra/talaria/tree/python-final).
 
 <!-- hermes-compat:start -->
-hermes: pinned v0.23.1 (3b421578), supported from v0.23.0, tested to v0.23.1
+hermes: tested against v0.23.1 (3b421578)
 [docs/compatibility.md](docs/compatibility.md)
 <!-- hermes-compat:end -->
 

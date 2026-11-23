@@ -493,7 +493,7 @@ const NO_SESSION: &str = "This session no longer exists on the gateway.";
 
 fn unknown_method_text(method: &str) -> String {
     format!(
-        "This Hermes gateway does not offer {method}. Talaria needs the Hermes release it was built for, or later."
+        "This Hermes gateway does not offer {method}. It may differ from the Hermes release Talaria was tested against."
     )
 }
 

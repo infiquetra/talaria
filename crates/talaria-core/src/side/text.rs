@@ -110,7 +110,7 @@ pub fn shell_refusal_text(reason: &str, detail: Option<&str>) -> String {
         "runtime_draining" => "The gateway is restarting, so the command was not run. Try again in a moment.".to_string(),
         "invalid_params" => "Hermes rejected the command as malformed.".to_string(),
         "profile_mismatch" => "This session belongs to a different profile than this window, so the command was not run.".to_string(),
-        "unknown_method" => "This Hermes gateway does not offer ! commands (shell.exec). Update Hermes to the release Talaria is pinned to.".to_string(),
+        "unknown_method" => "This Hermes gateway does not offer ! commands (shell.exec). It may differ from the Hermes release Talaria was tested against.".to_string(),
         other => format!("Hermes refused the command ({}).", cut_reason(other)),
     }
 }
@@ -125,7 +125,7 @@ pub fn side_refusal_text(reason: &str, detail: Option<&str>) -> String {
         "runtime_draining" => "The gateway is restarting, so the side question was not asked. Try again in a moment.".to_string(),
         "profile_mismatch" => "This session belongs to a different profile than this window, so the side question was not asked.".to_string(),
         "invalid_params" => "Hermes rejected the side question as malformed.".to_string(),
-        "unknown_method" => "This Hermes gateway does not offer /btw (prompt.btw). Update Hermes to the release Talaria is pinned to.".to_string(),
+        "unknown_method" => "This Hermes gateway does not offer /btw (prompt.btw). It may differ from the Hermes release Talaria was tested against.".to_string(),
         other => format!("Hermes refused the side question ({}).", cut_reason(other)),
     }
 }

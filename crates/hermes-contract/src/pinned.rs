@@ -1,9 +1,14 @@
-//! The Hermes release whose published contract this crate implements.
+//! The Hermes revision this crate's contract was generated from and tested against.
+//!
+//! Talaria does not pin Hermes: nothing at run time requires the gateway to match this revision.
+//! The record exists because the generator needs one revision to generate from and the live
+//! tests need one to compare against.
 
 pub const TAG: &str = crate::compat::CURRENT.pinned_tag;
 pub const COMMIT: &str = crate::compat::CURRENT.pinned_commit;
 
-/// The oldest Hermes release accepted by live tests and fixture recording.
+/// The oldest Hermes release this Talaria was tested against. Live tests and fixture recording
+/// start here; `talaria doctor` notes a gateway older than this.
 pub const OLDEST_SUPPORTED: (u64, u64, u64) = (0, 23, 0);
 
 fn version_triple(value: &str) -> Option<(u64, u64, u64)> {
@@ -63,7 +68,7 @@ pub fn feature_skip_reason(
     ))
 }
 
-/// Choose version-floor admission or the explicitly requested pinned revision.
+/// Choose version-floor admission or the explicitly requested tested-against revision.
 pub fn live_test_skip(
     code_version: Option<&str>,
     code_sha: Option<&str>,
@@ -105,17 +110,17 @@ pub fn live_profile() -> String {
     live_profile_from(std::env::var("TALARIA_LIVE_PROFILE").ok().as_deref())
 }
 
-/// Only the exact character `1` requests pinned-revision admission.
+/// Only the exact character `1` requests tested-against revision admission.
 pub fn live_exact_from(value: Option<&str>) -> bool {
     value == Some("1")
 }
 
-/// Whether this live run explicitly requests the pinned gateway revision.
+/// Whether this live run explicitly requests the tested-against gateway revision.
 pub fn live_exact() -> bool {
     live_exact_from(std::env::var("TALARIA_LIVE_EXACT").ok().as_deref())
 }
 
-/// Explain why a gateway's code identity is unsuitable for pinned live tests.
+/// Explain why a gateway's code identity is unsuitable for exact-revision live tests.
 pub fn live_skip_reason(code_sha: Option<&str>) -> Option<String> {
     match code_sha {
         Some(sha)

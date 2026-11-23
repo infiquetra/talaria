@@ -88,57 +88,32 @@ fn assert_row(
 
 #[test]
 fn version_verdicts() {
+    use VersionVerdict::{AtOrAboveOldestTested as Fine, OlderThanTested as Older, Unknown};
     let p = pin();
     let upper = p.commit[..7].to_uppercase();
     let six = &p.commit[..6];
     let build = format!("{}+3", pin_version());
     for (version, sha, expected) in [
-        (
-            Some(pin_version()),
-            Some(p.commit.as_str()),
-            VersionVerdict::Pinned,
-        ),
-        (
-            Some(pin_version()),
-            Some(upper.as_str()),
-            VersionVerdict::Pinned,
-        ),
-        (
-            Some(pin_version()),
-            Some(six),
-            VersionVerdict::SameReleaseOtherCommit,
-        ),
-        (
-            Some(pin_version()),
-            Some("ffffffff"),
-            VersionVerdict::SameReleaseOtherCommit,
-        ),
-        (
-            Some(pin_version()),
-            None,
-            VersionVerdict::SameReleaseUnknownCommit,
-        ),
-        (Some("0.22.3"), Some("ffffffff"), VersionVerdict::TooOld),
-        (Some("0.22.2"), None, VersionVerdict::TooOld),
-        (Some("0.21.9"), None, VersionVerdict::TooOld),
-        (Some("0.22.10"), None, VersionVerdict::TooOld),
-        (Some("1.0.0"), None, VersionVerdict::NewerThanPin),
-        (Some("unknown"), None, VersionVerdict::Unknown),
-        (None, None, VersionVerdict::Unknown),
-        (Some("0.22"), None, VersionVerdict::Unknown),
-        (
-            Some(hermes_contract::pinned::TAG),
-            None,
-            VersionVerdict::Unknown,
-        ),
-        (Some(build.as_str()), None, VersionVerdict::Unknown),
-        (Some(""), None, VersionVerdict::Unknown),
-        (Some("0.22.x"), None, VersionVerdict::Unknown),
-        (
-            Some("unknown"),
-            Some(p.commit.as_str()),
-            VersionVerdict::Pinned,
-        ),
+        (Some(pin_version()), Some(p.commit.as_str()), Fine),
+        (Some(pin_version()), Some(upper.as_str()), Fine),
+        (Some(pin_version()), Some(six), Fine),
+        (Some(pin_version()), Some("ffffffff"), Fine),
+        (Some(pin_version()), None, Fine),
+        (Some("0.23.0"), None, Fine),
+        (Some("0.22.3"), Some("ffffffff"), Older),
+        (Some("0.22.2"), None, Older),
+        (Some("0.21.9"), None, Older),
+        (Some("0.22.10"), None, Older),
+        (Some("0.23.3"), None, Fine),
+        (Some("1.0.0"), None, Fine),
+        (Some("unknown"), None, Unknown),
+        (None, None, Unknown),
+        (Some("0.22"), None, Unknown),
+        (Some(hermes_contract::pinned::TAG), None, Unknown),
+        (Some(build.as_str()), None, Unknown),
+        (Some(""), None, Unknown),
+        (Some("0.22.x"), None, Unknown),
+        (Some("unknown"), Some(p.commit.as_str()), Fine),
     ] {
         assert_eq!(
             compare_hermes_version(version, sha, &p),
@@ -152,24 +127,63 @@ fn version_verdicts() {
         vec![
             format!("running: {} at {}", pin_version(), pin_prefix()),
             format!(
-                "built for: {} ({})",
+                "tested against: {} ({})",
                 hermes_contract::pinned::TAG,
                 pin_prefix()
             )
         ]
     );
-
-    let mut too_old = ready();
-    let identity = too_old.identity.as_mut().expect("ready has identity");
-    identity.code_version = Some("0.22.2".into());
-    identity.code_sha = None;
-    let old_row = row(&too_old, CheckId::HermesVersion);
-    assert_eq!(old_row.severity, Severity::Fail);
-    assert_eq!(old_row.summary, "0.22.2; Talaria needs 0.23.0 or later");
 }
 
 #[test]
-fn connect_notice_uses_the_table() {
+fn a_newer_gateway_is_an_ok_row_and_does_not_degrade_the_result() {
+    for (version, sha) in [
+        ("0.23.3", None),
+        ("1.0.0", Some("ffffffff")),
+        ("0.23.0", None),
+    ] {
+        let mut newer = ready();
+        let identity = newer.identity.as_mut().expect("ready has identity");
+        identity.code_version = Some(version.into());
+        identity.code_sha = sha.map(Into::into);
+        let version_row = row(&newer, CheckId::HermesVersion);
+        assert_eq!(version_row.severity, Severity::Ok, "{version}");
+        assert_eq!(
+            version_row.summary,
+            format!(
+                "Hermes {version}; this Talaria was tested against {}",
+                hermes_contract::pinned::TAG
+            )
+        );
+        assert_eq!(version_row.fix, None);
+        let report = diagnose(&newer);
+        assert_eq!(
+            report.overall(),
+            diagnose(&ready()).overall(),
+            "{version} must not change the overall result"
+        );
+        let json = render_json(&report, None, &pin(), "0.7.0");
+        assert!(!json.contains("newer than"), "{json}");
+        assert!(!json.contains("pinned"), "{json}");
+    }
+}
+
+#[test]
+fn an_older_gateway_gets_one_plain_note() {
+    let mut older = ready();
+    let identity = older.identity.as_mut().expect("ready has identity");
+    identity.code_version = Some("0.22.2".into());
+    identity.code_sha = None;
+    let old_row = row(&older, CheckId::HermesVersion);
+    assert_eq!(old_row.severity, Severity::Warn);
+    assert_eq!(
+        old_row.summary,
+        "Hermes 0.22.2, older than 0.23.0, the oldest this Talaria was tested against; some methods may be missing"
+    );
+}
+
+#[test]
+fn connect_notice_only_speaks_for_an_older_gateway() {
     let bare_tag = hermes_contract::pinned::TAG
         .strip_prefix('v')
         .unwrap_or(hermes_contract::pinned::TAG);
@@ -181,32 +195,27 @@ fn connect_notice_uses_the_table() {
         newest_tested: "v0.23.0",
     };
 
-    let mut shown = false;
-    assert_eq!(
-        connect_notice(Some(bare_tag), &row, &mut shown),
-        Some(format!(
-            "This gateway runs Hermes {bare_tag}. This Talaria was tested up to v0.23.0. See docs/compatibility.md."
-        ))
-    );
-    assert!(shown);
-    assert_eq!(connect_notice(Some(bare_tag), &row, &mut shown), None);
-    assert!(shown);
+    for newer in [bare_tag, "0.23.3", "1.0.0"] {
+        let mut shown = false;
+        assert_eq!(
+            connect_notice(Some(newer), &row, &mut shown),
+            None,
+            "{newer}"
+        );
+        assert!(!shown, "{newer}");
+    }
 
     let mut shown_old = false;
     let older = connect_notice(Some("0.22.4"), &row, &mut shown_old);
     assert_eq!(
         older,
         Some(
-            "This gateway runs Hermes 0.22.4. This Talaria supports v0.23.0 and later, and some features will not work. See docs/compatibility.md."
+            "This gateway runs Hermes 0.22.4, older than v0.23.0, the oldest this Talaria was tested against, so some features may not work. See docs/compatibility.md."
                 .to_string()
         )
     );
-    assert!(
-        !older
-            .as_deref()
-            .unwrap_or_default()
-            .contains("This Talaria was tested up to")
-    );
+    assert!(shown_old);
+    assert_eq!(connect_notice(Some("0.22.4"), &row, &mut shown_old), None);
 
     let mut shown_floor = false;
     assert_eq!(connect_notice(Some("0.23.0"), &row, &mut shown_floor), None);
@@ -687,9 +696,9 @@ fn text_and_json_golden() {
     let expected = format!(
         concat!(
             "Talaria doctor (profile fixture)\n",
-            "ok    Talaria         Talaria 0.7.0, built for Hermes {tag} ({commit})\n",
+            "ok    Talaria         Talaria 0.7.0, tested against Hermes {tag} ({commit})\n",
             "ok    Gateway         ready · instance 9f2c41aa · epoch 3 · started by hand\n",
-            "ok    Hermes version  {version} ({commit}), the release Talaria was built for\n",
+            "ok    Hermes version  Hermes {version}; this Talaria was tested against {tag}\n",
             "ok    Capabilities    all 5 capabilities Talaria needs are offered\n",
             "ok    Profiles        fixture is served; the gateway serves 2 profiles\n",
             "ok    Attach          attached to fixture in 36 ms\n",

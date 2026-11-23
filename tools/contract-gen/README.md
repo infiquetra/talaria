@@ -14,27 +14,30 @@ disables the skip. The default typify mode includes builders. All generated file
 are formatted with the workspace rustfmt; `RUSTFMT` is resolved from PATH when
 the environment does not already select it.
 
-`pin` validates and prints PINNED. Bumping a pin remains a reviewed manual change.
-`verify-vendor` compares both the contract and license to the pinned commit using
+Talaria does not pin Hermes. `PINNED` records the one Hermes revision the contract is generated from
+and tested against; the generator needs exactly one. `pin` validates and prints it. Moving it to a newer
+release is a reviewed manual change that nothing forces.
+`verify-vendor` compares both the contract and license to the recorded commit using
 the GitHub CLI's raw media type. Neither generation nor checking needs network.
 
 `generate --hermes-checkout <clone>` extracts native owner methods from the
 specified Hermes handler functions using Python's abstract syntax tree. The
 checkout must match PINNED. The sorted committed list is the offline input.
-Fallback eligibility assumes the full interactive grant and follows the pinned
+Fallback eligibility assumes the full interactive grant and follows the recorded
 `tui_gateway/ws_legacy_fallback.py`; drift does not refresh that fallback rule.
 
 `config-choices --hermes-checkout <clone> [--check]` writes or checks
 `config-choices.json`, the proof behind the value lists `/config` offers for keys the
 gateway schema types as plain text. Each recipe in `CONFIG_CHOICE_SOURCES` names where the
-pinned source states a set: a module constant, the literals in one function, the comment at
+recorded source states a set: a module constant, the literals in one function, the comment at
 a `DEFAULT_CONFIG` key or anchor, or the desktop app's suggestion list. A missing name or
 value fails. The file also records every schema `_select`. The checkout must match PINNED;
 the Rust parity test in `crates/talaria-core/tests/integration/settings_choices.rs` reads
 only the committed file. With `--hermes-checkout`, `drift` also lists changed choice values.
 
 `drift --tag latest --summary <file> [--hermes-checkout <clone>]` builds in an
-isolated temporary workspace. Binding tests decide success; recording tests
+isolated temporary workspace. It is a report for the maintainer; a newer Hermes release is not a failure
+of Talaria, and the scheduled workflow step does not fail the workflow. Binding tests decide success; recording tests
 are reported separately. The source workspace is never modified.
 
 Schema preprocessing removes closed-object markers and the keyword exceptions

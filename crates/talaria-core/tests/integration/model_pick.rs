@@ -722,7 +722,7 @@ fn refusal_texts_exact() {
     });
     assert_eq!(
         notice_text(&effects),
-        vec!["This Hermes gateway cannot change the model (unknown method). Update Hermes to the pinned release.".to_owned()]
+        vec!["This Hermes gateway cannot change the model (unknown method). It may differ from the Hermes release Talaria was tested against.".to_owned()]
     );
 
     let mut fenced = ModelsState::new("L", Ok(SavedModels::empty()));

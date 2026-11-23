@@ -10,7 +10,7 @@ use talaria_core::commands::{CommandOutcome, CommandsInput};
 use talaria_core::session::{Event, NoticeKind, SessionId, SessionState};
 
 const NO_SESSION: &str = "No session is attached, so /help cannot run. Start one with talaria, talaria -c or talaria --resume <id>.";
-const NO_SLASH: &str = "This Hermes gateway does not run slash commands. Check that it is at the release Talaria is pinned to.";
+const NO_SLASH: &str = "This Hermes gateway does not run slash commands. It may differ from the Hermes release Talaria was tested against.";
 
 /// The mock records a request when its socket task reads it, after the client's writer, so
 /// wait for the first one and then a little longer for any that follow.

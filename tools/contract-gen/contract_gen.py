@@ -956,8 +956,10 @@ def read_compat():
 
 
 def compat_line(row):
-    return "hermes: pinned {} ({}), supported from {}, tested to {}".format(
-        row["pinned_tag"], row["pinned_commit"][:8].lower(), row["floor"], row["newest_tested"])
+    line = "hermes: tested against {} ({})".format(row["pinned_tag"], row["pinned_commit"][:8].lower())
+    if row["newest_tested"] != row["pinned_tag"]:
+        line += ", newest tested {}".format(row["newest_tested"])
+    return line
 
 
 def compat_readme(text, line):
@@ -980,7 +982,13 @@ def compat_readme(text, line):
 def compat(write=False):
     rows = read_compat()
     current = rows[-1]
-    table = ["# Compatibility", "", "| Talaria | Floor | Pinned Hermes | Newest tested |",
+    table = ["# Compatibility", "",
+             "Talaria does not pin Hermes. Each Talaria release records the Hermes release it was",
+             "generated from and tested against. Hermes ships often, and Talaria works with the",
+             "gateway you run or it gets fixed. A newer gateway is not a warning, and Talaria never",
+             "refuses to run because of the gateway's version. A gateway older than the oldest",
+             "tested release gets one plain note that some features may be missing.", "",
+             "| Talaria | Oldest tested | Tested against | Newest tested |",
              "| --- | --- | --- | --- |"]
     table.extend("| {} | {} | {} {} | {} |".format(
         row["talaria"], row["floor"], row["pinned_tag"], row["pinned_commit"][:8].lower(), row["newest_tested"])
