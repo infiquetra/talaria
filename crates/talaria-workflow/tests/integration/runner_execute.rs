@@ -1045,33 +1045,41 @@ fn an_ordinary_agent_leaves_nothing_to_report_from_its_route() {
 }
 
 #[test]
-fn a_working_folder_with_uncommitted_edits_is_listed_when_the_run_ends() {
-    let git = |dir: &Path, args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?}");
-    };
-    let h = Harness::new("return await agent('review', {label:'review', tier:'first'});");
-    git(&h.root, &["init", "-q"]);
-    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+fn a_worktree_with_uncommitted_edits_is_listed_when_the_run_ends() {
+    let h = Harness::new(
+        "return await agent('hold review', {label:'review', tier:'first', toolsets:['file'], isolation:'worktree'});",
+    );
+    let repo = h.root.join("source-repo");
+    init_repository(&repo);
+    // The run's own directory is a git repository too; it is not an agent worktree.
+    let mut request = h.request();
+    request.cwd = repo.canonicalize().unwrap();
+    let worker = Worker::start(Start::New(request), services(&h.wire, true));
     let folder = run_folder(&worker);
+    wait_for(|| h.wire.frames().iter().any(|f| f.method == "session.create"));
+    let worktree = PathBuf::from(
+        h.wire
+            .frames()
+            .iter()
+            .find(|f| f.method == "session.create")
+            .unwrap()
+            .params["cwd"]
+            .as_str()
+            .unwrap(),
+    );
+    // The agent leaves two edits behind, and a file in the shared repository too.
+    fs::write(worktree.join("one.txt"), "x").unwrap();
+    fs::write(worktree.join("two.txt"), "x").unwrap();
+    fs::write(repo.join("shared.txt"), "x").unwrap();
+    h.wire.release("hold review");
     let (exit, events) = worker.finish();
     assert_eq!(exit.code, 0, "{:?}", exit.problems);
     let outcome: Value =
         serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
     let listed = outcome["leftover_edits"].as_array().unwrap();
     assert_eq!(listed.len(), 1, "{outcome}");
-    assert_eq!(
-        listed[0]["path"],
-        h.root.canonicalize().unwrap().to_string_lossy().as_ref()
-    );
-    assert!(
-        listed[0]["changed_files"].as_u64().unwrap() >= 1,
-        "{outcome}"
-    );
+    assert_eq!(listed[0]["path"], worktree.to_string_lossy().as_ref());
+    assert_eq!(listed[0]["changed_files"], 2, "{outcome}");
     let said = |m: &str| m.starts_with("uncommitted changes left in an agent working folder: ");
     assert!(
         events
@@ -1083,10 +1091,10 @@ fn a_working_folder_with_uncommitted_edits_is_listed_when_the_run_ends() {
             .iter()
             .any(|r| r["event"]["message"].as_str().is_some_and(said))
     );
-    // Nothing was deleted or committed: the edits are still there.
-    assert!(h.root.join("root.js").exists());
+    // Nothing was deleted or committed.
+    assert!(worktree.join("one.txt").exists() && repo.join("shared.txt").exists());
 
-    // A folder with nothing uncommitted, or none a git work tree, adds no list.
+    // An agent that ran in the shared directory lists nothing: Talaria did not make it.
     let h = Harness::new("return await agent('review', {label:'review', tier:'first'});");
     let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
     let folder = run_folder(&worker);

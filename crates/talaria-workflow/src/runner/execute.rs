@@ -1239,10 +1239,12 @@ async fn execute_inner(
     // result file. Nothing is deleted.
     let records = control::read_records(dir.path()).map_err(|e| e.to_string())?;
     file.untracked_work = super::leftover::untracked_work(&records);
-    file.leftover_edits =
-        tokio::task::spawn_blocking(move || super::leftover::leftover_folders(&records))
-            .await
-            .map_err(|e| e.to_string())?;
+    let worktrees = dir.path().join("worktrees");
+    file.leftover_edits = tokio::task::spawn_blocking(move || {
+        super::leftover::leftover_folders(&records, &worktrees)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     for folder in &file.leftover_edits {
         let message = super::leftover::describe(folder);
         journal
