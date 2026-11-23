@@ -39,8 +39,10 @@ fn output(cmd: &mut Command) -> Output {
 fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).unwrap()
 }
+/// The limit is generous on purpose: these tests start real processes, and under a full parallel
+/// run on a loaded machine a 20 second limit was exceeded by a wait that takes 2 seconds alone.
 fn wait_for(mut condition: impl FnMut() -> bool) {
-    let until = Instant::now() + Duration::from_secs(20);
+    let until = Instant::now() + Duration::from_secs(60);
     while !condition() {
         assert!(Instant::now() < until, "condition timed out");
         thread::sleep(Duration::from_millis(20));
