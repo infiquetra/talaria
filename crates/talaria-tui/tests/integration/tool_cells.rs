@@ -778,3 +778,33 @@ fn tool_clock_ticks_only_while_running() {
     );
     assert_eq!(clock.next_tick(start + Duration::from_secs(4)), None);
 }
+
+#[test]
+fn a_file_write_header_keeps_the_file_name_when_the_path_is_cut() {
+    let path =
+        "/work/project/crates/some-long-crate-name/src/deeply/nested/module/writer_of_things.rs";
+    let mut tool = cell("write_file", ToolStatus::Succeeded);
+    // Hermes's own preview cut the path before its end; the arguments still hold all of it.
+    tool.context = Some(path[..30].to_string());
+    tool.args = Some(json!({"path": path, "content": "x"}));
+    tool.diff = Some(INLINE.to_string());
+    let lines = tool_lines(&tool, &options(60));
+    let first = row(&lines[0]);
+    assert!(UnicodeWidthStr::width(first.as_str()) <= 60, "{first}");
+    assert!(first.contains("writer_of_things.rs"), "{first}");
+    assert!(first.contains('\u{2026}'), "{first}");
+}
+
+#[test]
+fn counts_are_marked_partial_when_hermes_omitted_diff_lines() {
+    let mut tool = cell("write_file", ToolStatus::Succeeded);
+    tool.context = Some("big.txt".to_string());
+    tool.diff = Some(format!("{INLINE}\u{2026} omitted 120 diff line(s)\n"));
+    let lines = tool_lines(&tool, &options(100));
+    assert_eq!(row(&lines[0]), "⏺ Write big.txt  ✓ +1 -1 partial");
+    let mut whole = cell("write_file", ToolStatus::Succeeded);
+    whole.context = Some("big.txt".to_string());
+    whole.diff = Some(INLINE.to_string());
+    let lines = tool_lines(&whole, &options(100));
+    assert_eq!(row(&lines[0]), "⏺ Write big.txt  ✓ +1 -1");
+}

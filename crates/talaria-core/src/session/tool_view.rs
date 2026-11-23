@@ -4,6 +4,7 @@
 //! judges a result again. It only words what the cell holds.
 
 use serde_json::{Map, Value};
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::text::strip_terminal_escapes;
 use super::{ToolCell, ToolProgress, ToolStatus};
@@ -166,11 +167,60 @@ fn first_line_of(args: Option<&Value>, key: &str) -> Option<String> {
     text.lines().find_map(one_line)
 }
 
+/// Tools whose subject is the file they act on, taken from the `path` argument.
+const FILE_TOOLS: [&str; 3] = ["read_file", "write_file", "patch"];
+/// A path longer than this many characters loses its middle in the subject.
+const PATH_SUBJECT_CHARS: usize = 100;
+
+/// `text` cut to at most `max` columns by replacing its middle with `…`, so the last path
+/// segment (the file name) stays visible. `width` measures one grapheme cluster in columns. With
+/// no `/` the end is kept, so a file extension survives.
+#[must_use]
+pub fn shorten_middle(text: &str, max: usize, width: impl Fn(&str) -> usize) -> String {
+    let clusters: Vec<&str> = text.graphemes(true).collect();
+    let widths: Vec<usize> = clusters.iter().map(|cluster| width(cluster)).collect();
+    if widths.iter().sum::<usize>() <= max {
+        return text.to_owned();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let budget = max - 1;
+    let name_start = clusters
+        .iter()
+        .rposition(|cluster| matches!(*cluster, "/" | "\\"))
+        .map_or(0, |at| at + 1);
+    // The tail starts at the separator before the file name, or at the whole text.
+    let mut tail_start = name_start.saturating_sub(1);
+    let mut tail_width: usize = widths[tail_start..].iter().sum();
+    while tail_width > budget && tail_start < clusters.len() {
+        tail_width -= widths[tail_start];
+        tail_start += 1;
+    }
+    let mut head_end = 0;
+    let mut head_width = 0;
+    while head_end < tail_start && head_width + widths[head_end] + tail_width <= budget {
+        head_width += widths[head_end];
+        head_end += 1;
+    }
+    let mut out: String = clusters[..head_end].concat();
+    out.push('\u{2026}');
+    out.push_str(&clusters[tail_start..].concat());
+    out
+}
+
+fn path_subject(args: Option<&Value>) -> Option<String> {
+    let path = one_line(args?.get("path")?.as_str()?)?;
+    Some(shorten_middle(&path, PATH_SUBJECT_CHARS, |_| 1))
+}
+
 fn subject_of(cell: &ToolCell) -> Option<String> {
     let context = || cell.context.as_deref().and_then(one_line);
     match cell.name.as_str() {
         "terminal" => first_line_of(cell.args.as_ref(), "command").or_else(context),
         "execute_code" => first_line_of(cell.args.as_ref(), "code").or_else(context),
+        // Hermes's own preview of the call is cut at a fixed width and can lose the file name.
+        name if FILE_TOOLS.contains(&name) => path_subject(cell.args.as_ref()).or_else(context),
         _ => context(),
     }
 }

@@ -401,3 +401,47 @@ fn a_restored_question_lists_what_it_asked() {
     other.name = "todo".to_string();
     assert!(tool_view(&other).questions.is_empty());
 }
+
+#[test]
+fn a_file_tool_subject_is_the_path_argument_with_its_middle_shortened() {
+    let mut tool = cell("write_file", ToolStatus::Succeeded);
+    tool.context = Some("/work/project/crates/some-long".to_string());
+    tool.args = Some(json!({"path": "/work/project/src/lib.rs", "content": "x"}));
+    assert_eq!(
+        tool_view(&tool).subject.as_deref(),
+        Some("/work/project/src/lib.rs")
+    );
+    let long = format!("/work/{}/final_name.rs", "deeply/".repeat(30));
+    tool.args = Some(json!({"path": long, "content": "x"}));
+    let subject = tool_view(&tool).subject.unwrap();
+    assert!(subject.chars().count() <= 100, "{subject}");
+    assert!(subject.starts_with("/work/deeply/"), "{subject}");
+    assert!(subject.ends_with("/final_name.rs"), "{subject}");
+    assert!(subject.contains('\u{2026}'), "{subject}");
+    // Without a path argument the context is still the subject.
+    tool.args = Some(json!({"content": "x"}));
+    assert_eq!(
+        tool_view(&tool).subject.as_deref(),
+        Some("/work/project/crates/some-long")
+    );
+}
+
+#[test]
+fn shortening_the_middle_keeps_the_file_name_or_the_end() {
+    use talaria_core::session::shorten_middle;
+    let one = |_: &str| 1;
+    assert_eq!(shorten_middle("a/b/c.rs", 20, one), "a/b/c.rs");
+    assert_eq!(
+        shorten_middle("/aaaa/bbbb/cccc/file.rs", 15, one),
+        "/aaaa/\u{2026}/file.rs"
+    );
+    assert_eq!(
+        shorten_middle("/a/b/a_rather_long_name.rs", 10, one),
+        "\u{2026}g_name.rs"
+    );
+    assert_eq!(
+        shorten_middle("no_separators_here.txt", 9, one),
+        "\u{2026}here.txt"
+    );
+    assert_eq!(shorten_middle("abc", 0, one), "");
+}
