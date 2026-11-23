@@ -16,7 +16,7 @@ Options: --staffing, --budget-tokens, --budget-usd, --profile, --json. The versi
 @@TALARIA_COMMAND@@ workflow run --profile @@TALARIA_PROFILE@@ --json <path>
 ```
 
-Options: --detach, --json, --args, --args-file, --profile, --staffing, --cwd, --budget-tokens, --budget-usd, --on-unknown, --record, --runs-dir, --workflows-dir. JSON input flags conflict. The first line names the run folder. The final foreground object has event run_finished, run_id, outcome, one of result/error/reason, and spend with tokens, money_usd, money_source. Outcome budget_exhausted means the script returned but the budget refused or stopped agents; that object has result, reason and summary with refused and stopped counts. Exit 0 completed, 1 failed, 2 refused, 3 aborted, 4 budget exhausted. Detach returns a run id immediately; the child appends runner.log.
+Options: --detach, --json, --args, --args-file, --profile, --staffing, --cwd, --budget-tokens, --budget-usd, --on-unknown, --record, --runs-dir, --workflows-dir. JSON input flags conflict. The first line names the run folder. The final foreground object has event run_finished, run_id, outcome, one of result/error/reason, and spend with tokens, money_usd, money_source. Outcome budget_exhausted means the script returned but the budget refused or stopped agents; that object has result, reason and summary with refused and stopped counts. Exit 0 completed, 1 failed, 2 refused, 3 aborted, 4 budget exhausted. Detach returns a run id immediately and sends no completion notice; the child appends runner.log. --cwd sets the folder that unisolated agents run in and that worktrees are cut from; outside a git repository the command warns that isolated agents will fail there. The foreground --json stream also prints agent_started and agent_finished events.
 
 ## Resume
 
@@ -40,7 +40,7 @@ The needs operator line prints the exact resolve command. Choose fail, rerun, or
 @@TALARIA_COMMAND@@ workflow list --json --limit 20
 ```
 
-Options: --runs-dir, --json, --limit. Status is running, parked, completed, failed, aborted, interrupted, or unreadable. Rows include counts and observed spend, but no result. Missing history is an empty array. Exit 0 listed, 1 filesystem failure, 2 usage.
+Options: --runs-dir, --json, --limit. Status is running, parked, completed, failed, aborted, interrupted, or unreadable. Rows include run_id, status, agents_finished, agents_total_known, parked, tokens_spent and money_spent_usd, but no result. For a running run the agent counts show progress; for finished runs tokens_spent and the counts are the basis for a cost estimate. Missing history is an empty array. Exit 0 listed, 1 filesystem failure, 2 usage.
 
 ## Stop
 

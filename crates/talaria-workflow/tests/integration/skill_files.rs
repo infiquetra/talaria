@@ -306,3 +306,42 @@ fn drafts_use_an_extension_hermes_does_not_lint() {
         }
     }
 }
+#[test]
+fn waiting_follows_the_hermes_wait_cap_and_never_loops() {
+    let all = files();
+    for (name, text) in &all {
+        for part in text.split("timeout=").skip(1) {
+            let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
+            let seconds: u32 = digits.parse().unwrap_or(0);
+            assert!(seconds <= 180, "{name}: wait timeout {seconds} exceeds 180");
+        }
+        assert!(
+            !text.to_lowercase().contains("repeat the wait"),
+            "{name}: still tells the lead to repeat the wait"
+        );
+    }
+    let s = file(&all, "SKILL.md");
+    assert!(s.contains("timeout=180"));
+    assert!(s.contains("the completion notice resumes you"));
+}
+#[test]
+fn the_new_project_and_worker_folder_rules_are_stated() {
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    for marker in [
+        "not inside",
+        "git init",
+        "first agent unisolated",
+        "committed HEAD",
+        "git switch -c",
+        "never `cd` or `git -C`",
+        "absolute path",
+        "`rm` on any absolute path",
+        "`sh -c` or `bash -c`",
+        "workflow list --json",
+        "agents_finished",
+        "never drop it silently",
+    ] {
+        assert!(s.contains(marker), "missing {marker}");
+    }
+}
