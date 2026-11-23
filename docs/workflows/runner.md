@@ -107,7 +107,8 @@ runner. Use `resolve` to answer its parked calls while it remains alive. A resum
 token and money budget recorded in the manifest's roster snapshot; `--budget-tokens` or
 `--budget-usd` replaces only the one it names.
 
-A completed execution replays its stored `outcome.json` result without connecting to the
+A completed execution, including one that completed with failures, replays its stored
+`outcome.json` result and its failed and cut short agent lists without connecting to the
 gateway or executing the script, and so does a budget-exhausted run resumed without a budget
 flag (exit 4, with a line saying a larger budget continues it). Neither changes any file in
 the run folder. If a completed run predates that file, the runner reports
