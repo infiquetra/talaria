@@ -12,7 +12,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Workflow expand | Right | Expand the selected workflow item. | `workflow_expand` |
 | Workflow open | Enter | Open the selected item. | `workflow_open` |
 | Workflow steer | S | Steer the selected agent. | `workflow_steer` |
-| Workflow stop agent | X | Stop the selected agent. | `workflow_stop_agent` |
+| Workflow stop agent | X | Ask to stop the selected agent; X or Y confirms. The run then waits for an answer (`talaria workflow resolve`). | `workflow_stop_agent` |
 | Workflow restart | R | Restart the selected item. | `workflow_restart` |
 | Workflow pause | P | Pause or resume the run. | `workflow_pause` |
 | Workflow stop run | Shift+X | Ask to stop the workflow run. | `workflow_stop_run` |
