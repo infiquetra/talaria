@@ -60,8 +60,9 @@ pub(super) fn stop_reason(outcome: &str, meta: &Value, final_text: Option<&str>)
         Some(StopSource::WorkflowViewRestart) => {
             "the Talaria workflow view stopped it so that it can be restarted"
         }
+        Some(StopSource::Budget) => "the runner stopped it because the run's budget ran out",
         None => {
-            "a stop was requested from outside the runner, for example a key press in a window showing the agent's session"
+            "Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn"
         }
     };
     let mut line = format!("agent stopped: {who}; Hermes ended the turn as '{outcome}'");
@@ -76,7 +77,7 @@ pub(super) fn stop_reason(outcome: &str, meta: &Value, final_text: Option<&str>)
         line.push_str(&format!(": {}", first.trim_end_matches('.')));
     }
     line.push_str(
-        ". This was a requested stop, not a timeout: a time in Hermes's text is how long the turn had run",
+        ". This was a stop, not a timeout: a time in Hermes's text is how long the turn had run",
     );
     line
 }
@@ -247,12 +248,12 @@ mod tests {
         let reason = reason_after_outcome("interrupted", stopped_receipt());
         assert_eq!(
             reason,
-            "agent stopped: a stop was requested from outside the runner, for example a key press in a window showing the agent's session; Hermes ended the turn as 'interrupted' (interrupted_during_api_call): Operation interrupted: waiting for model response (80.0s elapsed). This was a requested stop, not a timeout: a time in Hermes's text is how long the turn had run"
+            "agent stopped: Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn; Hermes ended the turn as 'interrupted' (interrupted_during_api_call): Operation interrupted: waiting for model response (80.0s elapsed). This was a stop, not a timeout: a time in Hermes's text is how long the turn had run"
         );
         // A cancelled queued turn has no result at all and still says what happened.
         assert_eq!(
             reason_after_outcome("cancelled", Value::Null),
-            "agent stopped: a stop was requested from outside the runner, for example a key press in a window showing the agent's session; Hermes ended the turn as 'cancelled'. This was a requested stop, not a timeout: a time in Hermes's text is how long the turn had run"
+            "agent stopped: Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn; Hermes ended the turn as 'cancelled'. This was a stop, not a timeout: a time in Hermes's text is how long the turn had run"
         );
     }
 
@@ -270,6 +271,10 @@ mod tests {
             (
                 "workflow_view_restart",
                 "agent stopped: the Talaria workflow view stopped it so that it can be restarted;",
+            ),
+            (
+                "budget",
+                "agent stopped: the runner stopped it because the run's budget ran out;",
             ),
         ] {
             let meta =

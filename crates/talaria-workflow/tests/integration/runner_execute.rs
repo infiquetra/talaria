@@ -503,8 +503,17 @@ fn event_value(event: &RunnerEvent) -> Value {
             cause,
             reason,
             choices,
+            saved_branch,
         } => {
-            json!({"event":"parked","run_id":run_id,"label":label,"key":key,"attempt":attempt,"episode":episode,"cause":cause,"reason":reason,"choices":choices})
+            json!({"event":"parked","run_id":run_id,"label":label,"key":key,"attempt":attempt,"episode":episode,"cause":cause,"reason":reason,"choices":choices,"saved_branch":saved_branch})
+        }
+        RunnerEvent::WaitingForReply {
+            run_id,
+            label,
+            key,
+            session_id,
+        } => {
+            json!({"event":"waiting_for_reply","run_id":run_id,"label":label,"key":key,"session_id":session_id})
         }
         RunnerEvent::Finished {
             run_id,
@@ -1589,6 +1598,26 @@ fn stop_confirms_settlement() {
             1
         );
         assert!(!folder.join("control/stop.json").exists());
+        // The runner noted each stop before sending it. A settlement it confirmed used its
+        // note up; one it could not confirm keeps the note naming the stopped turn, so the
+        // next execution still knows the stop was the run's.
+        let dir = RunDir::open(&folder).unwrap();
+        for admitted in records(&folder)
+            .iter()
+            .filter(|r| r["t"] == "turn_admitted")
+        {
+            let key = admitted["key"].as_str().unwrap();
+            let admission = admitted["admission_id"].as_str().unwrap();
+            if unconfirmed {
+                assert_eq!(
+                    dir.agent_stop_for(key, 0, 0, admission),
+                    Some(talaria_workflow::journal::StopSource::RunStop),
+                    "{key}"
+                );
+            } else {
+                assert_eq!(dir.agent_stop(key), None, "{key}");
+            }
+        }
     }
     scenario(false);
     scenario(true);
@@ -1819,6 +1848,20 @@ fn token_budget_stops_running_agents_and_refuses_new_ones() {
     assert_eq!(finish["outcome"], "budget_exhausted");
     assert_eq!(finish["summary"]["refused"], 1);
     assert_eq!(finish["summary"]["stopped"], 2);
+    // The runner noted the budget stop before sending it, so the settled turn says who sent it
+    // even had it been read only by a later execution, and the used note is gone.
+    let settled: Vec<_> = journal
+        .iter()
+        .filter(|r| r["t"] == "turn_settled")
+        .collect();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(
+        settled[0]["result_meta"]["stopped_by"], "budget",
+        "{}",
+        settled[0]
+    );
+    let worker_one = settled[0]["key"].as_str().unwrap();
+    assert_eq!(RunDir::open(&folder).unwrap().agent_stop(worker_one), None);
 
     // The stored outcome keeps the script's result and says why the run did not complete.
     let outcome: Value =
@@ -2881,4 +2924,115 @@ fn runner_installs_worktree_provider() {
     assert!(resumed_cwd.starts_with(folder.join("worktrees").canonicalize().unwrap()));
     assert_eq!(common_dir(&resumed_cwd), common_dir(&repo));
     assert_ne!(common_dir(&resumed_cwd), common_dir(&other));
+}
+
+#[test]
+fn a_parked_isolated_agent_has_its_uncommitted_work_saved_and_named_when_it_parks() {
+    let h = Harness::new(
+        "return await agent('hold stopped', {label:'stopped', tier:'first', toolsets:['file'], isolation:'worktree'});",
+    );
+    let repo = h.root.join("source-repo");
+    init_repository(&repo);
+    let mut request = h.request();
+    request.cwd = repo.canonicalize().unwrap();
+    let worker = Worker::start(Start::New(request), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "turn_admitted"));
+    let worktree = PathBuf::from(
+        h.wire
+            .frames()
+            .iter()
+            .find(|f| f.method == "session.create")
+            .unwrap()
+            .params["cwd"]
+            .as_str()
+            .unwrap(),
+    );
+    fs::write(worktree.join("half.txt"), "half done").unwrap();
+    // The agent is stopped from the workflow view, so it parks for the operator.
+    let key = key_for(&folder, "stopped");
+    let (dir, mut view, _) = progress_view(&folder);
+    view.select_agent(&key);
+    assert!(update(&mut view, ProgressInput::Key(ProgressKey::StopAgent)).is_empty());
+    let note = view_write(
+        update(&mut view, ProgressInput::Key(ProgressKey::StopAgent)),
+        &ControlRequest::AgentStop {
+            key: key.clone(),
+            restart: false,
+        },
+    );
+    let noted = RunControl::note_agent_stop(&dir, &key, false, 1).unwrap();
+    let (session, generation) =
+        match update(&mut view, ProgressInput::ControlDone(note, noted)).as_slice() {
+            [
+                ProgressEffect::Interrupt {
+                    session_id,
+                    generation,
+                },
+            ] => (session_id.clone(), *generation),
+            other => panic!("expected the viewer's interrupt, got {other:?}"),
+        };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let wire = h.wire.open("fixture").await.unwrap();
+        let params = json!({"session_id":session,"execution_generation":generation})
+            .as_object()
+            .unwrap()
+            .clone();
+        wire.call("session.interrupt", params, Duration::from_secs(1))
+            .await
+            .unwrap()
+    });
+    wait_for(|| worker.events().iter().any(|e| e["event"] == "parked"));
+    let parked = worker
+        .events()
+        .into_iter()
+        .find(|e| e["event"] == "parked")
+        .unwrap();
+    // A rerun would start the next attempt in this worktree, so the work is saved first and
+    // the parked line names the branch.
+    let branch = parked["saved_branch"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{parked}"))
+        .to_owned();
+    assert!(
+        branch.starts_with("talaria/wf/") && branch.ends_with("-0-saved"),
+        "{branch}"
+    );
+    assert!(
+        parked["reason"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("(uncommitted work saved to branch {branch})")),
+        "{parked}"
+    );
+    let shown = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["show", &format!("{branch}:half.txt")])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&shown.stdout), "half done");
+    let run_id = folder.file_name().unwrap().to_string_lossy().into_owned();
+    answer_parked(
+        &h.runs,
+        &run_id,
+        &key,
+        parked["attempt"].as_u64().unwrap() as u32,
+        parked["episode"].as_u64().unwrap() as u32,
+        Resolution::Fail,
+    )
+    .unwrap();
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 5);
+    // The failed call names the same branch once: the second save found the same work.
+    let finish = records(&folder)
+        .into_iter()
+        .rfind(|r| r["t"] == "call_finished")
+        .unwrap();
+    let reason = finish["outcome"]["reason"].as_str().unwrap();
+    assert_eq!(reason.matches(&branch).count(), 1, "{reason}");
 }

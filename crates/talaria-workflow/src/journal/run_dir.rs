@@ -274,11 +274,34 @@ impl RunDir {
     }
     /// Leave a note that the workflow view is about to stop `key`'s running turn, so the runner
     /// can say who stopped it when the turn settles. `restart` marks a stop sent to restart the
-    /// agent. A newer note replaces an older one.
+    /// agent. The note names the turn running now, read from the journal; a newer note replaces
+    /// an older one.
     pub fn note_agent_stop(
         &self,
         key: &str,
         restart: bool,
+        at_ms: i64,
+    ) -> Result<(), JournalError> {
+        let source = if restart {
+            super::StopSource::WorkflowViewRestart
+        } else {
+            super::StopSource::WorkflowView
+        };
+        // A journal that cannot be read names no turn; the note then matches nothing.
+        let records = super::JournalReader::read_from(&self.path.join("journal.jsonl"), 0)
+            .map(|(records, _)| records)
+            .unwrap_or_default();
+        let turn = running_turn(&records, key);
+        self.note_stop(key, source, turn.as_ref(), at_ms)
+    }
+    /// Leave a durable note that `source` is about to stop `turn` of `key`, before the stop is
+    /// sent. A settlement read later, even by a later execution, is then attributed to it. A
+    /// note that names no turn matches no settlement.
+    pub fn note_stop(
+        &self,
+        key: &str,
+        source: super::StopSource,
+        turn: Option<&StopTurn>,
         at_ms: i64,
     ) -> Result<(), JournalError> {
         if !valid_key(key) {
@@ -288,14 +311,12 @@ impl RunDir {
         fs::create_dir_all(&folder)?;
         let note = AgentStopNote {
             v: 1,
-            kind: if restart {
-                "agent_restart"
-            } else {
-                "agent_stop"
-            }
-            .into(),
+            kind: note_kind(source).into(),
             key: key.into(),
             at_ms,
+            attempt: turn.map(|t| t.attempt),
+            turn: turn.map(|t| t.turn),
+            admission_id: turn.and_then(|t| t.admission_id.clone()),
         };
         let bytes = serde_json::to_vec(&note).map_err(super::io_error)?;
         let tmp = folder.join(format!(".tmp-agent-stop-{key}.{}", random_hex()?));
@@ -305,15 +326,32 @@ impl RunDir {
         fs::rename(&tmp, folder.join(agent_stop_name(key)))?;
         sync_dir(&folder).map_err(Into::into)
     }
-    /// Who the workflow view's note says stopped `key`, if a readable note is there.
-    pub fn agent_stop(&self, key: &str) -> Option<super::StopSource> {
+    fn read_stop_note(&self, key: &str) -> Option<(AgentStopNote, super::StopSource)> {
         let bytes = fs::read(self.path.join("control").join(agent_stop_name(key))).ok()?;
         let note: AgentStopNote = serde_json::from_slice(&bytes).ok()?;
-        match (note.v, note.kind.as_str()) {
-            (1, "agent_stop") if note.key == key => Some(super::StopSource::WorkflowView),
-            (1, "agent_restart") if note.key == key => Some(super::StopSource::WorkflowViewRestart),
-            _ => None,
+        if note.v != 1 || note.key != key {
+            return None;
         }
+        let source = note_source(&note.kind)?;
+        Some((note, source))
+    }
+    /// Who the readable stop note for `key` says sent a stop, whatever turn it names.
+    pub fn agent_stop(&self, key: &str) -> Option<super::StopSource> {
+        self.read_stop_note(key).map(|(_, source)| source)
+    }
+    /// Who stopped the turn now settling, when `key`'s note names exactly that turn: the same
+    /// attempt and turn, and the same admission when the note knows it. A note about another
+    /// turn, or one that names none, says nothing about this settlement.
+    pub fn agent_stop_for(
+        &self,
+        key: &str,
+        attempt: u32,
+        turn: u32,
+        admission_id: &str,
+    ) -> Option<super::StopSource> {
+        let (note, source) = self.read_stop_note(key)?;
+        note.names(attempt, turn, Some(admission_id))
+            .then_some(source)
     }
     /// Remove `key`'s stop note once the turn it named has settled.
     pub fn clear_agent_stop(&self, key: &str) -> std::io::Result<()> {
@@ -322,8 +360,97 @@ impl RunDir {
             _ => Ok(()),
         }
     }
+    /// Remove every stop note that no longer names a turn still running, read from the
+    /// journal: its turn settled, a later attempt replaced it, or it names no turn. A note for
+    /// a turn still waiting to settle is kept, so its settlement keeps its source.
+    pub fn prune_agent_stops(&self) -> Result<(), JournalError> {
+        let folder = self.path.join("control");
+        let entries = match fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        let records = super::JournalReader::read_from(&self.path.join("journal.jsonl"), 0)?.0;
+        for entry in entries {
+            let name = entry?.file_name().to_string_lossy().into_owned();
+            let Some(key) = name
+                .strip_prefix("agent-stop-")
+                .and_then(|rest| rest.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            let live = valid_key(key)
+                && self.read_stop_note(key).is_some_and(|(note, _)| {
+                    running_turn(&records, key).is_some_and(|running| {
+                        note.names(
+                            running.attempt,
+                            running.turn,
+                            running.admission_id.as_deref(),
+                        )
+                    })
+                });
+            if !live {
+                fs::remove_file(folder.join(&name))?;
+            }
+        }
+        sync_dir(&folder).map_err(Into::into)
+    }
 }
-/// The control file that holds the workflow view's note about stopping `key`.
+/// The turn a stop note names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StopTurn {
+    pub attempt: u32,
+    pub turn: u32,
+    /// The turn's admission, when it was admitted before the note was written.
+    pub admission_id: Option<String>,
+}
+/// The turn of `key` that has not settled yet, from the journal: its latest record is the
+/// turn's intent or its admission.
+pub(crate) fn running_turn(records: &[super::RecordLine], key: &str) -> Option<StopTurn> {
+    use super::Record;
+    let latest = records
+        .iter()
+        .rev()
+        .find(|line| line.record.identity().is_some_and(|(k, _)| k == key))?;
+    match &latest.record {
+        Record::TurnIntent { attempt, turn, .. } => Some(StopTurn {
+            attempt: *attempt,
+            turn: *turn,
+            admission_id: None,
+        }),
+        Record::TurnAdmitted {
+            attempt,
+            turn,
+            admission_id,
+            ..
+        } => Some(StopTurn {
+            attempt: *attempt,
+            turn: *turn,
+            admission_id: Some(admission_id.clone()),
+        }),
+        _ => None,
+    }
+}
+fn note_kind(source: super::StopSource) -> &'static str {
+    match source {
+        super::StopSource::WorkflowView => "agent_stop",
+        super::StopSource::WorkflowViewRestart => "agent_restart",
+        super::StopSource::RunStop => "run_stop",
+        super::StopSource::Budget => "budget_stop",
+    }
+}
+fn note_source(kind: &str) -> Option<super::StopSource> {
+    match kind {
+        "agent_stop" => Some(super::StopSource::WorkflowView),
+        "agent_restart" => Some(super::StopSource::WorkflowViewRestart),
+        "run_stop" => Some(super::StopSource::RunStop),
+        "budget_stop" => Some(super::StopSource::Budget),
+        _ => None,
+    }
+}
+/// The kinds a stop note can have, which the control-file reader accepts.
+pub const STOP_NOTE_KINDS: [&str; 4] = ["agent_stop", "agent_restart", "run_stop", "budget_stop"];
+/// The control file that holds the note about a stop sent to `key`'s running turn.
 pub fn agent_stop_name(key: &str) -> String {
     format!("agent-stop-{key}.json")
 }
@@ -333,6 +460,25 @@ struct AgentStopNote {
     kind: String,
     key: String,
     at_ms: i64,
+    /// The turn the stop was sent to. A note written before notes named their turn has none,
+    /// and matches nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attempt: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    turn: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    admission_id: Option<String>,
+}
+impl AgentStopNote {
+    /// Whether the note names this turn. An admission is compared only when both sides know it.
+    fn names(&self, attempt: u32, turn: u32, admission_id: Option<&str>) -> bool {
+        self.attempt == Some(attempt)
+            && self.turn == Some(turn)
+            && match (self.admission_id.as_deref(), admission_id) {
+                (Some(noted), Some(settling)) => noted == settling,
+                _ => true,
+            }
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

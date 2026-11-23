@@ -156,7 +156,7 @@ fn outcomes_map_as_specified() {
     );
     assert_eq!(
         reason(interrupted),
-        "agent stopped: a stop was requested from outside the runner, for example a key press in a window showing the agent's session; Hermes ended the turn as 'interrupted': partial. This was a requested stop, not a timeout: a time in Hermes's text is how long the turn had run"
+        "agent stopped: Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn; Hermes ended the turn as 'interrupted': partial. This was a stop, not a timeout: a time in Hermes's text is how long the turn had run"
     );
     let cancelled = policy.after_turn(
         &request,
@@ -164,7 +164,7 @@ fn outcomes_map_as_specified() {
     );
     let cancelled = reason(cancelled);
     assert!(
-        cancelled.starts_with("agent stopped: a stop was requested from outside the runner"),
+        cancelled.starts_with("agent stopped: Talaria's runner did not send this stop"),
         "{cancelled}"
     );
     let other = policy.after_turn(

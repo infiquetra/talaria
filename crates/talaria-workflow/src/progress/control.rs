@@ -132,9 +132,11 @@ impl RunControl {
                     {
                         pending.restarts.push(request)
                     }
-                    // The workflow view's note about a stop it sent; the runner reads it.
-                    (_, "agent_stop" | "agent_restart", Some(key))
-                        if valid_key(key) && name == crate::journal::agent_stop_name(key) => {}
+                    // A note about a stop the view or the runner sent; the runner reads it.
+                    (_, kind, Some(key))
+                        if crate::journal::STOP_NOTE_KINDS.contains(&kind)
+                            && valid_key(key)
+                            && name == crate::journal::agent_stop_name(key) => {}
                     _ => return Err("invalid control request".into()),
                 }
                 Ok(())

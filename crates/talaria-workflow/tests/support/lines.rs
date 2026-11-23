@@ -478,6 +478,7 @@ pub fn state_lines() -> Vec<RecordLine> {
             admission_id: Some("adm-parked".to_string()),
             execution_generation: Some(2),
             detail: "admission fate unproven".to_string(),
+            seen_admissions: Vec::new(),
         },
     ));
     rows.push(intent(3_700, KEY_ENDED, "ended-row", "plan", Vec::new()));
@@ -677,6 +678,7 @@ pub fn live_filter() -> Vec<RecordLine> {
                 admission_id: Some("adm-parked".to_string()),
                 execution_generation: Some(2),
                 detail: "admission fate unproven".to_string(),
+                seen_admissions: Vec::new(),
             },
         ),
         intent(1_400, KEY_RUNNING, "running-row", "build", Vec::new()),
@@ -716,6 +718,7 @@ pub fn live_stopped_parked(key: &str, session: &str) -> Vec<RecordLine> {
                 admission_id: Some("adm-1".to_string()),
                 execution_generation: Some(7),
                 detail: "agent stopped".to_string(),
+                seen_admissions: Vec::new(),
             },
         ),
     ])

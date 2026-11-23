@@ -852,6 +852,20 @@ impl GatewayPort for HermesPort {
             }
         })
     }
+    fn seen_admissions(
+        &self,
+        profile: String,
+        session_id: String,
+    ) -> BoxFuture<'static, Result<Vec<String>, PortError>> {
+        let port = self.clone();
+        Box::pin(async move {
+            Ok(port
+                .request(|reply| Command::Lookup((profile, session_id), reply))
+                .await?
+                .map(|session| session.admissions)
+                .unwrap_or_default())
+        })
+    }
 }
 /// How many times a sweep reads the route again while something there is still stopping.
 const SWEEP_ROUNDS: u32 = 20;

@@ -51,7 +51,8 @@ pub enum WorkflowCommand {
     /// Ask a finished run to run a failed agent again; `workflow resume` then runs it while
     /// finished agents stay kept.
     Restart(RestartArgs),
-    /// Print the value one agent of a run returned, read from the run's journal.
+    /// Print a finished run's result, or with --agent the value one agent returned, read from
+    /// the run's folder. It never starts or resumes anything.
     Result(ResultArgs),
     /// Turn a workflow's agent calls into kanban board cards. Kanban boards only; it does not
     /// validate a script, so use `check` for that.
@@ -194,9 +195,10 @@ pub struct RestartArgs {
 pub struct ResultArgs {
     #[arg(value_name = "RUN", value_parser = required_text)]
     pub target: String,
-    /// The agent's label or key.
+    /// The agent's label or key. Without it, the run's own result is printed as a resume of the
+    /// finished run prints it, without starting anything.
     #[arg(long, value_parser = required_text)]
-    pub agent: String,
+    pub agent: Option<String>,
     #[arg(long)]
     pub json: bool,
     #[arg(long, value_parser = required_path)]
@@ -518,6 +520,7 @@ impl Renderer {
                 cause,
                 reason,
                 choices,
+                saved_branch,
             } => {
                 let runs_dir = custom_runs_dir_flag(self.dir.as_deref().and_then(Path::parent));
                 let answer = format!(
@@ -542,6 +545,8 @@ impl Renderer {
                         answer: String,
                         #[serde(skip_serializing_if = "Option::is_none")]
                         use_reply: Option<&'static str>,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        saved_branch: Option<&'a str>,
                     }
                     self.json(&Parked {
                         event: "parked",
@@ -556,6 +561,7 @@ impl Renderer {
                         choices,
                         answer: format!("{answer} <choice>"),
                         use_reply: use_reply.then_some(USE_REPLY_HELP),
+                        saved_branch: saved_branch.as_deref(),
                     });
                 } else {
                     self.text(&format!(
@@ -574,6 +580,24 @@ impl Renderer {
                     if use_reply {
                         self.text(&format!("  use-reply: {USE_REPLY_HELP}\n"));
                     }
+                    if let Some(branch) = saved_branch {
+                        self.text(&format!(
+                            "  its uncommitted work was saved to branch {}\n",
+                            safe(branch)
+                        ));
+                    }
+                }
+            }
+            RunnerEvent::WaitingForReply {
+                run_id,
+                label,
+                key,
+                session_id,
+            } => {
+                if self.json {
+                    self.json(&waiting_for_reply_json(run_id, label, key, session_id));
+                } else {
+                    self.text(&waiting_for_reply_text(run_id, label, key, session_id));
                 }
             }
             RunnerEvent::Finished {
@@ -865,7 +889,31 @@ mod money_text_tests {
     }
 }
 /// What `use-reply` does, printed with a parked stopped agent.
-const USE_REPLY_HELP: &str = "continue the agent's Hermes session (for example type \"continue\" into it from a Talaria window); its next reply becomes the agent's result and is checked like any reply. A reply that already came is used at once.";
+const USE_REPLY_HELP: &str = "continue the agent's Hermes session (for example type \"continue\" into it from a Talaria window); its next reply becomes the agent's result and is checked like any reply. A reply that came after the stop while a runner had the run open is used at once; one that came while no runner had it open cannot be seen, so type it again after answering.";
+/// How to give the reply a use-reply answer waits for.
+const WAITING_FOR_REPLY_HELP: &str = "continue the agent's Hermes session (for example type \"continue\" into it from a Talaria window); its reply becomes the agent's result. Nothing else ends this wait; talaria workflow stop ends the run.";
+/// The JSON line for a use-reply answer that now waits for the agent's next reply.
+fn waiting_for_reply_json(run_id: &str, label: &str, key: &str, session_id: &str) -> Value {
+    json!({
+        "event": "waiting_for_reply",
+        "run_id": run_id,
+        "label": label,
+        "key": key,
+        "session_id": session_id,
+        "waiting_for": "operator",
+        "how": WAITING_FOR_REPLY_HELP,
+    })
+}
+/// The text for a use-reply answer that now waits for the agent's next reply.
+fn waiting_for_reply_text(run_id: &str, label: &str, key: &str, session_id: &str) -> String {
+    format!(
+        "waiting for a reply: run {} agent {} key {} waits for the next reply on Hermes session {}\n  {WAITING_FOR_REPLY_HELP}\n",
+        safe(run_id),
+        safe(label),
+        safe(key),
+        safe(session_id)
+    )
+}
 /// The short plain-text line printed after the `run_finished` object in JSON mode. Hermes keeps the
 /// last 2,000 characters of a background command's output and then cuts back to the first newline,
 /// so a single very long final line reached the lead as nothing; this line is always short.
@@ -1173,7 +1221,13 @@ fn restart_command(args: RestartArgs) -> u8 {
 }
 fn result_command(args: ResultArgs) -> u8 {
     let runs = runner::runs_dir(args.runs_dir.as_deref());
-    let result = match runner::agents::agent_result(&runs, &args.target, &args.agent) {
+    let Some(agent) = &args.agent else {
+        // The run's result, printed by the same renderer a resume replay uses.
+        let mut renderer = Renderer::new(args.json);
+        let exit = runner::replay_result(&runs, &args.target, &mut |event| renderer.emit(event));
+        return if renderer.failed { 1 } else { exit_code(exit) };
+    };
+    let result = match runner::agents::agent_result(&runs, &args.target, agent) {
         Ok(result) => result,
         Err(e) => return agent_error(e),
     };
@@ -1514,5 +1568,40 @@ mod leftover_text_tests {
             "{text}"
         );
         assert!(!text.contains("/project: 0 changed"), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod waiting_for_reply_tests {
+    use super::*;
+
+    #[test]
+    fn a_use_reply_wait_is_printed_as_waiting_for_the_operator_with_how_to_end_it() {
+        let line = waiting_for_reply_json("RUN", "review", "KEY", "session-1");
+        assert_eq!(line["event"], "waiting_for_reply");
+        assert_eq!(line["waiting_for"], "operator");
+        assert_eq!(
+            (
+                &line["run_id"],
+                &line["label"],
+                &line["key"],
+                &line["session_id"]
+            ),
+            (
+                &json!("RUN"),
+                &json!("review"),
+                &json!("KEY"),
+                &json!("session-1")
+            )
+        );
+        assert!(line["how"].as_str().unwrap().contains("continue"), "{line}");
+        let text = waiting_for_reply_text("RUN", "review", "KEY", "session-1");
+        assert!(
+            text.starts_with(
+                "waiting for a reply: run RUN agent review key KEY waits for the next reply on Hermes session session-1\n"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("Nothing else ends this wait"), "{text}");
     }
 }

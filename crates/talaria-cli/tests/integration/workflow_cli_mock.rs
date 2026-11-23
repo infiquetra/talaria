@@ -1230,6 +1230,17 @@ fn restart_runs_only_the_failed_agent_again_and_kept_values_are_readable_by_labe
         )
     };
 
+    // The run's own result reads exactly as a resume of the finished run replays it, in both
+    // modes and with the same exit code.
+    for mode in [&["--json"][..], &[][..]] {
+        let read = workflow(&[&["result", id.as_str()][..], mode].concat());
+        let replayed = workflow(&[&["resume", id.as_str()][..], mode].concat());
+        assert_eq!(read.status.code(), Some(5), "{}", text(&read.stderr));
+        assert_eq!(replayed.status.code(), Some(5), "{}", text(&replayed.stderr));
+        assert_eq!(text(&read.stdout), text(&replayed.stdout));
+        assert_eq!(text(&read.stderr), text(&replayed.stderr));
+    }
+
     // A finished agent's kept value is readable by its label, without the journal by hand.
     let plan = workflow(&["result", &id, "--agent", "plan", "--json"]);
     assert_eq!(plan.status.code(), Some(0), "{}", text(&plan.stderr));
@@ -1274,6 +1285,13 @@ fn restart_runs_only_the_failed_agent_again_and_kept_values_are_readable_by_labe
     assert!(asked["next"].as_str().unwrap().ends_with(&id));
     let restart_file = folder.join("control").join(format!("restart-{key}.json"));
     assert!(restart_file.exists());
+    // Reading the result while the restart waits starts nothing and leaves the request.
+    let journal_before = fs::read(folder.join("journal.jsonl")).unwrap();
+    let read = workflow(&["result", &id, "--json"]);
+    assert_eq!(read.status.code(), Some(5), "{}", text(&read.stderr));
+    assert_eq!(run_finished(&read.stdout)["outcome"], "completed_with_failures");
+    assert!(restart_file.exists());
+    assert_eq!(fs::read(folder.join("journal.jsonl")).unwrap(), journal_before);
     // Asking again is not an error; it says the request was already there.
     let again = workflow(&["restart", &id, "--all-failed"]);
     assert_eq!(again.status.code(), Some(0), "{}", text(&again.stderr));
@@ -1340,6 +1358,18 @@ fn a_stopped_agent_parks_and_tells_the_caller_it_waits_for_an_answer() {
     assert_eq!(parked["cause"], "stopped");
     let id = folder.file_name().unwrap().to_string_lossy().into_owned();
     let key = parked["key"].as_str().unwrap().to_owned();
+    // A run that has not finished has no result yet, and says so.
+    let unfinished = output(
+        command(temp.path(), "stopped-wire.json")
+            .args(["workflow", "result", &id, "--runs-dir"])
+            .arg(&runs),
+    );
+    assert_eq!(unfinished.status.code(), Some(1));
+    assert!(
+        text(&unfinished.stderr).contains("has not finished (it is parked)"),
+        "{}",
+        text(&unfinished.stderr)
+    );
     let resolve = |answer: &str| {
         output(
             command(temp.path(), "stopped-wire.json")
@@ -1372,7 +1402,10 @@ fn a_stopped_agent_parks_and_tells_the_caller_it_waits_for_an_answer() {
     )));
     assert!(event["use_reply"].as_str().unwrap().contains("continue"));
     let reason = event["reason"].as_str().unwrap();
-    assert!(reason.contains("a stop was requested"), "{reason}");
+    assert!(
+        reason.contains("Talaria's runner did not send this stop; a person or Hermes did"),
+        "{reason}"
+    );
     assert!(reason.contains("not a timeout"), "{reason}");
     assert!(reason.contains("80.0s elapsed"), "{reason}");
     let finished = run_finished(&out.stdout);
