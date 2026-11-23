@@ -77,11 +77,15 @@ mod tests {
 
     /// Settle a receipt the way the journal does, then ask the policy what happened.
     fn reason_after(result: Value) -> String {
+        reason_after_outcome("failed", result)
+    }
+
+    fn reason_after_outcome(outcome: &str, result: Value) -> String {
         let receipt: Receipt = serde_json::from_value(json!({
             "admission_id": "adm-1",
             "session_id": "sess-1",
             "status": "started",
-            "outcome": "failed",
+            "outcome": outcome,
             "authority_epoch": 1,
             "execution_generation": 1,
             "result": result,
@@ -128,6 +132,19 @@ mod tests {
         assert_eq!(
             reason,
             format!("agent failed: {message} (context_overflow)")
+        );
+    }
+
+    #[test]
+    fn a_failed_result_on_a_completed_turn_reads_the_same() {
+        // Hermes settles some failed turns as outcome "completed" with `failed: true`.
+        assert_eq!(
+            reason_after_outcome(
+                "completed",
+                json!({"completed": false, "failed": true, "error": "Over the limit.",
+                    "failure_reason": "context_overflow"}),
+            ),
+            "agent failed: Over the limit. (context_overflow)"
         );
     }
 
