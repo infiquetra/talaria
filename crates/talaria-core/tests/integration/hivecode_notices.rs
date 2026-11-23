@@ -175,7 +175,7 @@ fn a_changed_skill_names_the_files_what_it_causes_and_the_reinstall_command() {
     );
     assert_eq!(
         notice::skill_lock("default"),
-        "To stop Hermes changing the skill again, run: hermes -p default curator lock talaria-workflows",
+        "To stop Hermes changing the skill again, run: hermes -p default curator lock talaria-workflows (or, in a session on that profile, type /curator lock talaria-workflows)",
         "without -p Hermes uses the profile chosen with hermes profile use"
     );
     assert_eq!(

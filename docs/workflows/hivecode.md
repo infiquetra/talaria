@@ -102,6 +102,9 @@ every time, `-p default` included: without `-p`, Hermes runs in the profile chos
 hermes -p <profile> curator lock talaria-workflows
 ```
 
+Inside a Hermes session, `/curator lock talaria-workflows` does the same for that session's
+profile.
+
 A locked skill stays readable and usable; the agent and the background review can no longer
 edit it. `hermes -p <profile> curator unlock talaria-workflows` undoes it.
 A missing skill on a local session asks once: `Install talaria-workflows into profile <name> now? [y/N]`. `y` installs it and prints the installer's result. Any other answer prints the install command. A session started with `--remote` does not ask; its notice says the skill must be installed on the machine that runs the gateway. Check that the skill is enabled in Hermes if it
