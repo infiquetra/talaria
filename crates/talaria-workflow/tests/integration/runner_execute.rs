@@ -977,6 +977,12 @@ fn work_started_on_a_moved_route_is_cancelled_noted_and_counted() {
         assert!(notes[0].contains(part), "{part} missing from {notes:?}");
     }
     assert!(!notes[0].contains("still running"), "{notes:?}");
+    // The note was also printed live.
+    assert!(
+        events
+            .iter()
+            .any(|e| e["event"] == "log" && e["message"] == notes[0].as_str())
+    );
     // The stored run result carries the same note, without its fixed opening words.
     let outcome: Value =
         serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
@@ -1062,7 +1068,7 @@ fn an_agent_that_runs_out_of_context_is_restarted_in_a_fresh_session_with_a_note
 }
 
 #[test]
-fn a_sweep_the_gateway_refuses_is_noted_and_the_run_goes_on() {
+fn a_sweep_that_could_not_check_the_route_stops_the_restart_and_is_not_untracked_work() {
     let h = Harness::new(
         "return await agent('review overflow sweepfails', {label:'review', tier:'first'});",
     );
@@ -1073,7 +1079,7 @@ fn a_sweep_the_gateway_refuses_is_noted_and_the_run_goes_on() {
     let notes: Vec<String> = records(&folder)
         .iter()
         .filter_map(|r| r["event"]["message"].as_str().map(str::to_owned))
-        .filter(|m| m.starts_with("runner: untracked work: "))
+        .filter(|m| m.starts_with("runner: route not checked: "))
         .collect();
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(
@@ -1083,12 +1089,33 @@ fn a_sweep_the_gateway_refuses_is_noted_and_the_run_goes_on() {
         "{notes:?}"
     );
     assert!(notes[0].contains("look in "), "{notes:?}");
-    // The restart still ran and answered.
-    let finished = events
+    // The same note was printed live.
+    assert!(
+        events
+            .iter()
+            .any(|e| e["event"] == "log" && e["message"] == notes[0].as_str())
+    );
+    // No second agent went into the folder: the call failed and says why.
+    let created = h
+        .wire
+        .frames()
         .iter()
-        .find(|e| e["event"] == "run_finished")
-        .unwrap();
-    assert_eq!(finished["result"], "READY", "{finished}");
+        .filter(|f| f.method == "session.create")
+        .count();
+    assert_eq!(created, 1);
+    let outcome: Value =
+        serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
+    let message = outcome["failed_agents"][0]["reason"].as_str().unwrap();
+    assert!(
+        message.contains("could not check whether Hermes is still running untracked work in "),
+        "{message}"
+    );
+    assert!(
+        message.contains("so the agent was not restarted"),
+        "{message}"
+    );
+    // A check that failed is not untracked work.
+    assert!(outcome.get("untracked_work").is_none(), "{outcome}");
 }
 
 #[test]

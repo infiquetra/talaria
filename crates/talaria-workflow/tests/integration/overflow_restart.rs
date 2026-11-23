@@ -158,11 +158,49 @@ async fn the_restart_count_survives_a_kill_and_a_resume_never_restarts_a_fourth_
             _ => None,
         })
         .unwrap();
-    assert!(reason.contains("ran out of context 4 times"), "{reason}");
+    assert!(
+        reason.contains("ran out of context 4 times; its 3 restarts are used up"),
+        "{reason}"
+    );
     // Resuming again runs the failed call once more, as it always does, but the three restarts
     // are spent: it is not started a fourth time.
     let third = harness.run_port(&script, port.clone(), NoGate).await;
     assert_eq!(result(third.outcome), json!(null));
     assert_eq!(harness.gateway.stats().sessions, 5);
     assert_eq!(retries(&harness), 3);
+    // The count after a resume is the number of overflows, not "4 times" again.
+    let reason = harness
+        .records()
+        .iter()
+        .rev()
+        .find_map(|l| match &l.record {
+            Record::CallFinished {
+                outcome: CallOutcome::Failed { reason },
+                ..
+            } => Some(reason.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        reason.contains("ran out of context 5 times; its 3 restarts are used up"),
+        "{reason}"
+    );
+    // The attempt a resume ran again was told about the earlier work in its folder.
+    let rerun = harness
+        .records()
+        .iter()
+        .find_map(|l| match &l.record {
+            Record::TurnIntent {
+                attempt: 4,
+                turn: 0,
+                text,
+                ..
+            } => text.clone(),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        rerun.starts_with("Note: an earlier attempt at this task ran out of context"),
+        "{rerun}"
+    );
 }

@@ -1119,6 +1119,7 @@ async fn execute_inner(
                 }
                 Some(Input::Notice(JournalNotice::NeedsOperator{key,label,attempt,episode,..}))=>(output.out)(&RunnerEvent::Parked{run_id:dir.run_id().as_str().into(),label,key,attempt,episode}),
                 Some(Input::Notice(JournalNotice::Warning(warning)))=>output.diagnostic(format!("journal warning: {warning:?}")),
+                Some(Input::Notice(JournalNotice::RouteNote{message}))=>(output.out)(&RunnerEvent::Log{message}),
                 Some(Input::Notice(_))=>{},
                 Some(Input::Signal) if stop_requested=>{cancel.cancel();drop(durable_tx);forward.abort();return Ok(3);}
                 Some(Input::Signal|Input::Poll)=>{

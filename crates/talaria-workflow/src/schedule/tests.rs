@@ -634,12 +634,21 @@ async fn the_restart_count_is_read_from_the_journal_and_ignores_other_retries() 
     let h = c.journal.history(&key).unwrap();
     assert_eq!(h.overflow_restarts(), 2);
     assert_eq!(h.overflowed(), 3);
-    assert!(h.follows_overflow_restart());
+    assert!(h.previous_attempt_overflowed());
+    // An attempt that a resume runs again after a plain failed finish follows an overflow too.
+    c.record(&q, &l, 4, vec![(cost(0.0, "included"), overflow())], false)
+        .await;
+    assert!(
+        c.journal
+            .history(&key)
+            .unwrap()
+            .previous_attempt_overflowed()
+    );
     // An attempt after a rate-limit retry is not a restart after an overflow.
     c.record(
         &q,
         &l,
-        4,
+        5,
         vec![(
             cost(0.0, "included"),
             json!({"failure_reason":"rate_limit"}),
@@ -647,11 +656,11 @@ async fn the_restart_count_is_read_from_the_journal_and_ignores_other_retries() 
         true,
     )
     .await;
-    c.record(&q, &l, 5, vec![(cost(0.0, "included"), json!({}))], false)
+    c.record(&q, &l, 6, vec![(cost(0.0, "included"), json!({}))], false)
         .await;
     let h = c.journal.history(&key).unwrap();
     assert_eq!(h.overflow_restarts(), 2);
-    assert!(!h.follows_overflow_restart());
+    assert!(!h.previous_attempt_overflowed());
 }
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn the_scheduler_authorises_a_restart_only_while_the_budget_has_room() {
@@ -1187,11 +1196,19 @@ mod composed {
         }
     }
     /// A port whose first `failing` attempts settle with a context overflow.
+    /// What the route sweep finds after an overflowed attempt.
+    #[derive(Clone, Copy)]
+    enum Route {
+        Quiet,
+        Busy,
+        Unchecked,
+    }
     #[derive(Clone)]
     struct Overflow {
         fake: FakeGateway,
         sessions: Arc<Mutex<BTreeMap<String, bool>>>,
         failing: u32,
+        route: Route,
     }
     impl Overflow {
         fn decorate(&self, mut r: Receipt) -> Receipt {
@@ -1268,6 +1285,24 @@ mod composed {
         ) -> BoxFuture<'static, Result<Receipt, PortError>> {
             self.fake.resolve_unknown(p, s, a, g)
         }
+        fn sweep_route(
+            &self,
+            _: String,
+            _: String,
+            _: String,
+        ) -> BoxFuture<'static, Result<RouteSweep, PortError>> {
+            let route = self.route;
+            Box::pin(async move {
+                match route {
+                    Route::Quiet => Ok(RouteSweep::default()),
+                    Route::Busy => Ok(RouteSweep {
+                        still_active: true,
+                        ..Default::default()
+                    }),
+                    Route::Unchecked => Err(PortError::Transport("gateway gone".into())),
+                }
+            })
+        }
     }
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn a_context_overflow_restarts_the_agent_at_most_three_times() {
@@ -1283,6 +1318,7 @@ mod composed {
                 fake: fake.clone(),
                 sessions: Default::default(),
                 failing,
+                route: Route::Quiet,
             };
             let result=run(&c,s.clone(),port,"export const meta={name:'overflow',description:'test',phases:[]}; return await agent('one',{model:'m',provider:'alpha'});").await;
             let value = match result {
@@ -1404,6 +1440,61 @@ mod composed {
                     "{row}"
                 );
             }
+        }
+    }
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_restart_waits_for_a_quiet_route() {
+        for (route, why) in [
+            (Route::Busy, "Hermes is still running untracked work in "),
+            (
+                Route::Unchecked,
+                "Talaria could not check whether Hermes is still running untracked work in ",
+            ),
+        ] {
+            let c = Context::new(data(), 10).await;
+            let (s, mut events) = c.start().await;
+            let fake = FakeGateway::new().with_script(vec![ScriptRule {
+                duration: Duration::from_millis(1),
+                usage: cost(0.0, "included"),
+                ..Default::default()
+            }]);
+            let port = Overflow {
+                fake: fake.clone(),
+                sessions: Default::default(),
+                failing: 2,
+                route,
+            };
+            let result=run(&c,s.clone(),port,"export const meta={name:'busy',description:'test',phases:[]}; return await agent('one',{model:'m',provider:'alpha'});").await;
+            assert!(matches!(result, RunOutcome::Completed { result } if result == Value::Null));
+            // No second agent was put into the folder.
+            assert_eq!(fake.stats().sessions, 1);
+            let (lines, _) = JournalReader::read_from(c.journal.dir().path(), 0).unwrap();
+            assert!(
+                !lines
+                    .iter()
+                    .any(|l| matches!(l.record, Record::CallRetryFinished { .. }))
+            );
+            let reason = lines
+                .iter()
+                .find_map(|l| match &l.record {
+                    Record::CallFinished {
+                        outcome: CallOutcome::Failed { reason },
+                        ..
+                    } => Some(reason.clone()),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(reason.contains(why), "{reason}");
+            assert!(
+                reason.ends_with(", so the agent was not restarted"),
+                "{reason}"
+            );
+            // The call's own scheduler permit was released before the call ended.
+            assert_eq!(s.status().in_flight, 0);
+            assert!(
+                !std::iter::from_fn(|| events.0.try_recv().ok())
+                    .any(|e| matches!(e.event, SchedulerEvent::AgentRestarted { .. }))
+            );
         }
     }
     #[tokio::test(flavor = "current_thread", start_paused = true)]
