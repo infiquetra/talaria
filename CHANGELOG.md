@@ -50,6 +50,25 @@ with the usual caveat that a `0.x` line may break anything between releases.
 - While a workflow run is running, the Workflow line above the composer shows a spinner and the
   time since the run started.
 
+- A workflow agent that someone stops is no longer failed at once. Unless the stop was part of
+  stopping the run, the run waits for you with no time limit and prints the choices: `fail`,
+  `rerun`, `abort`, or the new `use-reply`, which takes the agent's next reply in its own Hermes
+  session (for example after you type "continue" there) as its result.
+- `talaria workflow restart <run> <agent>` (or `--all-failed`) asks for failed agents to run again;
+  `talaria workflow resume <run>` then runs them and keeps finished agents without paying twice.
+  `talaria workflow result <run> --agent <agent>` prints one finished agent's kept value.
+- When an agent working in its own worktree is cut short, fails or is stopped with uncommitted
+  changes, Talaria saves them to a branch and names the branch in the result. The worktree is not
+  changed. Agents without a worktree edit the run's folder directly, and the result now says so.
+- The closing line of `workflow run --json` and the rows of `workflow list` show what a run left
+  behind: failed agents, agents cut short, uncommitted edits, declared phases that never started,
+  and the script's own status.
+- `talaria workflow lessons` and `talaria workflow lessons add --run <run> <text>` keep a notes
+  file agents can read and add to, because the workflow skill itself is locked.
+- `talaria workflow check` warns when a script sets `maxTurns`, and reports which phases its trial
+  run reached instead of listing every declared phase.
+- A run's manifest records the commit of the Talaria build that wrote it.
+
 ### Changed
 
 - Talaria no longer treats a newer Hermes gateway as a problem. `talaria doctor` shows one plain
@@ -84,6 +103,19 @@ with the usual caveat that a `0.x` line may break anything between releases.
 - The background process line for a workflow run is not drawn when the Workflow line already shows
   that run; otherwise it is named after the workflow command and shows a readable event instead of
   raw JSON.
+
+- The stop-agent key (`x`) in the workflow view asks for confirmation, like restart and stop-run.
+- A stopped agent's reason says that a stop was requested, who sent it when Talaria knows, and
+  that it was not a timeout. It used to read "stopped in Hermes (outcome 'interrupted')".
+- `talaria workflow worktrees remove` now clears a clean worktree whose agent switched to its own
+  branch, once the source checkout contains that work. It deletes only merged branches and never a
+  branch that existed before the run. Its closing text names the real reasons folders were kept.
+- "Money unknown" now says why: Hermes reported no cost and has no price for the models used. It
+  no longer suggests that setting tiers would produce a price.
+- The workflow skill tells agents to leave `maxTurns` out, to give every field a script branches
+  on a fixed list of allowed words, to estimate from tokens without cache reads, to look at
+  leftover edits and ask again before a follow-up run, and that a stopped agent is not a provider
+  limit.
 
 ### Removed
 

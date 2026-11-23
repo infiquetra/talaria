@@ -2,6 +2,103 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-23 — A stopped workflow agent is parked for the operator
+
+**Decision.** When an agent's turn ends interrupted or cancelled and the stop was not part of
+stopping the run (a run stop, a budget stop, or the view's restart of a running agent), the call
+is parked through the existing parked-call mechanism. The answers are `fail`, `rerun`, `abort`
+and the new `use-reply`, which takes the next settled turn on the same Hermes session as the
+call's result and checks it like any reply. A run started with `--on-unknown fail` fails the call
+at once with the stop reason. The stop-agent key in the workflow view asks for confirmation first.
+The stop's source is kept in the settled turn's `result_meta.stopped_by`, and the view writes a
+note file before it sends a stop.
+
+**Rationale.** One accidental keypress ended a run and threw away the plan the agent wrote after
+the owner typed "continue". The owner's rule is to report and recover, with no time limits.
+
+**Rejected.** Failing as before. Rerunning automatically (it pays again and ignores why the agent
+was stopped). Any timer on the parked call. A new journal record field for the stop source (about
+twenty constructors and older readers).
+
+**Revisit when.** Hermes reports who sent a stop; or the workflow view should answer a parked
+call itself instead of pointing at `talaria workflow resolve`.
+
+## 2026-11-23 — Failed agents are rerun by a command that reuses the view's restart request
+
+**Decision.** `talaria workflow restart <run> <agent>` writes the same request file the workflow
+view's restart key writes, and `talaria workflow resume` then opens a new execution. `talaria
+workflow result <run> --agent <agent>` prints one kept value.
+
+**Rationale.** A calling agent had no supported way to rerun one failed agent or read a finished
+agent's value, so it parsed the journal by hand and started a second run.
+
+**Rejected.** A separate rerun path inside a live runner.
+
+**Revisit when.** Resume should rerun only the failed agents that were asked for; today a new
+execution reruns every failed agent the script reaches, and `restart` lists them.
+
+## 2026-11-23 — An isolated agent's uncommitted work is saved to a branch
+
+**Decision.** When an agent with worktree isolation is cut short, fails or is stopped and its
+worktree has uncommitted changes, Talaria commits them to a new branch
+(`talaria/wf/<run>/<digest>-<n>-saved`) through a temporary index, without touching the worktree,
+its index or its branch. Hooks and signing are off for those commands. The branch name travels in
+the cut-short mark and at the end of the failure reason. Agents without isolation, including
+every run outside a git repository, edit the run's folder directly: the result lists that folder
+as edited in place and nothing is saved.
+
+**Rationale.** Two cut-short agents left hundreds of changed lines that the calling agent called
+"nothing landed".
+
+**Rejected.** Switching or committing on the agent's own branch (it changes what the agent left).
+A new field on the `call_finished` record (about nineteen constructors across branches in
+flight).
+
+**Revisit when.** The journal's record format next changes; or saved branches pile up and need
+their own clean-up rule.
+
+## 2026-11-23 — Worktree clean-up accepts a merged folder on an agent's own branch
+
+**Decision.** `workflow worktrees remove` removes a clean worktree whose HEAD is an ancestor of
+the source checkout's HEAD even when the agent switched branches. It deletes the run's branch and
+the agent's branch only when each is fully merged, and the agent's branch only when its reflog
+shows it was created during the run.
+
+**Rationale.** The skill tells agents to create named branches, so every such folder was kept
+forever with a reason that did not apply.
+
+**Rejected.** Telling agents to stay on the branch Talaria created (existing scripts depend on
+named branches).
+
+**Revisit when.** A repository with reflogs disabled needs clean-up.
+
+## 2026-11-23 — Agents record lessons in a notes file, not in the skill
+
+**Decision.** `talaria workflow lessons` prints `lessons.txt` in the configuration folder and
+`lessons add --run <run> <text>` appends one dated line. The skill tells agents to read the notes
+as unreviewed, to record only what they verified from a run's own outcome or journal, and to tell
+the developer what they recorded.
+
+**Rationale.** The skill is locked on purpose, so an agent had nowhere to put a lesson. Two of
+the four lessons one agent drafted were wrong, so the notes are labelled unreviewed.
+
+**Rejected.** Unlocking the skill. Writing into the repository.
+
+**Revisit when.** A wrong note misleads a later run; then entries need review before agents read
+them.
+
+## 2026-11-23 — The build's commit reaches the manifest from the command-line crate
+
+**Decision.** A build script in `talaria-cli` reads the commit and tree state and passes them to
+the runner, which writes `talaria_commit` and `talaria_tree` into the manifest.
+
+**Rationale.** Three runs made by three different local builds all said the same version.
+
+**Rejected.** A build script in `talaria-workflow` (every dependent crate would rebuild whenever
+HEAD or the index changes).
+
+**Revisit when.** Another binary starts writing runs.
+
 ## 2026-11-23 — The second press of the interrupt key waits 110 ms
 
 **Decision.** A second press of the interrupt key inside the 2 second window does not interrupt at

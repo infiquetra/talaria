@@ -2,6 +2,78 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — A relayed stop was read as a provider timeout
+
+**Evidence.** A real run's planner ended with turn exit reason `interrupted_during_api_call` and
+the text "waiting for model response (80.0s elapsed)". Talaria's reason was the fixed text
+"stopped in Hermes (outcome 'interrupted')" (`crates/talaria-workflow/src/hermes/policy.rs`). The
+calling agent found the 80 seconds in the journal, concluded the provider had an 80 second limit,
+moved every long phase to other models and told the owner so. The Hermes log showed an explicit
+stop request sent from the owner's own Talaria window.
+
+**Mechanism.** Talaria dropped Hermes's detail and did not say who asked for the stop, so the
+only number the reader could find was an elapsed time, which reads like a limit.
+
+**Generalizable rule.** When relaying a stop, say that it was a stop, who asked when known, and
+what any number in the text means.
+
+## 2026-11-23 — A runner can adopt a turn another window started on the same session
+
+**Evidence.** Hermes's session authority serves a turn's receipt to the same owner for any
+admission on the session, and every frame carries its admission id. The runner's Hermes port now
+remembers every admission it sees (`crates/talaria-workflow/src/hermes/port.rs`), and the
+`use-reply` answer takes the next settled turn as the parked call's result.
+
+**Mechanism.** The owner rule is per session owner, not per connection, so a turn typed into the
+agent's session from a Talaria window is visible to the runner.
+
+**Generalizable rule.** Check the authority's owner rule before assuming a client can read only
+the turns it started.
+
+## 2026-11-23 — A free-text status field let whole phases silently not run
+
+**Evidence.** In two real runs an agent answered `complete` where the script tested for `done`:
+reviewers reviewed the wrong branch in one, and the verify and playtest phases never ran in the
+other. Talaria already enforces `enum` with a full JSON Schema validator and one correction turn
+(`crates/talaria-workflow/src/hermes/validate.rs`); the skill never said to use it.
+
+**Mechanism.** A plain string field accepts any word, and the script's branch simply did not run.
+
+**Generalizable rule.** Any field a script branches on gets an `enum`, and the prompt names the
+same words.
+
+## 2026-11-23 — A trial run reported declared phases as if it had reached them
+
+**Evidence.** `workflow check` filled its report from `meta.phases`, so a trial run that returned
+at the first phase listed all nine (`crates/talaria-workflow/src/script_check.rs`).
+
+**Mechanism.** Declared and observed were the same field.
+
+**Generalizable rule.** Report what a probe observed, not what the script declared.
+
+## 2026-11-23 — Git runs hooks on a plain update-ref
+
+**Evidence.** The test `a_repository_hook_does_not_run_when_the_branch_is_made` fails without
+`-c core.hooksPath=/dev/null` (`crates/talaria-workflow/src/worktree/git/save.rs`).
+
+**Mechanism.** Every reference transaction runs the `reference-transaction` hook from
+`core.hooksPath`, and configuration written by an agent can point that anywhere.
+
+**Generalizable rule.** Any git command that writes references in an agent's folder switches the
+hooks path off.
+
+## 2026-11-23 — A branch's age comes from its reflog, not from its commit
+
+**Evidence.** The test `a_branch_that_existed_before_the_run_is_never_deleted`
+(`crates/talaria-workflow/src/worktree/git/manage.rs`). Reflog times come from the committer
+date, and `%gd` with `--date=unix` reads them back.
+
+**Mechanism.** A branch made during a run can point at an old commit, and an old branch can point
+at a new one.
+
+**Generalizable rule.** Judge when a branch was created from its reflog, never from the commit it
+points at.
+
 ## 2026-11-23 — A test that spaces key presses with sleeps measures the machine
 
 **Evidence.** The process-level test for a held interrupt key wrote one press every 40 ms from the

@@ -58,6 +58,10 @@ Each run folder holds:
 | `runner.log` | Detached child's appended human output. |
 | `control/` | Shared pause, stop, and next-resume restart requests, and the workflow view's note that it is stopping an agent. |
 
+The manifest also records `talaria_commit`, the short commit of the Talaria build that wrote the
+run, and `talaria_tree` (`clean` or `modified`), both `unknown` for a build made without git and
+in older manifests; `approval_policy.source` describes the finite-only policy in plain words.
+
 Runner-owned JSON files are written through a synced temporary file and atomic replacement.
 The journal remains the authority for execution status. A stale process-id file does not make
 an interrupted run look active.
@@ -298,6 +302,25 @@ reads were kept apart). `cache_read_tokens` is null when no turn reported tokens
 [Staffing and budgets](staffing.md#spend-and-budgets). Money sums each
 attempt's last settled session cost; any missing or unknown settled cost makes the total
 unknown. File-only discovery never reprices tokens.
+
+Rows also carry `failed_agents`, `cut_short_agents`, `uncommitted_edits`, `saved_branches` and
+`phases_not_started` (zero until the run finishes) and `script_status` when the script's result
+has one; text rows add marks such as `failed 2`.
+
+In `--json` mode the closing text line adds, before `Full result:`, an `Attention:` sentence
+when the run left problems: the script's own `status` string, declared phases that never started,
+agents that left uncommitted edits and how many were saved to a branch, agents cut short, and
+agents that failed, with the most important last. `failed_agents`, `cut_short_agents` and
+`leftover_edits` entries name `saved_branch` when an isolated agent's uncommitted work was saved
+(see [Worktrees](worktrees.md)); a `leftover_edits` entry with `in_place: true` names a folder
+agents without isolation edited directly, where nothing was saved or lost.
+
+## Lessons
+
+`talaria workflow lessons` prints the notes file `lessons.txt` in Talaria's configuration folder
+(`TALARIA_CONFIG_DIR`, default `~/.talaria`), beside the `workflows` and `runs` folders, and
+`talaria workflow lessons add --run <run-id> <text>` appends one dated entry naming the run.
+Agents use it because the workflow skill is locked; the entries are unreviewed notes, not rules.
 
 Foreground output names the run folder, shows phases, logs, agents, and scheduler events,
 then prints the result. `--json` emits compact JSON lines and one final `run_finished`

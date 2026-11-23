@@ -45,13 +45,13 @@ The last JSON line is {"event":"run_finished",...}, then one short text line. Re
 @@TALARIA_COMMAND@@ workflow resume --json <run-id>
 ```
 
-Report failed, aborted, budget_exhausted, completed_with_failures (exit 5, not a crash), or parked status and ask the developer how to proceed. A follow-up run after completed_with_failures needs a fresh explicit yes. An agent whose failure reason says it was interrupted or stopped was stopped by a person or by Talaria, not by a provider limit: ask the developer and do not reroute models because of it. Before any follow-up run, list leftover edits with `workflow worktrees list <run>`, look at what is there, and tell the developer; never start a follow-up run that ignores them. After a run, record a lesson with `workflow lessons add --run <run-id> <text>` only if you verified it from that run's outcome or journal, and tell the developer exactly what you recorded. Never edit this skill. A budget_exhausted run continues only with a larger --budget-usd or --budget-tokens that the developer approves for it. Continue an interrupted run with:
+Report failed, aborted, budget_exhausted, completed_with_failures (exit 5, not a crash), or parked status and ask the developer how to proceed. A follow-up run after completed_with_failures needs a fresh explicit yes. `workflow restart` then `resume` reruns only its failed agents (references/commands.md). An agent whose failure reason says it was interrupted or stopped was stopped by a person or by Talaria, not by a provider limit: ask the developer and do not reroute models because of it. Before any follow-up run, list leftover edits with `workflow worktrees list <run>`, look at what is there, and tell the developer; never start a follow-up run that ignores them. After a run, record a lesson with `workflow lessons add --run <run-id> <text>` only if you verified it from that run's outcome or journal, and tell the developer exactly what you recorded. Never edit this skill. A budget_exhausted run continues only with a larger --budget-usd or --budget-tokens that the developer approves for it. Continue an interrupted run with:
 
 ```sh
 @@TALARIA_COMMAND@@ workflow resume <run-id>
 ```
 
-A `needs operator` line means a parked call. Show the exact `workflow resolve` command it prints. Explain that fail gives the script null, rerun permits a new paid attempt, and abort ends the execution. Wait for the developer's chosen resolution; never choose rerun yourself. Execute only that choice. Never replace an interrupted run with a new run: finished agents could be paid for twice.
+A `needs operator` line means a parked call; cause `stopped` means someone stopped the agent. Show the exact `workflow resolve` command it prints and explain its choices (references/commands.md). Wait for the developer's choice; never choose one yourself. Execute only that choice. Never replace an interrupted run with a new run: finished agents could be paid for twice.
 
 To request and confirm stopping:
 
