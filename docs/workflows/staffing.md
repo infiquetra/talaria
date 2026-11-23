@@ -142,6 +142,15 @@ Hermes version. A money budget warns about that accounting gap without refusing
 the provider. Estimates with token budgets show the cheapest-to-dearest known
 range plus any unpriced tiers; an all-unpriced roster is `unknown`.
 
+Without a token budget there is no range. The estimate then lists each tier's price per
+million tokens. When no tiers are set (a script that names its models directly), there are no
+tier prices to list, and it says so. It then says what decides the cost of a directly named
+model: whether Hermes lists a price for that model on its provider. If Hermes lists no price
+for any model on the configured providers, the estimate says that the cost of such agents
+will be unknown. Setting tiers does not create a price Hermes does not have, so the text never
+suggests it. The line printed after a run says why money is unknown in the same terms: Hermes
+reported no cost and has no price for the models used, or no agent turn had finished.
+
 Token spend also counts work in progress. Hermes streams a `session.usage` event
 with each agent session's cumulative token count after every model call, with its cache
 reads (`cache_read_tokens`) beside the total; the reading counts without them. An event

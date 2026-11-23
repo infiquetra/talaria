@@ -141,6 +141,27 @@ fn lex(source: &str) -> Vec<(Tok, u32)> {
     out
 }
 
+/// The lines where the script writes a `maxTurns` option key: `{maxTurns: 5}`, `, "maxTurns": 5`
+/// or the shorthand `{maxTurns}`. Comments and strings that merely contain the word are not
+/// counted. It is a text scan, so it also finds calls the trial run never reaches.
+pub fn max_turns_lines(source: &str) -> Vec<u32> {
+    let tokens = lex(source);
+    let mut lines = Vec::new();
+    for (index, (token, line)) in tokens.iter().enumerate() {
+        let (Tok::Ident(key) | Tok::Str(key)) = token else {
+            continue;
+        };
+        let after_open = index
+            .checked_sub(1)
+            .and_then(|i| tokens.get(i))
+            .is_some_and(|t| matches!(t.0, Tok::Punct('{' | ',')));
+        if key == "maxTurns" && after_open {
+            lines.push(*line);
+        }
+    }
+    lines
+}
+
 #[derive(Default)]
 struct Frame {
     /// The object is written as the second argument of an `agent()` call.

@@ -56,6 +56,8 @@ pub enum WorkflowCommand {
     Check(crate::workflow_check::CheckArgs),
     /// List or remove the git worktrees and branches that runs keep for review.
     Worktrees(crate::workflow_worktrees::WorktreesArgs),
+    /// Show the lessons earlier agents recorded about workflow runs, or record one.
+    Lessons(crate::workflow_lessons::LessonsArgs),
 }
 #[derive(Clone, Debug, Args)]
 pub struct CompileArgs {
@@ -704,6 +706,49 @@ impl Renderer {
         }
     }
 }
+/// Why a run's money is unknown, as far as the finished run can say. Money is unknown when no
+/// finished turn had a cost from Hermes or a price for its model; that is a fact about Hermes's
+/// price list, so the text does not suggest that setting tiers would fix it.
+fn unknown_money_text(spend: &SpendView) -> String {
+    if spend.tokens == 0 && spend.cache_read_tokens == 0 {
+        "unknown (no agent turn has finished)".to_owned()
+    } else {
+        "unknown (Hermes reported no cost and has no price for the models used)".to_owned()
+    }
+}
+#[cfg(test)]
+mod money_text_tests {
+    use super::*;
+
+    fn spend(tokens: u64, money_usd: Option<f64>) -> SpendView {
+        SpendView {
+            tokens,
+            cache_read_tokens: 0,
+            cache_unknown_turns: 0,
+            money_usd,
+            money_source: "none".into(),
+        }
+    }
+
+    #[test]
+    fn unknown_money_names_the_price_list_not_the_tiers() {
+        let line = closing_line("r1", "completed", &spend(500, None), None);
+        assert!(
+            line.contains(
+                "money unknown (Hermes reported no cost and has no price for the models used)"
+            ),
+            "{line}"
+        );
+        assert!(!line.contains("tier"), "{line}");
+        let idle = closing_line("r1", "failed", &spend(0, None), None);
+        assert!(
+            idle.contains("money unknown (no agent turn has finished)"),
+            "{idle}"
+        );
+        let known = closing_line("r1", "completed", &spend(500, Some(0.5)), None);
+        assert!(known.contains("money $0.5000 (none)"), "{known}");
+    }
+}
 /// The short plain-text line printed after the `run_finished` object in JSON mode. Hermes keeps the
 /// last 2,000 characters of a background command's output and then cuts back to the first newline,
 /// so a single very long final line reached the lead as nothing; this line is always short.
@@ -718,7 +763,7 @@ fn closing_line(
 ) -> String {
     let money = match spend.money_usd {
         Some(usd) => format!("${usd:.4} ({})", safe(&spend.money_source)),
-        None => "unknown".to_owned(),
+        None => unknown_money_text(spend),
     };
     format!(
         "run {} {}: {}, money {}. Full result: talaria workflow resume --json{} {}",
@@ -862,6 +907,7 @@ pub async fn run(args: WorkflowArgs) -> u8 {
         WorkflowCommand::Compile(args) => compile_command::execute(args).await,
         WorkflowCommand::Check(args) => crate::workflow_check::execute(args).await,
         WorkflowCommand::Worktrees(args) => crate::workflow_worktrees::execute(args),
+        WorkflowCommand::Lessons(args) => crate::workflow_lessons::execute(args),
     }
 }
 async fn run_command(args: RunArgs) -> u8 {

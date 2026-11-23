@@ -104,6 +104,8 @@ mod workflow_cli;
 mod workflow_compile_cli;
 #[path = "integration/workflow_compile_empty.rs"]
 mod workflow_compile_empty;
+#[path = "integration/workflow_lessons_cli.rs"]
+mod workflow_lessons_cli;
 #[path = "integration/workflow_live.rs"]
 mod workflow_live;
 #[path = "integration/workflow_skill_cli.rs"]
