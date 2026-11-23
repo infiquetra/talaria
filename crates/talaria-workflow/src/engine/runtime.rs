@@ -24,7 +24,7 @@ use super::{
     *,
 };
 
-const ROOT_PREFIX: &str = "(async function () {\"use strict\";";
+pub(super) const ROOT_PREFIX: &str = "(async function () {\"use strict\";";
 const CHILD_PREFIX: &str = "(async function (agent, parallel, pipeline, phase, log, args, budget, workflow, now, random, cutShort) {\"use strict\";";
 
 struct NoModules(Arc<AtomicBool>);

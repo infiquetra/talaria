@@ -11,6 +11,7 @@ pub mod mock;
 pub mod progress;
 pub mod runner;
 pub mod schedule;
+pub mod script_check;
 pub mod staffing;
 
 pub mod worktree;
