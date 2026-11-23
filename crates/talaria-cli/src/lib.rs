@@ -17,6 +17,7 @@ pub mod providers_wiring;
 pub mod remote;
 pub mod run;
 pub mod workflow;
+pub mod workflow_check;
 pub mod workflow_roster;
 pub mod workflow_skill;
 

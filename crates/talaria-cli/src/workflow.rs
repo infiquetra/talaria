@@ -30,15 +30,29 @@ pub struct WorkflowArgs {
 }
 #[derive(Clone, Debug, Subcommand)]
 pub enum WorkflowCommand {
+    /// Install, inspect or remove the workflow skill that teaches Hermes to use this command.
     Skill(crate::workflow_skill::SkillArgs),
+    /// Show the models and providers a workflow run could use, and what is left of their limits.
     Roster(crate::workflow_roster::RosterArgs),
+    /// List, show, install or check the workflows that ship with Talaria.
     Builtins(builtins::BuiltinArgs),
+    /// Start a workflow run from a script or a named workflow.
     Run(RunArgs),
+    /// Continue a run that stopped, using its saved journal.
     Resume(ResumeArgs),
+    /// List recent runs with their status, progress and spend.
     List(ListArgs),
+    /// Stop a running workflow.
     Stop(StopArgs),
+    /// Answer an agent call a run parked because its outcome is unknown: fail it, run it again,
+    /// or abort the run.
     Resolve(ResolveArgs),
+    /// Turn a workflow's agent calls into kanban board cards. Kanban boards only; it does not
+    /// validate a script, so use `check` for that.
     Compile(CompileArgs),
+    /// Check a script for problems before a run: meta block, syntax, agent options and tier
+    /// names. Starts no agent and does not contact the gateway.
+    Check(crate::workflow_check::CheckArgs),
 }
 #[derive(Clone, Debug, Args)]
 pub struct CompileArgs {
@@ -776,6 +790,7 @@ pub async fn run(args: WorkflowArgs) -> u8 {
         WorkflowCommand::Run(args) => run_command(args).await,
         WorkflowCommand::Builtins(args) => builtins::execute(args),
         WorkflowCommand::Compile(args) => compile_command::execute(args).await,
+        WorkflowCommand::Check(args) => crate::workflow_check::execute(args).await,
     }
 }
 async fn run_command(args: RunArgs) -> u8 {

@@ -59,7 +59,7 @@ pub struct CheckOptions {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Finding {
-    /// `meta`, `import`, `syntax`, `option`, `route` or `probe`.
+    /// `input`, `meta`, `import`, `syntax`, `option`, `route` or `probe`.
     pub kind: &'static str,
     pub message: String,
     pub line: Option<u32>,
@@ -209,6 +209,14 @@ fn route_problems(call: &AgentRequest, table: &StaffingTable) -> Option<String> 
     })
 }
 
+/// A report for input the check could not even start on: an unreadable file, bad arguments
+/// JSON, or a staffing table that does not load.
+pub fn input_problem(message: impl Into<String>) -> CheckReport {
+    let mut report = CheckReport::new();
+    report.errors.push(finding("input", message, (None, None)));
+    report.finish()
+}
+
 pub async fn check_script(source: &str, options: &CheckOptions) -> CheckReport {
     let mut report = CheckReport::new();
     let parsed = match engine::parse_script(source) {
@@ -285,7 +293,7 @@ pub async fn check_script(source: &str, options: &CheckOptions) -> CheckReport {
                 report.warnings.push(finding(
                     "probe",
                     format!(
-                        "the probe run stopped with {}: {}. Stand-in agent answers may have caused this; real answers can differ",
+                        "the probe run stopped with {}: {}. The probe uses the --args you gave and made-up agent answers, so a real run may not stop here",
                         error.name, error.message
                     ),
                     at,
