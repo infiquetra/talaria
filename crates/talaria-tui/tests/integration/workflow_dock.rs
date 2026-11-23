@@ -4,7 +4,9 @@
 use ratatui::{Terminal, backend::TestBackend, style::Style};
 use talaria_core::hivecode::authoring::{AuthoringProgress, AuthoringStage};
 use talaria_tui::live::LiveSection;
-use talaria_tui::workflow_view::{AuthoringDock, WorkflowDock, WorkflowTheme, WorkflowView};
+use talaria_tui::workflow_view::{
+    AuthoringDock, WorkflowAgentDock, WorkflowDock, WorkflowTheme, WorkflowView,
+};
 
 fn text(dock: &WorkflowDock<'_>, width: u16) -> Vec<String> {
     dock.lines(width)
@@ -188,4 +190,58 @@ fn empty_picker_says_how_runs_start_and_lists_keys() {
         !screen.contains("Runs start when"),
         "a prompt does not start a run by itself:\n{screen}"
     );
+}
+
+#[test]
+fn agent_dock_names_the_agent_its_state_and_the_key_to_the_run() {
+    let banner = "Workflow agent review:gameplay · failed · this conversation is not tracked by the run · run review-branch (…8Y0A1C)";
+    let lines = |dock: &WorkflowAgentDock<'_>, width: u16| -> Vec<String> {
+        dock.lines(width)
+            .into_iter()
+            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    };
+    let dock = WorkflowAgentDock::new(banner, Some("Alt+W"), Style::new(), Style::new());
+    assert_eq!(
+        lines(&dock, 200),
+        [format!("⚙ {banner} · Alt+W opens the run")]
+    );
+    assert_eq!(dock.height(200), 1);
+    // A narrow screen drops the key, then cuts the end: the agent and its state stay.
+    let narrow = lines(&dock, 60);
+    assert_eq!(narrow.len(), 1);
+    assert!(
+        narrow[0].starts_with("⚙ Workflow agent review:gameplay · failed"),
+        "{narrow:?}"
+    );
+    assert!(narrow[0].chars().count() <= 60, "{narrow:?}");
+    let unbound = WorkflowAgentDock::new(
+        "Workflow agent a · running",
+        None,
+        Style::new(),
+        Style::new(),
+    );
+    assert_eq!(
+        lines(&unbound, 100),
+        ["⚙ Workflow agent a · running · /workflows opens the run"]
+    );
+    assert!(lines(&dock, 0).is_empty());
+    assert_eq!(dock.height(0), 0);
+}
+
+#[test]
+fn agent_dock_text_from_the_journal_cannot_inject_escape_sequences() {
+    let dock = WorkflowAgentDock::new(
+        "Workflow agent \u{1b}[31mred\nline",
+        None,
+        Style::new(),
+        Style::new(),
+    );
+    let rows: Vec<String> = dock
+        .lines(100)
+        .into_iter()
+        .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].contains('\u{1b}'), "{rows:?}");
 }
