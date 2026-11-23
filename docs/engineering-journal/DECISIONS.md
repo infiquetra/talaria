@@ -63,6 +63,15 @@ agent's value, so it parsed the journal by hand and started a second run.
 
 **Rejected.** A separate rerun path inside a live runner.
 
+`restart` takes only an agent whose latest attempt failed or was stopped, one whose turn a recorded
+stop ended, and one waiting after an answer. A parked agent is answered with `resolve`, and any
+other unfinished agent is continued by `resume`: restarting a turn that completed would pay for
+it twice.
+
+**Rejected (continued).** Accepting every agent that is not finished (it corrupted a journal
+waiting on a retry and discarded completed replies). Accepting a running turn the run's stop
+targeted (its reply may have completed).
+
 **Revisit when.** Resume should rerun only the failed agents that were asked for; today a new
 execution reruns every failed agent the script reaches, and `restart` lists them.
 

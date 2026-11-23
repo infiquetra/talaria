@@ -2,6 +2,28 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — The journal wrote a record before checking it
+
+**Evidence.** A restart request for an agent waiting on a retry made the resume append a
+`call_finished` line the journal's own grammar rejects. The writer synced the line and only then
+applied the grammar, so every later open failed and the run could not be resumed
+(`crates/talaria-workflow/src/journal/store.rs` `append_inner`; test
+`a_record_its_call_cannot_take_is_refused_before_it_reaches_the_file`).
+
+**Mechanism.** Validation ran after the durable write, in an append-only file.
+
+**Generalizable rule.** Validate a record before it reaches an append-only log, never only after.
+
+## 2026-11-23 — A "we did this" note was written before the action and outlived it
+
+**Evidence.** Run-stop notes were written for every target before any stop was sent; a target
+whose stop never went out kept its note, and a person's later stop of that turn was blamed on the
+runner (`crates/talaria-workflow/src/runner/execute.rs` `settle_stop`; test
+`a_run_stop_that_was_not_sent_leaves_no_note_behind`).
+
+**Generalizable rule.** Write the note next to the action, and remove it only when the action
+certainly did not happen.
+
 ## 2026-11-23 — A fake gateway showed turns the real one cannot
 
 **Evidence.** The review found `use-reply` waiting forever on a resumed runner while every test
