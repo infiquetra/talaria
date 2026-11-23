@@ -327,7 +327,9 @@ impl Wire for CountingWire {
                     } else if session.prompt.contains("unknown") {
                         "unknown"
                     } else if session.prompt.split_whitespace().any(|word| word == "hold")
-                        && !state.released.contains(&session.prompt)
+                        // An isolated agent's first message starts with its working folder, so
+                        // a release names the script's own prompt text at the end.
+                        && !state.released.iter().any(|r| session.prompt.ends_with(r.as_str()))
                     {
                         &session.status
                     } else {

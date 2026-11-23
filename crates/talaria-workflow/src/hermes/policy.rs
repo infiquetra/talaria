@@ -3,7 +3,7 @@ use super::{
     brief::{brief, correction_message},
     validate::{check_schema, validate_output},
 };
-use crate::engine::{AgentOutcome, AgentRequest, CutShort};
+use crate::engine::{AgentOutcome, AgentRequest, CutShort, Isolation};
 use crate::journal::{NextStep, ResolvedLaunch, SettledTurn, TurnPolicy};
 use serde_json::Value;
 #[derive(Clone, Copy, Debug, Default)]
@@ -29,8 +29,14 @@ fn stopped_at_cap(meta: &Value) -> Option<CutShort> {
     CutShort::from_exit_reason(meta["turn_exit_reason"].as_str()?)
 }
 impl TurnPolicy for SchemaTurnPolicy {
-    fn first_turn(&self, request: &AgentRequest, _launch: &ResolvedLaunch) -> String {
-        brief(&request.prompt, request.schema.as_ref())
+    fn first_turn(&self, request: &AgentRequest, launch: &ResolvedLaunch) -> String {
+        let text = brief(&request.prompt, request.schema.as_ref());
+        match (&launch.isolation, &launch.cwd) {
+            (Some(Isolation::Worktree), Some(cwd)) => format!(
+                "Your working folder is {cwd}. Do all your work there, using relative paths, and do not change to the source checkout.\n\n{text}"
+            ),
+            _ => text,
+        }
     }
     fn after_turn(&self, request: &AgentRequest, turns: &[SettledTurn]) -> NextStep {
         let Some(turn) = turns.last() else {
