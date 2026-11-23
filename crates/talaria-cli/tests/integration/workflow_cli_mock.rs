@@ -745,6 +745,8 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
     let before = lines[lines.len() - 2];
     assert_eq!(serde_json::from_str::<Value>(before).unwrap(), finished);
     assert!(last.len() < 300, "{last}");
+    // Hermes folds cache reads into the input count, so the total says it includes them.
+    assert!(last.contains("tokens (including cache reads)"), "{last}");
     for part in [
         id.as_str(),
         "completed_with_failures",

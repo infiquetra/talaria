@@ -40,7 +40,7 @@ The needs operator line prints the exact resolve command. Choose fail, rerun, or
 @@TALARIA_COMMAND@@ workflow list --json --limit 20
 ```
 
-Options: --runs-dir, --json, --limit. Status is running, parked, completed, completed_with_failures, budget_exhausted, failed, aborted, interrupted, or unreadable. Rows include run_id, status, agents_finished, agents_total_known, parked, tokens_spent and money_spent_usd, but no result. For a running run the agent counts show progress; for finished runs tokens_spent and the counts are the basis for a cost estimate. Missing history is an empty array. Exit 0 listed, 1 filesystem failure, 2 usage.
+Options: --runs-dir, --json, --limit. Status is running, parked, completed, completed_with_failures, budget_exhausted, failed, aborted, interrupted, or unreadable. Rows include run_id, status, agents_finished, agents_total_known, parked, tokens_spent and money_spent_usd, but no result. Every token total (tokens_spent here, spend.tokens in run_finished, the totals in text output) includes cache reads: Hermes folds them into the input count and its settled usage does not split them out, so a total can be mostly cheap cache reads. Say "including cache reads" when you quote one. For a running run the agent counts show progress; for finished runs tokens_spent and the counts are the basis for a cost estimate. Missing history is an empty array. Exit 0 listed, 1 filesystem failure, 2 usage.
 
 ## Stop
 

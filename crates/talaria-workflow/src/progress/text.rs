@@ -20,7 +20,7 @@ pub fn agent_line(a: &AgentNode, now_ms: i64) -> String {
         .map(|p| format!(" on {p}"))
         .unwrap_or_default();
     format!(
-        "{} {} · {}{provider} · {} · {:.1}s · {} tokens · {}{}",
+        "{} {} · {}{provider} · {} · {:.1}s · {} tokens (including cache reads) · {}{}",
         a.state.glyph(),
         a.label,
         a.model.as_deref().unwrap_or("model unknown"),

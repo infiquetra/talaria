@@ -299,7 +299,7 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
                 })
                 .unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
         text.push_str(&format!(
-            "{}  {}  {}  agents {}/{}{}  tokens {}  money {}  {}  {}\n",
+            "{}  {}  {}  agents {}/{}{}  tokens {} (including cache reads)  money {}  {}  {}\n",
             safe(&run.run_id),
             safe(&run.name),
             run.status.as_str(),
@@ -684,7 +684,7 @@ fn closing_line(run_id: &str, outcome: &str, spend: &SpendView) -> String {
         None => "unknown".to_owned(),
     };
     format!(
-        "run {} {}: {} tokens, money {}. Full result: talaria workflow resume --json {}",
+        "run {} {}: {} tokens (including cache reads), money {}. Full result: talaria workflow resume --json {}",
         safe(run_id),
         safe(outcome),
         spend.tokens,
