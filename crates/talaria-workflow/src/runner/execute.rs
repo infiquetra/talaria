@@ -1159,6 +1159,8 @@ async fn execute_inner(
             reason: gate.budget_stop().or(budget_reason),
             finished_at_ms: 0,
             summary: Value::Null,
+            leftover_edits: Vec::new(),
+            untracked_work: Vec::new(),
         },
         RunOutcome::Completed { result } => OutcomeFile {
             v: 1,
@@ -1168,6 +1170,8 @@ async fn execute_inner(
             reason: None,
             finished_at_ms: 0,
             summary: Value::Null,
+            leftover_edits: Vec::new(),
+            untracked_work: Vec::new(),
         },
         // The script let the budget error end it: the run ended on its budget, with no result.
         RunOutcome::Failed { error } if exhausted && error.name == "BudgetExhaustedError" => {
@@ -1182,6 +1186,8 @@ async fn execute_inner(
                 reason: gate.budget_stop().or(budget_reason),
                 finished_at_ms: 0,
                 summary: Value::Null,
+                leftover_edits: Vec::new(),
+                untracked_work: Vec::new(),
             }
         }
         RunOutcome::Failed { error } => OutcomeFile {
@@ -1195,6 +1201,8 @@ async fn execute_inner(
             reason: None,
             finished_at_ms: 0,
             summary: Value::Null,
+            leftover_edits: Vec::new(),
+            untracked_work: Vec::new(),
         },
         RunOutcome::Aborted { reason } => {
             let reason = if let Some(unsettled) = stopped {
@@ -1222,9 +1230,30 @@ async fn execute_inner(
                 reason: Some(reason),
                 finished_at_ms: 0,
                 summary: Value::Null,
+                leftover_edits: Vec::new(),
+                untracked_work: Vec::new(),
             }
         }
     };
+    // Edits an agent left behind stay visible: they are listed here, in the journal and in the
+    // result file. Nothing is deleted.
+    let records = control::read_records(dir.path()).map_err(|e| e.to_string())?;
+    file.untracked_work = super::leftover::untracked_work(&records);
+    file.leftover_edits =
+        tokio::task::spawn_blocking(move || super::leftover::leftover_folders(&records))
+            .await
+            .map_err(|e| e.to_string())?;
+    for folder in &file.leftover_edits {
+        let message = super::leftover::describe(folder);
+        journal
+            .record_engine_event(&EngineEvent::Log {
+                message: message.clone(),
+                workflow_path: vec![],
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        (output.out)(&RunnerEvent::Log { message });
+    }
     let kind = match file.outcome.as_str() {
         "completed" => RunOutcomeKind::Completed,
         "budget_exhausted" => RunOutcomeKind::BudgetExhausted,
