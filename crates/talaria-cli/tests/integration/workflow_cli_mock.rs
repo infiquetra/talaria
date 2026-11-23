@@ -429,13 +429,23 @@ fn ctrl_c_graceful_then_resume_and_hard_kill() {
             assert_eq!(rows[0]["status"], "interrupted");
         }
         let target = folder.file_name().unwrap();
+        // After a stop the second agent's turn settled as cancelled, so the resume starts it
+        // again in a new session; after a hard kill nothing settled, and the resume takes the
+        // old session's receipt.
+        let wire = if graceful { "stopped-resume-wire.json" } else { "resume-wire.json" };
         let resumed = output(
-            command(temp.path(), "resume-wire.json")
+            command(temp.path(), wire)
                 .args(["workflow", "resume", "--json", "--runs-dir"])
                 .arg(&runs)
                 .arg(target),
         );
-        assert_eq!(resumed.status.code(), Some(if graceful { 5 } else { 0 }), "{}", text(&resumed.stderr));
+        assert_eq!(
+            resumed.status.code(),
+            Some(0),
+            "{}\n{}",
+            text(&resumed.stderr),
+            text(&resumed.stdout)
+        );
         let after = records(&folder);
         assert_eq!(
             after
@@ -444,16 +454,19 @@ fn ctrl_c_graceful_then_resume_and_hard_kill() {
                 .count(),
             1
         );
-        // The interrupt settled the second agent as cancelled, so a resume finishes it as failed
-        // and the run says it completed with a failure. After a hard kill nothing settled, and
-        // the agent runs again to a plain completion.
-        let expected = if graceful { "completed_with_failures" } else { "completed" };
+        // Either way the second agent ends completed: a run stop does not fail the agent it
+        // interrupted, the resume runs it again.
         assert!(
             after
                 .iter()
-                .any(|r| r["t"] == "run_finished" && r["outcome"] == expected),
+                .any(|r| r["t"] == "run_finished" && r["outcome"] == "completed"),
             "graceful={graceful}"
         );
+        let second_starts = after
+            .iter()
+            .filter(|r| r["t"] == "call_intent" && r["label"] == "second")
+            .count();
+        assert_eq!(second_starts, if graceful { 2 } else { 1 }, "graceful={graceful}");
         assert_eq!(
             fs::read_dir(temp.path().join("empty-hermes"))
                 .unwrap()
@@ -1305,7 +1318,13 @@ fn restart_runs_only_the_failed_agent_again_and_kept_values_are_readable_by_labe
     // the resume's scripted gateway serves exactly one new session, so a second call for it
     // would fail the run.
     let resumed = workflow(&["resume", "--json", &id]);
-    assert_eq!(resumed.status.code(), Some(0), "{}", text(&resumed.stderr));
+    assert_eq!(
+            resumed.status.code(),
+            Some(0),
+            "{}\n{}",
+            text(&resumed.stderr),
+            text(&resumed.stdout)
+        );
     let finished = run_finished(&resumed.stdout);
     assert_eq!(finished["outcome"], "completed");
     assert_eq!(

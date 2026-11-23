@@ -422,58 +422,81 @@ async fn use_reply_never_takes_a_reply_that_settled_before_the_stop() {
     )));
 }
 
+/// The runner noted its stop and sent it, but the turn settled only after it went away.
+async fn stop_noted_before_a_crash(source: StopSource) -> (String, Harness) {
+    let (script, harness) = crashed_while_running(held_stop()).await;
+    let turn = StopTurn {
+        attempt: 0,
+        turn: 0,
+        admission_id: Some(admission_of(&harness)),
+    };
+    harness
+        .dir
+        .note_stop(&key_of(&harness), source, Some(&turn), 1)
+        .unwrap();
+    (script, harness)
+}
+
+fn finishes(harness: &Harness) -> Vec<(u32, &'static str, bool)> {
+    harness
+        .records()
+        .iter()
+        .filter_map(|line| match &line.record {
+            Record::CallFinished {
+                attempt, outcome, ..
+            } => Some((*attempt, outcome.kind(), false)),
+            Record::CallRetryFinished {
+                attempt, outcome, ..
+            } => Some((*attempt, outcome.kind(), true)),
+            _ => None,
+        })
+        .collect()
+}
+
 #[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn a_run_stop_noted_before_a_crash_is_still_the_runs_stop_in_the_next_execution() {
-    for (source, stopped_by) in [
-        (StopSource::RunStop, "run_stop"),
-        (StopSource::Budget, "budget"),
-    ] {
-        let (script, harness) = crashed_while_running(held_stop()).await;
-        // The runner noted its stop and sent it, but the turn settled only after it went away.
-        let turn = StopTurn {
-            attempt: 0,
-            turn: 0,
-            admission_id: Some(admission_of(&harness)),
-        };
-        harness
-            .dir
-            .note_stop(&key_of(&harness), source, Some(&turn), 1)
-            .unwrap();
-        harness.gateway.release("hold");
-        // The next execution is not stopping the run, yet the stop stays the runner's.
-        let run = harness.run(&script).await;
-        match (source, &run.outcome) {
-            // The script sees the budget's error, as in the execution that sent the stop.
-            (StopSource::Budget, RunOutcome::Failed { error }) => {
-                assert_eq!(error.name, "BudgetExhaustedError");
-            }
-            (StopSource::Budget, other) => panic!("expected the budget's error: {other:?}"),
-            _ => assert_eq!(result(run.outcome.clone()), json!(null)),
-        }
-        assert!(
-            !run.notices
-                .iter()
-                .any(|n| matches!(n, JournalNotice::NeedsOperator { .. })),
-            "{stopped_by}"
-        );
-        assert_eq!(settled_source(&harness).as_deref(), Some(stopped_by));
-        assert!(harness.dir.agent_stop(&key_of(&harness)).is_none());
-        // A budget stop ends the call stopped, as in the execution that sent it, so the next
-        // resume with a larger budget runs it again; the run's stop fails it.
-        let finished = harness
-            .records()
-            .iter()
-            .rev()
-            .find_map(|line| match &line.record {
-                Record::CallFinished { outcome, .. } => Some(outcome.kind()),
-                _ => None,
-            });
-        let expected = match source {
-            StopSource::Budget => "stopped",
-            _ => "failed",
-        };
-        assert_eq!(finished, Some(expected), "{stopped_by}");
+async fn a_budget_stop_noted_before_a_crash_is_still_the_budgets_in_the_next_execution() {
+    let (script, harness) = stop_noted_before_a_crash(StopSource::Budget).await;
+    harness.gateway.release("hold");
+    // The next execution is not stopping the run, yet the stop stays the runner's.
+    let run = harness.run(&script).await;
+    // The script sees the budget's error, as in the execution that sent the stop.
+    match &run.outcome {
+        RunOutcome::Failed { error } => assert_eq!(error.name, "BudgetExhaustedError"),
+        other => panic!("expected the budget's error: {other:?}"),
     }
+    assert!(
+        !run.notices
+            .iter()
+            .any(|n| matches!(n, JournalNotice::NeedsOperator { .. }))
+    );
+    assert_eq!(settled_source(&harness).as_deref(), Some("budget"));
+    assert!(harness.dir.agent_stop(&key_of(&harness)).is_none());
+    // It ends the call stopped, so the next resume with a larger budget runs it again.
+    assert_eq!(finishes(&harness), vec![(0, "stopped", false)]);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_turn_the_run_stop_ended_is_run_again_by_the_next_execution() {
+    let (script, harness) = stop_noted_before_a_crash(StopSource::RunStop).await;
+    harness.gateway.release("hold");
+    harness
+        .gateway
+        .set_rules(vec![rule("slow", "second try", 10, None)]);
+    // Resuming a stopped run runs the interrupted agent again; it neither fails nor parks.
+    let run = harness.run(&script).await;
+    assert_eq!(result(run.outcome.clone()), json!("second try"));
+    assert!(
+        !run.notices
+            .iter()
+            .any(|n| matches!(n, JournalNotice::NeedsOperator { .. }))
+    );
+    assert_eq!(settled_source(&harness).as_deref(), Some("run_stop"));
+    assert!(harness.dir.agent_stop(&key_of(&harness)).is_none());
+    assert_eq!(
+        finishes(&harness),
+        vec![(0, "failed", true), (1, "completed", false)]
+    );
+    assert_eq!(harness.gateway.stats().sessions, 2);
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]

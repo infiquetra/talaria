@@ -183,6 +183,24 @@ chord). A setting for the window.
 
 **Revisit when.** People report the second press as friction, or want the window configurable.
 
+## 2026-11-23 — Resume runs again the agents a run stop interrupted
+
+**Decision.** A turn that ended because the run was being stopped (`stopped_by: run_stop`), read
+by an execution that is not itself stopping, starts a new attempt at once: a retry finish is
+journaled for the old attempt, uncommitted work in the agent's folder is saved to a branch, and
+the agent runs again in a new session.
+
+**Rationale.** The person stopped the run, not the agent, and `workflow resume` is the request to
+continue. Failing the agent made the script see a null result for work nobody judged.
+
+**Rejected.** Failing it and leaving the rerun to a second resume (the earlier behaviour).
+Parking it for the operator (the stop was the runner's own, so there is nothing to decide).
+Sending the prompt again in the same session to keep its context (cheaper, but it changes how
+an attempt maps to a session and needs its own design; revisit below).
+
+**Revisit when.** Long agents are often cut by gateway restarts and rerunning them from the start
+costs too much; then consider continuing in the same session.
+
 ## 2026-11-23 — Left arrow leaves a workflow agent's session the way Enter entered it
 
 **Decision.** Opening an agent from the workflow view remembers the session that was open. In the

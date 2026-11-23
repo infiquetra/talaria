@@ -131,6 +131,9 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ### Fixed
 
+- Resuming a stopped workflow run now runs again the agents whose turn the stop interrupted.
+  Before, the resume marked them failed and they ran only on a second resume. This is also the
+  recovery after a Hermes gateway restart ends a foreground run.
 - Left arrow now goes back from a workflow agent's session to the session you came from. It
   never worked against a real gateway: Talaria did not remember the session, because Hermes
   gives a session the same runtime and stored id.

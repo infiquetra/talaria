@@ -1012,6 +1012,48 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                             )
                             .await;
                     }
+                    // A turn that stopping the run ended, read by a later execution: the run
+                    // was stopped, not the agent, so resuming it runs the agent again at once
+                    // instead of failing it and waiting for one more resume.
+                    if let NextStep::Finish(AgentOutcome::Failed { reason }) = &next
+                        && let Some(last) = turns.last()
+                        && stopped_outcome(&last.outcome)
+                        && StopSource::from_meta(&last.result_meta) == Some(StopSource::RunStop)
+                        && !self.gate.run_stopping()
+                    {
+                        drop(permit.take());
+                        self.journal
+                            .append(Record::CallRetryFinished {
+                                key: key.clone(),
+                                attempt,
+                                outcome: CallOutcome::from_agent(AgentOutcome::Failed {
+                                    reason: reason.clone(),
+                                }),
+                                turns: turns.len() as u32,
+                            })
+                            .await?;
+                        let _ = self
+                            .journal
+                            .record_engine_event(&crate::engine::EngineEvent::Log {
+                                message: format!(
+                                    "agent {}: its turn ended when the run was stopped; running it again",
+                                    request.label
+                                ),
+                                workflow_path: request.workflow_path.clone(),
+                            })
+                            .await;
+                        let _ = self
+                            .save_folder(&key, "was stopped with the run and then run again")
+                            .await;
+                        let _ = self.route_busy(&key).await;
+                        self.detach_session(&key).await;
+                        next_attempt = Some(
+                            attempt
+                                .checked_add(1)
+                                .ok_or_else(|| io_error("attempt overflow"))?,
+                        );
+                        continue;
+                    }
                     // A stop that was not part of stopping the run, of its budget or of a
                     // restart parks the call for the operator instead of failing it; the
                     // parked call waits until answered.

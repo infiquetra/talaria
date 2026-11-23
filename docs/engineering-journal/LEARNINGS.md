@@ -2,6 +2,24 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — Resume failed the agents a run stop interrupted, because their stop had no finish record
+
+**Evidence.** A run was stopped and resumed (journal of that day: `turn_settled` with
+`stopped_by: run_stop` at one sequence, then on resume a `call_finished` failed with "the runner
+stopped it because the run was being stopped"). Later a `hermes update` restarted the gateway
+under the same run: the gateway interrupted the running turn, the runner noted a run stop and was
+killed as a tool subprocess before it journaled anything else. Code:
+`crates/talaria-workflow/src/journal/durable.rs` (the settled-turn branch); test
+`a_turn_the_run_stop_ended_is_run_again_by_the_next_execution`.
+
+**Mechanism.** Resume reruns a call whose last record from an earlier execution is a failed or
+stopped finish. A run stop cancels the engine first, so the interrupted call gets a settled turn
+but no finish. The next execution read that settled turn as a plain failure of its own and
+finished the call failed, which made it wait for a second resume.
+
+**Generalizable rule.** When recovery keys on a terminal record, check every path that can end
+without writing one; the interrupted path usually writes less than the failed path.
+
 ## 2026-11-23 — A test fixture gave a session two ids the real gateway never sends
 
 **Evidence.** Left arrow never went back from a workflow agent's session on a real gateway.

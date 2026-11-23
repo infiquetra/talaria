@@ -187,6 +187,13 @@ made itself, for example when the gateway restarts, so a stop from anywhere else
 press in a Talaria window that shows the agent's session, leaves the key out and the reason says
 that Talaria's runner did not send it and that a person or Hermes did.
 
+An agent whose turn a run stop ended is run again when the run is resumed: the run was stopped,
+not the agent. The resuming runner starts a new attempt for it at once, in a new session, after
+saving any uncommitted work in its folder to a branch. This also covers a runner that was killed
+while it was stopping, for example when a Hermes update restarts the gateway under a foreground
+run: the gateway ends the turn, the runner notes its stop, and the next `workflow resume` runs
+the agent again.
+
 A stopped agent is not failed at once. Unless the stop was part of the runner stopping the run
 (a run stop, a budget stop, which ends the call as `stopped` whichever execution reads the
 settlement, or the view's restart), the call parks as needing the operator, with cause `stopped`, through the same parked-call mechanism as
