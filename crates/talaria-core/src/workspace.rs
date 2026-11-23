@@ -284,7 +284,7 @@ impl CdState {
             return vec![notice(
                 NoticeKind::Warning,
                 format!(
-                    "A turn is running. Wait for it to finish, or press {interrupt} to stop it, \
+                    "A turn is running. Wait for it to finish, or press {interrupt} twice to stop it, \
                      then run /cd again."
                 ),
             )];

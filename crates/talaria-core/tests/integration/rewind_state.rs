@@ -7,12 +7,13 @@
 use serde_json::{Value, json};
 use talaria_core::rewind::{
     Call, CallFailure, Checkpoint, CheckpointList, DOUBLE_ESC_WINDOW_MS, DiffDoc, DiffSource,
-    DoubleEsc, LineStyle, MutateOutcome, Reply, RestoreOutcome, RewindEffect, RewindInput,
-    RewindKey, RewindScreen, RewindState, SessionRead, ViewLine, update,
+    DoubleEsc, INTERRUPT_CONFIRM_WINDOW_MS, InterruptConfirm, InterruptPress, LineStyle,
+    MutateOutcome, Reply, RestoreOutcome, RewindEffect, RewindInput, RewindKey, RewindScreen,
+    RewindState, SessionRead, ViewLine, update,
 };
 use talaria_core::session::NoticeKind;
 
-const T1: &str = "A reply is running. Stop it with Esc, then rewind.";
+const T1: &str = "A reply is running. Stop it with Esc twice, then rewind.";
 const T3: &str = "There is nothing to rewind: this conversation has no prompts yet.";
 const T9: &str = "Talaria lost Hermes's reply, but the rewind went through.";
 const T10: &str = "Talaria lost Hermes's reply. The rewind did not happen; nothing was changed.";
@@ -2246,6 +2247,60 @@ fn double_esc_window() {
     assert!(esc.press(100, true));
     assert!(!esc.press(100, true));
     assert!(esc.press(100, true));
+}
+
+#[test]
+fn interrupt_confirm_one_press_arms_and_does_not_interrupt() {
+    assert_eq!(INTERRUPT_CONFIRM_WINDOW_MS, 2_000);
+    let mut confirm = InterruptConfirm::default();
+    assert!(!confirm.is_armed(0));
+    assert_eq!(confirm.press(100), InterruptPress::Armed);
+    assert!(confirm.is_armed(100));
+    assert_eq!(confirm.expires_at(), Some(2_100));
+}
+
+#[test]
+fn interrupt_confirm_second_press_inside_the_window_confirms() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    assert_eq!(confirm.press(1_999), InterruptPress::Confirmed);
+    // A confirmed press leaves nothing armed: the next press starts over.
+    assert!(!confirm.is_armed(1_999));
+    assert_eq!(confirm.expires_at(), None);
+    assert_eq!(confirm.press(2_000), InterruptPress::Armed);
+}
+
+#[test]
+fn interrupt_confirm_second_press_outside_the_window_arms_again() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    assert!(!confirm.is_armed(2_000));
+    assert_eq!(confirm.press(2_000), InterruptPress::Armed);
+    // The late press became the new first press, with a fresh window.
+    assert_eq!(confirm.press(3_999), InterruptPress::Confirmed);
+}
+
+#[test]
+fn interrupt_confirm_window_restarts_after_it_expires() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(500), InterruptPress::Armed);
+    confirm.expire(2_000);
+    assert!(confirm.is_armed(2_499));
+    confirm.expire(2_500);
+    assert_eq!(confirm.expires_at(), None);
+    assert!(!confirm.is_armed(2_500));
+    assert_eq!(confirm.press(2_600), InterruptPress::Armed);
+    assert!(confirm.is_armed(4_599));
+    assert!(!confirm.is_armed(4_600));
+}
+
+#[test]
+fn interrupt_confirm_reset_when_the_turn_ends() {
+    let mut confirm = InterruptConfirm::default();
+    assert_eq!(confirm.press(0), InterruptPress::Armed);
+    confirm.reset();
+    assert!(!confirm.is_armed(1));
+    assert_eq!(confirm.press(10), InterruptPress::Armed);
 }
 
 #[test]

@@ -42,7 +42,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 |---|---|---|---|
 | Submit | Enter | Submit the draft. | `submit` |
 | Newline | Shift+Enter, Alt+Enter, Ctrl+J | Insert a newline. | `newline` |
-| Interrupt | Esc | Interrupt the running turn. | `interrupt` |
+| Interrupt | Esc | Interrupt the running turn. Press it twice within two seconds: the first press only asks for confirmation. Ctrl+C interrupts on one press. | `interrupt` |
 | Cancel | Ctrl+C | Clear the draft, interrupt, or exit on a second press. | `cancel` |
 | Move left | Left | Move the caret left. | `move_left` |
 | Move right | Right | Move the caret right. | `move_right` |

@@ -483,7 +483,7 @@ async fn branch_refusals_keep_the_parent() {
         (
             "session_busy",
             None,
-            "Hermes cannot branch while the agent is working. Wait for the reply to finish, or press Esc to stop it, then run /branch again.",
+            "Hermes cannot branch while the agent is working. Wait for the reply to finish, or press Esc twice to stop it, then run /branch again.",
         ),
         (
             "session_busy",
@@ -602,7 +602,7 @@ async fn branch_refuses_a_running_turn() {
     assert_eq!(
         outcome,
         BranchOutcome::Refused {
-            text: "Hermes cannot branch while the agent is working. Wait for the reply to finish, or press Esc to stop it, then run /branch again.".to_owned(),
+            text: "Hermes cannot branch while the agent is working. Wait for the reply to finish, or press Esc twice to stop it, then run /branch again.".to_owned(),
         }
     );
 }

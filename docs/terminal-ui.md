@@ -9,11 +9,17 @@ Talaria keeps finished conversation output in native terminal scrollback. Full-s
 temporarily cover it; closing a view restores the conversation and the draft.
 
 While a turn runs, a working row sits directly above the composer, for example
-`✻ Working · 12s · Esc to interrupt`. It shows Hermes's own activity text in place of `Working`
+`✻ Working · 12s · Esc twice to interrupt`. It shows Hermes's own activity text in place of `Working`
 when Hermes sends one, counts the turn's time, and names the bound interrupt key. A prompt card
 or the compacting row takes its place while one is shown. Under full motion a soft glow sweeps
 across the row and back; under reduced motion the row is static and only its seconds change.
-A narrow terminal drops the interrupt hint first, then shortens the activity text. The hint is
+Interrupting takes two presses of the bound interrupt key, so a stray press does not stop a long
+turn. The first press interrupts nothing and changes the hint to `Esc again to interrupt` for two
+seconds; a second press inside that time interrupts, and after it the hint reads normally again and
+the next press starts over. Ctrl+C interrupts on one press. Closing a menu, list, selector or
+view with Esc, and the idle double Esc that opens rewind, work as before.
+A narrow terminal drops the interrupt hint first, then shortens the activity text (an armed hint
+shrinks to `Esc again` before it goes). The hint is
 also left out while the key would do something else (the focused menu bar, an open selector,
 slash palette, mention list or history search takes it first) and while the link to the gateway is redialling. When the
 gateway reports the session gone, or the link gives up, the turn ends and the row leaves.

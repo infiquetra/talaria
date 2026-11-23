@@ -228,7 +228,7 @@ fn cd_checks_before_sending() {
         notices(&effects),
         vec![(
             NoticeKind::Warning,
-            "A turn is running. Wait for it to finish, or press Esc to stop it, then run /cd \
+            "A turn is running. Wait for it to finish, or press Esc twice to stop it, then run /cd \
              again."
                 .to_owned()
         )]

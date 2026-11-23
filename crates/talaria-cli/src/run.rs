@@ -1210,6 +1210,24 @@ fn paste_actions(composer: &mut Composer, text: &str, now: Instant) -> Vec<UserA
     actions
 }
 
+/// A press of the key bound to the interrupt action reaches the application as
+/// [`UserAction::InterruptKey`], which asks for a second press while a turn runs. Every other
+/// route to an interrupt, Ctrl+C among them, keeps [`UserAction::Interrupt`] and acts at once.
+/// A held key's repeats are not presses: they neither arm nor confirm.
+fn interrupt_key_actions(keymap: &KeyMap, key: &Key, actions: Vec<UserAction>) -> Vec<UserAction> {
+    if keymap.resolve(key, KeyContext::Composer) != Some(Action::Interrupt) {
+        return actions;
+    }
+    actions
+        .into_iter()
+        .filter_map(|action| match action {
+            UserAction::Interrupt if key.kind == KeyKind::Repeat => None,
+            UserAction::Interrupt => Some(UserAction::InterruptKey),
+            other => Some(other),
+        })
+        .collect()
+}
+
 fn composer_key_actions(
     composer: &mut Composer,
     key: Key,
@@ -2511,7 +2529,8 @@ impl TuiScreen {
             turn_running: view.turn_running(),
         };
         let mut actions = Vec::new();
-        for action in composer_key_actions(&mut self.composer, key, ctx, now) {
+        let produced = composer_key_actions(&mut self.composer, key, ctx, now);
+        for action in interrupt_key_actions(&self.keymap, &key, produced) {
             match action {
                 UserAction::Submit(text) if view.palette.open => {
                     actions.push(palette_submit(&mut self.composer, text));
@@ -4861,6 +4880,7 @@ impl Screen for TuiScreen {
                 activity: view.state.and_then(|state| state.activity()),
                 elapsed_ms,
                 interrupt: interrupt_key.as_deref(),
+                interrupt_armed: view.interrupt_armed,
                 style: &activity_style,
             });
         // The task checklist sits above the composer, and is one row on a short screen.
@@ -6815,6 +6835,62 @@ mod tests {
             attachment_key(&map, &plain(KeyCode::Delete), &view, "[Image #1]", 0),
             Some(AttachmentAction::DeleteForward)
         );
+    }
+
+    #[test]
+    fn only_the_interrupt_key_asks_for_a_second_press() {
+        use crossterm::event::{KeyEventKind, KeyEventState};
+        use talaria_app::app::UserAction;
+        use talaria_tui::keys::Action;
+        let running = ComposerContext { turn_running: true };
+        let routed = |map: &KeyMap, event: KeyEvent, text: &str| {
+            let mut composer = Composer::new(map.clone());
+            composer.load(text.to_string());
+            let key = Key::from(event);
+            let produced = composer_key_actions(&mut composer, key, running, Instant::now());
+            super::interrupt_key_actions(map, &key, produced)
+        };
+        let count = |actions: &[UserAction], wanted: fn(&UserAction) -> bool| {
+            actions.iter().filter(|action| wanted(action)).count()
+        };
+        let is_key = |action: &UserAction| matches!(action, UserAction::InterruptKey);
+        let is_now = |action: &UserAction| matches!(action, UserAction::Interrupt);
+        let map = KeyMap::defaults();
+
+        // Esc reaches the application as the key that wants a second press.
+        let esc = routed(&map, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), "");
+        assert_eq!((count(&esc, is_key), count(&esc, is_now)), (1, 0));
+        // Ctrl+C is the cancel action, not the interrupt action: it acts at once.
+        let ctrl_c = routed(
+            &map,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            "",
+        );
+        assert_eq!((count(&ctrl_c, is_key), count(&ctrl_c, is_now)), (0, 1));
+        // A held key's repeats are not presses.
+        let mut repeat = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        repeat.kind = KeyEventKind::Repeat;
+        repeat.state = KeyEventState::NONE;
+        let held = routed(&map, repeat, "");
+        assert_eq!((count(&held, is_key), count(&held, is_now)), (0, 0));
+
+        // The rule follows whatever key is bound to the interrupt action.
+        let entries = BTreeMap::from([("interrupt".to_owned(), vec!["f8".to_owned()])]);
+        let (rebound, notices) = KeyMap::from_entries(&entries);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert_eq!(rebound.label(Action::Interrupt).as_deref(), Some("F8"));
+        let f8 = routed(
+            &rebound,
+            KeyEvent::new(KeyCode::F(8), KeyModifiers::NONE),
+            "",
+        );
+        assert_eq!((count(&f8, is_key), count(&f8, is_now)), (1, 0));
+        let old = routed(
+            &rebound,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            "",
+        );
+        assert_eq!((count(&old, is_key), count(&old, is_now)), (0, 0));
     }
 
     #[test]

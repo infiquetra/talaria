@@ -92,6 +92,9 @@ fn building_block_shows_each_step_and_leaves_one_line_when_stopped() {
         "the block replaces the interim line:\n{screen}"
     );
 
+    // Esc asks for a second press before it interrupts.
+    terminal.type_keys("\x1b");
+    std::thread::sleep(Duration::from_millis(300));
     terminal.type_keys("\x1b");
     assert!(
         gateway

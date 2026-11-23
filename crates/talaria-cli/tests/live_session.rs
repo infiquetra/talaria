@@ -493,10 +493,13 @@ fn interrupt_and_resume_list() {
         session.screen_text()
     );
     std::thread::sleep(Duration::from_secs(2));
+    // The first Esc only asks for confirmation; the second interrupts.
+    session.type_keys("\u{1b}");
+    std::thread::sleep(Duration::from_millis(300));
     session.type_keys("\u{1b}");
     assert!(
         session.wait_for_text("Interrupted", Duration::from_secs(30)),
-        "Esc did not interrupt the turn:\n{}",
+        "Esc twice did not interrupt the turn:\n{}",
         session.screen_text()
     );
     assert!(

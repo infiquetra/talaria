@@ -68,9 +68,10 @@ use talaria_core::queue::{
     IdSource, QueueAction, QueueIntent, RECONCILE_WAIT, SubmissionId, update_queue,
 };
 use talaria_core::rewind::{
-    CallFailure, DiffCommand, DiffSource, DoubleEsc, Reply, RewindEffect, RewindInput, RewindKey,
-    RewindState, RewindView, RollbackCommand, parse_diff as parse_diff_command, parse_rollback,
-    parse_undo, text as rewind_text, update as rewind_update,
+    CallFailure, DiffCommand, DiffSource, DoubleEsc, InterruptConfirm, InterruptPress, Reply,
+    RewindEffect, RewindInput, RewindKey, RewindState, RewindView, RollbackCommand,
+    parse_diff as parse_diff_command, parse_rollback, parse_undo, text as rewind_text,
+    update as rewind_update,
 };
 use talaria_core::session::{
     Cell, ConnectionChoice, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState,
@@ -190,7 +191,7 @@ const RENAME_FENCE: &str = "Hermes refused the rename: the session changed while
 const RENAME_TAKEN: &str = "Hermes could not rename the session. Another session may already use that title; titles must be unique.";
 /// The line a branch while a turn runs gets; nothing is sent.
 const BRANCH_TURN_RUNNING: &str =
-    "A turn is running. Wait for it to finish or press Esc to stop it, then branch.";
+    "A turn is running. Wait for it to finish or press Esc twice to stop it, then branch.";
 /// The line an export to a file Talaria cannot write in any format gets.
 const EXPORT_BAD_EXTENSION: &str = "Use a file name ending in .md, .json or .html.";
 /// The line an export with arguments Talaria does not know gets.
@@ -309,8 +310,12 @@ pub enum UserAction {
     ModelConfirm(ConfirmKey),
     /// The composer sent this text.
     Submit(String),
-    /// Stop the running turn (Esc, or Ctrl+C on a card or an empty draft).
+    /// Stop the running turn now (Ctrl+C, or Esc on a card).
     Interrupt,
+    /// The interrupt key was pressed in the composer. While a turn runs the first press only
+    /// arms a confirmation and a second press inside the window interrupts; with no turn
+    /// running it does what [`UserAction::Interrupt`] does.
+    InterruptKey,
     /// `/quit` or the composer's exit request.
     Quit,
     /// A key the transcript screen owns.
@@ -497,6 +502,8 @@ pub struct View<'a> {
     pub workflow_run: Option<&'a talaria_workflow::runner::RunSummary>,
     /// What the journal says about the foreground session, when it is a workflow agent's.
     pub workflow_agent: Option<&'a talaria_workflow::progress::agent_session::AgentSessionNote>,
+    /// One press of the interrupt key is waiting for a second: the working row says so.
+    pub interrupt_armed: bool,
     /// The building block, while a routed turn builds a workflow and no run it started shows.
     pub authoring: Option<talaria_core::hivecode::authoring::AuthoringView>,
 }
@@ -1006,6 +1013,8 @@ pub struct AppState {
     rewind_owner: Option<RowKey>,
     /// Two quick eligible Esc presses open the rewind overlay.
     double_esc: DoubleEsc,
+    /// The first press of the interrupt key while a turn runs waits here for a second one.
+    interrupt_confirm: InterruptConfirm,
     /// Retry submissions still waiting for their outcome, keyed by submission id.
     retry: BTreeMap<String, (RowKey, String)>,
     /// Failed retries waiting to return to their original session's composer.
@@ -1318,6 +1327,7 @@ impl AppState {
             rewind: RewindState::default(),
             rewind_owner: None,
             double_esc: DoubleEsc::default(),
+            interrupt_confirm: InterruptConfirm::default(),
             retry: BTreeMap::new(),
             retry_returns: BTreeMap::new(),
             context: ContextTracker::new(),
@@ -1570,6 +1580,7 @@ impl AppState {
                 .as_ref()
                 .and(self.workflow_agent.as_ref())
                 .map(crate::workflow_agent::WorkflowAgentSession::note),
+            interrupt_armed: turn_running(self) && self.interrupt_confirm.is_armed(self.now_ms),
             authoring: self.opened.as_ref().and_then(|opened| {
                 self.hivecode.authoring_view(
                     &SessionId::new(opened.session_id.clone()),
@@ -4811,6 +4822,16 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
     }
 
+    // A first press of the interrupt key belongs to one running turn in one session.
+    if !turn_running(state)
+        || previous_session.as_ref().map(|(id, _)| id.as_str())
+            != state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.as_str())
+    {
+        state.interrupt_confirm.reset();
+    }
     redraw |= queue_age_changed;
     if let Some(opened) = state.opened.as_mut() {
         // Newly decoded snapshots first meet the application's clock here.
@@ -7353,6 +7374,22 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             }
             reduce(state, Event::Interrupt)
         }
+        UserAction::InterruptKey => {
+            // The voice cutoff and an interrupt already in flight take the key as they always did.
+            let voice_cutoff =
+                state.uses_client_voice() && state.client_voice.active() && state.opened.is_some();
+            let confirmed = if turn_running(state) && !state.interrupting && !voice_cutoff {
+                state.interrupt_confirm.press(state.now_ms) == InterruptPress::Confirmed
+            } else {
+                state.interrupt_confirm.reset();
+                true
+            };
+            if confirmed {
+                user_action(state, UserAction::Interrupt)
+            } else {
+                Vec::new()
+            }
+        }
         UserAction::Quit => {
             state.quitting = true;
             vec![AppEffect::Quit]
@@ -7629,7 +7666,9 @@ fn foreground_key(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         return user_action(state, action);
     }
     match action {
-        UserAction::Interrupt => palette_input(state, PaletteInput::Close),
+        UserAction::Interrupt | UserAction::InterruptKey => {
+            palette_input(state, PaletteInput::Close)
+        }
         UserAction::Submit(text) => palette_enter(state, text),
         other => user_action(state, other),
     }
@@ -12654,6 +12693,13 @@ fn notice_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     executor.started.checked_add(Duration::from_millis(due))
 }
 
+/// When the working row's "press again to interrupt" hint ends, so it is drawn plain again on
+/// time with no key pressed.
+fn interrupt_hint_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
+    let due = state.interrupt_confirm.expires_at()?;
+    executor.started.checked_add(Duration::from_millis(due))
+}
+
 fn queue_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     if state.session_gone {
         return None;
@@ -16876,6 +16922,7 @@ async fn run_inner<S: Screen>(
         let deadline = earliest_of([deadline, voice_due]);
         let deadline = earliest_of([deadline, state.attachments.next_deadline()]);
         let deadline = earliest_of([deadline, state.automation_deadline]);
+        let deadline = earliest_of([deadline, interrupt_hint_wake(&state, &executor)]);
         let deadline = earliest_of([deadline, state.configure_tick_at]);
         let provider_deadline = talaria_core::providers::next_deadline(&state.providers);
         let deadline = earliest_of([deadline, provider_deadline]);
@@ -16931,6 +16978,7 @@ async fn run_inner<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
+                state.interrupt_confirm.expire(state.now_ms);
                 if voice_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || notice_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || queue_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
                     redraw |= apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);

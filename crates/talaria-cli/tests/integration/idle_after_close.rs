@@ -117,6 +117,9 @@ fn the_idle_screen_writes_nothing_after_the_effort_scale_and_a_thinking_row_clos
         "no thinking row while the thinking streams:\n{}",
         terminal.screen_text()
     );
+    // Esc asks for a second press before it interrupts.
+    terminal.type_keys("\x1b");
+    std::thread::sleep(Duration::from_millis(300));
     terminal.type_keys("\x1b");
     assert!(
         gateway
