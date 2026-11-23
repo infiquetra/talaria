@@ -78,6 +78,7 @@ fn history(
                 _ => CallOutcome::Completed {
                     value: Some(json!("cached")),
                     value_ref: None,
+                    cut_short: None,
                 },
             },
         });

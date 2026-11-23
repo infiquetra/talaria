@@ -702,8 +702,12 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     let turns = h.turns(self.journal.dir().path())?;
                     let next = self.policy.after_turn(&request, &turns);
                     // A finished answer is kept; anything else would spend past the budget.
-                    if !matches!(next, NextStep::Finish(AgentOutcome::Completed(_)))
-                        && let Some(reason) = self.gate.budget_stop()
+                    if !matches!(
+                        next,
+                        NextStep::Finish(
+                            AgentOutcome::Completed(_) | AgentOutcome::CutShort { .. }
+                        )
+                    ) && let Some(reason) = self.gate.budget_stop()
                     {
                         drop(permit.take());
                         return self
@@ -995,9 +999,10 @@ pub(crate) fn settled_record(key: &str, attempt: u32, turn: u32, r: Receipt) -> 
             "model",
             "provider",
             "failure_reason",
+            "error",
         ] {
             if let Some(v) = result.get(field) {
-                if field == "failure_reason" && !v.is_string() {
+                if matches!(field, "failure_reason" | "error") && !v.is_string() {
                     continue;
                 }
                 meta.insert(

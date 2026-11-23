@@ -1,5 +1,5 @@
 use super::{AdmissionState, AttentionCause, JournalError, Resolution, ResolvedLaunch, corrupt};
-use crate::engine::{AgentOutcome, CallId, EngineEvent, RunOutcomeKind};
+use crate::engine::{AgentOutcome, CallId, CutShort, EngineEvent, RunOutcomeKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -27,6 +27,9 @@ pub enum CallOutcome {
         value: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         value_ref: Option<BlobRef>,
+        /// Present when Hermes stopped the agent at its step cap and its reply was kept.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cut_short: Option<CutShort>,
     },
     Failed {
         reason: String,
@@ -46,6 +49,12 @@ impl CallOutcome {
             AgentOutcome::Completed(value) => Self::Completed {
                 value: Some(value),
                 value_ref: None,
+                cut_short: None,
+            },
+            AgentOutcome::CutShort { value, cut_short } => Self::Completed {
+                value: Some(value),
+                value_ref: None,
+                cut_short: Some(cut_short),
             },
             AgentOutcome::Failed { reason } | AgentOutcome::Abort { reason } => Self::Failed {
                 reason: super::cut(&reason, 4096),
@@ -318,7 +327,10 @@ impl Record {
                     && !(final_text.is_some() && final_text_ref.is_some())
             }
             Self::CallFinished {
-                outcome: CallOutcome::Completed { value, value_ref },
+                outcome:
+                    CallOutcome::Completed {
+                        value, value_ref, ..
+                    },
                 turns,
                 ..
             } => *turns <= 2 && value.is_some() != value_ref.is_some(),

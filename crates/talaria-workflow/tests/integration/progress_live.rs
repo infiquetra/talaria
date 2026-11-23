@@ -676,6 +676,7 @@ fn journal_settlement_reports_whether_completion_beat_pending_interrupt() {
                         CallOutcome::Completed {
                             value: Some(json!("done")),
                             value_ref: None,
+                            cut_short: None,
                         }
                     } else {
                         CallOutcome::Failed {
@@ -888,4 +889,83 @@ fn picker_agrees_with_runner_discovery() {
     let picker = ProgressPicker::load(&runs);
     assert_eq!(picker.rows(), discovered.as_slice());
     assert_eq!(picker.empty_message(), None);
+}
+
+/// Every event Hermes sent in a recorded live run, in order, as it would reach the view for the
+/// agent whose session is `session`.
+fn recorded_events(name: &str, session: &str) -> Vec<Notification> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/hermes/recorded")
+        .join(name);
+    std::fs::read_to_string(path)
+        .expect("recorded fixture")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|row| row["kind"] == "frame" && row["frame"]["method"] == "event")
+        .filter_map(|row| {
+            let mut params = row["frame"]["params"].clone();
+            params["session_id"] = json!(session);
+            hermes_contract::events::EventFrame::from_params(&params).ok()
+        })
+        .map(|frame| frame.notification)
+        .collect()
+}
+
+#[test]
+fn a_recorded_run_with_agent_steps_logs_nothing_and_shows_the_last_step() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    let events = recorded_events("live_schema_agent_returns_object.jsonl", "sess-running");
+    let steps = events
+        .iter()
+        .filter(|event| matches!(event, Notification::Unknown(p) if p["type"] == "agent.step"))
+        .count();
+    assert_eq!(steps, 14, "the fixture carries its agent.step frames");
+    for event in events {
+        update(
+            &mut state,
+            ProgressInput::Gateway {
+                session_id: "sess-running".into(),
+                event,
+            },
+        );
+    }
+    // Hermes's ordinary step event is known: no diagnostic, and no line in the view.
+    assert_eq!(state.take_diagnostics(), Vec::<String>::new());
+    let agent = state.progress.agent(lines::KEY_RUNNING).expect("agent");
+    assert_eq!(agent.step, Some(14));
+    assert_eq!(agent.progress_note().as_deref(), Some("step 14"));
+}
+
+#[test]
+fn a_new_step_changes_the_view_and_a_repeat_does_not() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    let step = |n: u64| ProgressInput::Gateway {
+        session_id: "sess-running".into(),
+        event: frame(json!({"type": "agent.step", "session_id": "sess-running",
+            "payload": {"iteration": n}})),
+    };
+    update(&mut state, step(1));
+    let revision = state.revision;
+    update(&mut state, step(1));
+    assert_eq!(state.revision, revision);
+    update(&mut state, step(2));
+    assert!(state.revision > revision);
+}
+
+#[test]
+fn the_other_known_undrawn_events_are_silent_too() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    for name in hermes_contract::events::KNOWN_UNDRAWN_EVENTS {
+        update(
+            &mut state,
+            ProgressInput::Gateway {
+                session_id: "sess-running".into(),
+                // Built directly: some of these decode to a known type only with a full payload.
+                event: Notification::Unknown(
+                    json!({"type": name, "session_id": "sess-running", "payload": {}}),
+                ),
+            },
+        );
+    }
+    assert_eq!(state.take_diagnostics(), Vec::<String>::new());
 }

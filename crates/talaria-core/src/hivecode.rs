@@ -564,6 +564,7 @@ pub mod notice {
     pub fn run_outcome(status: &str) -> &str {
         match status {
             "budget_exhausted" => "stopped by its budget",
+            "completed_with_failures" => "completed with failures",
             other => other,
         }
     }

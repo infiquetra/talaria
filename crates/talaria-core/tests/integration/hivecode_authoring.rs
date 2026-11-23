@@ -404,6 +404,20 @@ fn the_line_left_behind_says_how_the_build_ended() {
             ),
             "Hivecode built the workflow in 3m 20s: fix-parser stopped by its budget (5 agents).",
         ),
+        // A run that finished with failed agents says so in the run watcher's words.
+        (
+            notice::authoring_ended(
+                &running,
+                AuthoringEnd::Completed,
+                200_000,
+                Some(RunFacts {
+                    status: "completed_with_failures",
+                    agents: 5,
+                    ..run
+                }),
+            ),
+            "Hivecode built the workflow in 3m 20s: fix-parser completed with failures (5 agents).",
+        ),
         // A turn stopped after it sent the run command, before Talaria found the run (always
         // so on a remote gateway), does not say that no workflow started.
         (

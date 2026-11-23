@@ -21,8 +21,12 @@ agents and that `f` changes it.
 Agent states are done, failed, skipped, unknown (unresolved journal attention),
 ended (engine ended without a journal outcome), waiting (an outstanding
 approval or clarification), stopping, running and queued. A recorded outcome
-wins over later live activity. Run states are running, completed, budget
-exhausted, failed and aborted. Agents the budget stopped count as `stopped` in the
+wins over later live activity. A running agent's row ends its state with
+`step N`, from Hermes's `agent.step` event. An agent Hermes stopped at its step cap keeps
+its reply and its done state, and its row says `cut short (60 of 60 steps)`; the header
+counts them as `cut short`. Run states are running, completed, completed with failures
+(the script returned, but at least one agent failed; each failed agent and its reason is
+listed above the rows), budget exhausted, failed and aborted. Agents the budget stopped count as `stopped` in the
 header instead of failed, calls it refused count as `refused`, and each refusal
 adds an `agent <label> refused: <reason>` line to the log. A resumed execution keeps the previous outcome separately. The view
 checks the run lock on every poll. When no runner holds it and the journal has

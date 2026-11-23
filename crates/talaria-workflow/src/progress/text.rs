@@ -20,7 +20,10 @@ pub fn agent_line(a: &AgentNode, now_ms: i64) -> String {
             format_tokens(a.tokens)
         },
         format_money(a.money),
-    )
+    ) + &a
+        .progress_note()
+        .map(|note| format!(" · {note}"))
+        .unwrap_or_default()
 }
 
 pub fn run_line(s: &ProgressState) -> String {
@@ -40,6 +43,12 @@ pub fn run_line(s: &ProgressState) -> String {
         line.push_str(&format!(" · filter: {}", s.filter.as_str()));
     }
     line.push_str(&format!(" · agents {}/{}", c.done, c.total));
+    let cut_short = s
+        .progress
+        .agents()
+        .iter()
+        .filter(|a| a.cut_short.is_some())
+        .count();
     for (n, name) in [
         (c.running, "running"),
         (c.needs_you, "needs you"),
@@ -50,6 +59,7 @@ pub fn run_line(s: &ProgressState) -> String {
         (c.ended, "ended"),
         (r.refused, "refused"),
         (r.budget_stopped, "stopped"),
+        (cut_short, "cut short"),
     ] {
         if n > 0 {
             line.push_str(&format!(" · {n} {name}"));

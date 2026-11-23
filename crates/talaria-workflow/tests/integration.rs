@@ -54,6 +54,8 @@ mod check;
 mod combinators;
 #[path = "integration/crate_boundaries.rs"]
 mod crate_boundaries;
+#[path = "integration/cut_short.rs"]
+mod cut_short;
 #[path = "integration/dry_run.rs"]
 mod dry_run;
 #[path = "integration/estimate.rs"]

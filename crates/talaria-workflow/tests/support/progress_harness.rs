@@ -435,6 +435,7 @@ impl<G: Gateway> Consumer<G> {
                             CallOutcome::Completed {
                                 value: Some(json!("completed")),
                                 value_ref: None,
+                                cut_short: None,
                             }
                         } else {
                             CallOutcome::Failed {

@@ -78,6 +78,13 @@ pub(crate) struct FailureView {
 pub(crate) struct OutcomeFile {
     pub v: u32,
     pub outcome: String,
+    /// Agents that failed, written right after the outcome so a reader meets them before the
+    /// result. Empty lists are not written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_agents: Vec<AgentNote>,
+    /// Agents Hermes stopped at their step cap; their replies are kept in the result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cut_short_agents: Vec<AgentNote>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -90,6 +97,12 @@ pub(crate) struct OutcomeFile {
     pub reason: Option<String>,
     pub finished_at_ms: i64,
     pub summary: Value,
+}
+/// An agent that needs a reader's attention, and why.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentNote {
+    pub label: String,
+    pub reason: String,
 }
 fn present_value<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -167,6 +180,8 @@ mod tests {
         let result = OutcomeFile {
             v: 1,
             outcome: "completed".into(),
+            failed_agents: Vec::new(),
+            cut_short_agents: Vec::new(),
             result: Some(Value::Null),
             error: None,
             reason: None,

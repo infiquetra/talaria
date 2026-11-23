@@ -9,9 +9,11 @@ use ratatui::{
 };
 pub use talaria_workflow::progress::live::ProgressKey;
 use talaria_workflow::progress::{
-    format_money, format_tokens,
+    RunState, format_money, format_tokens,
     live::{NodeKey, ProgressState, WaitView},
 };
+/// The failed agents a finished run lists above its rows before the rest are counted.
+const FAILED_LISTED: usize = 5;
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Debug)]
@@ -278,6 +280,33 @@ impl WorkflowView {
             );
             y += 1;
         }
+        // A run that completed with failures names its failed agents first, before any row.
+        if state.progress.run.state == RunState::CompletedWithFailures {
+            let failed: Vec<_> = state
+                .progress
+                .agents()
+                .iter()
+                .filter(|a| a.last_outcome.as_deref() == Some("failed") && !a.stopped)
+                .collect();
+            let shown = failed.len().min(FAILED_LISTED);
+            for a in failed.iter().take(shown) {
+                if y >= inner.bottom() {
+                    break;
+                }
+                let reason = a.failure.as_deref().unwrap_or("no reason given");
+                put(y, format!("✗ {} · {reason}", a.label), theme.warning, buf);
+                y += 1;
+            }
+            if failed.len() > shown && y < inner.bottom() {
+                put(
+                    y,
+                    format!("… and {} more failed agents", failed.len() - shown),
+                    theme.warning,
+                    buf,
+                );
+                y += 1;
+            }
+        }
         if state.progress.last_seq == 0 && y < inner.bottom() {
             put(
                 y,
@@ -468,6 +497,9 @@ fn node_line(s: &ProgressState, node: &NodeKey) -> String {
                 }
                 if let Some(cause) = &a.attention {
                     state.push_str(&format!(" · {cause}"));
+                }
+                if let Some(note) = a.progress_note() {
+                    state.push_str(&format!(" · {note}"));
                 }
                 if a.state == talaria_workflow::progress::AgentState::Ended {
                     state.push_str(" · ended without a journal outcome");

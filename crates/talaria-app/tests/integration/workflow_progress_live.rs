@@ -480,6 +480,7 @@ async fn write_finished(writer: &JournalWriter) {
             outcome: CallOutcome::Completed {
                 value: Some(json!("ok")),
                 value_ref: None,
+                cut_short: None,
             },
             turns: 1,
         },

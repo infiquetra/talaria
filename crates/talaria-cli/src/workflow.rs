@@ -186,6 +186,28 @@ fn absolute(path: PathBuf) -> io::Result<PathBuf> {
         Ok(std::env::current_dir()?.join(path))
     }
 }
+/// True for a missing or empty list of agents, which the final object leaves out.
+fn is_unlisted(list: &&Value) -> bool {
+    list.as_array().is_none_or(Vec::is_empty)
+}
+/// The failed and cut short agents as plain lines, or nothing when there are none.
+fn agent_attention_text(failed: &Value, cut_short: &Value) -> String {
+    let mut text = String::new();
+    for (title, list) in [("Failed agents", failed), ("Cut short agents", cut_short)] {
+        let Some(list) = list.as_array().filter(|list| !list.is_empty()) else {
+            continue;
+        };
+        text.push_str(&format!("{title}:\n"));
+        for note in list {
+            text.push_str(&format!(
+                "  {}: {}\n",
+                safe(note["label"].as_str().unwrap_or("agent")),
+                safe(note["reason"].as_str().unwrap_or("no reason given"))
+            ));
+        }
+    }
+    text
+}
 pub fn safe(text: &str) -> String {
     let mut prepared = String::with_capacity(text.len());
     for character in text.chars() {
@@ -407,12 +429,31 @@ impl Renderer {
             .and_then(|dir| fs::read(dir.join("outcome.json")).ok())
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
             .unwrap_or(Value::Null);
+        // Agents that failed or were cut short come first, before the result they qualify.
+        let failed_agents = &saved["failed_agents"];
+        let cut_short_agents = &saved["cut_short_agents"];
+        let attention = agent_attention_text(failed_agents, cut_short_agents);
         #[derive(Serialize)]
         struct Completed<'a> {
             event: &'static str,
             run_id: &'a str,
             outcome: &'a str,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            cut_short_agents: &'a Value,
             result: &'a Value,
+            spend: &'a SpendView,
+        }
+        #[derive(Serialize)]
+        struct CompletedWithFailures<'a> {
+            event: &'static str,
+            run_id: &'a str,
+            outcome: &'a str,
+            reason: &'a str,
+            failed_agents: &'a Value,
+            #[serde(skip_serializing_if = "is_unlisted")]
+            cut_short_agents: &'a Value,
+            result: &'a Value,
+            summary: &'a Value,
             spend: &'a SpendView,
         }
         #[derive(Serialize)]
@@ -439,12 +480,37 @@ impl Renderer {
                         event: "run_finished",
                         run_id,
                         outcome,
+                        cut_short_agents,
                         result,
                         spend,
                     });
                 } else {
                     self.text(&format!(
-                        "Result:\n{}\n",
+                        "{attention}Result:\n{}\n",
+                        serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
+                    ));
+                }
+            }
+            "completed_with_failures" => {
+                // The script returned, but at least one agent failed; the result is what the script made of that.
+                let result = result.unwrap_or(&Value::Null);
+                let reason = saved["reason"].as_str().unwrap_or("agents failed");
+                if self.json {
+                    self.json(&CompletedWithFailures {
+                        event: "run_finished",
+                        run_id,
+                        outcome,
+                        reason,
+                        failed_agents,
+                        cut_short_agents,
+                        result,
+                        summary: &saved["summary"],
+                        spend,
+                    });
+                } else {
+                    self.text(&format!(
+                        "Completed with failures: {}.\n{attention}Result:\n{}\n",
+                        safe(reason),
                         serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
                     ));
                 }
@@ -456,6 +522,10 @@ impl Renderer {
                     event: &'static str,
                     run_id: &'a str,
                     outcome: &'a str,
+                    #[serde(skip_serializing_if = "is_unlisted")]
+                    failed_agents: &'a Value,
+                    #[serde(skip_serializing_if = "is_unlisted")]
+                    cut_short_agents: &'a Value,
                     result: &'a Value,
                     reason: &'a str,
                     summary: &'a Value,
@@ -468,6 +538,8 @@ impl Renderer {
                         event: "run_finished",
                         run_id,
                         outcome,
+                        failed_agents,
+                        cut_short_agents,
                         result,
                         reason,
                         summary: &saved["summary"],
@@ -475,7 +547,7 @@ impl Renderer {
                     });
                 } else {
                     self.text(&format!(
-                        "Budget exhausted: {}. Agents refused: {}, stopped: {}.\nResult:\n{}\n",
+                        "Budget exhausted: {}. Agents refused: {}, stopped: {}.\n{attention}Result:\n{}\n",
                         safe(reason),
                         saved["summary"]["refused"].as_u64().unwrap_or(0),
                         saved["summary"]["stopped"].as_u64().unwrap_or(0),

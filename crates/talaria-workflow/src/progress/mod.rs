@@ -164,6 +164,7 @@ impl RunProgress {
             "run_finished" => {
                 self.run.state = match string(&record, "outcome").as_str() {
                     "completed" => RunState::Completed,
+                    "completed_with_failures" => RunState::CompletedWithFailures,
                     "budget_exhausted" => RunState::BudgetExhausted,
                     "aborted" => RunState::Aborted,
                     _ => RunState::Failed,
@@ -234,6 +235,9 @@ impl RunProgress {
             a.attempt = attempt;
             a.turn = 0;
             a.last_outcome = None;
+            a.failure = None;
+            a.cut_short = None;
+            a.step = None;
             a.attention = None;
             a.ended = false;
             a.stopping = false;
@@ -281,6 +285,7 @@ impl RunProgress {
                 a.turn = record["turn"].as_u64().unwrap_or(0) as u32;
                 a.prompt = record["text"].as_str().map(str::to_owned);
                 a.prompt_ref = serde_json::from_value(record["text_ref"].clone()).ok();
+                a.step = None;
                 a.admission_status = None;
                 a.admission_id = None;
                 a.live_active = false;
@@ -333,6 +338,21 @@ impl RunProgress {
                     .or_else(|| record["outcome"]["kind"].as_str())
                     .unwrap_or("failed");
                 a.last_outcome = Some(outcome.into());
+                a.cut_short = record["outcome"]["cut_short"].is_object().then(|| {
+                    crate::engine::CutShort {
+                        steps: record["outcome"]["cut_short"]["steps"]
+                            .as_u64()
+                            .and_then(|n| u32::try_from(n).ok()),
+                        limit: record["outcome"]["cut_short"]["limit"]
+                            .as_u64()
+                            .and_then(|n| u32::try_from(n).ok()),
+                    }
+                    .describe()
+                });
+                a.failure = (outcome == "failed")
+                    .then(|| record["outcome"]["reason"].as_str().map(str::to_owned))
+                    .flatten();
+                a.step = None;
                 a.finished_at_ms = Some(line.at_ms);
                 a.stopping = false;
                 a.stopped |= outcome == "stopped";

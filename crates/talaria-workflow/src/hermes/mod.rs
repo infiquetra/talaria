@@ -1,5 +1,6 @@
 //! Workflow agents bind to ordinary profile-scoped, durable Hermes sessions.
 pub mod brief;
+mod failure;
 pub mod feed;
 pub mod frames;
 pub mod launch;

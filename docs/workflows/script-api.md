@@ -33,7 +33,15 @@ syntax errors.
 ## Agents
 
 `agent(prompt, opts?)` returns a promise for the backend's final string or JSON object. A failed
-or skipped agent returns `null`. The prompt must be a non-blank string. Options may be absent,
+or skipped agent returns `null`; a run whose script returns while an agent has failed ends
+`completed_with_failures`, naming the failed agents first. An agent Hermes stops at its step
+cap (exit reason `max_iterations_reached(N/M)` with `completed: false`) is cut short: it is
+not failed and is not sent another turn, and its reply is returned as for a finished agent,
+so a script that ignores the mark behaves as before. An object or array reply carries a hidden
+`cutShort` property, `{steps, limit}`, that keys, spread and `JSON.stringify` do not show, and
+`cutShort()` returns `{label, steps, limit}` for every cut short agent so far, in the order
+their results arrived. A cut short reply for `opts.schema` that does not fit fails the call
+without a correction turn. The prompt must be a non-blank string. Options may be absent,
 `undefined`, `null`, or a plain object. Unknown keys and null option values are errors;
 undefined option values are absent. Non-blank strings retain their original whitespace.
 

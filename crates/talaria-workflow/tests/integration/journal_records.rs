@@ -98,6 +98,7 @@ fn round_trip_every_record_type() {
             outcome: CallOutcome::Completed {
                 value: Some(json!("ok")),
                 value_ref: None,
+                cut_short: None,
             },
             turns: 1,
         },
@@ -293,6 +294,7 @@ async fn every_allowed_transition_round_trips() {
             outcome: CallOutcome::Completed {
                 value: Some(json!("ok")),
                 value_ref: None,
+                cut_short: None,
             },
             turns: 1,
         }

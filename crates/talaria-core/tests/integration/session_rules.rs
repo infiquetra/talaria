@@ -1890,6 +1890,21 @@ fn known_but_unmodelled_events_are_silent() {
     assert!(effects.is_empty());
 }
 
+/// The list the workflow view also reads: every event on it is silent here, so the two cannot
+/// disagree about what Hermes is expected to send.
+#[test]
+fn every_event_on_the_shared_known_list_is_silent() {
+    let events: Vec<_> = hermes_contract::events::KNOWN_UNDRAWN_EVENTS
+        .iter()
+        .enumerate()
+        .map(|(index, name)| ev(index as u64 + 1, name, json!({})))
+        .collect();
+    assert!(!events.is_empty());
+    let (state, _) = run(events);
+    assert!(state.cells().is_empty());
+    assert!(state.unknown_event_types().is_empty());
+}
+
 fn generated_variant(name: &str) -> bool {
     let raw = json!({"type": name, "session_id": SESSION, "payload": {}});
     match EventFrame::from_params(&raw) {

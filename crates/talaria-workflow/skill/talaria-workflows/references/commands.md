@@ -16,7 +16,7 @@ Options: --staffing, --budget-tokens, --budget-usd, --profile, --json. The versi
 @@TALARIA_COMMAND@@ workflow run --profile @@TALARIA_PROFILE@@ --json <path>
 ```
 
-Options: --detach, --json, --args, --args-file, --profile, --staffing, --cwd, --budget-tokens, --budget-usd, --on-unknown, --record, --runs-dir, --workflows-dir. JSON input flags conflict. The first line names the run folder. The final foreground object has event run_finished, run_id, outcome, one of result/error/reason, and spend with tokens, money_usd, money_source. Outcome budget_exhausted means the script returned but the budget refused or stopped agents; that object has result, reason and summary with refused and stopped counts. Exit 0 completed, 1 failed, 2 refused, 3 aborted, 4 budget exhausted. Detach returns a run id immediately; the child appends runner.log.
+Options: --detach, --json, --args, --args-file, --profile, --staffing, --cwd, --budget-tokens, --budget-usd, --on-unknown, --record, --runs-dir, --workflows-dir. JSON input flags conflict. The first line names the run folder. The final foreground object has event run_finished, run_id, outcome, one of result/error/reason, and spend with tokens, money_usd, money_source. Outcome budget_exhausted means the script returned but the budget refused or stopped agents; that object has result, reason and summary with refused and stopped counts. Outcome completed_with_failures means the script returned but at least one agent failed; that object has reason, then failed_agents (label and reason for each), then cut_short_agents when any, and only then result. Any outcome that has cut short agents (Hermes stopped them at their step cap; their replies are kept) lists them in cut_short_agents before result. Exit 0 completed or completed with failures, 1 failed, 2 refused, 3 aborted, 4 budget exhausted. Detach returns a run id immediately; the child appends runner.log.
 
 ## Resume
 
@@ -24,7 +24,7 @@ Options: --detach, --json, --args, --args-file, --profile, --staffing, --cwd, --
 @@TALARIA_COMMAND@@ workflow resume --json <run-id>
 ```
 
-Options: --script, --staffing, --cwd, --budget-tokens, --budget-usd, --record, --json, --runs-dir, --workflows-dir. A completed run prints its stored result without doing paid work again. Other runs open a new execution and reuse kept calls. A live runner holds its lock and refuses another resume. Exit codes match run.
+Options: --script, --staffing, --cwd, --budget-tokens, --budget-usd, --record, --json, --runs-dir, --workflows-dir. A completed or completed_with_failures run prints its stored result, with its failed and cut short agent lists, without doing paid work again. Other runs open a new execution and reuse kept calls. A live runner holds its lock and refuses another resume. Exit codes match run.
 
 ## Resolve
 
@@ -40,7 +40,7 @@ The needs operator line prints the exact resolve command. Choose fail, rerun, or
 @@TALARIA_COMMAND@@ workflow list --json --limit 20
 ```
 
-Options: --runs-dir, --json, --limit. Status is running, parked, completed, failed, aborted, interrupted, or unreadable. Rows include counts and observed spend, but no result. Missing history is an empty array. Exit 0 listed, 1 filesystem failure, 2 usage.
+Options: --runs-dir, --json, --limit. Status is running, parked, completed, completed_with_failures, budget_exhausted, failed, aborted, interrupted, or unreadable. Rows include counts and observed spend, but no result. Missing history is an empty array. Exit 0 listed, 1 filesystem failure, 2 usage.
 
 ## Stop
 

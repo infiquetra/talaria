@@ -56,6 +56,8 @@ pub enum RunState {
     #[default]
     Running,
     Completed,
+    /// The script returned, but at least one agent failed.
+    CompletedWithFailures,
     BudgetExhausted,
     Failed,
     Aborted,
@@ -65,6 +67,7 @@ impl RunState {
         match self {
             Self::Running => "running",
             Self::Completed => "completed",
+            Self::CompletedWithFailures => "completed with failures",
             Self::BudgetExhausted => "budget exhausted",
             Self::Failed => "failed",
             Self::Aborted => "aborted",
@@ -152,6 +155,13 @@ pub struct AgentNode {
     pub tokens_unknown: bool,
     pub money: Option<f64>,
     pub last_outcome: Option<String>,
+    /// Why the agent failed, from its journaled outcome.
+    pub failure: Option<String>,
+    /// Set when Hermes stopped the agent at its step cap and its reply was kept: "cut short
+    /// (60 of 60 steps)".
+    pub cut_short: Option<String>,
+    /// The step Hermes last reported for the running agent.
+    pub step: Option<u32>,
     pub attention: Option<String>,
     pub last_tool: Option<String>,
     pub prompt: Option<String>,
@@ -197,6 +207,9 @@ impl AgentNode {
             tokens_unknown: false,
             money: None,
             last_outcome: None,
+            failure: None,
+            cut_short: None,
+            step: None,
             attention: None,
             last_tool: None,
             prompt: None,
@@ -242,6 +255,17 @@ impl AgentNode {
                 .map(|(s, n)| n.saturating_sub(*self.settled_sessions.get(s).unwrap_or(&0)))
                 .sum::<u64>(),
         );
+    }
+    /// What a row says about the agent beyond its state: the kept mark of a cut short agent, or
+    /// the step a running agent is on.
+    pub fn progress_note(&self) -> Option<String> {
+        if let Some(cut_short) = &self.cut_short {
+            return Some(cut_short.clone());
+        }
+        if self.state == AgentState::Running {
+            return self.step.map(|step| format!("step {step}"));
+        }
+        None
     }
     pub(crate) fn push_tail(&mut self, text: &str) {
         for line in text.lines().filter(|s| !s.is_empty()) {
