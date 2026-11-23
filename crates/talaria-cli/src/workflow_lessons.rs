@@ -25,6 +25,9 @@ pub const MAX_ENTRY_CHARS: usize = 1000;
 /// How many of the newest entries a plain listing prints. Hermes keeps only the head and tail of
 /// a long command output, so an unbounded listing would silently lose its middle entries.
 pub const SHOWN_ENTRIES: usize = 50;
+/// The most bytes of entries a plain listing prints, well under the 50,000 bytes of command
+/// output Hermes shows whole: 50 entries of the longest kind would come to about 52 KB.
+pub const SHOWN_BYTES: usize = 30_000;
 /// The longest run id accepted.
 const MAX_RUN_ID_CHARS: usize = 64;
 const FILE_NAME: &str = "lessons.txt";
@@ -38,7 +41,7 @@ pub struct LessonsArgs {
     /// Print one JSON object instead of text.
     #[arg(long)]
     pub json: bool,
-    /// Print every entry, not only the newest 50.
+    /// Print every entry, not only the newest 50 that fit in 30,000 bytes.
     #[arg(long)]
     pub all: bool,
 }
@@ -249,14 +252,22 @@ fn add_entry(path: &Path, args: &AddArgs) -> u8 {
     }
 }
 
-/// The entries a listing prints, newest last, and how many older ones it leaves out.
+/// The entries a listing prints, newest last, and how many older ones it leaves out: the newest
+/// [`SHOWN_ENTRIES`] whose lines, each with its line end, fit in [`SHOWN_BYTES`].
 pub fn shown(lines: &[String], all: bool) -> (&[String], usize) {
-    let older = if all {
-        0
-    } else {
-        lines.len().saturating_sub(SHOWN_ENTRIES)
-    };
-    (&lines[older..], older)
+    if all {
+        return (lines, 0);
+    }
+    let mut first = lines.len();
+    let mut bytes = 0;
+    for (at, line) in lines.iter().enumerate().rev().take(SHOWN_ENTRIES) {
+        bytes += line.len() + 1;
+        if bytes > SHOWN_BYTES {
+            break;
+        }
+        first = at;
+    }
+    (&lines[first..], first)
 }
 
 /// The line that says how many older entries a listing left out.
@@ -439,6 +450,29 @@ mod tests {
             older_note(1),
             "1 older entry is not shown; `workflow lessons --all` prints every entry."
         );
+    }
+
+    #[test]
+    fn a_listing_of_long_entries_stays_within_its_byte_cap() {
+        let lines: Vec<String> = (0..SHOWN_ENTRIES)
+            .map(|n| {
+                entry_line(
+                    "2026-11-23",
+                    &format!("01ARZ3NDEKTSV4RRFFQ69G5F{n:02}"),
+                    &"x".repeat(MAX_ENTRY_CHARS),
+                )
+                .unwrap()
+            })
+            .collect();
+        let (kept, older) = shown(&lines, false);
+        let bytes: usize = kept.iter().map(|line| line.len() + 1).sum();
+        assert!(bytes <= SHOWN_BYTES, "{bytes}");
+        // The newest entries that fit are printed, and the rest are counted as older.
+        assert_eq!(kept.len() + older, SHOWN_ENTRIES);
+        assert!(older > 0 && kept.len() > 1, "{older}");
+        assert_eq!(kept.last(), lines.last());
+        assert!(bytes + lines[older - 1].len() + 1 > SHOWN_BYTES);
+        assert_eq!(shown(&lines, true), (&lines[..], 0));
     }
 
     #[cfg(unix)]

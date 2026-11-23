@@ -218,6 +218,34 @@ fn a_long_notes_file_shows_the_newest_fifty_and_counts_the_rest() {
 }
 
 #[test]
+fn a_listing_of_long_entries_fits_what_hermes_shows_whole() {
+    let t = tempfile::tempdir().unwrap();
+    fs::create_dir_all(t.path().join("cfg")).unwrap();
+    // Fifty entries of the longest kind come to more than Hermes shows of one command's output.
+    let long = "x".repeat(1000);
+    let text: String = (1..=50)
+        .map(|n| format!("2026-11-23 run r{n}: {long}\n"))
+        .collect();
+    fs::write(t.path().join("cfg/lessons.txt"), text).unwrap();
+    let shown = out(&talaria(&["workflow", "lessons"], t.path()));
+    assert!(shown.len() < 32_000, "{}", shown.len());
+    let lines: Vec<_> = shown.lines().collect();
+    let printed = lines.len() - 2;
+    assert!(
+        lines[1].starts_with(&format!("{} older entries are not shown", 50 - printed)),
+        "{}",
+        lines[1]
+    );
+    assert!(lines.last().unwrap().starts_with("2026-11-23 run r50: "));
+    let json: Value =
+        serde_json::from_str(&out(&talaria(&["workflow", "lessons", "--json"], t.path()))).unwrap();
+    assert_eq!(json["entries"].as_array().unwrap().len(), printed);
+    assert_eq!(json["older_entries"], 50 - printed);
+    let every = out(&talaria(&["workflow", "lessons", "--all"], t.path()));
+    assert_eq!(every.lines().count(), 51);
+}
+
+#[test]
 fn a_relative_configuration_folder_is_refused_and_writes_nothing() {
     let t = tempfile::tempdir().unwrap();
     for config in [None, Some("relative-cfg")] {
