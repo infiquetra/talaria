@@ -70,8 +70,17 @@ mod tests {
 
     #[test]
     fn a_saved_branch_reads_back_from_the_reason() {
-        let reason = with_saved_branch("stopped in Hermes (outcome 'interrupted')", "talaria/wf/r/c-0-saved");
-        assert_eq!(saved_branch_in(&reason).as_deref(), Some("talaria/wf/r/c-0-saved"));
-        assert_eq!(saved_branch_in("stopped in Hermes (outcome 'interrupted')"), None);
+        let reason = with_saved_branch(
+            "stopped in Hermes (outcome 'interrupted')",
+            "talaria/wf/r/c-0-saved",
+        );
+        assert_eq!(
+            saved_branch_in(&reason).as_deref(),
+            Some("talaria/wf/r/c-0-saved")
+        );
+        assert_eq!(
+            saved_branch_in("stopped in Hermes (outcome 'interrupted')"),
+            None
+        );
     }
 }

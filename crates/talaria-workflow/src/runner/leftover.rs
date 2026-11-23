@@ -464,7 +464,10 @@ mod tests {
         assert_eq!(found.len(), 1, "{found:?}");
         let folder = &found[0];
         assert!(folder.in_place && folder.saved_branch.is_none());
-        assert_eq!(folder.agents, vec!["writer".to_string(), "checker".to_string()]);
+        assert_eq!(
+            folder.agents,
+            vec!["writer".to_string(), "checker".to_string()]
+        );
         let said = describe(folder);
         assert!(
             said.contains("edited") && said.contains("directly"),
@@ -512,6 +515,9 @@ mod tests {
             call(&tree, 'e', "builder", Some(Isolation::Worktree)),
             finished('e', completed()),
         ];
-        assert_eq!(leftover_folders(&done, &run, "run1").0[0].saved_branch, None);
+        assert_eq!(
+            leftover_folders(&done, &run, "run1").0[0].saved_branch,
+            None
+        );
     }
 }

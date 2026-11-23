@@ -664,7 +664,10 @@ mod tests {
             text.contains("Kept worktrees have uncommitted changes; --force removes them"),
             "{text}"
         );
-        assert!(!text.contains("commits the source checkout lacks"), "{text}");
+        assert!(
+            !text.contains("commits the source checkout lacks"),
+            "{text}"
+        );
         assert!(text.contains("would remove") && text.contains(" and branch talaria/wf/"));
         // Committed but unmerged work is named as such, and not as uncommitted changes.
         git(&dirty, &["add", "note.txt"]);

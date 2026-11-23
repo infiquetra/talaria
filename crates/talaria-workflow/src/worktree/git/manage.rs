@@ -449,10 +449,12 @@ impl GitWorktrees {
                 }
                 Err(error) => problems.push(format!("cannot read the folder's status: {error}")),
             }
-            report.folder_branch =
-                text(&report.path, &["branch".as_ref(), "--show-current".as_ref()])
-                    .ok()
-                    .filter(|name| !name.is_empty() && *name != side.branch);
+            report.folder_branch = text(
+                &report.path,
+                &["branch".as_ref(), "--show-current".as_ref()],
+            )
+            .ok()
+            .filter(|name| !name.is_empty() && *name != side.branch);
             match head_of(&report.path) {
                 Ok(head) => {
                     if report.branch_tip.as_deref() != Some(head.as_str()) {
@@ -1144,14 +1146,22 @@ mod tests {
             let entry = f.provider.clean_up(false, dry_run).unwrap().remove(0);
             assert_eq!(entry.action, CleanupAction::Kept);
             let said = entry.reasons.join(" ");
-            assert!(said.contains("(branch agent-own) has 1 commit not contained"), "{said}");
+            assert!(
+                said.contains("(branch agent-own) has 1 commit not contained"),
+                "{said}"
+            );
             assert!(!said.contains("recorded branch"), "{said}");
         }
         git(&f.repo, &["merge", "--ff-only", "agent-own"]);
         fs::write(tree.join("new.txt"), "x").unwrap();
         let entry = f.provider.clean_up(false, false).unwrap().remove(0);
         assert_eq!(entry.action, CleanupAction::Kept);
-        assert!(entry.reasons.join(" ").contains("1 uncommitted changed file"));
+        assert!(
+            entry
+                .reasons
+                .join(" ")
+                .contains("1 uncommitted changed file")
+        );
         assert!(tree.join("new.txt").exists());
         assert!(GitWorktrees::branch_exists(&f.repo, "agent-own").unwrap());
     }
@@ -1169,7 +1179,10 @@ mod tests {
         assert_eq!(entry.deleted_branches, vec!["agent-own".to_string()]);
         let kept = entry.kept_branches.join(" ");
         assert!(
-            kept.contains(&format!("branch {} kept: 1 commit not contained", f.branch(0))),
+            kept.contains(&format!(
+                "branch {} kept: 1 commit not contained",
+                f.branch(0)
+            )),
             "{kept}"
         );
         assert!(!tree.exists());

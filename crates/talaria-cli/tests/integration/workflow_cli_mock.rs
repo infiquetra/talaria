@@ -274,6 +274,11 @@ fn list_output_shapes() {
             "money_spent_usd",
             "run_dir",
             "warning",
+            "failed_agents",
+            "cut_short_agents",
+            "uncommitted_edits",
+            "saved_branches",
+            "phases_not_started",
         ];
         assert_eq!(object.len(), fields.len());
         assert!(fields.iter().all(|field| object.contains_key(*field)));
@@ -814,7 +819,8 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
     assert!(serde_json::from_str::<Value>(last).is_err(), "{last}");
     let before = lines[lines.len() - 2];
     assert_eq!(serde_json::from_str::<Value>(before).unwrap(), finished);
-    assert!(last.len() < 300, "{last}");
+    // Short, even with a long --runs-dir path and the problems the run left.
+    assert!(last.len() < 340, "{last}");
     // The recording gives no cache read total, so the line says they are unknown for that turn.
     assert!(
         last.contains("10 tokens (cache reads unknown for 1 turn, counted in full)"),
@@ -891,6 +897,12 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
         .to_owned();
     assert!(line.find("failed_agents").unwrap() < line.find("\"result\"").unwrap(), "{line}");
     let id = finished["run_id"].as_str().unwrap().to_owned();
+    // The closing line names the failure before the hint, where a short tail still shows it.
+    let closing = text(&out.stdout).lines().last().unwrap().to_owned();
+    assert!(
+        closing.contains(" Attention: 1 agent failed. Full result: "),
+        "{closing}"
+    );
 
     // Listed with its own status, and readable again without paid work.
     let listed = output(
@@ -900,6 +912,8 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
     );
     let rows: Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert_eq!(rows[0]["status"], "completed_with_failures");
+    assert_eq!(rows[0]["failed_agents"], 1, "{rows}");
+    assert_eq!(rows[0]["cut_short_agents"], 0, "{rows}");
     // The text listing says it in words; only JSON keeps the underscores.
     let plain_list = text(
         &output(
@@ -910,6 +924,7 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
         .stdout,
     );
     assert!(plain_list.contains("  completed with failures  agents "), "{plain_list}");
+    assert!(plain_list.contains("  failed 1  "), "{plain_list}");
     assert!(!plain_list.contains("completed_with_failures"), "{plain_list}");
     assert!(
         plain_list.contains("10 tokens (cache reads unknown for 1 turn, counted in full)"),
@@ -938,10 +953,16 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
     let shown = text(&plain.stdout);
     assert!(
         shown.contains(&format!(
-            "Completed with failures: 1 agent failed.\nFailed agents:\n  review: {reason}\nResult:\n"
+            "Completed with failures: 1 agent failed.\nFailed agents:\n  review: {reason}\n"
         )),
         "{shown}"
     );
+    // The agent ran without isolation, so the report says plainly that nothing is missing.
+    assert!(
+        shown.contains("Folders agents edited directly, without worktree isolation (their edits are already there; nothing was saved or lost):\n"),
+        "{shown}"
+    );
+    assert!(shown.contains(": review\nResult:\n"), "{shown}");
 }
 
 #[test]
@@ -971,7 +992,9 @@ fn work_found_on_a_moved_route_is_printed_live_and_listed_before_the_result() {
     for part in ["agent review", "session session", "new stored session session-2", "cancelled 1 turn(s)"] {
         assert!(entry.contains(part), "{part} missing from {entry}");
     }
-    assert!(finished.get("leftover_edits").is_none());
+    // The failed agent ran without isolation: its folder is named as edited in place.
+    let leftovers = finished["leftover_edits"].as_array().unwrap();
+    assert!(leftovers.iter().all(|f| f["in_place"] == true), "{finished}");
     // After the failed agents, before the result.
     let line = shown.lines().find(|l| l.contains("\"run_finished\"")).unwrap().to_owned();
     assert!(line.find("failed_agents").unwrap() < line.find("untracked_work").unwrap(), "{line}");
@@ -1065,7 +1088,7 @@ fn an_agent_stopped_at_its_step_cap_keeps_its_reply_and_is_marked_everywhere() {
     );
     assert_eq!(plain.status.code(), Some(0));
     assert!(
-        text(&plain.stdout).contains("Cut short agents:\n  review: cut short (60 of 60 steps)\nResult:\n"),
+        text(&plain.stdout).contains("Cut short agents:\n  review: cut short (60 of 60 steps)\nFolders agents edited directly"),
         "{}",
         text(&plain.stdout)
     );

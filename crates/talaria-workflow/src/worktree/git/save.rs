@@ -56,19 +56,21 @@ fn git_text(folder: &Folder, args: &[&OsStr], env: &[(&str, &OsStr)]) -> Result<
 /// Whether git would take an author and a committer from the configuration or environment,
 /// without guessing one from the host name.
 fn identity_configured(folder: &Folder) -> bool {
-    ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"].iter().all(|var| {
-        git_text(
-            folder,
-            &[
-                "-c".as_ref(),
-                "user.useConfigOnly=true".as_ref(),
-                "var".as_ref(),
-                var.as_ref(),
-            ],
-            &[],
-        )
-        .is_ok()
-    })
+    ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"]
+        .iter()
+        .all(|var| {
+            git_text(
+                folder,
+                &[
+                    "-c".as_ref(),
+                    "user.useConfigOnly=true".as_ref(),
+                    "var".as_ref(),
+                    var.as_ref(),
+                ],
+                &[],
+            )
+            .is_ok()
+        })
 }
 
 /// Save `folder`'s uncommitted changes, tracked and untracked (ignored files stay out), as a
@@ -94,7 +96,11 @@ pub fn save_uncommitted(
 fn save_in(folder: &Folder, branch: &str, message: &str) -> Result<Option<String>, String> {
     let head = git_text(
         folder,
-        &["rev-parse".as_ref(), "--verify".as_ref(), "HEAD^{commit}".as_ref()],
+        &[
+            "rev-parse".as_ref(),
+            "--verify".as_ref(),
+            "HEAD^{commit}".as_ref(),
+        ],
         &[],
     )
     .map_err(|e| format!("cannot read the worktree's HEAD: {e}"))?;
@@ -218,12 +224,18 @@ fn save_in(folder: &Folder, branch: &str, message: &str) -> Result<Option<String
             &[],
         ) {
             Ok(_) => return Ok(Some(name)),
-            Err(_) if git_text(
-                folder,
-                &["rev-parse".as_ref(), "--verify".as_ref(), "--quiet".as_ref(), reference.as_ref()],
-                &[],
-            )
-            .is_ok_and(|tip| !tip.is_empty()) =>
+            Err(_)
+                if git_text(
+                    folder,
+                    &[
+                        "rev-parse".as_ref(),
+                        "--verify".as_ref(),
+                        "--quiet".as_ref(),
+                        reference.as_ref(),
+                    ],
+                    &[],
+                )
+                .is_ok_and(|tip| !tip.is_empty()) =>
             {
                 continue;
             }
@@ -257,7 +269,14 @@ mod tests {
         let tree = temp.path().join("tree");
         git(
             &repo,
-            &["worktree", "add", "-q", "-b", "agent", tree.to_str().unwrap()],
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "agent",
+                tree.to_str().unwrap(),
+            ],
         );
         (temp, repo, tree)
     }
@@ -296,11 +315,12 @@ mod tests {
         );
         // No temporary index is left behind.
         let gitdir = PathBuf::from(git(&tree, &["rev-parse", "--absolute-git-dir"]));
-        assert!(
-            !fs::read_dir(&gitdir)
-                .unwrap()
-                .any(|e| e.unwrap().file_name().to_string_lossy().starts_with("talaria-save")),
-        );
+        assert!(!fs::read_dir(&gitdir).unwrap().any(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("talaria-save")
+        }),);
     }
 
     #[test]
@@ -341,11 +361,20 @@ mod tests {
         assert!(!identity_configured(&folder));
         let saved = save_in(&folder, "agent-saved", "m").unwrap().unwrap();
         assert_eq!(
-            git(&repo, &["log", "-1", "--format=%an <%ae>|%cn <%ce>", &saved]),
+            git(
+                &repo,
+                &["log", "-1", "--format=%an <%ae>|%cn <%ce>", &saved]
+            ),
             format!("{NEUTRAL_NAME} <{NEUTRAL_EMAIL}>|{NEUTRAL_NAME} <{NEUTRAL_EMAIL}>")
         );
         // The repository's configuration was not changed to get there.
-        assert!(text(&repo, &["config".as_ref(), "--local".as_ref(), "user.name".as_ref()]).is_err());
+        assert!(
+            text(
+                &repo,
+                &["config".as_ref(), "--local".as_ref(), "user.name".as_ref()]
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -361,9 +390,16 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        git(&repo, &["config", "core.hooksPath", hooks.to_str().unwrap()]);
+        git(
+            &repo,
+            &["config", "core.hooksPath", hooks.to_str().unwrap()],
+        );
         fs::write(tree.join("new.txt"), "x\n").unwrap();
-        assert!(save_uncommitted(&tree, "agent-saved", "m").unwrap().is_some());
+        assert!(
+            save_uncommitted(&tree, "agent-saved", "m")
+                .unwrap()
+                .is_some()
+        );
         assert!(!marker.exists(), "a repository hook ran");
     }
 }

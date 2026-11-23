@@ -1233,7 +1233,9 @@ fn a_failed_isolated_agent_has_its_uncommitted_work_saved_to_a_branch() {
     let outcome: Value =
         serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
     let note = &outcome["failed_agents"][0];
-    let branch = note["saved_branch"].as_str().unwrap_or_else(|| panic!("{outcome}"));
+    let branch = note["saved_branch"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{outcome}"));
     assert!(
         branch.starts_with("talaria/wf/") && branch.ends_with("-0-saved"),
         "{branch}"
@@ -1254,11 +1256,16 @@ fn a_failed_isolated_agent_has_its_uncommitted_work_saved_to_a_branch() {
             .is_some_and(|r| r.contains(branch)),
         "{finish}"
     );
-    assert_eq!(outcome["leftover_edits"][0]["saved_branch"], branch, "{outcome}");
-    assert!(events.iter().any(|e| e["event"] == "log"
-        && e["message"]
-            .as_str()
-            .is_some_and(|m| m.contains("saved the uncommitted work of agent review"))));
+    assert_eq!(
+        outcome["leftover_edits"][0]["saved_branch"], branch,
+        "{outcome}"
+    );
+    assert!(events.iter().any(|e| {
+        e["event"] == "log"
+            && e["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("saved the uncommitted work of agent review"))
+    }));
     // The branch holds the work; the worktree still has it uncommitted, on its own branch.
     let git = |dir: &Path, args: &[&str]| {
         let out = std::process::Command::new("git")
@@ -1270,7 +1277,10 @@ fn a_failed_isolated_agent_has_its_uncommitted_work_saved_to_a_branch() {
         assert!(out.status.success(), "git {args:?}");
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     };
-    assert_eq!(git(&repo, &["show", &format!("{branch}:half.txt")]), "half done");
+    assert_eq!(
+        git(&repo, &["show", &format!("{branch}:half.txt")]),
+        "half done"
+    );
     assert_eq!(git(&worktree, &["status", "--porcelain"]), "?? half.txt");
     assert!(git(&worktree, &["branch", "--show-current"]).starts_with("talaria/wf/"));
     assert!(!git(&worktree, &["branch", "--show-current"]).ends_with("-saved"));

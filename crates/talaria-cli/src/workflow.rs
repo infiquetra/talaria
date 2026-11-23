@@ -349,13 +349,14 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
                 })
                 .unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
         text.push_str(&format!(
-            "{}  {}  {}  agents {}/{}{}  {}  money {}  {}  {}\n",
+            "{}  {}  {}  agents {}/{}{}{}  {}  money {}  {}  {}\n",
             safe(&run.run_id),
             safe(&run.name),
             run.status.label(),
             run.agents_finished,
             run.agents_total_known,
             parked,
+            attention_marks(&run.attention),
             tokens,
             money,
             timestamp,
@@ -722,9 +723,14 @@ impl Renderer {
         }
         if self.json {
             let runs_dir = self.dir.as_deref().and_then(std::path::Path::parent);
+            let attention = self
+                .dir
+                .as_deref()
+                .map(runner::run_attention)
+                .unwrap_or_default();
             self.text(&format!(
                 "{}\n",
-                closing_line(run_id, outcome, spend, runs_dir)
+                closing_line(run_id, outcome, spend, runs_dir, &attention)
             ));
         }
     }
@@ -740,13 +746,14 @@ fn closing_line(
     outcome: &str,
     spend: &SpendView,
     runs_dir: Option<&std::path::Path>,
+    attention: &runner::RunAttention,
 ) -> String {
     let money = match spend.money_usd {
         Some(usd) => format!("${usd:.4} ({})", safe(&spend.money_source)),
         None => "unknown".to_owned(),
     };
     format!(
-        "run {} {}: {}, money {}. Full result: talaria workflow resume --json{} {}",
+        "run {} {}: {}, money {}.{} Full result: talaria workflow resume --json{} {}",
         safe(run_id),
         safe(outcome),
         tokens_text(
@@ -756,9 +763,77 @@ fn closing_line(
             |n| n.to_string()
         ),
         money,
+        attention_sentence(attention),
         custom_runs_dir_flag(runs_dir),
         safe(run_id)
     )
+}
+/// The script's own `status` word, made safe and short for one line.
+fn script_status(status: &str) -> String {
+    let status = safe(status);
+    if status.chars().count() > 40 {
+        format!("{}...", status.chars().take(40).collect::<String>())
+    } else {
+        status
+    }
+}
+/// The problems a finished run left, as one short sentence for the closing line, or nothing.
+/// The most important come last, nearest the end a reader that keeps only the tail still sees.
+fn attention_sentence(attention: &runner::RunAttention) -> String {
+    let agents = |n: u32| format!("{n} agent{}", if n == 1 { "" } else { "s" });
+    let mut parts = Vec::new();
+    if let Some(status) = &attention.script_status {
+        parts.push(format!("script's own status \"{}\"", script_status(status)));
+    }
+    if attention.phases_not_started > 0 {
+        let n = attention.phases_not_started;
+        parts.push(format!(
+            "{n} declared phase{} never started",
+            if n == 1 { "" } else { "s" }
+        ));
+    }
+    let saved = match attention.saved_branches {
+        0 => String::new(),
+        n => format!(" ({n} saved to a branch)"),
+    };
+    if attention.uncommitted_edits > 0 {
+        parts.push(format!(
+            "{} left uncommitted edits{saved}",
+            agents(attention.uncommitted_edits)
+        ));
+    } else if !saved.is_empty() {
+        parts.push(format!("uncommitted work{saved}"));
+    }
+    if attention.cut_short_agents > 0 {
+        parts.push(format!("{} cut short", agents(attention.cut_short_agents)));
+    }
+    if attention.failed_agents > 0 {
+        parts.push(format!("{} failed", agents(attention.failed_agents)));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" Attention: {}.", parts.join("; "))
+    }
+}
+/// Compact marks for a `workflow list` text row, or nothing when the run left no problems.
+fn attention_marks(attention: &runner::RunAttention) -> String {
+    let mut marks = String::new();
+    for (count, word) in [
+        (attention.failed_agents, "failed"),
+        (attention.cut_short_agents, "cut short"),
+        (attention.uncommitted_edits, "uncommitted edits"),
+        (attention.saved_branches, "saved branches"),
+        (attention.phases_not_started, "phases not started"),
+    ] {
+        if count > 0 {
+            marks.push_str(&format!("  {word} {count}"));
+        }
+    }
+    if let Some(status) = &attention.script_status {
+        marks.push_str(&format!("  script status \"{}\"", script_status(status)));
+    }
+    marks
 }
 /// The commit and tree state this binary was built from, as the build script recorded them.
 fn build_stamp() -> talaria_workflow::journal::BuildStamp {
@@ -1123,6 +1198,54 @@ mod leftover_text_tests {
     }
 
     #[test]
+    fn the_closing_line_puts_problems_before_the_hint_and_adds_nothing_without_them() {
+        let spend = SpendView {
+            tokens: 10,
+            cache_read_tokens: 0,
+            cache_unknown_turns: 0,
+            money_usd: None,
+            money_source: "unknown".into(),
+        };
+        let quiet = closing_line("r1", "completed", &spend, None, &Default::default());
+        assert!(!quiet.contains("Attention"), "{quiet}");
+        let attention = runner::RunAttention {
+            failed_agents: 2,
+            cut_short_agents: 1,
+            uncommitted_edits: 1,
+            saved_branches: 1,
+            phases_not_started: 2,
+            script_status: Some("partial".into()),
+        };
+        let line = closing_line("r1", "completed", &spend, None, &attention);
+        let hint = line.find(" Full result: ").unwrap();
+        let tail = &line[..hint];
+        assert!(
+            tail.ends_with(
+                " Attention: script's own status \"partial\"; 2 declared phases never started; 1 agent left uncommitted edits (1 saved to a branch); 1 agent cut short; 2 agents failed."
+            ),
+            "{line}"
+        );
+        // The outcome word itself is unchanged.
+        assert!(line.starts_with("run r1 completed: "), "{line}");
+        // What a caller keeping only the last 170 characters still sees.
+        let end: String = line
+            .chars()
+            .rev()
+            .take(170)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        assert!(end.contains("2 agents failed"), "{end}");
+        let marks = attention_marks(&attention);
+        assert_eq!(
+            marks,
+            "  failed 2  cut short 1  uncommitted edits 1  saved branches 1  phases not started 2  script status \"partial\""
+        );
+        assert_eq!(attention_marks(&Default::default()), "");
+    }
+
+    #[test]
     fn leftovers_name_the_saved_branch_and_say_plainly_when_nothing_is_missing() {
         let text = leftovers_text(
             &Value::Null,
@@ -1133,7 +1256,9 @@ mod leftover_text_tests {
             ]),
         );
         assert!(
-            text.contains("  /w/one: 2 changed files; a copy is saved on branch talaria/wf/r/c-0-saved\n"),
+            text.contains(
+                "  /w/one: 2 changed files; a copy is saved on branch talaria/wf/r/c-0-saved\n"
+            ),
             "{text}"
         );
         assert!(

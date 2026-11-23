@@ -707,6 +707,7 @@ fn run_row(
         money_spent_usd: None,
         run_dir: format!("fixture-runs/{run_id}"),
         warning: None,
+        attention: Default::default(),
     }
 }
 
