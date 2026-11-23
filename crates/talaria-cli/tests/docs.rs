@@ -73,9 +73,10 @@ fn product_descriptions_match_the_rust_client() {
     let claude = read(&root, "CLAUDE.md");
     let agents = read(&root, "AGENTS.md");
     let readme = read(&root, "README.md");
-    assert!(
-        !claude.contains("placeholder"),
-        "CLAUDE.md product sentence"
+    assert_eq!(
+        claude.lines().next(),
+        Some("@AGENTS.md"),
+        "CLAUDE.md must import AGENTS.md on its first line"
     );
     assert!(
         !agents.contains("placeholder"),
@@ -91,7 +92,6 @@ fn product_descriptions_match_the_rust_client() {
     );
     let checks =
         "cargo fmt --check\ncargo clippy --all-targets -- -D warnings\ncargo test --workspace\n";
-    assert!(claude.contains(checks), "CLAUDE.md Checks");
     assert!(agents.contains(checks), "AGENTS.md Checks");
 }
 

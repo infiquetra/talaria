@@ -3,6 +3,16 @@
 Talaria is a public Rust terminal client for the Hermes gateway. The workspace
 owns terminal presentation, transport adapters and client state.
 
+## Navigation
+
+- [Handoff](docs/handoff/2026-10-22-next-steps/README.md)
+- [Architecture decisions](platform-specs/04-architecture/adrs/)
+- [Engineering journal](docs/engineering-journal/)
+- [Deferred work](docs/engineering-journal/QUEUED.md)
+- Organization standards: [infiquetra-context-library](https://github.com/infiquetra/infiquetra-context-library)
+
+Read [README.md](README.md) before changing code.
+
 ## Architecture decision records
 
 Read the architecture decision records before writing code. Their recorded statuses are:
@@ -37,7 +47,8 @@ Read the architecture decision records before writing code. Their recorded statu
    Every source of change sends a message into one application event channel.
    Domain crates never import terminal libraries.
 7. Record non-obvious learnings with evidence and a one-line rule in
-   [LEARNINGS.md](docs/engineering-journal/LEARNINGS.md). No planning codes in source comments.
+   [LEARNINGS.md](docs/engineering-journal/LEARNINGS.md), and update the engineering journal for
+   durable decisions. No planning codes in source comments.
 8. Use the unit's suggested model tier or the nearest provider equivalent; state it in the PR.
    After a failed review, retry one tier higher; at the top tier, a second failure goes to the operator.
 
