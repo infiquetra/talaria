@@ -253,3 +253,84 @@ async fn a_nested_script_path_is_found_through_the_cwd_option() {
     with.cwd = cwd.path().into();
     assert!(check_script(&source, &with).await.ok);
 }
+
+fn warnings(report: &CheckReport) -> Vec<String> {
+    report.warnings.iter().map(|w| w.message.clone()).collect()
+}
+const THREE_PHASES: &str = "export const meta = { name: 'sample', description: 'A sample.', phases: [{title:'Plan'},{title:'Build'},{title:'Review'}] };\n";
+
+#[tokio::test]
+async fn phases_the_trial_run_never_reached_are_named_not_listed() {
+    // The stand-in answer for a plain string field is a made-up sentence, so the script returns
+    // at its first phase.
+    let source = format!(
+        "{THREE_PHASES}phase('Plan');\nconst r = await agent('plan', {{ schema: {{ type: 'object', properties: {{ status: {{ type: 'string' }} }} }} }});\nif (r.status !== 'done') return 'stopped';\nphase('Build');\nawait agent('build');\nphase('Review');\nreturn 1;\n"
+    );
+    let report = check_script(&source, &options(TIERS)).await;
+    assert!(report.ok, "{:?}", report.errors);
+    assert_eq!(report.phases, ["Plan"]);
+    assert_eq!(
+        warnings(&report),
+        [
+            "the trial run returned at phase Plan; phases Build, Review were not exercised. The trial run answers every agent with made-up values, so a real run may go further"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_trial_run_answers_an_enum_field_with_its_first_word() {
+    // The same script, with the field's allowed words listed: the trial run takes the first one,
+    // so the script's usual path runs to its last phase and nothing is left unexercised.
+    let source = format!(
+        "{THREE_PHASES}phase('Plan');\nconst r = await agent('plan', {{ schema: {{ type: 'object', properties: {{ status: {{ type: 'string', enum: ['done', 'blocked'] }} }} }} }});\nif (r.status !== 'done') return 'stopped';\nphase('Build');\nawait agent('build');\nphase('Review');\nreturn 1;\n"
+    );
+    let report = check_script(&source, &options(TIERS)).await;
+    assert!(report.ok, "{:?}", report.errors);
+    assert_eq!(report.phases, ["Plan", "Build", "Review"]);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+}
+
+#[tokio::test]
+async fn a_script_that_never_calls_phase_gets_no_unexercised_warning() {
+    let report = check_script(
+        &format!("{THREE_PHASES}await agent('one');\nreturn 1;\n"),
+        &options(TIERS),
+    )
+    .await;
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+}
+
+#[tokio::test]
+async fn max_turns_on_a_reached_call_warns_and_names_its_label() {
+    let report = check(
+        "await agent('one', { label: 'build:a', maxTurns: 40 });\nawait agent('two', { label: 'plain' });\nawait agent('three', { label: 'review', maxTurns: 10 });\nreturn 1;\n",
+    )
+    .await;
+    assert!(report.ok, "a step cap is a warning, never a refusal: {:?}", report.errors);
+    let text = warnings(&report);
+    assert_eq!(text.len(), 1, "{text:?}");
+    assert!(text[0].contains("\"build:a\", \"review\""), "{}", text[0]);
+    assert!(!text[0].contains("plain"), "{}", text[0]);
+    assert!(text[0].contains("Leave maxTurns out"), "{}", text[0]);
+    assert_eq!(report.warnings[0].kind, "option");
+    assert_eq!(report.warnings[0].line, Some(2));
+}
+
+#[tokio::test]
+async fn max_turns_in_code_the_trial_run_did_not_reach_still_warns_with_its_line() {
+    let report = check(
+        "const r = await agent('one', { schema: { type: 'object', properties: { ok: { type: 'string' } } } });\nif (r.ok === 'never') {\n  await agent('two', { maxTurns: 5 });\n}\nreturn 1;\n",
+    )
+    .await;
+    assert!(report.ok);
+    let text = warnings(&report);
+    assert_eq!(text.len(), 1, "{text:?}");
+    assert!(text[0].contains("at line 4"), "{}", text[0]);
+    assert!(text[0].contains("did not reach"), "{}", text[0]);
+}
+
+#[tokio::test]
+async fn a_script_without_max_turns_has_no_step_cap_warning() {
+    let report = check("// maxTurns: 5 is a comment\nawait agent('one', { label: 'maxTurns' });\nreturn 1;\n").await;
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+}
