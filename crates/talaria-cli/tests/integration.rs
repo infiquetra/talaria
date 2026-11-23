@@ -96,6 +96,8 @@ mod voice_vim;
 mod workflow_authoring;
 #[path = "integration/workflow_builtins_live.rs"]
 mod workflow_builtins_live;
+#[path = "integration/workflow_check_cli.rs"]
+mod workflow_check_cli;
 #[path = "integration/workflow_cli.rs"]
 mod workflow_cli;
 #[path = "integration/workflow_compile_cli.rs"]

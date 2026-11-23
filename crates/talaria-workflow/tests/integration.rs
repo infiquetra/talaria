@@ -166,6 +166,8 @@ mod sandbox;
 mod scheduler;
 #[path = "integration/scheduler_composed.rs"]
 mod scheduler_composed;
+#[path = "integration/script_check.rs"]
+mod script_check;
 #[path = "integration/skill_files.rs"]
 mod skill_files;
 #[path = "integration/skill_install.rs"]
