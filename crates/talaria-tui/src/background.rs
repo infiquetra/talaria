@@ -9,7 +9,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Widget, Wrap};
 use talaria_core::background::{
     BackgroundCell, BackgroundWork, BgOrigin, BgResult, BgState, FINISHED_ROW_MS, KillState,
-    ListState, ProcessId, ProcessRow, ProcessStatus, format_elapsed, list_failure_text,
+    ListState, ProcessId, ProcessRow, ProcessStatus, RunIdentity, WorkflowProcess, format_elapsed,
+    last_whole_line, list_failure_text, summarize_event_line, workflow_process,
 };
 use talaria_core::side::clean_output;
 use unicode_segmentation::UnicodeSegmentation;
@@ -50,6 +51,9 @@ pub struct BackgroundSection<'a> {
     pub width_hint: u16,
     /// Colours.
     pub theme: &'a BackgroundTheme,
+    /// The run the Workflow line above shows. A process that carries it has no row of its own,
+    /// because that line covers it.
+    pub workflow_run: Option<RunIdentity<'a>>,
 }
 
 impl LiveSection for BackgroundSection<'_> {
@@ -81,6 +85,44 @@ impl BackgroundSection<'_> {
         }
     }
 
+    /// What the row runs, when it runs a workflow.
+    fn workflow(&self, row: &ProcessRow) -> Option<WorkflowProcess> {
+        workflow_process(row, self.work.output(&row.id))
+    }
+
+    /// Whether the Workflow line above shows the run this process carries.
+    fn covered(&self, row: &ProcessRow) -> bool {
+        self.workflow_run
+            .zip(self.workflow(row))
+            .is_some_and(|(run, process)| process.carries(run))
+    }
+
+    /// The row's name: a workflow command names itself, any other the first line of its command.
+    fn name(&self, row: &ProcessRow) -> String {
+        match self.workflow(row) {
+            Some(process) => title(&process.command.label, "background process", 60),
+            None => title(&row.command, "background process", 60),
+        }
+    }
+
+    /// The row's last output line; a workflow's event line is shortened to what it says.
+    fn last_text(&self, row: &ProcessRow) -> Option<String> {
+        if row.live_line.is_empty() {
+            return None;
+        }
+        if self.workflow(row).is_some() {
+            let whole = self
+                .work
+                .output(&row.id)
+                .and_then(|output| last_whole_line(output.raw()))
+                .unwrap_or_else(|| row.live_line.clone());
+            if let Some(summary) = summarize_event_line(&whole) {
+                return Some(clean(&summary));
+            }
+        }
+        Some(clean(&row.live_line))
+    }
+
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         for task in self.work.bg_tasks().iter().take(2) {
@@ -106,18 +148,19 @@ impl BackgroundSection<'_> {
                 self.theme.dim,
             ));
         }
-        let rows: Vec<_> = self.work.rows().collect();
+        // The Workflow line stands for a process that carries its run; the process stays in the
+        // process view and in every count, and only loses its row here.
+        let rows: Vec<_> = self.work.rows().filter(|row| !self.covered(row)).collect();
         let running: Vec<_> = rows.iter().copied().filter(|row| is_running(row)).collect();
         let (text, style) = if let [row] = running.as_slice() {
-            let output = if row.live_line.is_empty() {
-                "no output yet".to_string()
-            } else {
-                format!("last: {}", clean(&row.live_line))
+            let output = match self.last_text(row) {
+                Some(text) => format!("last: {text}"),
+                None => "no output yet".to_string(),
             };
             (
                 format!(
                     "⚙ {} · {} · {output}",
-                    title(&row.command, "background process", 60),
+                    self.name(row),
                     elapsed(row, self.work.now_ms(), self.work.wall_s())
                 ),
                 Style::default(),
@@ -128,11 +171,7 @@ impl BackgroundSection<'_> {
                 format!(
                     "⚙ {} background processes running · newest: {}",
                     running.len(),
-                    newest.map_or_else(String::new, |row| title(
-                        &row.command,
-                        "background process",
-                        60
-                    ))
+                    newest.map_or_else(String::new, |row| self.name(row))
                 ),
                 Style::default(),
             )
@@ -144,7 +183,7 @@ impl BackgroundSection<'_> {
                 format!(
                     "{} {} · {} · ended {} ago",
                     glyph(&row.status),
-                    title(&row.command, "background process", 60),
+                    self.name(row),
                     label(&row.status),
                     ended_ago(row, self.work.now_ms(), self.work.wall_s())
                 ),

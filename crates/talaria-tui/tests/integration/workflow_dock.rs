@@ -4,8 +4,9 @@
 use ratatui::{Terminal, backend::TestBackend, style::Style};
 use talaria_core::hivecode::authoring::{AuthoringProgress, AuthoringStage};
 use talaria_tui::live::LiveSection;
+use talaria_tui::theme::Motion;
 use talaria_tui::workflow_view::{
-    AuthoringDock, WorkflowAgentDock, WorkflowDock, WorkflowTheme, WorkflowView,
+    AuthoringDock, RunClock, WorkflowAgentDock, WorkflowDock, WorkflowTheme, WorkflowView,
 };
 
 fn text(dock: &WorkflowDock<'_>, width: u16) -> Vec<String> {
@@ -64,6 +65,121 @@ fn dock_hidden_without_room() {
     );
     assert!(text(&dock, 0).is_empty());
     assert_eq!(dock.height(0), 0);
+}
+
+/// A started-at time of 5 minutes 51 seconds before `NOW`.
+const NOW: u64 = 1_800_000_000_000;
+const STARTED: i64 = (NOW - 351_000) as i64;
+
+fn clocked(status: &str, clock: Option<RunClock>) -> WorkflowDock<'_> {
+    WorkflowDock::new(
+        "galaga-forge",
+        status,
+        1,
+        4,
+        Some("Alt+W"),
+        Style::new(),
+        Style::new(),
+    )
+    .with_clock(clock)
+}
+
+#[test]
+fn a_running_run_shows_a_spinner_and_the_time_since_it_started() {
+    let clock = RunClock::of_run(true, STARTED, NOW, 200, Motion::Full);
+    assert_eq!(
+        text(&clocked("running", clock), 100),
+        ["⠹ Workflow galaga-forge · running 5m51s · 1/4 agents · Alt+W to open"]
+    );
+    // The spinner moves with the tick and the time with the wall clock.
+    let later = RunClock::of_run(true, STARTED, NOW + 2_000, 280, Motion::Full);
+    assert_eq!(
+        text(&clocked("running", later), 100),
+        ["⠸ Workflow galaga-forge · running 5m53s · 1/4 agents · Alt+W to open"]
+    );
+}
+
+#[test]
+fn reduced_motion_keeps_the_glyph_still_and_the_seconds_counting() {
+    let clock = RunClock::of_run(true, STARTED, NOW, 200, Motion::Reduced);
+    assert_eq!(
+        text(&clocked("running", clock), 100),
+        ["⚙ Workflow galaga-forge · running 5m51s · 1/4 agents · Alt+W to open"]
+    );
+    let later = RunClock::of_run(true, STARTED, NOW + 1_000, 99_999, Motion::Reduced);
+    assert_eq!(
+        text(&clocked("running", later), 100),
+        ["⚙ Workflow galaga-forge · running 5m52s · 1/4 agents · Alt+W to open"]
+    );
+}
+
+#[test]
+fn an_unknown_start_time_shows_no_time_rather_than_a_wrong_one() {
+    for started in [0, -5, (NOW + 60_000) as i64] {
+        let clock = RunClock::of_run(true, started, NOW, 200, Motion::Full);
+        assert_eq!(
+            text(&clocked("running", clock), 100),
+            ["⠹ Workflow galaga-forge · running · 1/4 agents · Alt+W to open"],
+            "start {started}"
+        );
+    }
+}
+
+#[test]
+fn a_run_that_is_not_running_holds_still() {
+    // The caller gives no clock for any other state, so the line keeps its wording.
+    for status in [
+        "completed",
+        "completed_with_failures",
+        "failed",
+        "aborted",
+        "budget_exhausted",
+        "parked",
+        "interrupted",
+    ] {
+        assert_eq!(
+            RunClock::of_run(false, STARTED, NOW, 200, Motion::Full),
+            None
+        );
+        let shown = text(&clocked(status, None), 100);
+        assert_eq!(
+            shown,
+            [format!(
+                "⚙ Workflow galaga-forge · {} · 1/4 agents · Alt+W to open",
+                status.replace('_', " ")
+            )]
+        );
+    }
+}
+
+#[test]
+fn a_narrow_line_drops_the_hint_then_the_time_and_keeps_the_agent_count() {
+    let clock = RunClock::of_run(true, STARTED, NOW, 200, Motion::Full);
+    let dock = clocked("running", clock);
+    let full = "⠹ Workflow galaga-forge · running 5m51s · 1/4 agents";
+    let width = u16::try_from(full.chars().count()).unwrap();
+    assert_eq!(text(&dock, width), [full]);
+    assert_eq!(
+        text(&dock, width - 1),
+        ["⠹ Workflow galaga-forge · running · 1/4 agents"]
+    );
+    let tiny = text(&dock, 12);
+    assert_eq!(tiny.len(), 1);
+    assert!(tiny[0].chars().count() <= 12, "{tiny:?}");
+}
+
+#[test]
+fn the_line_asks_for_a_redraw_only_while_something_on_it_moves() {
+    let full = RunClock::of_run(true, STARTED, NOW, 200, Motion::Full).unwrap();
+    assert_eq!(full.wake_after_ms(), Some(talaria_tui::activity::FRAME_MS));
+    // Reduced motion waits for the next whole second of the run.
+    let reduced = RunClock::of_run(true, STARTED, NOW + 250, 0, Motion::Reduced).unwrap();
+    assert_eq!(reduced.wake_after_ms(), Some(750));
+    // Reduced motion with no known start has nothing that moves.
+    let still = RunClock::of_run(true, 0, NOW, 0, Motion::Reduced).unwrap();
+    assert_eq!(still.wake_after_ms(), None);
+    // A run that is not running has no clock, so nothing asks for a redraw.
+    assert_eq!(RunClock::of_run(false, STARTED, NOW, 0, Motion::Full), None);
 }
 
 fn authoring(

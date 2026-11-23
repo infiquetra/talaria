@@ -1,5 +1,5 @@
 //! Windowed alternate-screen progress presentation. Untrusted content stays literal.
-use crate::{checklist::cut_to_width, history::sanitize};
+use crate::{activity::FRAME_MS, checklist::cut_to_width, history::sanitize, theme::Motion};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -7,6 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Paragraph, Widget},
 };
+use talaria_core::background::format_elapsed;
 pub use talaria_workflow::progress::live::ProgressKey;
 use talaria_workflow::progress::{
     RunState, format_money, format_tokens,
@@ -38,7 +39,56 @@ pub struct WorkflowDock<'a> {
     open_hint: Option<&'a str>,
     header: Style,
     hint: Style,
+    clock: Option<RunClock>,
 }
+
+/// What shows that a running workflow is alive: a spinner frame, the time since the run
+/// started, or both. A run that is not running has none, and its line holds still.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RunClock {
+    /// The spinner frame, under full motion. Under reduced motion the glyph stays still.
+    pub frame: Option<usize>,
+    /// Whole milliseconds since the run started, when its start time is known.
+    pub elapsed_ms: Option<u64>,
+}
+
+impl RunClock {
+    /// The clock of a run at `wall_now_ms` (Unix milliseconds) whose records say it started at
+    /// `started_at_ms`. `tick_ms` is any millisecond count that rises with time and picks the
+    /// spinner frame. A run that is not running has no clock. A start time that is missing (not
+    /// above zero) or in the future gives no elapsed time rather than a wrong one.
+    #[must_use]
+    pub fn of_run(
+        running: bool,
+        started_at_ms: i64,
+        wall_now_ms: u64,
+        tick_ms: u64,
+        motion: Motion,
+    ) -> Option<Self> {
+        if !running {
+            return None;
+        }
+        let elapsed_ms = u64::try_from(started_at_ms)
+            .ok()
+            .filter(|started| *started > 0)
+            .and_then(|started| wall_now_ms.checked_sub(started));
+        let frame = (motion == Motion::Full).then(|| {
+            usize::try_from(tick_ms / FRAME_MS).unwrap_or(0) % crate::launch_dialog::SPINNER.len()
+        });
+        Some(Self { frame, elapsed_ms })
+    }
+
+    /// How long until the line next changes: a spinner frame under full motion, the next whole
+    /// second of the run under reduced motion, and never when nothing on the line moves.
+    #[must_use]
+    pub fn wake_after_ms(&self) -> Option<u64> {
+        if self.frame.is_some() {
+            return Some(FRAME_MS);
+        }
+        self.elapsed_ms.map(|elapsed| 1_000 - elapsed % 1_000)
+    }
+}
+
 impl<'a> WorkflowDock<'a> {
     pub fn new(
         name: &'a str,
@@ -57,33 +107,56 @@ impl<'a> WorkflowDock<'a> {
             open_hint,
             header,
             hint,
+            clock: None,
         }
+    }
+    /// Show the spinner and the elapsed time of a running run.
+    #[must_use]
+    pub fn with_clock(mut self, clock: Option<RunClock>) -> Self {
+        self.clock = clock;
+        self
     }
     pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
         if width == 0 {
             return vec![];
         }
-        let base = sanitize(&format!(
-            "⚙ Workflow {} · {} · {}/{} agents",
-            self.name.replace(['\r', '\n', '\t'], " "),
-            self.status.replace('_', " "),
-            self.finished,
-            self.total
-        ))
-        .into_owned();
+        let clock = self.clock.unwrap_or_default();
+        let glyph = clock.frame.map_or("⚙", |frame| {
+            crate::launch_dialog::SPINNER[frame % crate::launch_dialog::SPINNER.len()]
+        });
+        let line = |with_time: bool| {
+            let time = clock
+                .elapsed_ms
+                .filter(|_| with_time)
+                .map(|ms| format!(" {}", format_elapsed(ms / 1_000)))
+                .unwrap_or_default();
+            sanitize(&format!(
+                "{glyph} Workflow {} · {}{time} · {}/{} agents",
+                self.name.replace(['\r', '\n', '\t'], " "),
+                self.status.replace('_', " "),
+                self.finished,
+                self.total
+            ))
+            .into_owned()
+        };
         let hint = format!(
             " · {} to open",
             self.open_hint
                 .map_or_else(|| "/workflows".to_owned(), |key| sanitize(key).into_owned())
         );
         let room = usize::from(width);
-        if base.width() + hint.width() <= room {
+        let with_time = line(true);
+        if with_time.width() + hint.width() <= room {
             return vec![Line::from(vec![
-                Span::styled(base, self.header),
+                Span::styled(with_time, self.header),
                 Span::styled(hint, self.hint),
             ])];
         }
-        vec![Line::styled(cut_to_width(&base, width), self.header)]
+        // Short of room, the hint goes first, then the time, and the agent count stays.
+        if with_time.width() <= room {
+            return vec![Line::styled(with_time, self.header)];
+        }
+        vec![Line::styled(cut_to_width(&line(false), width), self.header)]
     }
 }
 impl crate::live::LiveSection for WorkflowDock<'_> {

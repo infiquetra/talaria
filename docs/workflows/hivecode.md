@@ -185,8 +185,8 @@ routed prompt, because the agent asks before it starts a run and the answer can 
 later; a run still going after that hour is followed until it ends. Each routed prompt starts
 a fresh hour and forgets runs that already ended. When one starts it prints
 `Workflow run started: <name> (<run id>). Press Alt+W or type /workflows to see its agents.`,
-shows a dock line above the composer (`⚙ Workflow <name> · running · 3/10 agents · Alt+W to
-open`), and adds the agent count to the status segment (`hivecode · 3/10 agents`), which is
+shows a dock line above the composer (`⠹ Workflow <name> · running 5m51s · 3/10 agents · Alt+W
+to open`, with a moving spinner and the run's elapsed time while it runs), and adds the agent count to the status segment (`hivecode · 3/10 agents`), which is
 then kept on a narrow line. When the run ends it prints `Workflow run <outcome>: …` and the
 dock line goes away; a run whose budget refused or stopped any agent prints
 `Workflow run stopped by its budget: …`. The view never opens by itself. `workflow_view` (Alt+W) opens the latest

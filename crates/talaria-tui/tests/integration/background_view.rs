@@ -115,6 +115,7 @@ fn draw_section(work: &BackgroundWork, width: u16, height: u16) -> Buffer {
         work,
         width_hint: width,
         theme: &theme,
+        workflow_run: None,
     };
     let area = Rect::new(0, 0, width, height);
     let mut buf = Buffer::empty(area);
@@ -128,6 +129,7 @@ fn section_height(work: &BackgroundWork, width: u16) -> u16 {
         work,
         width_hint: width,
         theme: &theme,
+        workflow_run: None,
     }
     .height(width)
 }
@@ -1014,4 +1016,196 @@ fn a_result_cell_shows_the_answer_and_the_footer() {
         failed_text.contains("background task bg_bad · not part of the conversation"),
         "{failed_text}"
     );
+}
+
+mod workflow_rows {
+    use super::*;
+    use talaria_core::background::RunIdentity;
+
+    const RUN_ID: &str = "01RUNIDEXAMPLE0000000000A";
+    const RUN_DIR: &str = "/data/runs/01RUNIDEXAMPLE0000000000A";
+    const RUN: RunIdentity<'static> = RunIdentity {
+        run_id: RUN_ID,
+        run_dir: RUN_DIR,
+    };
+    const START_LINE: &str = concat!(
+        "{\"event\":\"run_started\",\"run_id\":\"01RUNIDEXAMPLE0000000000A\",",
+        "\"run_dir\":\"/data/runs/01RUNIDEXAMPLE0000000000A\"}\n"
+    );
+    const COMPOUND: &str = "ls -A /srv/project | wc -l; HERMES_HOME='/srv/home' \
+                            talaria workflow run --json /srv/project/forge.workflow";
+
+    fn with_processes(rows: Vec<ListedProcess>, output: &[(&str, &str)]) -> BackgroundWork {
+        let mut work = BackgroundWork::default();
+        let request = foreground(&mut work);
+        list(&mut work, request, rows);
+        for (id, chunk) in output {
+            let _ = apply(
+                &mut work,
+                BackgroundEvent::TerminalOutput {
+                    process_id: (*id).to_owned(),
+                    chunk: (*chunk).to_owned(),
+                    now_ms: 2,
+                },
+            );
+        }
+        // The live row's last line follows the clock.
+        let _ = apply(
+            &mut work,
+            BackgroundEvent::Clock {
+                now_ms: 42_000,
+                wall_s: 185.0,
+            },
+        );
+        work
+    }
+
+    fn draw(work: &BackgroundWork, run: Option<RunIdentity<'_>>) -> Vec<String> {
+        let theme = BackgroundTheme::default();
+        let section = BackgroundSection {
+            work,
+            width_hint: 100,
+            theme: &theme,
+            workflow_run: run,
+        };
+        let height = section.height(100);
+        let area = Rect::new(0, 0, 100, height);
+        let mut buf = Buffer::empty(area);
+        section.render(area, &mut buf);
+        rows_of(&buf)
+    }
+
+    #[test]
+    fn a_process_the_workflow_line_covers_has_no_row_but_stays_counted() {
+        let work = with_processes(
+            vec![listed("wf", COMPOUND, "running", Some(1.0))],
+            &[
+                ("wf", START_LINE),
+                ("wf", "{\"event\":\"phase\",\"title\":\"Build\"}\n"),
+            ],
+        );
+        assert!(draw(&work, Some(RUN)).is_empty(), "covered");
+        // Without the Workflow line the process is drawn, named by its workflow command.
+        let shown = draw(&work, None);
+        assert_eq!(shown.len(), 1);
+        assert!(
+            shown[0].starts_with("⚙ talaria workflow run forge.workflow · "),
+            "{shown:?}"
+        );
+        // The process and every count that includes it are untouched.
+        assert_eq!(work.rows().count(), 1);
+        assert_eq!(work.summary().running, 1);
+    }
+
+    #[test]
+    fn a_resume_is_covered_by_the_run_it_names_and_not_by_another() {
+        let work = with_processes(
+            vec![listed(
+                "wf",
+                &format!("talaria workflow resume --json {RUN_ID}"),
+                "running",
+                Some(1.0),
+            )],
+            &[],
+        );
+        assert!(draw(&work, Some(RUN)).is_empty());
+        let other = RunIdentity {
+            run_id: "01OTHER",
+            run_dir: "/data/runs/01OTHER",
+        };
+        let shown = draw(&work, Some(other));
+        assert_eq!(shown.len(), 1);
+        assert!(
+            shown[0].starts_with("⚙ talaria workflow resume 01RUNIDEXAMPLE0000000000A · "),
+            "{shown:?}"
+        );
+    }
+
+    #[test]
+    fn a_workflow_process_with_no_known_run_is_relabelled_and_stays_drawn() {
+        // The start line was never seen, so nothing says which run it carries.
+        let work = with_processes(
+            vec![listed("wf", COMPOUND, "running", Some(1.0))],
+            &[("wf", "{\"event\":\"phase\",\"title\":\"Build\"}\n")],
+        );
+        let shown = draw(&work, Some(RUN));
+        assert_eq!(shown.len(), 1);
+        assert!(
+            shown[0].starts_with("⚙ talaria workflow run forge.workflow"),
+            "{shown:?}"
+        );
+    }
+
+    #[test]
+    fn the_last_json_line_is_shown_as_the_event_and_its_label() {
+        let work = with_processes(
+            vec![listed("wf", COMPOUND, "running", Some(1.0))],
+            &[(
+                "wf",
+                concat!(
+                    "{\"event\":\"scheduler\",\"value\":{\"at\":\"2026-11-23T10:00:00Z\",",
+                    "\"event\":\"queued\",\"label\":\"fix-1\",\"key\":\"k\",\"profile\":\"p\",",
+                    "\"provider\":\"prov\",\"model\":\"some-long-model-name\"}}\n"
+                ),
+            )],
+        );
+        let shown = draw(&work, None);
+        assert!(
+            shown[0].contains("· last: scheduler queued · fix-1 · /processes"),
+            "{shown:?}"
+        );
+        assert!(!shown[0].contains("{\""), "{shown:?}");
+    }
+
+    #[test]
+    fn a_plain_last_line_of_a_workflow_process_stays_as_it_is() {
+        let work = with_processes(
+            vec![listed("wf", COMPOUND, "running", Some(1.0))],
+            &[("wf", "warning: slow disk\n")],
+        );
+        let shown = draw(&work, None);
+        assert!(
+            shown[0].contains("· last: warning: slow disk · /processes"),
+            "{shown:?}"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_process_is_unchanged_whatever_the_workflow_line_shows() {
+        let work = with_processes(
+            vec![listed(
+                "p1",
+                "sh tick.sh && talaria workflow list",
+                "running",
+                Some(1.0),
+            )],
+            &[("p1", "{\"event\":\"tick\",\"n\":1}\n")],
+        );
+        let covered = draw(&work, Some(RUN));
+        assert_eq!(covered, draw(&work, None));
+        assert_eq!(covered.len(), 1);
+        assert!(
+            covered[0].starts_with("⚙ sh tick.sh && talaria workflow list · "),
+            "{covered:?}"
+        );
+        assert!(
+            covered[0].contains("last: {\"event\":\"tick\",\"n\":1}"),
+            "{covered:?}"
+        );
+    }
+
+    #[test]
+    fn another_process_is_still_drawn_beside_a_covered_workflow_process() {
+        let work = with_processes(
+            vec![
+                listed("wf", COMPOUND, "running", Some(1.0)),
+                listed("p1", "sh tick.sh", "running", Some(2.0)),
+            ],
+            &[("wf", START_LINE), ("p1", "tick 1\n")],
+        );
+        let shown = draw(&work, Some(RUN));
+        assert_eq!(shown.len(), 1);
+        assert!(shown[0].starts_with("⚙ sh tick.sh · "), "{shown:?}");
+        assert_eq!(work.summary().running, 2);
+    }
 }
