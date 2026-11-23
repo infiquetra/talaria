@@ -2,6 +2,52 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — A fake gateway showed turns the real one cannot
+
+**Evidence.** The review found `use-reply` waiting forever on a resumed runner while every test
+passed: the fake gateway's `next_reply` scanned every stored turn, and Hermes's snapshot lists
+only queued and started turns (`crates/talaria-workflow/src/journal/fake_gateway.rs`). The fake
+now shows a client only turns made while it was subscribed, or queued or running when it
+subscribed.
+
+**Mechanism.** The tests proved behaviour that does not exist in Hermes.
+
+**Generalizable rule.** A fake may show only what the real service can show.
+
+## 2026-11-23 — `git add --ignore-errors` still exits 1
+
+**Evidence.** One unreadable file made the whole save of an agent's work fail, although git had
+indexed everything else (`crates/talaria-workflow/src/worktree/git/save.rs`). Writing the tree
+also runs the clean filter on entries git must re-read, so filter overrides go on every command
+that touches the temporary index, and a filter is only switched off with `required=false` beside
+empty `clean` and `process`.
+
+**Mechanism.** The option tolerates per-file errors but reports them in the exit status, and the
+caller treated any non-zero status as failure.
+
+**Generalizable rule.** When a git option tolerates per-file errors, judge by the exit status
+and the error output together.
+
+## 2026-11-23 — A replayed run cannot say why money is unknown the way a live run can
+
+**Evidence.** Only the cost Hermes reports is journaled; money priced from the price list is not
+(`crates/talaria-workflow/src/runner/execute.rs`, the replay path). The replay said "Hermes has
+no price for the models used" for a run the live path had priced.
+
+**Mechanism.** One message was written for two code paths that know different things.
+
+**Generalizable rule.** A message about why a value is missing describes what the code that
+built that value knows.
+
+## 2026-11-23 — A free-text argument swallowed words that look like flags
+
+**Evidence.** `workflow lessons add --run R pass --cwd to check` exited 2 until the positional
+argument got `trailing_var_arg` and `allow_hyphen_values`
+(`crates/talaria-cli/src/workflow_lessons.rs`, test `lesson_text_may_name_flags`).
+
+**Generalizable rule.** A free-text positional argument needs both settings and a test with a
+hyphen word.
+
 ## 2026-11-23 — A relayed stop was read as a provider timeout
 
 **Evidence.** A real run's planner ended with turn exit reason `interrupted_during_api_call` and

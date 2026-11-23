@@ -56,15 +56,19 @@ with the usual caveat that a `0.x` line may break anything between releases.
   session (for example after you type "continue" there) as its result.
 - `talaria workflow restart <run> <agent>` (or `--all-failed`) asks for failed agents to run again;
   `talaria workflow resume <run>` then runs them and keeps finished agents without paying twice.
-  `talaria workflow result <run> --agent <agent>` prints one finished agent's kept value.
+  `talaria workflow result <run>` prints a finished run's stored result without running or
+  spending anything, and with `--agent <agent>` one finished agent's kept value. The closing
+  line of a run now points at it.
 - When an agent working in its own worktree is cut short, fails or is stopped with uncommitted
   changes, Talaria saves them to a branch and names the branch in the result. The worktree is not
   changed. Agents without a worktree edit the run's folder directly, and the result now says so.
 - The closing line of `workflow run --json` and the rows of `workflow list` show what a run left
   behind: failed agents, agents cut short, uncommitted edits, declared phases that never started,
-  and the script's own status.
+  and the script's own status. Failed agents, cut-short agents and uncommitted edits are marked
+  `Attention:`; the script's status and the phases that did not start are stated as facts.
 - `talaria workflow lessons` and `talaria workflow lessons add --run <run> <text>` keep a notes
-  file agents can read and add to, because the workflow skill itself is locked.
+  file agents can read and add to, since agents do not edit the workflow skill. The listing shows
+  the newest 50 entries; `--all` shows every entry.
 - `talaria workflow check` warns when a script sets `maxTurns`, and reports which phases its trial
   run reached instead of listing every declared phase.
 - A run's manifest records the commit of the Talaria build that wrote it.
@@ -110,8 +114,9 @@ with the usual caveat that a `0.x` line may break anything between releases.
 - `talaria workflow worktrees remove` now clears a clean worktree whose agent switched to its own
   branch, once the source checkout contains that work. It deletes only merged branches and never a
   branch that existed before the run. Its closing text names the real reasons folders were kept.
-- "Money unknown" now says why: Hermes reported no cost and has no price for the models used. It
-  no longer suggests that setting tiers would produce a price.
+- "Money unknown" now says why: Hermes reported no cost and no turn could be priced, or, for a
+  stored run, that only costs Hermes reported are kept. It no longer suggests that setting tiers
+  would produce a price.
 - The workflow skill tells agents to leave `maxTurns` out, to give every field a script branches
   on a fixed list of allowed words, to estimate from tokens without cache reads, to look at
   leftover edits and ask again before a follow-up run, and that a stopped agent is not a provider

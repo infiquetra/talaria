@@ -283,7 +283,7 @@ returned to the script, read from the journal: the pretty JSON value in text mod
 `reason` when the agent did not complete, and `cut_short` for a reply kept at Hermes's step
 cap. It exits 0 when a value was printed and 1 when the agent has none (failed, skipped,
 stopped, parked, or unfinished). A `completed_with_failures` result already lists each failed
-agent's `label` and `reason` in `failed_agents`, also on a replaying `resume --json`.
+agent's `label` and `reason` in `failed_agents`, also from `workflow result --json`.
 
 `talaria workflow result <run-id>` without `--agent` prints the run's own stored result, read
 from the run folder only: exactly what a resume of the finished run prints when it replays it,
@@ -372,23 +372,19 @@ attempt's last settled session cost; any missing or unknown settled cost makes t
 unknown. File-only discovery never reprices tokens.
 
 Rows also carry `failed_agents`, `cut_short_agents`, `uncommitted_edits`, `saved_branches` and
-`phases_not_started` (zero until the run finishes) and `script_status` when the script's result
-has one; text rows add marks such as `failed 2`.
+`phases_not_started` (zero until the run finishes), `phases_not_started_names` when any phase did
+not start, and `script_status` when the script's result has one; text rows add marks such as
+`failed 2`, then `script status "reviewed"` and `phases not started: Verify, Synthesize`.
 
-In `--json` mode the closing text line adds, before `Full result:`, an `Attention:` sentence
-when the run left problems: the script's own `status` string, declared phases that never started,
-agents that left uncommitted edits and how many were saved to a branch, agents cut short, and
-agents that failed, with the most important last. `failed_agents`, `cut_short_agents` and
-`leftover_edits` entries name `saved_branch` when an isolated agent's uncommitted work was saved
-(see [Worktrees](worktrees.md)); a `leftover_edits` entry with `in_place: true` names a folder
-agents without isolation edited directly, where nothing was saved or lost.
-
-## Lessons
-
-`talaria workflow lessons` prints the notes file `lessons.txt` in Talaria's configuration folder
-(`TALARIA_CONFIG_DIR`, default `~/.talaria`), beside the `workflows` and `runs` folders, and
-`talaria workflow lessons add --run <run-id> <text>` appends one dated entry naming the run.
-Agents use it because the workflow skill is locked; the entries are unreviewed notes, not rules.
+In `--json` mode the closing text line states, before `Full result:`, the script's own `status`
+and the declared phases that did not start (up to three named, the rest counted), as information.
+Then it adds an `Attention:` sentence when agents left uncommitted edits (and how many were saved
+to a branch), were cut short or failed, most important last. The hint is `Full result: talaria
+workflow result --json <run-id>`, with `--runs-dir` for a custom runs folder. `failed_agents`,
+`cut_short_agents` and `leftover_edits` entries name `saved_branch` when an isolated agent's
+uncommitted work was saved (see [Worktrees](worktrees.md)); a `leftover_edits` entry with
+`in_place: true` names a folder agents ran in without isolation: anything they changed is already
+there, and nothing was saved.
 
 Foreground output names the run folder, shows phases, logs, agents, and scheduler events,
 then prints the result. `--json` emits compact JSON lines and one final `run_finished`
@@ -407,6 +403,16 @@ always write human output to `runner.log`; the parent prints one detached-run ob
 Exit codes are 0 completed, 1 failed or unconfirmed, 2 usage or refusal, 3 aborted, 4 budget exhausted (the script
 returned, but the budget refused or stopped at least one agent), and 5 completed with failures (the script returned
 and its result is printed, but at least one agent failed).
+
+## Lessons
+
+`talaria workflow lessons` prints the newest 50 entries of the notes file `lessons.txt` in
+Talaria's configuration folder (`TALARIA_CONFIG_DIR`, default `~/.talaria`), with one line saying
+how many older entries exist; `--all` prints every entry. `talaria workflow lessons add --run
+<run-id> <text>` appends one dated entry naming the run, and refuses when the configuration folder
+resolves to a relative path. Agents do not edit the workflow skill; they record lessons with this
+command instead. The entries are unreviewed notes, not rules, and the developer may edit or prune
+the file by hand.
 
 ## Integration and verification
 

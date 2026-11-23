@@ -23,6 +23,35 @@ twenty constructors and older readers).
 **Revisit when.** Hermes reports who sent a stop; or the workflow view should answer a parked
 call itself instead of pointing at `talaria workflow resolve`.
 
+## 2026-11-23 — A finished run's result is read with `workflow result`, never with resume
+
+**Decision.** `talaria workflow result <run>` without `--agent` prints a finished run's stored
+result exactly as a replaying resume does, never opens an execution and ignores pending restart
+requests. The skill, the closing line's hint and the guides point at it.
+
+**Rationale.** `workflow resume --json` on a finished run opens a new, paid execution when a
+restart request is pending, and the skill told agents to use it only to read a result.
+
+**Rejected.** Making resume skip pending restarts (restart then resume is the rerun path).
+
+**Revisit when.** Resume gets a read-only mode of its own.
+
+## 2026-11-23 — Stop notes name their turn and are written before the stop is sent
+
+**Decision.** The run-stop and budget-stop paths write a note per target before sending a stop,
+as the workflow view does. A note records the attempt, turn and admission it describes; a note
+naming another turn is ignored, and resume removes notes whose turn is no longer running.
+`use-reply` accepts only a turn first seen after the call parked: the call record keeps the
+admissions seen up to then.
+
+**Rationale.** A settlement first read by a later execution has no live "run is stopping" flag,
+so the runner's own stop was blamed on a person and parked. A note keyed only by agent outlived
+its stop and mislabelled the next one. A reply that settled before the stop could be adopted.
+
+**Rejected.** Clearing every note when an execution starts (it would lose live run-stop notes).
+
+**Revisit when.** The view can read admission ids directly.
+
 ## 2026-11-23 — Failed agents are rerun by a command that reuses the view's restart request
 
 **Decision.** `talaria workflow restart <run> <agent>` writes the same request file the workflow
@@ -44,8 +73,11 @@ worktree has uncommitted changes, Talaria commits them to a new branch
 (`talaria/wf/<run>/<digest>-<n>-saved`) through a temporary index, without touching the worktree,
 its index or its branch. Hooks and signing are off for those commands. The branch name travels in
 the cut-short mark and at the end of the failure reason. Agents without isolation, including
-every run outside a git repository, edit the run's folder directly: the result lists that folder
-as edited in place and nothing is saved.
+every run outside a git repository, run in the run's folder directly: the result lists that folder
+as one they ran in without isolation, where anything they changed is already there and nothing
+is saved. A parked call's worktree is saved when it parks and again before a rerun. A save keeps
+what git can read, names the paths it skipped, and switches off filter programs the repository
+itself configures (the user's own, such as Git LFS, still run).
 
 **Rationale.** Two cut-short agents left hundreds of changed lines that the calling agent called
 "nothing landed".
@@ -61,8 +93,8 @@ their own clean-up rule.
 
 **Decision.** `workflow worktrees remove` removes a clean worktree whose HEAD is an ancestor of
 the source checkout's HEAD even when the agent switched branches. It deletes the run's branch and
-the agent's branch only when each is fully merged, and the agent's branch only when its reflog
-shows it was created during the run.
+the agent's branch only when each is fully merged, and the agent's branch only when the first line
+of its reflog is a creation dated inside the run; a branch whose reflog expired is kept.
 
 **Rationale.** The skill tells agents to create named branches, so every such folder was kept
 forever with a reason that did not apply.
@@ -79,10 +111,11 @@ named branches).
 as unreviewed, to record only what they verified from a run's own outcome or journal, and to tell
 the developer what they recorded.
 
-**Rationale.** The skill is locked on purpose, so an agent had nowhere to put a lesson. Two of
+**Rationale.** Agents are told not to edit the skill, so an agent had nowhere to put a lesson. Two of
 the four lessons one agent drafted were wrong, so the notes are labelled unreviewed.
 
-**Rejected.** Unlocking the skill. Writing into the repository.
+**Rejected.** Letting agents edit the skill. Writing into the repository. A prune command (the
+developer edits the file by hand; the listing shows the newest 50 entries).
 
 **Revisit when.** A wrong note misleads a later run; then entries need review before agents read
 them.
