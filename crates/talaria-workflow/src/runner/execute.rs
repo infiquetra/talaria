@@ -623,10 +623,12 @@ async fn resume(
                     cache_read_tokens: fold.cache_read_tokens,
                     cache_unknown_turns: fold.cache_unknown_turns,
                     money_usd: fold.money,
+                    // The journal keeps only the costs Hermes reported, so a replay cannot show
+                    // money the live run priced from the price list.
                     money_source: if fold.money.is_some() {
                         "hermes"
                     } else {
-                        "none"
+                        "unrecorded"
                     }
                     .into(),
                 },

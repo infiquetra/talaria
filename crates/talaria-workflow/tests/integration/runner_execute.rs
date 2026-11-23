@@ -189,6 +189,12 @@ fn receipt(session_id: &str, session: &Session, status: &str, include_result: bo
             value["result"]["completed"] = json!(false);
             value["result"]["failed"] = json!(true);
         }
+        if session.prompt.contains("unpriced") {
+            // Hermes reports no cost for this turn.
+            for field in ["estimated_cost_usd", "cost_status", "cost_source"] {
+                value["result"].as_object_mut().unwrap().remove(field);
+            }
+        }
         if session.prompt.contains("billing") {
             // The answer arrives, but the provider reports the account out of credit.
             value["result"]["failure_reason"] = json!("billing");
@@ -2615,6 +2621,24 @@ fn progress_control_files_match_view() {
                 .all(|s| !s.contains(&key))
         );
     }
+}
+
+#[test]
+fn a_replay_says_its_money_was_not_recorded_when_a_turn_had_no_hermes_cost() {
+    // The live run can price a turn from the price list, but only Hermes's own costs are journaled,
+    // so the replay cannot know that money and must not claim there was no price.
+    let h = Harness::new("return await agent('unpriced review', {label:'review'});");
+    let (first, events) = Worker::start(Start::New(h.request()), services(&h.wire, true)).finish();
+    assert_eq!(first.code, 0);
+    let live: Vec<_> = events.iter().filter(|e| e["event"] == "run_finished").collect();
+    assert_eq!(live[0]["spend"]["money_source"], "none");
+    let target = first.run_id.unwrap();
+    let (exit, events) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, false)).finish();
+    assert_eq!(exit.code, 0);
+    let replay: Vec<_> = events.iter().filter(|e| e["event"] == "run_finished").collect();
+    assert_eq!(replay[0]["spend"]["money_usd"], Value::Null);
+    assert_eq!(replay[0]["spend"]["money_source"], "unrecorded");
 }
 
 #[test]
