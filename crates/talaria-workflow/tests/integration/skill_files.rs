@@ -369,6 +369,9 @@ fn waiting_follows_the_hermes_wait_cap_and_never_loops() {
 fn the_new_project_and_worker_folder_rules_are_stated() {
     let all = files();
     let s = file(&all, "SKILL.md");
+    // The worktree and new project rules live in the script reference, and SKILL.md points there.
+    let reference = file(&all, "references/script-api.md");
+    assert!(s.contains("worktree, new project and phase rules in references/script-api.md"));
     for marker in [
         "not inside",
         "git init",
@@ -377,6 +380,10 @@ fn the_new_project_and_worker_folder_rules_are_stated() {
         "git switch -c",
         "never `cd` or `git -C`",
         "absolute path",
+    ] {
+        assert!(reference.contains(marker), "missing {marker} in script-api.md");
+    }
+    for marker in [
         "`rm` on any absolute path",
         "`sh -c` or `bash -c`",
         "workflow list --json",
@@ -385,4 +392,35 @@ fn the_new_project_and_worker_folder_rules_are_stated() {
     ] {
         assert!(s.contains(marker), "missing {marker}");
     }
+}
+
+#[test]
+fn the_new_guidance_is_in_the_skill() {
+    let all = files();
+    let s = file(&all, "SKILL.md");
+    for marker in [
+        "workflow lessons",
+        "unreviewed notes",
+        "Leave `maxTurns` out",
+        "`enum`",
+        "cache_unknown_turns",
+        "do not scale by agent count alone",
+        "workflow worktrees list <run>",
+        "never start a follow-up run that ignores them",
+        "fresh explicit yes",
+        "not by a provider limit",
+        "Never edit this skill",
+    ] {
+        assert!(s.contains(marker), "missing {marker}");
+    }
+    let reference = file(&all, "references/script-api.md");
+    for marker in ["## Step caps", "## Status words", "status: {enum: ['done','blocked']}"] {
+        assert!(reference.contains(marker), "missing {marker} in script-api.md");
+    }
+    assert!(file(&all, "references/commands.md").contains("workflow lessons add --run"));
+    // Every example that branches on a status word lists its words with enum.
+    let examples = file(&all, "references/examples.md");
+    assert!(examples.contains("status:{enum:['done','blocked']}"));
+    assert!(examples.contains("verdict:{enum:['confirmed','rejected']}"));
+    assert!(!examples.contains("maxTurns:"), "no example sets a step cap");
 }
