@@ -5587,6 +5587,9 @@ struct StandaloneInfo {
     profile_registry: Mutex<Vec<RegistrySeen>>,
     profile_registry_reply: Mutex<Option<(u16, Value)>>,
     configure_rest_origin: Mutex<Option<String>>,
+    /// What `GET /api/config` answers, and every such request seen.
+    config_reply: Mutex<Value>,
+    config_seen: Mutex<Vec<DoctorHttpSeen>>,
     doctor: Mutex<DoctorMockState>,
 }
 
@@ -5722,6 +5725,10 @@ impl StandaloneGateway {
                 http: Vec::new(),
             }),
             configure_rest_origin: Mutex::new(None),
+            config_reply: Mutex::new(
+                json!({"compression":{"in_place":true},"agent":{"max_turns":null}}),
+            ),
+            config_seen: Mutex::new(Vec::new()),
         });
         lock(&shared).sess.profile_id = info.home.clone();
         let socket = home.join("gateway.sock");
@@ -5960,6 +5967,14 @@ impl StandaloneGateway {
     }
     pub fn doctor_drop_restart(&self, value: bool) {
         plain(&self.info.doctor).drop_restart = value;
+    }
+    /// Set what `GET /api/config` answers; the default is a healthy configuration.
+    pub fn set_config_reply(&self, reply: Value) {
+        *plain(&self.info.config_reply) = reply;
+    }
+    /// Every `GET /api/config` the gateway answered. They are plain HTTP, not connections.
+    pub fn config_requests(&self) -> Vec<DoctorHttpSeen> {
+        plain(&self.info.config_seen).clone()
     }
     pub fn doctor_http_requests(&self) -> Vec<DoctorHttpSeen> {
         plain(&self.info.doctor).http.clone()
@@ -6244,6 +6259,8 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
             if head.starts_with("GET /api/status") || head.starts_with("POST /api/gateway/restart")
             {
                 doctor_http(stream, info).await;
+            } else if head.starts_with("GET /api/config") {
+                config_http(stream, info).await;
             } else if head.starts_with("DELETE /api/profiles/")
                 || head.starts_with("PATCH /api/profiles/")
             {
@@ -6859,6 +6876,62 @@ async fn doctor_http(stream: TcpStream, info: Arc<StandaloneInfo>) {
         status,
         data.len(),
         data
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+}
+/// `GET /api/config` for a profile: the effective configuration, behind one unused `native-http`
+/// ticket. It is plain HTTP, so it is not counted as a connection.
+async fn config_http(stream: TcpStream, info: Arc<StandaloneInfo>) {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    if reader.read_line(&mut line).await.is_err() {
+        return;
+    }
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("").to_owned();
+    let target = parts.next().unwrap_or("").to_owned();
+    let mut headers = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).await.unwrap_or(0) == 0 || line == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = line.trim_end().split_once(':') {
+            headers.push((name.to_ascii_lowercase(), value.trim().to_owned()));
+        }
+    }
+    let found: Vec<_> = headers
+        .iter()
+        .filter(|(k, _)| k == "x-hermes-gateway-ticket")
+        .collect();
+    let allowed = found.len() == 1 && {
+        let mut issued = plain(&info.tickets);
+        match issued
+            .iter_mut()
+            .find(|t| t.value == found[0].1 && !t.used && t.purpose == "native-http")
+        {
+            Some(entry) => {
+                entry.used = true;
+                true
+            }
+            None => false,
+        }
+    };
+    plain(&info.config_seen).push(DoctorHttpSeen {
+        method,
+        target,
+        headers,
+        body: String::new(),
+    });
+    let (status, data) = if allowed {
+        (200, plain(&info.config_reply).to_string())
+    } else {
+        (401, json!({"detail":"Unauthorized"}).to_string())
+    };
+    let mut stream = reader.into_inner();
+    let response = format!(
+        "HTTP/1.1 {status} response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}",
+        data.len(),
     );
     let _ = stream.write_all(response.as_bytes()).await;
 }
