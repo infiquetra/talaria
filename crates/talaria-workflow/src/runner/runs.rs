@@ -57,6 +57,18 @@ pub enum RunStatus {
     Unreadable,
 }
 impl RunStatus {
+    /// Whether the run reached a recorded end. Running, parked, interrupted and unreadable runs
+    /// have not: their agents may still be working or may be resumed.
+    pub fn is_finished(self) -> bool {
+        matches!(
+            self,
+            Self::Completed
+                | Self::CompletedWithFailures
+                | Self::BudgetExhausted
+                | Self::Failed
+                | Self::Aborted
+        )
+    }
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
@@ -375,6 +387,14 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
         run_dir: path.to_string_lossy().into_owned(),
         warning: None,
     }
+}
+/// One run folder's summary, derived exactly as `workflow list` derives it.
+pub fn summarize_run(path: &Path) -> RunSummary {
+    let id = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    summarize(path, &id)
 }
 pub fn discover_runs(runs_dir: &Path) -> Vec<RunSummary> {
     let entries = match fs::read_dir(runs_dir) {
