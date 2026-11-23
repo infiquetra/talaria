@@ -778,3 +778,38 @@ fn empty_gateway_home_reports_one_plain_gateway_not_found_line() {
 
 #[path = "../workflow_builtins_cli.rs"]
 mod builtins_contract;
+
+fn run_in(temp: &Path, cwd: &Path, runs: &str) -> Output {
+    output(
+        command(temp, "events-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--cwd"])
+            .arg(cwd)
+            .arg("--runs-dir")
+            .arg(temp.join(runs))
+            .arg(fixture("scripts/events.js")),
+    )
+}
+
+#[test]
+fn a_run_outside_a_git_repository_warns_but_still_runs() {
+    let temp = tempfile::tempdir().unwrap();
+    let plain = temp.path().join("new-project");
+    fs::create_dir_all(&plain).unwrap();
+    let out = run_in(temp.path(), &plain, "plain-runs");
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("is not inside a git repository"), "{stderr}");
+    assert!(stderr.contains("isolation: 'worktree' will fail"), "{stderr}");
+    assert!(stderr.contains("git init"), "{stderr}");
+    assert!(
+        text(&out.stdout).contains("\"event\":\"run_finished\""),
+        "the warning must not stop the run"
+    );
+
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    fs::create_dir_all(repo.join("sub")).unwrap();
+    let out = run_in(temp.path(), &repo.join("sub"), "repo-runs");
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(!text(&out.stderr).contains("not inside a git repository"));
+}

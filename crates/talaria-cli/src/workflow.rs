@@ -3,7 +3,7 @@
 use std::{
     fs,
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -205,6 +205,21 @@ pub fn safe(text: &str) -> String {
 fn fail(text: impl std::fmt::Display, code: u8) -> u8 {
     eprintln!("{}", safe(&text.to_string()));
     code
+}
+/// True when `path` or one of its ancestors holds a `.git` entry (a folder, or the file a
+/// linked worktree uses).
+fn inside_git_repository(path: &Path) -> bool {
+    path.ancestors().any(|dir| dir.join(".git").exists())
+}
+/// A warning, not a refusal: the bootstrap pattern runs its first agent here without isolation.
+fn outside_git_warning(cwd: &Path) -> Option<String> {
+    if inside_git_repository(cwd) {
+        return None;
+    }
+    Some(format!(
+        "warning: the working folder {} is not inside a git repository. Agents with isolation: 'worktree' will fail here. To start a new project, make the script's first agent run without isolation (the run's --cwd is that folder) and have it do only `git init` and an initial commit; give every later agent worktree isolation.",
+        cwd.display()
+    ))
 }
 fn exit_code(exit: RunExit) -> u8 {
     u8::try_from(exit.code).unwrap_or(1)
@@ -664,6 +679,9 @@ async fn run_command(args: RunArgs) -> u8 {
         Ok(cwd) => cwd,
         Err(e) => return fail(e, 2),
     };
+    if let Some(warning) = outside_git_warning(&cwd) {
+        eprintln!("{}", safe(&warning));
+    }
     let runs_dir = match absolute(runner::runs_dir(args.runs_dir.as_deref())) {
         Ok(dir) => dir,
         Err(e) => return fail(e, 2),
