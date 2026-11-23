@@ -134,9 +134,14 @@ fn row_line(row: &WorktreeReport) -> String {
         changes
     } else {
         format!(
-            "{changes}, {} ({} build output)",
+            "{changes}, {} ({} verified build output{})",
             plural(row.ignored_entries, "ignored item"),
-            row.ignored_build_output
+            row.ignored_build_output,
+            if row.ignored_unverified == 0 {
+                String::new()
+            } else {
+                format!(", {} not verified", row.ignored_unverified)
+            }
         )
     };
     let commits = if row.unmerged_commits == 0 {
@@ -162,6 +167,9 @@ fn row_line(row: &WorktreeReport) -> String {
         },
         commits,
     );
+    for reason in row.ignored_details.iter().filter_map(|e| e.reason.as_ref()) {
+        line.push_str(&format!("  ignored: {}\n", safe(reason)));
+    }
     if let Some(problem) = &row.problem {
         line.push_str(&format!("  problem: {}\n", safe(problem)));
     }
@@ -323,7 +331,7 @@ mod tests {
     use super::*;
     use crate::workflow::{WorkflowCommand, parse};
     use std::{ffi::OsStr, fs, process::Command};
-    use talaria_workflow::worktree::GitWorktrees;
+    use talaria_workflow::worktree::{GitWorktrees, IgnoredEntry, IgnoredKind};
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|p| p.to_string()).collect()
@@ -558,6 +566,29 @@ mod tests {
         ignored.ignored_entries = 3;
         ignored.ignored_build_output = 2;
         let line = row_line(&ignored);
-        assert!(line.contains("3 ignored items (2 build output)"), "{line}");
+        assert!(
+            line.contains("3 ignored items (2 verified build output)"),
+            "{line}"
+        );
+        ignored.ignored_unverified = 1;
+        ignored.ignored_details = vec![IgnoredEntry {
+            path: "build/".into(),
+            kind: IgnoredKind::UnverifiedBuildOutput,
+            reason: Some(
+                "build/ was not accepted as build output: it has no project manifest beside it"
+                    .into(),
+            ),
+        }];
+        let line = row_line(&ignored);
+        assert!(
+            line.contains("3 ignored items (2 verified build output, 1 not verified)"),
+            "{line}"
+        );
+        assert!(
+            line.contains(
+                "ignored: build/ was not accepted as build output: it has no project manifest"
+            ),
+            "{line}"
+        );
     }
 }

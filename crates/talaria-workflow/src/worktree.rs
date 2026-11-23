@@ -3,7 +3,10 @@
 mod git;
 mod provenance;
 
-pub use git::{CleanupAction, CleanupEntry, GitWorktrees, WorktreeInfo, WorktreeReport};
+pub use git::{
+    CleanupAction, CleanupEntry, GitWorktrees, IgnoredEntry, IgnoredKind, WorktreeInfo,
+    WorktreeReport,
+};
 
 use crate::{engine::AgentRequest, hermes::WorktreeProvider};
 use std::path::PathBuf;
