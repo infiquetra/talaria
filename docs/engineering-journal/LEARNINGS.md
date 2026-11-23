@@ -2,6 +2,119 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-22 — A failure that repeats identically is a rule, not bad luck: trace it upstream
+
+**Evidence.** A workflow agent's conversation was compressed three times and each attempt was
+rolled back with `storage_unavailable` within milliseconds of a paid summary; the conversation
+then grew until the provider refused it. The profile had `compression.in_place: false`. In that
+mode Hermes publishes a child session and validates the chain from parent to child, and the query
+that finds a parent's continuation leaves out children whose source is `tool`. Talaria creates
+every workflow agent session with that source (`crates/talaria-workflow/src/hermes/frames.rs`), so
+the check could never pass. The same query is present in the release Talaria was tested against.
+
+**Mechanism.** Two things that are each reasonable met badly: an old profile setting that selects
+a legacy code path, and a client that labels its sessions in a way that path does not support. The
+error text named storage, which pointed away from both.
+
+**Generalizable rule.** When an upstream error repeats with the same text and timing, read the
+upstream code path before adding a guard around it, and compare the profile's settings with the
+upstream defaults first. A setting that differs from the default is the cheapest suspect.
+
+## 2026-11-22 — A fixed field list in the journal filters what the turn policy can see
+
+**Evidence.** A failed agent was recorded as "agent failed: no reason given" although Hermes had
+sent both a reason code and a message. `settled_record` in
+`crates/talaria-workflow/src/journal/durable.rs` copied a fixed list of result fields and `error`
+was not on it; the policy read `error` first. The policy's test built its input by hand, so it
+passed. The fix keeps `error`, and its tests send a realistic receipt through `settled_record` and
+then the policy; removing the field from the list makes four of them fail.
+
+**Mechanism.** The record that stores a value and the code that reads it were tested separately,
+each against its own idea of the shape.
+
+**Generalizable rule.** Test a policy through the code that stores its input.
+
+## 2026-11-22 — Hermes's step cap is neither a failure nor a clean finish
+
+**Evidence.** A capped turn settles with outcome `completed`, `completed: false`, `failed: false`,
+an exit reason of the form `max_iterations_reached(N/M)` and a reply written with tools switched
+off. Talaria failed a turn only when `failed` was true, so a review that had been stopped at its
+cap was recorded as a full success (`crates/talaria-workflow/src/hermes/policy.rs`).
+
+**Mechanism.** One flag was read where three fields together carry the meaning.
+
+**Generalizable rule.** Classify a turn from the outcome, the completed flag and the exit reason
+together, never from one of them.
+
+## 2026-11-22 — A test can pin the outcome that hides the defect
+
+**Evidence.** `ctrl_c_graceful_then_resume_and_hard_kill` asserted that a run ended `completed`
+after a graceful stop and a resume. In that scenario the cancelled agent is finished as failed on
+resume, so the run it pinned as completed contained a failed agent. It now ends
+`completed_with_failures` and the assertion says so.
+
+**Mechanism.** The test recorded what the code did when it was written. The good-looking word made
+it read as a check of correct behaviour.
+
+**Generalizable rule.** When a test pins a healthy-looking outcome, read the scenario for anything
+that outcome should have reported.
+
+## 2026-11-22 — After a reset Hermes keeps the session id and swaps the conversation under it
+
+**Evidence.** After a context overflow Hermes reset the agent's session. The id Talaria held
+stayed valid, the stored conversation behind it was replaced, and a queued notice about a finished
+background process then ran as a new turn there, with none of the agent's brief. Talaria had
+detached the id it knew, which only ends an idle session
+(`crates/talaria-workflow/src/hermes/port.rs`). The sweep added here re-reads the session after a
+failed call and cancels or interrupts work the run did not start. It was built from the Hermes
+source and exercised against a scripted gateway only.
+
+**Mechanism.** An unchanged identifier was taken as proof that nothing behind it had changed.
+
+**Generalizable rule.** When a call ends, read the session again and compare what is stored with
+what was bound. Until the sweep has been seen working against a real gateway, treat a route it
+could not confirm quiet as busy.
+
+## 2026-11-22 — A plain `git status` in a folder an agent wrote to can run a program
+
+**Evidence.** A test plants a `core.fsmonitor` script in a repository and shows `git status`
+running it; with `-c core.fsmonitor=false` it does not run
+(`crates/talaria-workflow/src/runner/leftover.rs`). The older worktree code ran plain git in the
+same folders (`crates/talaria-workflow/src/worktree/git.rs`). Both now switch off `core.fsmonitor`
+and `core.untrackedCache`, skip submodules and take no optional locks, and the leftover check
+looks only at folders under the run's own worktrees directory.
+
+**Mechanism.** Git executes programs named in repository configuration. A worker with a terminal
+can write that configuration, and the command then runs outside the gateway's approval rules.
+
+**Generalizable rule.** Run git in agent folders only with those options off and only in folders
+Talaria created. This removes the easy cases; it is not a sandbox, because the worker already runs
+as the same user. Git filters remain a known gap.
+
+## 2026-11-22 — The rendered skill's size depends on the length of the Hermes home path
+
+**Evidence.** `SKILL.md` has an 8192 byte limit that is checked after rendering
+(`crates/talaria-workflow/src/skill/mod.rs`). Each `@@TALARIA_COMMAND@@` becomes the command with
+a `HERMES_HOME='<path>'` prefix, and the file used it seven times. A file well under the limit as
+written failed fourteen install tests, whose temporary home paths are long. Two uses inside prose
+were replaced with the bare subcommand and a pointer to the full command below.
+
+**Mechanism.** The limit was measured on text whose length depends on the machine.
+
+**Generalizable rule.** Count each placeholder as its longest plausible expansion when budgeting a
+rendered file, and keep the placeholder out of running prose.
+
+## 2026-11-22 — A reworded diagnostic line is also a contract for recorded screens
+
+**Evidence.** Rewording the doctor row for the Hermes version required changing three recorded
+screen files under `docs/fixtures/smoke/` and a wording constant in the smoke tool, which match
+the exact text.
+
+**Mechanism.** A line written for people was also read by a tool.
+
+**Generalizable rule.** Before rewording a doctor line, search `tools/` and `docs/fixtures/` for
+the old text.
+
 ## 2026-11-22 — A skill installed into Hermes can be rewritten by Hermes itself
 
 **Evidence.** A session with the workflow mode on kept building the project by hand instead of

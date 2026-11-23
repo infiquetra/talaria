@@ -10,6 +10,29 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+### Added
+
+- `talaria doctor`, a one-time notice at session start and the start of `talaria workflow run` now
+  warn when the profile's Hermes configuration has `compression.in_place` set to false (workflow
+  agents cannot compress their conversations and will overflow) or `agent.max_turns` set to a
+  number (sessions stop after that many steps). Each warning names the setting and what to change.
+- A workflow agent whose conversation overflows its context is started again in a fresh session
+  with its working folder intact, at most three times per agent. Each restart shows in the run
+  output and on the agent's row. It does not restart while something else is still running on that
+  agent's session.
+- A workflow run now ends `completed_with_failures` when its script finished but at least one
+  agent failed. The failed agents, with reasons, come before the result in the text and JSON
+  output and above the rows in the workflow view. The exit code stays 0 and `workflow resume`
+  replays the stored result as for a completed run.
+- An agent that Hermes stopped at a step cap is marked "cut short" and its reply is kept. Scripts
+  can see the mark through a `cutShort()` function and a hidden `cutShort` property on object and
+  array replies.
+- The run result lists agent working folders that still hold uncommitted changes, and any work
+  found on an agent's session that the run did not start.
+- Each running agent's row in the workflow view shows its current step.
+- `talaria workflow run` warns when its working folder is not inside a git repository, and an
+  isolated agent's first message names its working folder.
+
 ### Changed
 
 - Talaria no longer treats a newer Hermes gateway as a problem. `talaria doctor` shows one plain
@@ -21,6 +44,18 @@ with the usual caveat that a `0.x` line may break anything between releases.
   supported range. The doctor JSON keeps its `hermes_tag` and `hermes_commit` fields.
 - The weekly contract drift workflow reports in its run summary and no longer turns the run red
   because a newer Hermes release changes the contract.
+- Workflow agents run with no step cap unless the script sets `maxTurns`. Before, a step cap in
+  the profile's Hermes configuration applied to every agent.
+- The `talaria-workflows` skill text changed: how to start a brand-new project, staying in an
+  agent's own working folder, waiting once on a run, the commands Hermes refuses in unattended
+  agents, basing a cost estimate on past runs, and reporting failed agents. An installed copy
+  reads as changed until `/hivecode reinstall`.
+
+### Fixed
+
+- A failed workflow agent now shows the reason Hermes gave. Before, the reason was dropped and the
+  run said "no reason given".
+- The workflow view no longer logs Hermes's `agent.step` event as an unknown event type.
 
 ## [0.9.1] — 2026-11-21
 

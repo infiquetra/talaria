@@ -2,6 +2,105 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-22 — Talaria does not pin Hermes; it records what it was tested against
+
+**Decision.** Talaria states which Hermes release its contract was generated from and tested
+against, and nothing more. A gateway newer than that is an ok row in `talaria doctor`, gets no
+connect notice, and never gates or refuses anything. A gateway older than the oldest tested
+release gets one plain warning that some methods may be missing. `talaria --version` says "tested
+against". The weekly contract drift job reports without failing.
+
+**Rationale.** Hermes ships a release every few days. Talaria works with the gateway the user
+runs, or it gets fixed. A warning for every newer release is noise that teaches people to ignore
+doctor, and it implies a compatibility promise nobody is keeping. The file
+`crates/hermes-contract/PINNED` stays because the contract generator needs exactly one revision to
+generate from; it is a record, not a policy.
+
+**Rejected.** Keeping the pin and warning on drift (noise every few days). Renaming the file, the
+`hermes_contract::pinned` module and the `pinned_*` compatibility fields in the same pass (a
+mechanical change across some sixty files, left for a later pass).
+
+**Revisit when.** A Hermes change breaks Talaria silently often enough that a visible
+compatibility signal would pay for itself, or when the internal names are renamed to match.
+
+## 2026-11-22 — Workflow runs get no artificial limits; failures are reported and recovered
+
+**Decision.** A workflow agent runs with no step cap unless the script sets `maxTurns`: Talaria
+sends Hermes the no-cap value on `session.create` instead of leaving the profile's setting to
+apply. No wall-clock limit and no per-agent token ceiling were added. The run's token budget
+remains the only limit. Talaria checks the profile's Hermes configuration and warns, in doctor, in
+one session notice and before a workflow run, when `compression.in_place` is false or
+`agent.max_turns` is a finite number.
+
+**Rationale.** A run lost an agent to a context overflow and another to a step cap. Both came from
+two old profile settings, not from the agents: with `compression.in_place: false` Hermes
+compresses by publishing a child session, and its lineage check refuses that for sessions created
+with source `tool`, which is what a workflow agent is; and a profile step cap applied to every
+agent because Talaria sent a cap only when a script set one. A time limit would have hidden both
+causes behind another moving part.
+
+**Rejected.** A per-agent wall-clock limit passed as Hermes's `run_budget`. A per-agent input
+token ceiling. Sending the no-cap value for ordinary interactive sessions too (it would make the
+profile's own setting and the `/config` entry for it silently do nothing; the warning covers that
+case instead).
+
+**Revisit when.** A provider or model produces runaway agents that the token budget stops too late
+to be useful.
+
+## 2026-11-22 — An agent that overflows its context is restarted, at most three times, and only on a quiet route
+
+**Decision.** When an agent's turn fails with `failure_reason: context_overflow`, Talaria starts
+the same call again in a fresh Hermes session, with the same brief and working folder and a note
+that the folder holds the earlier attempt's work. A call gets at most three restarts, counted from
+the journal so a killed and resumed run cannot exceed it. A restart needs budget room, is refused
+once a stop was requested, and happens only when the sweep of the session's route found nothing
+still running there. Otherwise the call fails with a reason that names the session and the folder.
+
+**Rationale.** The agent's files survive an overflow; only its conversation is lost, so a restart
+recovers most of the work. The count must survive a kill, and only the journal does. After an
+overflow Hermes may start a turn of its own on the same route; a restart beside it would put two
+agents in one folder.
+
+**Rejected.** An in-memory counter. A new journal record type (the existing retry-finish record
+carries it). Resetting the count on resume. Restarting regardless of what the sweep found.
+
+**Revisit when.** Operators want a fresh set of restarts on an explicit resume, or Hermes offers a
+call that pauses automation for a route.
+
+## 2026-11-22 — A cut short agent keeps its result; a run with failed agents says so
+
+**Decision.** An agent that Hermes stopped at a step cap is marked cut short and its reply is
+kept. It is not failed and gets no continuation turn. The mark is a field on the completed journal
+record, a hidden `cutShort` property on object and array replies, and a `cutShort()` function in
+the script. A run whose script returned while at least one agent failed ends
+`completed_with_failures`, exit code 0, with the failed and cut short agents listed before the
+result. A resume replays it like a completed run.
+
+**Rationale.** A reply written at the cap is usable, and the script and the reader must both be
+able to see that it may be incomplete. A run that reports `completed` while an agent failed hides
+the one fact the reader needs first. Exit code 0 keeps resume and replay identical to a completed
+run.
+
+**Rejected.** Failing a cut short agent. A continuation turn (it spends more steps nobody asked
+for). A new journal record kind (older readers could not read the journal). A non-zero exit code
+for a run with failed agents. Reusing `failed` for such a run (it loses the result).
+
+**Revisit when.** Callers need an exit code that distinguishes a run with failed agents.
+
+## 2026-11-22 — One list of Hermes events that are known but not drawn
+
+**Decision.** `hermes-contract` holds the names of events Talaria receives on purpose and does not
+draw (`agent.step`, `session.updated`, `session.tools_changed`, `request.cancel` and the
+`subagent.` family). The session reducer and the workflow view both ask that list.
+
+**Rationale.** The two handlers had drifted: one silenced `agent.step` by name and the other
+logged it as an event type this build does not read, which reads like a contract mismatch.
+
+**Rejected.** A second copy of the list in the workflow crate. Keeping it in `talaria-core`, which
+the workflow crate would then have to reach into.
+
+**Revisit when.** The generated contract gains a typed `agent.step`.
+
 ## 2026-11-22 — Call the multi-agent mode Hivecode
 
 **Decision.** The mode that handles a plain prompt as a multi-agent workflow is named
