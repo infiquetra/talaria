@@ -635,6 +635,14 @@ async fn the_restart_count_is_read_from_the_journal_and_ignores_other_retries() 
     assert_eq!(h.overflow_restarts(), 2);
     assert_eq!(h.overflowed(), 3);
     assert!(h.previous_attempt_overflowed());
+    // The route check needs the bound session; a call the journal knows nothing about has none,
+    // so its route cannot be checked and a restart is refused.
+    assert!(h.route().is_some());
+    assert!(
+        c.journal
+            .history("a call the journal never saw")
+            .is_ok_and(|h| h.route().is_none())
+    );
     // An attempt that a resume runs again after a plain failed finish follows an overflow too.
     c.record(&q, &l, 4, vec![(cost(0.0, "included"), overflow())], false)
         .await;

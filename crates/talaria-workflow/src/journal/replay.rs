@@ -132,6 +132,13 @@ impl CallHistory {
             _ => None,
         })
     }
+    /// What a route check needs: the call's label and launch, the session id the run holds and
+    /// the stored session it was bound to. `None` when the journal holds no intent or no bound
+    /// session for this call, in which case the route cannot be checked.
+    pub fn route(&self) -> Option<(&str, &ResolvedLaunch, String, String)> {
+        let (_, launch, _, label) = self.intent()?;
+        Some((label, launch, self.session()?, self.stored_session()?))
+    }
     pub fn stored_session(&self) -> Option<String> {
         self.current().find_map(|r| match &r.record {
             Record::SessionBound {

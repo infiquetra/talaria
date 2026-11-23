@@ -199,12 +199,13 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
     /// does not follow is still running there. A check that could not be made counts as not
     /// quiet.
     async fn route_busy(&self, key: &str) -> Option<String> {
-        let history = self.journal.history(key).ok()?;
-        let (session, (_, launch, _, label), stored) = (
-            history.session()?,
-            history.intent()?,
-            history.stored_session()?,
-        );
+        // A route that cannot even be named was not checked, and an unchecked route is not quiet.
+        let Ok(history) = self.journal.history(key) else {
+            return Some(ROUTE_UNREADABLE.into());
+        };
+        let Some((label, launch, session, stored)) = history.route() else {
+            return Some(ROUTE_UNREADABLE.into());
+        };
         self.sweep_route(label, launch, &session, &stored).await
     }
     /// End the call's session in Hermes once its outcome is recorded; left open, it lingers
@@ -1246,6 +1247,8 @@ pub const ROUTE_WARNING: &str = "runner: untracked work: ";
 /// Starts every journal note about a route Talaria could not check. Not untracked work: nothing
 /// was found, so the run result does not list it.
 pub const ROUTE_UNCHECKED: &str = "runner: route not checked: ";
+/// Why a restart is refused when the journal does not say which session the call ran on.
+const ROUTE_UNREADABLE: &str = "Talaria could not read this call's session from the run journal, so it could not check whether Hermes is still running untracked work there";
 /// Put at the top of the first prompt of an agent started again after a context overflow.
 const OVERFLOW_RESTART_NOTE: &str = "Note: an earlier attempt at this task ran out of context and was stopped. Its working folder still holds whatever it wrote or committed. Check that folder first and continue from it rather than starting over. Keep your notes in files rather than in the conversation.";
 fn overflow_exhausted(overflowed: u32) -> String {
