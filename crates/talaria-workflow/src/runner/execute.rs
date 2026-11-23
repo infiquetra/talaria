@@ -594,7 +594,7 @@ async fn resume(
                     None
                 }
             };
-            if code != 0 {
+            if outcome == "budget_exhausted" {
                 output.diagnostic(
                     "this run's budget ran out; to continue it, resume with a larger --budget-tokens or --budget-usd",
                 );

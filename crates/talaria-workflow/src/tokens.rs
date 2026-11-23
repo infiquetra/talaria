@@ -166,7 +166,14 @@ impl<K: Ord> CacheTracker<K> {
     }
     /// `None` when the turn reported no token total at all.
     pub fn settle(&mut self, scope: K, usage: &Value) -> Option<Settled> {
-        let total = turn_total(usage)?;
+        let Some(total) = turn_total(usage) else {
+            // Keep the running total current, or the next turn would take this turn's cache
+            // reads for its own.
+            if let Some(running) = usage[SESSION_CACHE_READ_KEY].as_u64() {
+                self.previous.insert(scope, running);
+            }
+            return None;
+        };
         Some(match usage[SESSION_CACHE_READ_KEY].as_u64() {
             Some(running) => {
                 let before = self.previous.insert(scope, running).unwrap_or(0);
@@ -231,6 +238,26 @@ mod tests {
             Some(c) => json!({"total_tokens": total, SESSION_CACHE_READ_KEY: c}),
             None => json!({"total_tokens": total}),
         }
+    }
+
+    #[test]
+    fn a_turn_with_no_total_still_moves_the_running_cache_figure_on() {
+        let mut tracker = CacheTracker::new();
+        tracker.settle("a", &usage(1000, Some(400))).unwrap();
+        // Hermes can send a turn with a running cache figure and no token total.
+        assert!(
+            tracker
+                .settle("a", &json!({ SESSION_CACHE_READ_KEY: 900 }))
+                .is_none()
+        );
+        let turn = tracker.settle("a", &usage(1000, Some(1000))).unwrap();
+        assert_eq!(
+            turn.tokens,
+            Tokens {
+                counted: 900,
+                cache_read: 100
+            }
+        );
     }
 
     #[test]

@@ -22,8 +22,8 @@ with the usual caveat that a `0.x` line may break anything between releases.
   agent's session.
 - A workflow run now ends `completed_with_failures` when its script finished but at least one
   agent failed. The failed agents, with reasons, come before the result in the text and JSON
-  output and above the rows in the workflow view. The exit code stays 0 and `workflow resume`
-  replays the stored result as for a completed run.
+  output and above the rows in the workflow view. `workflow resume` replays the stored result as
+  for a completed run.
 - An agent that Hermes stopped at a step cap is marked "cut short" and its reply is kept. Scripts
   can see the mark through a `cutShort()` function and a hidden `cutShort` property on object and
   array replies.

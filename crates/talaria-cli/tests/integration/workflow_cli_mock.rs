@@ -923,6 +923,7 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
             .arg(&id),
     );
     assert_eq!(replay.status.code(), Some(5), "{}", text(&replay.stderr));
+    assert!(!text(&replay.stderr).contains("budget ran out"), "{}", text(&replay.stderr));
     let again = run_finished(&replay.stdout);
     assert_eq!(again["outcome"], "completed_with_failures");
     assert_eq!(again["failed_agents"], finished["failed_agents"]);

@@ -248,7 +248,10 @@ fn classify_ignored(folder: &Path, raw: &[u8]) -> IgnoredEntry {
     if !BUILD_OUTPUT.contains(&name) {
         return other;
     }
-    match verify_build_output(&folder.join(trimmed), name) {
+    // The bytes git printed, not the text shown to people, so a folder under a path that is not
+    // UTF-8 is still found. No trailing slash: with one, the checks would follow a link.
+    let real = folder.join(os_path(raw.strip_suffix(b"/").unwrap_or(raw)));
+    match verify_build_output(&real, name) {
         Ok(()) => IgnoredEntry {
             kind: IgnoredKind::BuildOutput,
             ..other
@@ -269,6 +272,9 @@ fn folder_status(folder: &Path) -> Result<FolderStatus, String> {
             "--porcelain".as_ref(),
             "-z".as_ref(),
             "--ignored".as_ref(),
+            // A user's `status.showUntrackedFiles=no` would hide every untracked and ignored file
+            // and make a folder that holds work look empty.
+            "--untracked-files=normal".as_ref(),
             "--ignore-submodules=all".as_ref(),
         ],
     )?;
@@ -715,6 +721,18 @@ mod tests {
         assert_eq!(f.provider.inspect().unwrap()[0].unmerged_commits, 0);
         assert_eq!(f.actions(false, false)[0].1, CleanupAction::Removed);
         assert!(!f.has_branch(0) && !tree.exists());
+    }
+
+    #[test]
+    fn a_git_setting_that_hides_untracked_files_does_not_make_a_folder_look_empty() {
+        let f = fixture();
+        let tree = f.tree(0);
+        git(&tree, &["config", "status.showUntrackedFiles", "no"]);
+        fs::write(tree.join("new.txt"), "x").unwrap();
+        let entry = f.provider.clean_up(false, false).unwrap().remove(0);
+        assert_eq!(entry.action, CleanupAction::Kept);
+        assert_eq!(entry.worktree.changed_files, 1);
+        assert!(tree.join("new.txt").exists());
     }
 
     #[test]

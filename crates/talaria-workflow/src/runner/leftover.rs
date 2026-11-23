@@ -76,6 +76,7 @@ fn status_command(folder: &Path) -> Command {
             "status",
             "--porcelain",
             "--no-renames",
+            "--untracked-files=normal",
             "--ignore-submodules=all",
         ])
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -202,6 +203,7 @@ mod tests {
             "status",
             "--porcelain",
             "--no-renames",
+            "--untracked-files=normal",
             "--ignore-submodules=all",
         ];
         assert_eq!(args, want.map(OsStr::new));

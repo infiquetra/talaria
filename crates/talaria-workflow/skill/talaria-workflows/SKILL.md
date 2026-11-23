@@ -43,7 +43,7 @@ The last JSON line is {"event":"run_finished",...}, then one short text line. Re
 @@TALARIA_COMMAND@@ workflow resume --json <run-id>
 ```
 
-Report failed, aborted, budget_exhausted, completed_with_failures, or parked status and ask the developer how to proceed. A budget_exhausted run continues only with a larger --budget-usd or --budget-tokens that the developer approves for it. Continue an interrupted run with:
+Report failed, aborted, budget_exhausted, completed_with_failures (exit 5, not a crash), or parked status and ask the developer how to proceed. A budget_exhausted run continues only with a larger --budget-usd or --budget-tokens that the developer approves for it. Continue an interrupted run with:
 
 ```sh
 @@TALARIA_COMMAND@@ workflow resume <run-id>

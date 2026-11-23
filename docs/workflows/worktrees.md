@@ -123,6 +123,9 @@ and the checks never follow a link or read file contents. Verified folders are d
 the worktree and the output says so. A listed name that fails its check is an ordinary
 ignored entry: it keeps the worktree, and the reason names the folder and what is missing,
 for example "build/ was not accepted as build output: it has no project manifest beside it".
+For `dist` and `build` the manifest shows only that the folder sits in a project that builds;
+Talaria does not look inside, so hand-made files in an ignored `dist` or `build` beside a
+manifest are deleted with it.
 `list` shows the ignored count, how many are verified build output and how many are not;
 `--json` adds `ignored_unverified` and an `ignored_details` list whose entries carry a
 `path`, a `kind` (`build_output`, `unverified_build_output` or `other`) and, for an

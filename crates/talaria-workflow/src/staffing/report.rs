@@ -119,7 +119,10 @@ impl std::fmt::Display for CostEstimate {
                 high_usd,
                 unpriced_tiers,
             } => {
-                write!(f, "${low_usd:.2} to ${high_usd:.2}")?;
+                write!(
+                    f,
+                    "${low_usd:.2} to ${high_usd:.2}, not counting cache reads"
+                )?;
                 if !unpriced_tiers.is_empty() {
                     write!(
                         f,

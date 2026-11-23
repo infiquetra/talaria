@@ -112,6 +112,7 @@ fn dirty(path: &Path) -> bool {
         &[
             "status".as_ref(),
             "--porcelain".as_ref(),
+            "--untracked-files=normal".as_ref(),
             "--ignore-submodules=all".as_ref(),
         ],
     )
