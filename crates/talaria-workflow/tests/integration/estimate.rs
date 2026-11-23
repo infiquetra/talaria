@@ -45,3 +45,16 @@ fn range_unknown_and_free() {
     let text = estimate_run_cost(&t, &roster(&priced), None).to_string();
     assert!(text.contains("survey") && text.contains("$3.00/$15.00"));
 }
+
+#[test]
+fn no_tiers_means_no_price_list_and_no_dangling_sentence() {
+    // A script that names models directly leaves the table with no tiers.
+    let mut t = table();
+    t.tiers.clear();
+    let text = estimate_run_cost(&t, &roster(&data()), None).to_string();
+    assert_eq!(
+        text,
+        "no estimate without a token budget; no tiers are set, so there is no price list"
+    );
+    assert!(!text.contains("per million"), "{text}");
+}
