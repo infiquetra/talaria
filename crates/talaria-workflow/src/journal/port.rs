@@ -154,6 +154,8 @@ pub struct RouteSweep {
     pub cancelled: u32,
     /// Tokens Hermes reports for the moved session, when it reports any.
     pub moved_tokens: Option<u64>,
+    /// How many of `moved_tokens` were cache reads, when Hermes says.
+    pub moved_cache_read_tokens: Option<u64>,
     /// Something is still running or queued on the route and could not be stopped.
     pub still_active: bool,
     /// Calls that failed while sweeping, in plain words.
@@ -222,8 +224,8 @@ pub trait AdmissionGate: Send + Sync + 'static {
         self.budget_stop().is_none()
     }
     /// Count a session's tokens that the run did not start: work found on a route after an
-    /// agent call ended. `id` names it; `tokens` is the cumulative reading Hermes reported.
-    fn count_untracked_usage(&self, _id: &str, _tokens: u64) {}
+    /// agent call ended. `id` names it; `reading` is the cumulative reading Hermes reported.
+    fn count_untracked_usage(&self, _id: &str, _reading: crate::tokens::Reading) {}
 }
 /// How often an agent that ran out of context is started again in a fresh session.
 pub const MAX_OVERFLOW_RESTARTS: u32 = 3;

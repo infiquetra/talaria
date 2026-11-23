@@ -9,7 +9,10 @@ use std::{
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::journal::{JournalError, JournalReader, Manifest, RecordLine};
+use crate::{
+    journal::{JournalError, JournalReader, Manifest, RecordLine},
+    tokens::CacheTracker,
+};
 
 pub fn configuration_dir() -> PathBuf {
     env::var_os("TALARIA_CONFIG_DIR")
@@ -98,7 +101,14 @@ pub struct RunSummary {
     pub agents_finished: u32,
     pub agents_total_known: u32,
     pub parked: u32,
+    /// Tokens the budget counts: everything except cache reads. A turn whose cache reads Hermes
+    /// did not report is counted whole.
     pub tokens_spent: Option<u64>,
+    /// Cache reads Hermes reported; not in `tokens_spent`. `None` when no turn reported tokens.
+    pub cache_read_tokens: Option<u64>,
+    /// Settled turns whose cache reads were not reported (every turn of a run journaled before
+    /// cache reads were kept apart); their tokens are all in `tokens_spent`.
+    pub cache_unknown_turns: u32,
     pub money_spent_usd: Option<f64>,
     pub run_dir: String,
     pub warning: Option<String>,
@@ -192,6 +202,8 @@ pub(crate) struct Fold {
     pub total: u32,
     pub parked: u32,
     pub tokens: Option<u64>,
+    pub cache_read_tokens: u64,
+    pub cache_unknown_turns: u32,
     pub money: Option<f64>,
 }
 impl Fold {
@@ -203,6 +215,7 @@ impl Fold {
         let mut money = BTreeMap::new();
         let mut unknown_money = false;
         let mut settled = false;
+        let mut cache = CacheTracker::new();
         for line in records {
             let record = serde_json::to_value(&line.record)?;
             let kind = record["t"].as_str().unwrap_or_default();
@@ -250,15 +263,21 @@ impl Fold {
                 "turn_settled" => {
                     settled = true;
                     let usage = &record["usage"];
-                    let tokens = usage["total_tokens"].as_u64().or_else(|| {
-                        usage["input_tokens"]
-                            .as_u64()
-                            .zip(usage["output_tokens"].as_u64())
-                            .map(|(a, b)| a.saturating_add(b))
-                    });
-                    if let Some(tokens) = tokens {
-                        folded.tokens =
-                            Some(folded.tokens.unwrap_or_default().saturating_add(tokens));
+                    let attempt = record["attempt"].as_u64().unwrap_or_default();
+                    if let Some(turn) = cache.settle((key.to_owned(), attempt), usage) {
+                        folded.tokens = Some(
+                            folded
+                                .tokens
+                                .unwrap_or_default()
+                                .saturating_add(turn.tokens.counted),
+                        );
+                        folded.cache_read_tokens = folded
+                            .cache_read_tokens
+                            .saturating_add(turn.tokens.cache_read);
+                        if !turn.cache_known {
+                            folded.cache_unknown_turns =
+                                folded.cache_unknown_turns.saturating_add(1);
+                        }
                     }
                     let cost = &usage["session_cost"];
                     let amount = cost["estimated_cost_usd"]
@@ -313,6 +332,8 @@ fn unreadable(path: &Path, id: &str, warning: String) -> RunSummary {
         agents_total_known: 0,
         parked: 0,
         tokens_spent: None,
+        cache_read_tokens: None,
+        cache_unknown_turns: 0,
         money_spent_usd: None,
         run_dir: path.to_string_lossy().into_owned(),
         warning: Some(warning),
@@ -383,6 +404,8 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
         agents_total_known: fold.total,
         parked: fold.parked,
         tokens_spent: fold.tokens,
+        cache_read_tokens: fold.tokens.map(|_| fold.cache_read_tokens),
+        cache_unknown_turns: fold.cache_unknown_turns,
         money_spent_usd: fold.money,
         run_dir: path.to_string_lossy().into_owned(),
         warning: None,

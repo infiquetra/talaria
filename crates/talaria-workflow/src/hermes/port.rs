@@ -603,6 +603,15 @@ fn parse_receipt(method: &str, value: Value, submit: bool) -> Result<Receipt, Po
             usage.insert(key.into(), v.clone());
         }
     }
+    // The turn's own usage folds cache reads into its input count and does not split them out.
+    // The settled result carries the session's running cache read total; the journal keeps it
+    // so a replay can take each turn's share the way the live run did.
+    if let Some(running) = result
+        .as_ref()
+        .and_then(|r| r["cache_read_tokens"].as_u64())
+    {
+        usage.insert(crate::tokens::SESSION_CACHE_READ_KEY.into(), running.into());
+    }
     let mut cost = Map::new();
     if let Some(result) = &result {
         for key in ["estimated_cost_usd", "cost_status", "cost_source"] {
@@ -924,10 +933,12 @@ impl HermesPort {
                     self.inner.cfg.timeouts.poll,
                 )
                 .await;
-            sweep.moved_tokens = stats
+            let reading = stats
                 .ok()
-                .and_then(|v| v["total_tokens"].as_u64())
-                .filter(|n| *n > 0);
+                .and_then(|v| crate::tokens::Reading::from_stats(&v))
+                .filter(|r| r.total > 0);
+            sweep.moved_tokens = reading.map(|r| r.total);
+            sweep.moved_cache_read_tokens = reading.and_then(|r| r.cache_read);
         }
         Ok(sweep)
     }
@@ -1043,5 +1054,50 @@ impl HermesPort {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The settled receipt of a recorded turn: its usage folds cache reads into the input count,
+    /// and the result beside it carries the session's running cache read total.
+    #[test]
+    fn a_recorded_settled_receipt_keeps_the_running_cache_read_total() {
+        let text =
+            include_str!("../../tests/data/hermes/recorded/live_text_agent_on_fixture.jsonl");
+        let settled = text
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .map(|v| v["frame"]["result"].clone())
+            .find(|r| r["status"] == "terminal" && r["result"].is_object())
+            .expect("a recorded settled receipt");
+        let receipt = parse_receipt("prompt.receipt", settled, false).unwrap();
+        let usage = receipt.usage.unwrap();
+        assert_eq!(usage["total_tokens"], 3170);
+        assert_eq!(usage["input_tokens"], 3168);
+        assert_eq!(usage[crate::tokens::SESSION_CACHE_READ_KEY], 1601);
+        let split = crate::tokens::CacheTracker::new()
+            .settle("agent", &usage)
+            .unwrap();
+        assert_eq!(split.tokens.counted, 1569);
+        assert_eq!(split.tokens.cache_read, 1601);
+    }
+
+    #[test]
+    fn a_receipt_whose_result_has_no_cache_read_total_journals_none() {
+        let value = json!({
+            "admission_id": "a", "authority_epoch": 1, "execution_generation": 1,
+            "outcome": "completed", "ref": {"profile_id": "p", "session_id": "s"},
+            "sequence": 1, "status": "terminal",
+            "result": {"final_response": "ok"},
+            "usage": {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6}
+        });
+        let usage = parse_receipt("prompt.receipt", value, false)
+            .unwrap()
+            .usage
+            .unwrap();
+        assert!(usage.get(crate::tokens::SESSION_CACHE_READ_KEY).is_none());
     }
 }

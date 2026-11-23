@@ -14,7 +14,7 @@ Start with a pure literal header: `export const meta = {name:'name', description
 | `now()` | Fixed run-start timestamp, restored on resume. |
 | `random(key)` | Deterministic number in [0,1) for a nonempty string key and stored seed. |
 | `args` | JSON input; undefined when omitted. |
-| `budget` | `.total`, `.spent()`, `.remaining()` in tokens, including usage running agents have streamed. Missing total is null; remaining is Infinity. Once spend reaches the total, new agents and still-running agents reject with BudgetExhaustedError naming what was spent; catch it to return partial results. |
+| `budget` | `.total`, `.spent()`, `.remaining()` in tokens, including usage running agents have streamed. Tokens means every token except cache reads (cache writes count); a turn whose cache reads Hermes did not report counts whole. Missing total is null; remaining is Infinity. Once spend reaches the total, new agents and still-running agents reject with BudgetExhaustedError naming what was spent; catch it to return partial results. |
 | `budget.money` | Same accessors in US dollars. |
 
 Every execution option:

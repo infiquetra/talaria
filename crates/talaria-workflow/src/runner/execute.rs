@@ -29,6 +29,7 @@ use crate::{
         PriceBook, Roster, RosterError, RunBudget, StaffedLaunch, StaffingResolver, StaffingTable,
         check_script_routes, check_tiers, estimate_run_cost, script_routes, staffing_drift,
     },
+    tokens::Reading,
     worktree::GitWorktrees,
 };
 
@@ -77,7 +78,15 @@ pub struct ResumeRequest {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpendView {
+    /// Tokens the budget counts: everything except cache reads. A turn whose cache reads Hermes
+    /// did not report is counted whole here.
     pub tokens: u64,
+    /// Cache reads Hermes reported. They are not in `tokens` and not in the budget.
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    /// Turns whose cache reads Hermes did not report; their tokens are all in `tokens`.
+    #[serde(default)]
+    pub cache_unknown_turns: u32,
     pub money_usd: Option<f64>,
     pub money_source: String,
 }
@@ -89,6 +98,8 @@ impl SpendView {
             .unwrap_or_else(|| "none".into());
         Self {
             tokens: spend.tokens,
+            cache_read_tokens: spend.cache_read_tokens,
+            cache_unknown_turns: spend.cache_unknown_turns,
             money_usd: if matches!(spend.money_source, MoneySource::None) {
                 None
             } else {
@@ -595,6 +606,8 @@ async fn resume(
                 result,
                 spend: SpendView {
                     tokens: fold.tokens.unwrap_or_default(),
+                    cache_read_tokens: fold.cache_read_tokens,
+                    cache_unknown_turns: fold.cache_unknown_turns,
                     money_usd: fold.money,
                     money_source: if fold.money.is_some() {
                         "hermes"
@@ -1346,13 +1359,9 @@ async fn count_live_usage(mut feed: AgentFeedReceiver, scheduler: Scheduler) {
             session_id, frame, ..
         } = item
             && let hermes_contract::events::Notification::SessionUsage(p) = frame.notification
-            && let Some(tokens) = p
-                .total_tokens
-                .or_else(|| p.prompt_tokens?.checked_add(p.completion_tokens?))
-                .or_else(|| p.input_tokens?.checked_add(p.output_tokens?))
-                .and_then(|n| u64::try_from(n).ok())
+            && let Some(reading) = Reading::from_payload(&p)
         {
-            scheduler.observe_usage(&session_id, tokens);
+            scheduler.observe_usage(&session_id, reading);
         }
     }
 }

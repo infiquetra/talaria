@@ -286,8 +286,9 @@ fn dump_rows_include_launch_duration_and_keep_unknown_cost_explicit() {
     let row = agent_line(agent, 99_000);
     assert!(row.contains("minimax-m3.1-flash on ollama-cloud"), "{row}");
     assert!(row.contains("done · 1.2s"), "{row}");
+    // These journal lines predate cache reads being kept apart, so the row says they are unknown.
     assert!(
-        row.contains("tokens (including cache reads) · $0.10"),
+        row.contains("1.1k tokens (cache reads unknown for 1 turn, counted in full) · $0.10"),
         "{row}"
     );
     let unknown = RunProgress::from_records(&lines::manifest(), &lines::cost_lines("unknown"));
@@ -296,6 +297,34 @@ fn dump_rows_include_launch_duration_and_keep_unknown_cost_explicit() {
         assert!(row.contains("cost unknown"));
         assert!(!row.contains("$0.00"));
     }
+}
+
+#[test]
+fn rows_show_cache_reads_as_their_own_number_when_the_journal_has_them() {
+    use talaria_workflow::journal::Record;
+    use talaria_workflow::progress::text::agent_line;
+    let mut rows = lines::finished_lines();
+    for line in &mut rows {
+        if let Record::TurnSettled { key, usage, .. } = &mut line.record
+            && key == lines::KEY_CORRECTNESS
+            && let Some(usage) = usage.as_mut()
+        {
+            usage["session_cache_read_tokens"] = serde_json::json!(800);
+        }
+    }
+    let progress = RunProgress::from_records(&lines::manifest(), &rows);
+    let agent = progress.agent(lines::KEY_CORRECTNESS).unwrap();
+    assert_eq!((agent.tokens, agent.cache_read), (250, 800));
+    assert_eq!(agent.cache_unknown_turns, 0);
+    let row = agent_line(agent, 99_000);
+    assert!(
+        row.contains("250 tokens + 800 cache reads · $0.10"),
+        "{row}"
+    );
+    // The other agents in the recording have no split; the run says so rather than folding them.
+    let run = progress.run();
+    assert_eq!(run.cache_read, 800);
+    assert!(run.cache_unknown_turns > 0);
 }
 
 #[test]

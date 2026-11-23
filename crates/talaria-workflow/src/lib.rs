@@ -13,6 +13,7 @@ pub mod runner;
 pub mod schedule;
 pub mod script_check;
 pub mod staffing;
+pub mod tokens;
 
 pub mod worktree;
 

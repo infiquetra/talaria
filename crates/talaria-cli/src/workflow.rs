@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use talaria_workflow::{
     journal::{OnUnknown, Resolution},
     runner::{self, ResumeRequest, RunExit, RunRequest, RunnerEvent, SpendView, StopExit, execute},
+    tokens::tokens_text,
 };
 
 use crate::args::{neutralise, required_path, required_text};
@@ -300,9 +301,17 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
         } else {
             String::new()
         };
-        let tokens = run
-            .tokens_spent
-            .map_or_else(|| "-".into(), |v| format!("{v} (including cache reads)"));
+        let tokens = run.tokens_spent.map_or_else(
+            || "tokens -".into(),
+            |v| {
+                tokens_text(
+                    v,
+                    run.cache_read_tokens.unwrap_or_default(),
+                    run.cache_unknown_turns,
+                    |n| n.to_string(),
+                )
+            },
+        );
         let money = run
             .money_spent_usd
             .map_or_else(|| "-".into(), |v| format!("${v:.2}"));
@@ -315,7 +324,7 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
                 })
                 .unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
         text.push_str(&format!(
-            "{}  {}  {}  agents {}/{}{}  tokens {}  money {}  {}  {}\n",
+            "{}  {}  {}  agents {}/{}{}  {}  money {}  {}  {}\n",
             safe(&run.run_id),
             safe(&run.name),
             run.status.label(),
@@ -712,10 +721,15 @@ fn closing_line(
         None => "unknown".to_owned(),
     };
     format!(
-        "run {} {}: {} tokens (including cache reads), money {}. Full result: talaria workflow resume --json{} {}",
+        "run {} {}: {}, money {}. Full result: talaria workflow resume --json{} {}",
         safe(run_id),
         safe(outcome),
-        spend.tokens,
+        tokens_text(
+            spend.tokens,
+            spend.cache_read_tokens,
+            spend.cache_unknown_turns,
+            |n| n.to_string()
+        ),
         money,
         custom_runs_dir_flag(runs_dir),
         safe(run_id)

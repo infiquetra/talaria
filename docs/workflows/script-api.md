@@ -94,7 +94,10 @@ with `…`. Use `log()` for narration; `console` is absent.
 
 ## Budgets
 
-`budget.total`, `budget.spent()` and `budget.remaining()` read token usage from the backend.
+`budget.total`, `budget.spent()` and `budget.remaining()` read token usage from the backend. The
+count leaves out cache reads, which Hermes folds into its token totals but which cost a fraction
+of other tokens; cache writes still count. A turn whose cache reads Hermes did not report counts
+whole.
 The total is a number or `null`; remaining is clamped at zero or `Infinity` without a total.
 `budget.money.total`, `.spent()` and `.remaining()` work the same way in US dollars.
 

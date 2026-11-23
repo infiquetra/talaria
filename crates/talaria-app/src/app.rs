@@ -19644,6 +19644,8 @@ mod hivecode_visibility_tests {
             agents_total_known: 10,
             parked: 0,
             tokens_spent: None,
+            cache_read_tokens: None,
+            cache_unknown_turns: 0,
             money_spent_usd: None,
             run_dir: "fixture-runs/run-0001".into(),
             warning: None,
