@@ -50,6 +50,15 @@ Options: --runs-dir, --json, --limit. Status is running, parked, completed, comp
 
 Options: --runs-dir, --timeout. Exit 0 means already finished or confirmed stopped. Exit 1 says stop not confirmed; requesting an interrupt alone does not prove settlement. Exit 2 means usage or unknown run.
 
+## Worktrees
+
+```sh
+@@TALARIA_COMMAND@@ workflow worktrees list --json <run-id>
+@@TALARIA_COMMAND@@ workflow worktrees remove --dry-run <run-id>
+```
+
+Agent worktrees and their branches stay until someone removes them; nothing removes them automatically. List takes an optional run id (every run when left out), --json and --runs-dir, and shows each agent's folder, branch, changed_files (uncommitted changes) and unmerged_commits (commits the source checkout's HEAD lacks). Remove takes --force, --dry-run, --json and --runs-dir; it refuses a running run. Without --force it removes only clean worktrees whose commits are already in HEAD, deletes their branches, and keeps anything with uncommitted changes or unmerged commits, listing the reason. --force also removes those and reports what was discarded. Exit 0 done, 1 refused or failed, 2 unknown run or usage.
+
 ## Skill status
 
 ```sh

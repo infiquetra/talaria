@@ -39,6 +39,8 @@ pub enum WorkflowCommand {
     Stop(StopArgs),
     Resolve(ResolveArgs),
     Compile(CompileArgs),
+    /// List or remove the git worktrees and branches that runs keep for review.
+    Worktrees(crate::workflow_worktrees::WorktreesArgs),
 }
 #[derive(Clone, Debug, Args)]
 pub struct CompileArgs {
@@ -776,6 +778,7 @@ pub async fn run(args: WorkflowArgs) -> u8 {
         WorkflowCommand::Run(args) => run_command(args).await,
         WorkflowCommand::Builtins(args) => builtins::execute(args),
         WorkflowCommand::Compile(args) => compile_command::execute(args).await,
+        WorkflowCommand::Worktrees(args) => crate::workflow_worktrees::execute(args),
     }
 }
 async fn run_command(args: RunArgs) -> u8 {
