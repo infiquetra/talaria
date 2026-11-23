@@ -10,6 +10,7 @@ mod recording;
 pub mod resolver;
 pub mod runs;
 mod services;
+pub mod worktrees;
 
 pub use control::{
     AnswerError, ControlWrite, PausingGate, StopExit, answer_parked, request_stop, write_control,

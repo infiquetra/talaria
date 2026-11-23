@@ -7,6 +7,9 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
+mod manage;
+pub use manage::{CleanupAction, CleanupEntry, WorktreeReport};
+
 /// One provider owns a run's provenance and serialises its local Git operations.
 pub struct GitWorktrees {
     run_dir: PathBuf,

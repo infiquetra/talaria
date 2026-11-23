@@ -20,6 +20,7 @@ pub mod workflow;
 pub mod workflow_check;
 pub mod workflow_roster;
 pub mod workflow_skill;
+pub mod workflow_worktrees;
 
 /// Show untrusted text at the terminal without letting it change the screen.
 ///

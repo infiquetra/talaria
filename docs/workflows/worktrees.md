@@ -81,6 +81,39 @@ keeps the branch unless forced, and removes the sidecar. A Git or branch-deletio
 failure leaves provenance for recovery. Only a sidecar-backed canonical path can be
 removed; even a Git-known worktree from the same repository is refused without it.
 
+## Cleaning up from the command line
+
+Nothing removes a run's worktrees or branches automatically. Two commands do it on request:
+
+```bash
+talaria workflow worktrees list [<run-id>] [--json]
+talaria workflow worktrees remove <run-id> [--force] [--dry-run] [--json]
+```
+
+Both take `--runs-dir`. The run's own sidecar records name the worktrees and `launch.json`
+names the source checkout; labels come from the journal when it gives them. `list` covers one
+run, or every run in the runs directory when no id is given, and shows each agent worktree's
+run id, agent label, folder, branch, whether the folder still exists, how many files `git
+status` reports as changed, and how many commits on the branch (or checked out in the folder)
+the source checkout's current `HEAD` does not contain. It only reads, so it works on a running
+run.
+
+`remove` refuses a run whose runner holds `run.lock`, and it holds that lock itself while it
+works. Without `--force` it removes a worktree, its branch and its sidecar only when the folder
+is clean and everything it holds is already contained in the source checkout's `HEAD`; the
+branch goes with `git branch -d`, which refuses unmerged work a second time. Every worktree
+with uncommitted changes or unmerged commits is kept and listed with the reason, and so is a
+folder that no longer sits on its recorded branch. With `--force` it removes everything for
+that run and prints exactly what was discarded: the changed-file count and, for unmerged
+commits, the count and the branch tip, which `git branch <name> <tip>` can restore until Git
+collects it. `--dry-run` prints the same decisions and changes nothing.
+
+Only a folder that resolves to the run's own `worktrees` directory and a branch under
+`talaria/wf/<run-id>/` are ever touched. A folder that is a link leading elsewhere is kept
+without any git command running in it, and a `worktrees` directory that is itself a link is
+refused. Git runs through the same hardened runner as the provider (`core.fsmonitor` and
+`core.untrackedCache` off, no optional locks).
+
 ## Offline demonstration
 
 ```bash
