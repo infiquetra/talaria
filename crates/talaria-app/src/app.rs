@@ -1866,6 +1866,11 @@ pub enum AppMessage {
         run: PathBuf,
         result: Result<crate::workflow_progress::PollBatch, String>,
     },
+    /// A read of the journal of the run a workflow agent's session belongs to.
+    WorkflowAgentRead {
+        stored_id: String,
+        result: Result<talaria_workflow::progress::agent_session::AgentSessionRead, String>,
+    },
     WorkflowProgress {
         run: PathBuf,
         input: talaria_workflow::progress::live::ProgressInput,
@@ -2222,6 +2227,11 @@ pub enum AppEffect {
         reference: talaria_workflow::progress::BlobRef,
     },
     WorkflowOpen(PathBuf),
+    /// Read the journal of the run a workflow agent's session belongs to, off the update thread.
+    WorkflowAgentRead {
+        stored_id: String,
+        request: crate::workflow_agent::JournalReadRequest,
+    },
     WorkflowDiscover,
     WorkflowPoll {
         run: PathBuf,
@@ -3449,7 +3459,7 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let restored = matches!(&message, AppMessage::Opened { .. });
     let settled = mutation_session(&message);
     let mut redraw = match &message {
-        AppMessage::WorkflowScoped(_) | AppMessage::WorkflowProgress { .. } | AppMessage::WorkflowPolled { .. } | AppMessage::WorkflowOpened(_) | AppMessage::User(UserAction::Workflow(_)) | AppMessage::ForegroundKey(UserAction::Workflow(_)) | AppMessage::Cron { .. } | AppMessage::CronPrepared { .. }
+        AppMessage::WorkflowScoped(_) | AppMessage::WorkflowProgress { .. } | AppMessage::WorkflowPolled { .. } | AppMessage::WorkflowAgentRead { .. } | AppMessage::WorkflowOpened(_) | AppMessage::User(UserAction::Workflow(_)) | AppMessage::ForegroundKey(UserAction::Workflow(_)) | AppMessage::Cron { .. } | AppMessage::CronPrepared { .. }
         | AppMessage::User(UserAction::Cron(_))
         | AppMessage::ForegroundKey(UserAction::Cron(_)) => false,
         AppMessage::PromptDone { events, notices, masked } => {
@@ -4291,6 +4301,18 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::WorkflowOpened(result) => workflow_opened(state, result),
         AppMessage::WorkflowPolled { run, result } => workflow_polled(state, run, result),
+        AppMessage::WorkflowAgentRead { stored_id, result } => {
+            let changed = state
+                .workflow_agent
+                .as_mut()
+                .filter(|agent| agent.stored_id() == stored_id)
+                .is_some_and(|agent| agent.finish_read(result));
+            if changed {
+                vec![AppEffect::Redraw]
+            } else {
+                Vec::new()
+            }
+        }
         AppMessage::Recovered(result) => recovered(state, result),
         AppMessage::Rewind(input) => rewind_input(state, input),
         AppMessage::RewindReply { owner, input } => {
@@ -4436,9 +4458,12 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects.extend(review_tick(state));
             effects.extend(workflow_tick(state));
             if let Some(agent) = state.workflow_agent.as_mut()
-                && agent.tick(now_ms)
+                && let Some(request) = agent.tick(now_ms)
             {
-                redraw = true;
+                effects.push(AppEffect::WorkflowAgentRead {
+                    stored_id: agent.stored_id().to_owned(),
+                    request,
+                });
             }
             effects.extend(hivecode_scan(state));
             effects.extend(kanban_input(
@@ -4610,6 +4635,7 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 left,
             } => {
                 state.opened = None;
+                state.workflow_agent = None;
                 let notice = if left {
                     let hint = crate::launch::exit_hint(&previous_id, &state.profile);
                     format!(
@@ -10621,6 +10647,14 @@ fn opened_session(
         &state.workflow_runs_dir,
         state.now_ms,
     );
+    if let Some(agent) = state.workflow_agent.as_mut()
+        && let Some(request) = agent.first_read()
+    {
+        effects.push(AppEffect::WorkflowAgentRead {
+            stored_id: agent.stored_id().to_owned(),
+            request,
+        });
+    }
     state.opened = Some(opened);
     if state.client_voice_config.backend == "client-bridge" {
         if !same_session {
@@ -10778,6 +10812,14 @@ fn opened_session(
                 continue;
             }
         }
+        // A prompt typed before the session finished opening gets the same first-send warning.
+        if let Some(agent) = state.workflow_agent.as_mut()
+            && let Some(warning) = agent.first_send_warning(&mut state.workflow_agent_warned)
+        {
+            effects.push(notice_lines(&warning));
+            effects.extend(return_held_prompt(state, text));
+            continue;
+        }
         if state
             .held_attachments
             .front()
@@ -10793,6 +10835,37 @@ fn opened_session(
         }
     }
     effects
+}
+
+/// Put a held prompt back in the composer, with its attachments, ahead of anything typed
+/// since.
+fn return_held_prompt(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    let display = if state
+        .held_attachments
+        .front()
+        .is_some_and(|payload| payload.expanded.display == text)
+    {
+        let payload = state
+            .held_attachments
+            .pop_front()
+            .expect("checked held payload");
+        state.attachments.chips.restore_payloads(payload.media);
+        state
+            .attachments
+            .chips
+            .restore_pastes(&payload.expanded.display);
+        payload.expanded.display
+    } else {
+        text
+    };
+    state.draft = if state.draft.is_empty() {
+        display
+    } else {
+        format!("{display}\n{}", state.draft)
+    };
+    state.caret = state.draft.len();
+    state.attachment_epoch = state.attachment_epoch.wrapping_add(1);
+    vec![AppEffect::LoadDraft(state.draft.clone())]
 }
 
 fn restore_failed_attachments(state: &mut AppState) -> Vec<AppEffect> {
@@ -13824,6 +13897,20 @@ fn apply<S: Screen>(
                     .await
                     .unwrap_or_else(|_| Err("workflow view task failed".into()));
                     let _ = sender.send(AppMessage::WorkflowOpened(result));
+                });
+            }
+            AppEffect::WorkflowAgentRead { stored_id, request } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        talaria_workflow::progress::agent_session::read_agent_journal(
+                            &request.run_dir,
+                            request.offset,
+                        )
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err("workflow agent read task failed".into()));
+                    let _ = sender.send(AppMessage::WorkflowAgentRead { stored_id, result });
                 });
             }
             AppEffect::WorkflowPoll {
@@ -22435,6 +22522,7 @@ mod workflow_agent_session_tests {
             "roster":{},"approval_policy":{}
         });
         std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
+        std::fs::write(dir.join("run.lock"), "").unwrap();
         let key = "8".repeat(32);
         let records = [
             json!({"t":"run_started","run_id":RUN,"script_sha256":"a".repeat(64)}),
@@ -22484,7 +22572,27 @@ mod workflow_agent_session_tests {
         }
     }
 
-    fn open(state: &mut AppState, runs: &Path, runtime: &str, stored: &str, in_worktree: bool) {
+    /// Do what the executor does with the journal read an opening asks for, then hand the
+    /// answer back as the message the executor would send.
+    fn answer_reads(state: &mut AppState, effects: Vec<AppEffect>) {
+        for effect in effects {
+            if let AppEffect::WorkflowAgentRead { stored_id, request } = effect {
+                let result = talaria_workflow::progress::agent_session::read_agent_journal(
+                    &request.run_dir,
+                    request.offset,
+                );
+                let _ = update(state, AppMessage::WorkflowAgentRead { stored_id, result });
+            }
+        }
+    }
+
+    fn open_with(
+        state: &mut AppState,
+        runs: &Path,
+        runtime: &str,
+        stored: &str,
+        in_worktree: bool,
+    ) -> Vec<AppEffect> {
         state.profile = "fixture".into();
         state.workflow_runs_dir = runs.to_owned();
         let cwd = in_worktree.then(|| {
@@ -22494,7 +22602,12 @@ mod workflow_agent_session_tests {
                 .to_string_lossy()
                 .into_owned()
         });
-        let _ = opened_session(state, session(runtime, stored, cwd), None);
+        opened_session(state, session(runtime, stored, cwd), None)
+    }
+
+    fn open(state: &mut AppState, runs: &Path, runtime: &str, stored: &str, in_worktree: bool) {
+        let effects = open_with(state, runs, runtime, stored, in_worktree);
+        answer_reads(state, effects);
     }
 
     fn sent(effects: &[AppEffect]) -> bool {
@@ -22620,24 +22733,133 @@ mod workflow_agent_session_tests {
     fn the_banner_follows_the_journal_while_the_agent_runs() {
         let temp = tempfile::tempdir().unwrap();
         let run = run_folder(temp.path());
-        // Take the failure back out: the agent is bound and has not finished.
+        // A live runner, and the failure taken back out: the agent is bound and unfinished.
+        let runner = std::fs::File::open(run.join("run.lock")).unwrap();
+        runner.try_lock().unwrap();
         let journal = std::fs::read_to_string(run.join("journal.jsonl")).unwrap();
         let unfinished: Vec<&str> = journal.lines().take(3).collect();
         std::fs::write(run.join("journal.jsonl"), unfinished.join("\n") + "\n").unwrap();
         let mut state = AppState::new("agent-banner");
         state.now_ms = 1_000;
-        open(
+        let opening = open_with(
             &mut state,
             temp.path(),
             "runtime-bound",
             "stored-bound",
             true,
         );
+        // Until the read answers, the banner says it is still reading.
+        let note = state.view().workflow_agent.cloned().unwrap();
+        assert!(note.pending, "{note:?}");
+        answer_reads(&mut state, opening);
         let note = state.view().workflow_agent.cloned().unwrap();
         assert_eq!(note.phase, Some(AgentPhase::Queued));
         std::fs::write(run.join("journal.jsonl"), journal).unwrap();
-        let _ = update(&mut state, AppMessage::Tick { now_ms: 4_000 });
+        let effects = update(&mut state, AppMessage::Tick { now_ms: 4_000 });
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, AppEffect::WorkflowAgentRead { .. })),
+            "the tick asks for a read instead of doing it: {effects:?}"
+        );
+        answer_reads(&mut state, effects);
         let note = state.view().workflow_agent.cloned().unwrap();
         assert_eq!(note.phase, Some(AgentPhase::Failed));
+        // The agent has stopped: no further reads are asked for.
+        let later = update(&mut state, AppMessage::Tick { now_ms: 9_000 });
+        assert!(
+            !later
+                .iter()
+                .any(|e| matches!(e, AppEffect::WorkflowAgentRead { .. })),
+            "{later:?}"
+        );
+        drop(runner);
+    }
+
+    #[test]
+    fn one_read_runs_at_a_time_and_a_dead_runner_is_not_polled() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        state.now_ms = 1_000;
+        let opening = open_with(
+            &mut state,
+            temp.path(),
+            "runtime-bound",
+            "stored-bound",
+            true,
+        );
+        assert_eq!(
+            opening
+                .iter()
+                .filter(|e| matches!(e, AppEffect::WorkflowAgentRead { .. }))
+                .count(),
+            1
+        );
+        // The first read has not answered: a tick must not start a second one.
+        let tick = update(&mut state, AppMessage::Tick { now_ms: 9_000 });
+        assert!(
+            !tick
+                .iter()
+                .any(|e| matches!(e, AppEffect::WorkflowAgentRead { .. }))
+        );
+    }
+
+    #[test]
+    fn a_failed_open_clears_the_agent_session_and_its_polling() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(state.workflow_agent.is_some());
+        let _ = update(
+            &mut state,
+            AppMessage::SessionCleared(SessionCleared::OpenFailed {
+                previous_id: "runtime-new".into(),
+                reason: "gone".into(),
+                left: true,
+            }),
+        );
+        assert!(state.opened.is_none());
+        assert!(state.workflow_agent.is_none());
+    }
+
+    #[test]
+    fn a_prompt_held_while_the_session_opened_gets_the_first_send_warning() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        // The person typed before the session finished opening.
+        state.held.push_back("yes, commit it".into());
+        let effects = open_with(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(!sent(&effects), "{effects:?}");
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, AppEffect::LoadDraft(text) if text == "yes, commit it")),
+            "the text comes back to the composer: {effects:?}"
+        );
+        assert_eq!(state.draft, "yes, commit it");
+        assert!(state.held.is_empty());
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, AppEffect::CommitLines(lines)
+            if lines.iter().any(|l| l.contains("Workflow agent session"))))
+        );
+        // Submitting it again goes through: the warning was given once.
+        assert!(sent(&submit(&mut state, "yes, commit it".into())));
+    }
+
+    #[test]
+    fn a_held_prompt_returns_ahead_of_text_typed_since() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-banner");
+        state.held.push_back("first".into());
+        state.draft = "second".into();
+        state.caret = state.draft.len();
+        let _ = open_with(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert_eq!(state.draft, "first\nsecond");
     }
 }

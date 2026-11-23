@@ -4,6 +4,25 @@ use std::fs;
 
 const RUN: &str = "01JB2X9Q4M8Z7K3T5V6W8Y0A1C";
 
+/// What the app does in two steps: build the watch, then apply a read made elsewhere.
+fn open_watch(
+    dir: PathBuf,
+    call: Option<(String, u32)>,
+    stored: &str,
+    runtime: &str,
+) -> AgentSessionWatch {
+    let mut watch = AgentSessionWatch::new(dir.clone(), call, stored, runtime);
+    watch.apply(read_agent_journal(&dir, 0));
+    watch
+}
+
+/// A live runner: it holds the run's lock for as long as the returned file lives.
+fn hold_runner(dir: &Path) -> fs::File {
+    let file = fs::File::open(dir.join("run.lock")).unwrap();
+    file.try_lock().unwrap();
+    file
+}
+
 fn key() -> String {
     "8".repeat(32)
 }
@@ -24,6 +43,7 @@ fn run_folder(root: &Path, extra: &[Value]) -> PathBuf {
         "roster":{},"approval_policy":{}
     });
     fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
+    fs::write(dir.join("run.lock"), "").unwrap();
     let mut records = vec![
         json!({"t":"run_started","run_id":RUN,"script_sha256":"a".repeat(64)}),
         json!({"t":"call_intent","key":key(),"attempt":0,
@@ -104,7 +124,7 @@ fn a_folder_that_only_looks_similar_names_nobody() {
 fn the_bound_session_of_a_failed_agent_is_followed_and_says_failed() {
     let temp = tempfile::tempdir().unwrap();
     let dir = run_folder(temp.path(), &[failed()]);
-    let watch = AgentSessionWatch::open(dir, None, "stored-bound", "runtime-bound");
+    let watch = open_watch(dir, None, "stored-bound", "runtime-bound");
     let note = watch.note();
     assert_eq!(note.tracking, Tracking::Followed);
     assert_eq!(note.phase, Some(AgentPhase::Failed));
@@ -125,7 +145,7 @@ fn a_follow_on_session_is_found_by_its_worktree_and_called_untracked() {
     let temp = tempfile::tempdir().unwrap();
     let dir = run_folder(temp.path(), &[failed()]);
     let call = Some((digest(), 0));
-    let watch = AgentSessionWatch::open(dir, call, "stored-follow-on", "runtime-follow-on");
+    let watch = open_watch(dir, call, "stored-follow-on", "runtime-follow-on");
     let note = watch.note();
     assert_eq!(note.tracking, Tracking::NotFollowed);
     assert_eq!(note.phase, Some(AgentPhase::Failed));
@@ -152,7 +172,7 @@ fn a_follow_on_session_is_found_by_its_worktree_and_called_untracked() {
 fn a_running_bound_agent_warns_that_a_message_changes_its_work() {
     let temp = tempfile::tempdir().unwrap();
     let dir = run_folder(temp.path(), &started());
-    let note = AgentSessionWatch::open(dir, None, "stored-bound", "").note();
+    let note = open_watch(dir, None, "stored-bound", "").note();
     assert_eq!(note.tracking, Tracking::Followed);
     assert_eq!(note.phase, Some(AgentPhase::Running));
     assert!(!note.finished());
@@ -168,7 +188,7 @@ fn a_kept_reply_from_the_step_cap_reads_cut_short() {
         "outcome":{"kind":"completed","value":"partial",
         "cut_short":{"steps":60,"limit":60}},"turns":1});
     let dir = run_folder(temp.path(), &[done]);
-    let note = AgentSessionWatch::open(dir, None, "stored-bound", "").note();
+    let note = open_watch(dir, None, "stored-bound", "").note();
     assert_eq!(note.phase, Some(AgentPhase::CutShort));
     assert!(note.banner().contains("cut short"), "{}", note.banner());
     assert!(note.first_send_warning().contains("cut short"));
@@ -178,7 +198,7 @@ fn a_kept_reply_from_the_step_cap_reads_cut_short() {
 fn an_unreadable_journal_says_so_and_claims_nothing() {
     let temp = tempfile::tempdir().unwrap();
     let missing = temp.path().join(RUN);
-    let watch = AgentSessionWatch::open(missing, Some((digest(), 0)), "stored-x", "runtime-x");
+    let watch = open_watch(missing, Some((digest(), 0)), "stored-x", "runtime-x");
     let note = watch.note();
     assert_eq!(note.tracking, Tracking::Unknown);
     assert_eq!(note.phase, None);
@@ -199,7 +219,7 @@ fn a_call_the_journal_does_not_name_is_unknown_rather_than_untracked() {
     let temp = tempfile::tempdir().unwrap();
     let dir = run_folder(temp.path(), &[failed()]);
     let other = Some(("b".repeat(64), 0));
-    let note = AgentSessionWatch::open(dir, other, "stored-x", "runtime-x").note();
+    let note = open_watch(dir, other, "stored-x", "runtime-x").note();
     assert_eq!(note.tracking, Tracking::Unknown);
     assert_eq!(note.label, None);
     assert_eq!(note.run_name.as_deref(), Some("review-branch"));
@@ -211,16 +231,80 @@ fn a_call_the_journal_does_not_name_is_unknown_rather_than_untracked() {
 }
 
 #[test]
-fn a_refresh_picks_up_the_agents_new_state_and_stops_once_it_is_final() {
+fn a_later_read_picks_up_the_agents_new_state_and_reads_stop_once_it_is_final() {
     let temp = tempfile::tempdir().unwrap();
     let dir = run_folder(temp.path(), &started());
-    let mut watch = AgentSessionWatch::open(dir.clone(), None, "stored-bound", "");
+    let _runner = hold_runner(&dir);
+    let mut watch = open_watch(dir.clone(), None, "stored-bound", "");
     assert_eq!(watch.note().phase, Some(AgentPhase::Running));
     assert!(watch.wants_refresh());
-    assert!(!watch.refresh(), "nothing new was journaled");
+    assert!(
+        !watch.apply(read_agent_journal(&dir, watch.offset())),
+        "nothing new"
+    );
     append(&dir, &[failed()], 6);
-    assert!(watch.refresh());
+    assert!(watch.apply(read_agent_journal(&dir, watch.offset())));
     assert_eq!(watch.note().phase, Some(AgentPhase::Failed));
+    assert!(!watch.wants_refresh());
+}
+
+#[test]
+fn nothing_is_known_until_the_first_read_is_applied() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = run_folder(temp.path(), &started());
+    let watch = AgentSessionWatch::new(dir, None, "stored-bound", "");
+    let note = watch.note();
+    assert!(note.pending);
+    assert_eq!(note.phase, None);
+    assert!(
+        note.banner().contains("reading the run's journal"),
+        "{}",
+        note.banner()
+    );
+    assert!(note.first_send_warning().contains("still reading"));
+    assert!(!watch.wants_refresh());
+}
+
+#[test]
+fn reads_stop_when_the_run_has_ended_or_its_runner_is_gone_or_the_agent_is_not_named() {
+    let temp = tempfile::tempdir().unwrap();
+    // The run finished while the agent never reported an outcome.
+    let finished = json!({"t":"run_finished","outcome":"aborted","summary":{"completed":0,"failed":0,"skipped":0,"parked":0,"unfinished":1}});
+    let dir = run_folder(temp.path(), &[started(), vec![finished]].concat());
+    let _runner = hold_runner(&dir);
+    let watch = open_watch(dir, None, "stored-bound", "");
+    assert_eq!(watch.note().phase, Some(AgentPhase::Running));
+    assert!(!watch.wants_refresh(), "the run is over");
+
+    // The run never wrote its end, but no runner holds the lock: it was interrupted.
+    let gone = tempfile::tempdir().unwrap();
+    let dir = run_folder(gone.path(), &started());
+    let watch = open_watch(dir, None, "stored-bound", "");
+    assert_eq!(watch.note().phase, Some(AgentPhase::Running));
+    assert!(!watch.wants_refresh(), "no runner is alive");
+
+    // The journal does not name this agent.
+    let other = tempfile::tempdir().unwrap();
+    let dir = run_folder(other.path(), &started());
+    let _runner = hold_runner(&dir);
+    let stranger = open_watch(dir, Some(("b".repeat(64), 0)), "stored-x", "runtime-x");
+    assert_eq!(stranger.note().phase, None);
+    assert!(!stranger.wants_refresh());
+}
+
+#[test]
+fn a_failed_read_stops_further_reads_and_says_unreadable() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut watch = AgentSessionWatch::new(temp.path().join(RUN), None, "s", "r");
+    assert!(watch.note().pending);
+    assert!(watch.apply(Err("no such folder".into())));
+    let note = watch.note();
+    assert!(!note.pending);
+    assert!(
+        note.banner().contains("not readable here"),
+        "{}",
+        note.banner()
+    );
     assert!(!watch.wants_refresh());
 }
 
@@ -232,6 +316,7 @@ fn journal_text_with_control_characters_is_flattened_and_cut() {
         label: Some(format!("line\nbreak {}", "x".repeat(200))),
         phase: Some(AgentPhase::Failed),
         tracking: Tracking::Followed,
+        pending: false,
     };
     let banner = note.banner();
     assert!(!banner.contains(['\u{1b}', '\n']), "{banner:?}");
