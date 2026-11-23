@@ -31,7 +31,7 @@ Every execution option:
 | `opts.toolsets` | Nonempty array of distinct toolset names. |
 | `opts.skills` | Nonempty array of distinct skill names. |
 | `opts.isolation` | Exactly 'worktree'. |
-| `opts.maxTurns` | Integer 1 through 10,000. Omitted uses the profile policy. |
+| `opts.maxTurns` | Integer 1 through 10,000. Omitted means the agent has no step cap; the profile's own `agent.max_turns` does not apply to workflow agents. |
 | `opts.stallMs` | Positive integer, accepted as a logged no-op. |
 
 There are no coding toolsets by default. Name toolsets explicitly: ["file"], ["file","terminal"], ["web"], or ["todo"]. A file or terminal agent needs a worktree; tell readers not to edit. The file toolset can write.

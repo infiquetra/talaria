@@ -13,7 +13,7 @@ pub mod wire;
 pub use crate::journal::*;
 pub use brief::{brief, correction_message};
 pub use feed::*;
-pub use frames::{CREATE_KEYS, FrameError, create_params, submit_params};
+pub use frames::{CREATE_KEYS, FrameError, NO_STEP_CAP, create_params, submit_params};
 pub use launch::{ExplicitLaunch, LaunchDefaults, WorktreeProvider};
 pub use policy::SchemaTurnPolicy;
 pub use port::*;
