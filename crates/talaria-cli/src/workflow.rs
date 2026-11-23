@@ -286,7 +286,7 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
         };
         let tokens = run
             .tokens_spent
-            .map_or_else(|| "-".into(), |v| v.to_string());
+            .map_or_else(|| "-".into(), |v| format!("{v} (including cache reads)"));
         let money = run
             .money_spent_usd
             .map_or_else(|| "-".into(), |v| format!("${v:.2}"));
@@ -299,7 +299,7 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
                 })
                 .unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
         text.push_str(&format!(
-            "{}  {}  {}  agents {}/{}{}  tokens {} (including cache reads)  money {}  {}  {}\n",
+            "{}  {}  {}  agents {}/{}{}  tokens {}  money {}  {}  {}\n",
             safe(&run.run_id),
             safe(&run.name),
             run.status.as_str(),
