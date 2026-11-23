@@ -716,6 +716,39 @@ fn unknown_money_text(spend: &SpendView) -> String {
         "unknown (Hermes reported no cost and has no price for the models used)".to_owned()
     }
 }
+#[cfg(test)]
+mod money_text_tests {
+    use super::*;
+
+    fn spend(tokens: u64, money_usd: Option<f64>) -> SpendView {
+        SpendView {
+            tokens,
+            cache_read_tokens: 0,
+            cache_unknown_turns: 0,
+            money_usd,
+            money_source: "none".into(),
+        }
+    }
+
+    #[test]
+    fn unknown_money_names_the_price_list_not_the_tiers() {
+        let line = closing_line("r1", "completed", &spend(500, None), None);
+        assert!(
+            line.contains(
+                "money unknown (Hermes reported no cost and has no price for the models used)"
+            ),
+            "{line}"
+        );
+        assert!(!line.contains("tier"), "{line}");
+        let idle = closing_line("r1", "failed", &spend(0, None), None);
+        assert!(
+            idle.contains("money unknown (no agent turn has finished)"),
+            "{idle}"
+        );
+        let known = closing_line("r1", "completed", &spend(500, Some(0.5)), None);
+        assert!(known.contains("money $0.5000 (none)"), "{known}");
+    }
+}
 /// The short plain-text line printed after the `run_finished` object in JSON mode. Hermes keeps the
 /// last 2,000 characters of a background command's output and then cuts back to the first newline,
 /// so a single very long final line reached the lead as nothing; this line is always short.

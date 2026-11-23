@@ -306,7 +306,11 @@ async fn max_turns_on_a_reached_call_warns_and_names_its_label() {
         "await agent('one', { label: 'build:a', maxTurns: 40 });\nawait agent('two', { label: 'plain' });\nawait agent('three', { label: 'review', maxTurns: 10 });\nreturn 1;\n",
     )
     .await;
-    assert!(report.ok, "a step cap is a warning, never a refusal: {:?}", report.errors);
+    assert!(
+        report.ok,
+        "a step cap is a warning, never a refusal: {:?}",
+        report.errors
+    );
     let text = warnings(&report);
     assert_eq!(text.len(), 1, "{text:?}");
     assert!(text[0].contains("\"build:a\", \"review\""), "{}", text[0]);
@@ -331,6 +335,9 @@ async fn max_turns_in_code_the_trial_run_did_not_reach_still_warns_with_its_line
 
 #[tokio::test]
 async fn a_script_without_max_turns_has_no_step_cap_warning() {
-    let report = check("// maxTurns: 5 is a comment\nawait agent('one', { label: 'maxTurns' });\nreturn 1;\n").await;
+    let report = check(
+        "// maxTurns: 5 is a comment\nawait agent('one', { label: 'maxTurns' });\nreturn 1;\n",
+    )
+    .await;
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
 }

@@ -58,7 +58,10 @@ fn an_added_lesson_is_dated_names_its_run_and_reads_back() {
     let stored = fs::read_to_string(&file).unwrap();
     let (date, rest) = stored.split_once(" run 01RUNID: ").unwrap();
     assert_eq!(date.len(), 10, "{stored}");
-    assert!(date.starts_with("20") && date.as_bytes()[4] == b'-', "{stored}");
+    assert!(
+        date.starts_with("20") && date.as_bytes()[4] == b'-',
+        "{stored}"
+    );
     assert_eq!(rest, "Name the status words in the prompt.\n");
     assert_eq!(out(&add), format!("recorded: {}", stored));
 
@@ -68,7 +71,10 @@ fn an_added_lesson_is_dated_names_its_run_and_reads_back() {
     let json = talaria(&["workflow", "lessons", "--json"], t.path());
     let body: Value = serde_json::from_str(&out(&json)).unwrap();
     assert_eq!(body["entries"][0]["run"], "01RUNID");
-    assert_eq!(body["entries"][0]["text"], "Name the status words in the prompt.");
+    assert_eq!(
+        body["entries"][0]["text"],
+        "Name the status words in the prompt."
+    );
     assert_eq!(body["entries"][0]["date"], date);
 }
 
@@ -91,16 +97,25 @@ fn several_unquoted_words_make_one_entry_and_a_second_add_appends() {
 fn empty_overlong_and_unnamed_lessons_are_refused_and_write_nothing() {
     let t = tempfile::tempdir().unwrap();
     let file = t.path().join("cfg/lessons.txt");
-    let empty = talaria(&["workflow", "lessons", "add", "--run", "r1", "  "], t.path());
+    let empty = talaria(
+        &["workflow", "lessons", "add", "--run", "r1", "  "],
+        t.path(),
+    );
     assert_eq!(empty.status.code(), Some(2), "{}", err(&empty));
     assert!(err(&empty).contains("empty"), "{}", err(&empty));
     let long = "x".repeat(1001);
-    let over = talaria(&["workflow", "lessons", "add", "--run", "r1", &long], t.path());
+    let over = talaria(
+        &["workflow", "lessons", "add", "--run", "r1", &long],
+        t.path(),
+    );
     assert_eq!(over.status.code(), Some(2));
     assert!(err(&over).contains("limit is 1000"), "{}", err(&over));
     let no_run = talaria(&["workflow", "lessons", "add", "words"], t.path());
     assert_eq!(no_run.status.code(), Some(2));
-    let bad_run = talaria(&["workflow", "lessons", "add", "--run", "a b", "words"], t.path());
+    let bad_run = talaria(
+        &["workflow", "lessons", "add", "--run", "a b", "words"],
+        t.path(),
+    );
     assert_eq!(bad_run.status.code(), Some(2));
     assert!(!file.exists());
 }
@@ -111,9 +126,12 @@ fn the_notes_file_is_owner_only() {
     use std::os::unix::fs::PermissionsExt;
     let t = tempfile::tempdir().unwrap();
     assert!(
-        talaria(&["workflow", "lessons", "add", "--run", "r1", "x"], t.path())
-            .status
-            .success()
+        talaria(
+            &["workflow", "lessons", "add", "--run", "r1", "x"],
+            t.path()
+        )
+        .status
+        .success()
     );
     let mode = fs::metadata(t.path().join("cfg/lessons.txt"))
         .unwrap()
@@ -126,7 +144,11 @@ fn the_notes_file_is_owner_only() {
 fn escape_sequences_in_a_stored_line_do_not_reach_the_terminal() {
     let t = tempfile::tempdir().unwrap();
     fs::create_dir_all(t.path().join("cfg")).unwrap();
-    fs::write(t.path().join("cfg/lessons.txt"), "hand \u{1b}[31mred\u{1b}[0m note\n").unwrap();
+    fs::write(
+        t.path().join("cfg/lessons.txt"),
+        "hand \u{1b}[31mred\u{1b}[0m note\n",
+    )
+    .unwrap();
     let text = talaria(&["workflow", "lessons"], t.path());
     assert!(!out(&text).contains('\u{1b}'), "{:?}", out(&text));
 }

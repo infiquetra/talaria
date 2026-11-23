@@ -381,7 +381,10 @@ fn the_new_project_and_worker_folder_rules_are_stated() {
         "never `cd` or `git -C`",
         "absolute path",
     ] {
-        assert!(reference.contains(marker), "missing {marker} in script-api.md");
+        assert!(
+            reference.contains(marker),
+            "missing {marker} in script-api.md"
+        );
     }
     for marker in [
         "`rm` on any absolute path",
@@ -414,13 +417,23 @@ fn the_new_guidance_is_in_the_skill() {
         assert!(s.contains(marker), "missing {marker}");
     }
     let reference = file(&all, "references/script-api.md");
-    for marker in ["## Step caps", "## Status words", "status: {enum: ['done','blocked']}"] {
-        assert!(reference.contains(marker), "missing {marker} in script-api.md");
+    for marker in [
+        "## Step caps",
+        "## Status words",
+        "status: {enum: ['done','blocked']}",
+    ] {
+        assert!(
+            reference.contains(marker),
+            "missing {marker} in script-api.md"
+        );
     }
     assert!(file(&all, "references/commands.md").contains("workflow lessons add --run"));
     // Every example that branches on a status word lists its words with enum.
     let examples = file(&all, "references/examples.md");
     assert!(examples.contains("status:{enum:['done','blocked']}"));
     assert!(examples.contains("verdict:{enum:['confirmed','rejected']}"));
-    assert!(!examples.contains("maxTurns:"), "no example sets a step cap");
+    assert!(
+        !examples.contains("maxTurns:"),
+        "no example sets a step cap"
+    );
 }

@@ -261,7 +261,12 @@ mod tests {
     #[test]
     fn an_entry_is_one_tidy_line_naming_its_run() {
         assert_eq!(
-            entry_line("2026-11-23", "01ABC", "  Name the\nstatus\twords   in the prompt ").unwrap(),
+            entry_line(
+                "2026-11-23",
+                "01ABC",
+                "  Name the\nstatus\twords   in the prompt "
+            )
+            .unwrap(),
             "2026-11-23 run 01ABC: Name the status words in the prompt"
         );
     }
@@ -360,6 +365,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("lessons.txt");
         append_entry(&path, "2026-11-23 run r1: x").unwrap();
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }
