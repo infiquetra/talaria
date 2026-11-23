@@ -899,7 +899,7 @@ mod money_text_tests {
     }
 }
 /// What `use-reply` does, printed with a parked stopped agent.
-const USE_REPLY_HELP: &str = "continue the agent's Hermes session (for example type \"continue\" into it from a Talaria window); its next reply becomes the agent's result and is checked like any reply. A reply that came after the stop while a runner had the run open is used at once. A reply typed while no runner had the run open, even one still running when the runner attaches, is recorded as seen before the call parked and is not used: type it again after answering.";
+const USE_REPLY_HELP: &str = "continue the agent's Hermes session (for example type \"continue\" into it from a Talaria window); its next reply becomes the agent's result and is checked like any reply. Only a reply that arrives after the call parked counts: one that already came since then is used at once. A reply typed before the call parked, for example while no runner had the run open, is not used: type it again after answering.";
 /// How to give the reply a use-reply answer waits for.
 const WAITING_FOR_REPLY_HELP: &str = "continue the agent's Hermes session (for example type \"continue\" into it from a Talaria window); its reply becomes the agent's result. Nothing else ends this wait; talaria workflow stop ends the run.";
 /// The JSON line for a use-reply answer that now waits for the agent's next reply.

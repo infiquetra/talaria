@@ -1499,7 +1499,7 @@ fn stop_for_budget(
             .is_ok_and(|mut set| set.insert(target.admission_id.clone()));
         if fresh {
             // The note goes first, so a settlement a later execution reads is still the budget's.
-            note_runner_stop(dir, &target, crate::journal::StopSource::Budget);
+            let noted = note_runner_stop(dir, &target, crate::journal::StopSource::Budget);
             let (port, sent, dir) = (port.clone(), sent.clone(), dir.to_owned());
             handles.push(tokio::spawn(async move {
                 // `NotRunning` can also mean the port has no receipt yet for a reattached turn.
@@ -1508,7 +1508,7 @@ fn stop_for_budget(
                     // A stop known not to have gone out must not claim the next settlement;
                     // the next tick writes the note again before it tries again. An unknown
                     // answer may still have reached Hermes, so its note stays.
-                    if stopped == StopResult::NotRunning {
+                    if noted && stopped == StopResult::NotRunning {
                         clear_runner_stop(&dir, &target.key);
                     }
                     if let Ok(mut set) = sent.lock() {
@@ -1578,12 +1578,12 @@ async fn settle_stop(
         }
         // Each note goes before its stop, so a settlement that only a later execution reads
         // is still the run's stop and does not park.
-        note_runner_stop(&path, &target, crate::journal::StopSource::RunStop);
+        let noted = note_runner_stop(&path, &target, crate::journal::StopSource::RunStop);
         let stopped =
             tokio::time::timeout_at(deadline, port.stop(&target.profile, &target.session_id)).await;
         // A stop known not to have gone out leaves no note. An unknown answer, or one cut off
         // by the deadline, may still have reached Hermes, so its note stays.
-        if matches!(stopped, Ok(StopResult::NotRunning)) {
+        if noted && matches!(stopped, Ok(StopResult::NotRunning)) {
             clear_runner_stop(&path, &target.key);
         }
         pending.push(target);
@@ -1631,22 +1631,25 @@ async fn settle_stop(
 /// Leave the durable note that the runner is about to stop `target`'s turn. A note that cannot
 /// be written leaves the stop unattributed: a later execution then parks the agent for the
 /// operator, which loses nothing.
+/// Returns whether this call wrote the note; `false` when an earlier note for the same turn was kept.
 fn note_runner_stop(
     run_dir: &Path,
     target: &control::StopTarget,
     source: crate::journal::StopSource,
-) {
+) -> bool {
     let Ok(dir) = RunDir::open(run_dir) else {
-        return;
+        return false;
     };
     let turn = crate::journal::StopTurn {
         attempt: target.attempt,
         turn: target.turn,
         admission_id: Some(target.admission_id.clone()),
     };
-    let _ = dir.note_stop(&target.key, source, Some(&turn), files::now_ms());
+    dir.note_stop_if_new(&target.key, source, &turn, files::now_ms())
+        .unwrap_or(false)
 }
-/// Remove the note for a stop the runner meant to send but did not.
+/// Remove the note for a stop the runner meant to send but did not. Only a note this stop
+/// wrote itself is removed; see `note_runner_stop`.
 fn clear_runner_stop(run_dir: &Path, key: &str) {
     if let Ok(dir) = RunDir::open(run_dir) {
         let _ = dir.clear_agent_stop(key);

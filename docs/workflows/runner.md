@@ -189,8 +189,8 @@ press in a Talaria window that shows the agent's session, leaves the key out and
 that Talaria's runner did not send it and that a person or Hermes did.
 
 A stopped agent is not failed at once. Unless the stop was part of the runner stopping the run
-(a run stop, a budget stop, which ends the call as `stopped` in the execution that sent it, or
-the view's restart), the call parks as needing the operator, with cause `stopped`, through the same parked-call mechanism as
+(a run stop, a budget stop, which ends the call as `stopped` whichever execution reads the
+settlement, or the view's restart), the call parks as needing the operator, with cause `stopped`, through the same parked-call mechanism as
 an unknown admission. A stop from the view's stop-agent key parks too. The answers are `fail`,
 `rerun` and `abort` as above, and `use-reply`:
 
@@ -200,9 +200,9 @@ talaria workflow resolve <run-id> --key <key> --attempt <n> --episode <n> --reso
 
 `use-reply` takes the next turn that settles on the agent's same Hermes session after the stop
 as the call's result. Continue the session, for example by typing `continue` into it from a
-Talaria window, before or after answering: a reply that already settled after the stop is used
-at once, and otherwise the runner waits for one, with no time limit. Only a turn that follows
-the stop counts. When the call parks, the runner records in its `call_attention` record, as
+Talaria window, before or after answering: a reply that settled after the call parked is used
+at once, and otherwise the runner waits for one, with no time limit. Only a turn first seen
+after the call parked counts. When the call parks, the runner records in its `call_attention` record, as
 `seen_admissions`, the other turns it had already seen on the session, for example the answer
 to a message a person typed while the agent was still working; none of those is taken, however
 the turns were ordered. The adopted reply goes through the same checks as the agent's own
@@ -257,12 +257,13 @@ its reply counts as the agent's result only once the parked call is answered wit
 ### Running a failed agent again
 
 `talaria workflow restart <run-id> <label-or-key>` writes the same `restart-<key>.json` request
-the workflow view's restart key writes. It accepts exactly the agents the resume that reads the
-request can restart: one that failed or that the budget stopped, one the run's own stop left
-unfinished (its turn settled stopped, or the stop could not confirm the settlement), one
-waiting for a reply after a `use-reply` answer, and one parked for the operator, which the
-resume then answers with `rerun`. `--all-failed` asks for all of these except parked agents,
-which wait for their own answer, and `--json` prints one `restart_requested` object with
+the workflow view's restart key writes. It accepts an agent whose latest attempt failed or that the
+budget stopped, one whose turn a recorded stop ended (its turn settled stopped), and one waiting
+for a reply after a `use-reply` answer. It refuses a parked agent (answer it with `talaria
+workflow resolve`; the `rerun` answer runs it again) and any other unfinished agent, including
+one whose stop could not confirm the settlement (`talaria workflow resume` continues it; if it
+then fails, ask again): restarting a turn that completed would pay for it twice. `--all-failed`
+takes the same set, and `--json` prints one `restart_requested` object with
 `requested` (each `label`, `key`, and `written`, false when the request was already there),
 `also_run_again`, and `next`. Then run `talaria workflow resume <run-id>`, as `next` says: the
 pending request opens a new execution even for a run that completed with failures, the failed
@@ -405,7 +406,7 @@ and its result is printed, but at least one agent failed).
 
 ## Lessons
 
-`talaria workflow lessons` prints the newest 50 entries of the notes file `lessons.txt` in
+`talaria workflow lessons` prints the newest entries (at most 50 and 30,000 bytes) of the notes file `lessons.txt` in
 Talaria's configuration folder (`TALARIA_CONFIG_DIR`, default `~/.talaria`), with one line saying
 how many older entries exist; `--all` prints every entry. `talaria workflow lessons add --run
 <run-id> <text>` appends one dated entry naming the run, and refuses when the configuration folder

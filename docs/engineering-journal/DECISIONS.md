@@ -50,7 +50,12 @@ its stop and mislabelled the next one. A reply that settled before the stop coul
 
 **Rejected.** Clearing every note when an execution starts (it would lose live run-stop notes).
 
-**Revisit when.** The view can read admission ids directly.
+A stop that finds a note already naming the same turn leaves it alone, so an earlier stop that
+did go out keeps its source.
+
+**Revisit when.** The view can read admission ids directly. Known limit: when the runner dies right after a
+budget stop, the next resume ends `budget_exhausted` without running that agent, and one more
+resume runs it.
 
 ## 2026-11-23 — Failed agents are rerun by a command that reuses the view's restart request
 

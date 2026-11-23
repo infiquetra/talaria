@@ -326,6 +326,28 @@ impl RunDir {
         fs::rename(&tmp, folder.join(agent_stop_name(key)))?;
         sync_dir(&folder).map_err(Into::into)
     }
+    /// Write the note unless one already names exactly this turn, and say whether it was
+    /// written. A note that already names the turn records an earlier stop that did go out (a
+    /// budget stop, the view's stop, or a run stop whose settlement was never read). Writing
+    /// over it, and then clearing it when a second stop finds the turn already ended, would
+    /// leave that earlier stop without a source, and the turn would park on resume.
+    pub fn note_stop_if_new(
+        &self,
+        key: &str,
+        source: super::StopSource,
+        turn: &StopTurn,
+        at_ms: i64,
+    ) -> Result<bool, JournalError> {
+        if let Some(admission_id) = &turn.admission_id
+            && self
+                .agent_stop_for(key, turn.attempt, turn.turn, admission_id)
+                .is_some()
+        {
+            return Ok(false);
+        }
+        self.note_stop(key, source, Some(turn), at_ms)?;
+        Ok(true)
+    }
     fn read_stop_note(&self, key: &str) -> Option<(AgentStopNote, super::StopSource)> {
         let bytes = fs::read(self.path.join("control").join(agent_stop_name(key))).ok()?;
         let note: AgentStopNote = serde_json::from_slice(&bytes).ok()?;
@@ -616,6 +638,49 @@ mod tests {
         assert_eq!(manifest.build, BuildStamp::default());
         assert_eq!(manifest.build.talaria_commit, "unknown");
         assert_eq!(manifest.approval_policy["mode"], "finite-only");
+    }
+
+    #[test]
+    fn an_earlier_stop_note_for_the_same_turn_is_kept() {
+        let parent = tempfile::tempdir().unwrap();
+        let folder = parent.path().join("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(
+            folder.join("manifest.json"),
+            serde_json::to_vec(&old_manifest()).unwrap(),
+        )
+        .unwrap();
+        let dir = RunDir::open(&folder).unwrap();
+        let key = "0123456789abcdef0123456789abcdef";
+        let turn = |turn: u32, admission: &str| StopTurn {
+            attempt: 0,
+            turn,
+            admission_id: Some(admission.into()),
+        };
+        // The budget stop goes out first and leaves its note.
+        assert!(
+            dir.note_stop_if_new(key, crate::journal::StopSource::Budget, &turn(0, "a0"), 1)
+                .unwrap()
+        );
+        // A run stop of the same turn must not take the note over: it would then clear it when
+        // it finds the turn already ended, and the budget's stop would park on resume.
+        assert!(
+            !dir.note_stop_if_new(key, crate::journal::StopSource::RunStop, &turn(0, "a0"), 2)
+                .unwrap()
+        );
+        assert_eq!(
+            dir.agent_stop_for(key, 0, 0, "a0"),
+            Some(crate::journal::StopSource::Budget)
+        );
+        // A note about another turn is stale and is replaced.
+        assert!(
+            dir.note_stop_if_new(key, crate::journal::StopSource::RunStop, &turn(1, "a1"), 3)
+                .unwrap()
+        );
+        assert_eq!(
+            dir.agent_stop_for(key, 0, 1, "a1"),
+            Some(crate::journal::StopSource::RunStop)
+        );
     }
 
     #[test]
