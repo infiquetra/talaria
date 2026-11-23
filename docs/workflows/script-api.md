@@ -39,7 +39,8 @@ cap (exit reason `max_iterations_reached(N/M)` with `completed: false`) is cut s
 not failed and is not sent another turn, and its reply is returned as for a finished agent,
 so a script that ignores the mark behaves as before. An object or array reply carries a hidden
 `cutShort` property, `{steps, limit}`, that keys, spread and `JSON.stringify` do not show, and
-`cutShort()` returns `{label, steps, limit}` for every cut short agent so far, in the order
+`cutShort()` returns `{label, steps, limit}` (with `savedBranch` when an isolated agent's
+uncommitted work was saved) for every cut short agent so far, in the order
 their results arrived. A cut short reply for `opts.schema` that does not fit fails the call
 without a correction turn. The prompt must be a non-blank string. Options may be absent,
 `undefined`, `null`, or a plain object. Unknown keys and null option values are errors;
@@ -57,7 +58,7 @@ undefined option values are absent. Non-blank strings retain their original whit
 | `profile` | Non-blank profile. |
 | `toolsets`, `skills` | Non-empty arrays of distinct, non-blank strings. Duplicates compare exactly. |
 | `isolation` | Exactly `'worktree'`. |
-| `maxTurns` | Integer from 1 to 10,000. Omitted means no step cap: the profile's own `agent.max_turns` does not apply to workflow agents (since 0.9.2-fix.2). Leave it out. An agent stopped at a step cap cannot make another tool call, so it cannot commit or report; the token budget is the only limit. `talaria workflow check` warns about every `maxTurns` it finds. |
+| `maxTurns` | Integer from 1 to 10,000. Omitted means no step cap: the profile's own `agent.max_turns` does not apply to workflow agents (since 0.9.2-fix.2). Leave it out. An agent stopped at a step cap cannot make another tool call, so it cannot commit or report; the token budget is the only limit. `talaria workflow check` warns about it: it names the labels of the calls its trial run made with `maxTurns` set, or else the line where the script writes a `maxTurns` key. That source scan can also match a key that is not an agent option (a schema property, a destructured name), and misses a cap set by assignment (`opts.maxTurns = 5`) or inside a template string in code the trial run did not reach. |
 | `stallMs` | Positive integer; accepted and ignored. Its first use logs an explanation. |
 
 An `agentType` option is refused: Hermes has no agent types; use `tier`, `toolsets` or `skills`.

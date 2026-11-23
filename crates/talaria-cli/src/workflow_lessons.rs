@@ -1,9 +1,9 @@
 //! `talaria workflow lessons`: a notes file where agents record what a workflow run taught them.
 //!
-//! The workflow skill is locked on the owner's machines, so an agent cannot patch it. This file is
-//! where a lesson goes instead. It sits in Talaria's own configuration folder, next to the
-//! `workflows` and `runs` folders, and honours the same `TALARIA_CONFIG_DIR` override. Entries are
-//! unreviewed notes: whoever reads them treats them as hints, not rules.
+//! Agents do not edit the workflow skill; they record lessons with this command instead. The file
+//! sits in Talaria's configuration folder and honours the `TALARIA_CONFIG_DIR` override. Entries
+//! are unreviewed notes: whoever reads them treats them as hints, not rules. The developer may edit
+//! or prune the file by hand.
 //!
 //! One entry is one line: `YYYY-MM-DD run <run-id>: <text>`. A line is appended with a single
 //! write to a file opened for appending, so two writers add whole lines and never mix their text.
@@ -22,6 +22,9 @@ use crate::workflow::safe;
 /// The longest entry, in characters, after white space has been tidied. Longer text is refused
 /// rather than cut, so a lesson is never silently changed.
 pub const MAX_ENTRY_CHARS: usize = 1000;
+/// How many of the newest entries a plain listing prints. Hermes keeps only the head and tail of
+/// a long command output, so an unbounded listing would silently lose its middle entries.
+pub const SHOWN_ENTRIES: usize = 50;
 /// The longest run id accepted.
 const MAX_RUN_ID_CHARS: usize = 64;
 const FILE_NAME: &str = "lessons.txt";
@@ -35,6 +38,9 @@ pub struct LessonsArgs {
     /// Print one JSON object instead of text.
     #[arg(long)]
     pub json: bool,
+    /// Print every entry, not only the newest 50.
+    #[arg(long)]
+    pub all: bool,
 }
 #[derive(Clone, Debug, Subcommand)]
 pub enum LessonsCommand {
@@ -46,8 +52,15 @@ pub struct AddArgs {
     /// The run the lesson was verified from, as `workflow list` shows it.
     #[arg(long, value_name = "RUN")]
     pub run: String,
-    /// The lesson, in plain words; at most 1000 characters. Several words may be given unquoted.
-    #[arg(value_name = "TEXT", required = true, num_args = 1..)]
+    /// The lesson, in plain words; at most 1000 characters. Several words may be given unquoted,
+    /// and words that start with a hyphen (a flag the lesson is about) are part of the text.
+    #[arg(
+        value_name = "TEXT",
+        required = true,
+        num_args = 1..,
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
     pub text: Vec<String>,
 }
 
@@ -57,6 +70,7 @@ pub enum LessonError {
     EmptyText,
     TooLong { chars: usize },
     BadRunId,
+    RelativeFolder(PathBuf),
     Io(String),
 }
 impl std::fmt::Display for LessonError {
@@ -71,12 +85,17 @@ impl std::fmt::Display for LessonError {
                 f,
                 "the run id must be 1 to {MAX_RUN_ID_CHARS} letters, digits, dots, dashes or underscores, as `workflow list` shows it"
             ),
+            Self::RelativeFolder(path) => write!(
+                f,
+                "Talaria's configuration folder resolves to the relative path {}, because neither TALARIA_CONFIG_DIR nor HOME gives an absolute folder; nothing was written. Set TALARIA_CONFIG_DIR or HOME to an absolute folder",
+                path.display()
+            ),
             Self::Io(message) => f.write_str(message),
         }
     }
 }
 
-/// The notes file: in the configuration folder, beside `workflows` and `runs`.
+/// The notes file, in Talaria's configuration folder.
 pub fn lessons_path() -> PathBuf {
     runner::runs::configuration_dir().join(FILE_NAME)
 }
@@ -112,7 +131,15 @@ pub fn entry_line(date: &str, run: &str, text: &str) -> Result<String, LessonErr
 }
 
 /// Append one entry to `path`, creating the file with owner-only permissions when it is new.
+///
+/// A relative `path` is refused: it would put the notes file inside whatever folder the agent
+/// runs in, usually a project checkout where it could be committed.
 pub fn append_entry(path: &Path, line: &str) -> Result<(), LessonError> {
+    if !path.is_absolute() {
+        return Err(LessonError::RelativeFolder(
+            path.parent().unwrap_or(path).to_owned(),
+        ));
+    }
     let io_error = |e: io::Error| LessonError::Io(format!("{}: {e}", path.display()));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(io_error)?;
@@ -207,7 +234,7 @@ pub fn execute(args: LessonsArgs) -> u8 {
     let path = lessons_path();
     match args.command {
         Some(LessonsCommand::Add(add)) => add_entry(&path, &add),
-        None => show(&path, args.json),
+        None => show(&path, args.json, args.all),
     }
 }
 
@@ -222,11 +249,30 @@ fn add_entry(path: &Path, args: &AddArgs) -> u8 {
     }
 }
 
-fn show(path: &Path, json_mode: bool) -> u8 {
+/// The entries a listing prints, newest last, and how many older ones it leaves out.
+pub fn shown(lines: &[String], all: bool) -> (&[String], usize) {
+    let older = if all {
+        0
+    } else {
+        lines.len().saturating_sub(SHOWN_ENTRIES)
+    };
+    (&lines[older..], older)
+}
+
+/// The line that says how many older entries a listing left out.
+fn older_note(older: usize) -> String {
+    format!(
+        "{older} older entr{} not shown; `workflow lessons --all` prints every entry.",
+        if older == 1 { "y is" } else { "ies are" }
+    )
+}
+
+fn show(path: &Path, json_mode: bool, all: bool) -> u8 {
     let lines = match read_lines(path) {
         Ok(lines) => lines,
         Err(e) => return fail(e, 1),
     };
+    let (lines, older) = shown(&lines, all);
     if json_mode {
         let entries: Vec<_> = lines
             .iter()
@@ -240,6 +286,7 @@ fn show(path: &Path, json_mode: bool) -> u8 {
             "path": path.display().to_string(),
             "note": "Unreviewed notes from earlier agents, not rules.",
             "entries": entries,
+            "older_entries": older,
         });
         return print(&format!("{body}\n"));
     }
@@ -247,7 +294,11 @@ fn show(path: &Path, json_mode: bool) -> u8 {
         return print("No lessons recorded.\n");
     }
     let mut text = String::from("Unreviewed notes from earlier agents, not rules:\n");
-    for line in &lines {
+    if older > 0 {
+        text.push_str(&older_note(older));
+        text.push('\n');
+    }
+    for line in lines {
         text.push_str(&safe(line));
         text.push('\n');
     }
@@ -356,6 +407,38 @@ mod tests {
             assert!(entry.run.is_some_and(|run| run.starts_with('w')), "{line}");
             assert!(entry.text.ends_with(&"x".repeat(400)), "{line}");
         }
+    }
+
+    #[test]
+    fn a_relative_notes_path_is_refused_and_creates_nothing() {
+        let error = append_entry(Path::new(".talaria/lessons.txt"), "2026-11-23 run r1: x");
+        assert_eq!(
+            error,
+            Err(LessonError::RelativeFolder(PathBuf::from(".talaria")))
+        );
+        assert!(
+            error
+                .unwrap_err()
+                .to_string()
+                .contains("nothing was written")
+        );
+    }
+
+    #[test]
+    fn a_listing_shows_the_newest_entries_and_counts_the_rest() {
+        let lines: Vec<String> = (0..SHOWN_ENTRIES + 3).map(|n| format!("e{n}")).collect();
+        let (kept, older) = shown(&lines, false);
+        assert_eq!(older, 3);
+        assert_eq!(kept.len(), SHOWN_ENTRIES);
+        assert_eq!(kept[0], "e3");
+        assert_eq!(kept.last().unwrap(), &format!("e{}", SHOWN_ENTRIES + 2));
+        let (every, none) = shown(&lines, true);
+        assert_eq!((every.len(), none), (SHOWN_ENTRIES + 3, 0));
+        assert_eq!(shown(&lines[..2], false), (&lines[..2], 0));
+        assert_eq!(
+            older_note(1),
+            "1 older entry is not shown; `workflow lessons --all` prints every entry."
+        );
     }
 
     #[cfg(unix)]

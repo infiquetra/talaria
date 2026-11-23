@@ -809,14 +809,20 @@ impl Renderer {
         }
     }
 }
-/// Why a run's money is unknown, as far as the finished run can say. Money is unknown when no
-/// finished turn had a cost from Hermes or a price for its model; that is a fact about Hermes's
-/// price list, so the text does not suggest that setting tiers would fix it.
+/// Why a run's money is unknown, in what the code that built the spend knows. A live run's money
+/// is unknown when no finished turn had a cost from Hermes or could be priced from the price list
+/// (a price needs Hermes's input and output token split). A replayed run's spend comes from the
+/// journal, which keeps only the costs Hermes reported, so it says that instead. Neither suggests
+/// that setting tiers would fix it.
 fn unknown_money_text(spend: &SpendView) -> String {
     if spend.tokens == 0 && spend.cache_read_tokens == 0 {
         "unknown (no agent turn has finished)".to_owned()
+    } else if spend.money_source == "unrecorded" {
+        "unknown (the stored run keeps only costs Hermes reported, and at least one turn had none)"
+            .to_owned()
     } else {
-        "unknown (Hermes reported no cost and has no price for the models used)".to_owned()
+        "unknown (Hermes reported no cost and no turn could be priced from the price list)"
+            .to_owned()
     }
 }
 #[cfg(test)]
@@ -844,11 +850,21 @@ mod money_text_tests {
         );
         assert!(
             line.contains(
-                "money unknown (Hermes reported no cost and has no price for the models used)"
+                "money unknown (Hermes reported no cost and no turn could be priced from the price list)"
             ),
             "{line}"
         );
         assert!(!line.contains("tier"), "{line}");
+        let mut replayed = spend(500, None);
+        replayed.money_source = "unrecorded".into();
+        let replay = closing_line("r1", "completed", &replayed, None, &Default::default());
+        assert!(
+            replay.contains(
+                "money unknown (the stored run keeps only costs Hermes reported, and at least one turn had none)"
+            ),
+            "{replay}"
+        );
+        assert!(!replay.contains("no price"), "{replay}");
         let idle = closing_line("r1", "failed", &spend(0, None), None, &Default::default());
         assert!(
             idle.contains("money unknown (no agent turn has finished)"),

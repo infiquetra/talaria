@@ -268,11 +268,13 @@ accepts any extension. The skill tells the lead never to write the deliverable i
 authoring session: anything the workers must share goes in the workflow's first phase. It runs foreground workflows
 in a background terminal with completion notification and waits using that process's returned
 session id. The final `run_finished` JSON line supplies the run id, outcome, result, and spend.
-Detached work is polled with `workflow list --json`; a completed run's result is retrieved with
-`workflow resume --json <run-id>`, which the lead also uses after a background completion whose
-output was cut short. Interrupted work resumes under the same id. A parked call
-requires the developer to choose the printed `workflow resolve` command's fail, rerun, or abort
-resolution. The lead never chooses a new paid attempt alone.
+Detached work is polled with `workflow list --json`; a finished run's result is read with
+`workflow result --json <run-id>`, which never spends, and which the lead also uses after a
+background completion whose output was cut short. `workflow resume` is used only to continue an
+interrupted run, or after `workflow restart` with the developer's yes; on a run with a pending
+restart request it runs agents again. A parked call prints a `parked` JSON event whose `answer`
+is the `workflow resolve` command with a `<choice>` placeholder; the developer chooses one of its
+`choices` (fail, rerun, abort, and use-reply for a stopped agent). The lead never chooses alone.
 
 Workflow agents cannot answer approval requests. Dangerous-command behavior depends on the
 operator's profile approval settings; enabling hivecode does not change them. Code-reading
