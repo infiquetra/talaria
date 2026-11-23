@@ -50,6 +50,8 @@ struct WireState {
     unconfirmed: bool,
     failing_interrupts: u32,
     stale_subscriptions: bool,
+    /// Sessions whose queued notice from the moved route was cancelled.
+    foreign_cancelled: BTreeSet<String>,
     /// The connection number; each reconnect gives every resumed session a new subscription.
     generation: u64,
     /// The sessions the link follows; a reconnect resumes each of them.
@@ -163,10 +165,15 @@ fn reconnect(
 }
 fn receipt(session_id: &str, session: &Session, status: &str, include_result: bool) -> Value {
     let terminal = status == "terminal";
+    // A first attempt naming `overflow` runs out of context; the restart's prompt opens with
+    // Talaria's note, so it answers normally.
+    let overflow = session.prompt.contains("overflow") && !session.prompt.starts_with("Note:");
     let outcome = if session.unknown_resolved {
         "interrupted"
     } else if session.stopped {
         "cancelled"
+    } else if overflow {
+        "failed"
     } else {
         "completed"
     };
@@ -176,6 +183,11 @@ fn receipt(session_id: &str, session: &Session, status: &str, include_result: bo
         value["result"] = json!({"final_response":"READY","completed":!session.stopped,"failed":session.stopped,
             "turn_exit_reason":outcome,"estimated_cost_usd":0.2,"cost_status":"estimated","cost_source":"fixture"});
         value["usage"] = json!({"input_tokens":8,"output_tokens":2,"total_tokens":10});
+        if overflow {
+            value["result"]["failure_reason"] = json!("context_overflow");
+            value["result"]["completed"] = json!(false);
+            value["result"]["failed"] = json!(true);
+        }
         if session.prompt.contains("billing") {
             // The answer arrives, but the provider reports the account out of credit.
             value["result"]["failure_reason"] = json!("billing");
@@ -235,9 +247,42 @@ impl Wire for CountingWire {
                     };
                     snapshot(&session_id, &state.sessions[&session_id], state.generation)
                 }
+                "session.resume"
+                    if state.sessions[params["session_id"].as_str().unwrap()]
+                        .prompt
+                        .contains("sweepfails") =>
+                {
+                    return Err(WireError::Refused {
+                        code: 4001,
+                        message: "refused".into(),
+                        data: json!({"reason":"not_found"}),
+                    });
+                }
                 "session.resume" => {
                     let id = params["session_id"].as_str().unwrap();
-                    snapshot(id, &state.sessions[id], state.generation)
+                    let mut value = snapshot(id, &state.sessions[id], state.generation);
+                    if state.sessions[id].prompt.contains("moved") {
+                        // Hermes reset the conversation: a fresh stored session took the route
+                        // and a notice queued behind the failed turn waits to run there.
+                        value["stored_session_id"] = json!(format!("{id}-moved"));
+                        if !state.foreign_cancelled.contains(id) {
+                            value["running"] = json!(true);
+                            value["pending"] = json!([{"admission_id":"foreign-admission",
+                                "ref":{"profile_id":"fixture","session_id":id},"sequence":2,
+                                "status":"queued","outcome":null,"authority_epoch":1,
+                                "execution_generation":null,"input_id":"foreign-input",
+                                "text":"[a background process finished]"}]);
+                        }
+                    }
+                    value
+                }
+                "session.stats" => json!({"total_tokens":4321}),
+                "prompt.cancel" if params["admission_id"] == "foreign-admission" => {
+                    let id = params["session_id"].as_str().unwrap();
+                    state.foreign_cancelled.insert(id.into());
+                    json!({"admission_id":"foreign-admission","ref":{"profile_id":"fixture","session_id":id},
+                        "sequence":2,"status":"terminal","outcome":"cancelled","authority_epoch":1,
+                        "execution_generation":null})
                 }
                 "prompt.submit" => {
                     let id = params["session_id"].as_str().unwrap();
@@ -281,7 +326,7 @@ impl Wire for CountingWire {
                         "terminal"
                     } else if session.prompt.contains("unknown") {
                         "unknown"
-                    } else if session.prompt.contains("hold")
+                    } else if session.prompt.split_whitespace().any(|word| word == "hold")
                         && !state.released.contains(&session.prompt)
                     {
                         &session.status
@@ -821,6 +866,243 @@ fn a_finished_agent_session_is_ended_in_hermes() {
         .collect();
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("session session-1"), "{notes:?}");
+}
+
+#[test]
+fn work_started_on_a_moved_route_is_cancelled_noted_and_counted() {
+    // The first attempt overflows its context and Hermes moves the route; the restart answers.
+    let h = Harness::new(
+        "return await agent('review overflow moved', {label:'review', tier:'first'});",
+    );
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let frames = h.wire.frames();
+    let position = |method: &str| frames.iter().rposition(|f| f.method == method).unwrap();
+    // The notice nobody tracked was cancelled before the session was detached.
+    let cancels: Vec<_> = frames
+        .iter()
+        .filter(|f| f.method == "prompt.cancel")
+        .collect();
+    assert_eq!(cancels.len(), 1, "{frames:?}");
+    assert_eq!(cancels[0].params["admission_id"], "foreign-admission");
+    assert!(position("prompt.cancel") < position("session.detach"));
+    // The journal says what was found, where, and that its usage was counted.
+    let notes: Vec<String> = records(&folder)
+        .iter()
+        .filter_map(|r| r["event"]["message"].as_str().map(str::to_owned))
+        .filter(|m| m.starts_with("runner: untracked work: "))
+        .collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    for part in [
+        "agent review",
+        "session session-1",
+        "new stored session session-1-moved",
+        "cancelled 1 turn(s)",
+        "4321 tokens",
+    ] {
+        assert!(notes[0].contains(part), "{part} missing from {notes:?}");
+    }
+    assert!(!notes[0].contains("still running"), "{notes:?}");
+    // The stored run result carries the same note, without its fixed opening words.
+    let outcome: Value =
+        serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
+    assert_eq!(
+        outcome["untracked_work"],
+        json!([notes[0].strip_prefix("runner: untracked work: ").unwrap()]),
+        "{outcome}"
+    );
+    // The moved session's tokens are in the run's spend beside the ten of each attempt.
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["spend"]["tokens"], 4341, "{finished}");
+    // The sweep ran before the restart started its new session.
+    let created: Vec<_> = frames
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.method == "session.create")
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(created.len(), 2, "{frames:?}");
+    assert!(
+        frames
+            .iter()
+            .position(|f| f.method == "prompt.cancel")
+            .unwrap()
+            < created[1]
+    );
+}
+
+#[test]
+fn an_agent_that_runs_out_of_context_is_restarted_in_a_fresh_session_with_a_note() {
+    let h = Harness::new("return await agent('review overflow', {label:'review', tier:'first'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["outcome"], "completed", "{finished}");
+    assert_eq!(finished["result"], "READY", "{finished}");
+    // Two sessions: the first attempt and its restart, which carries the note.
+    let frames = h.wire.frames();
+    let created = frames
+        .iter()
+        .filter(|f| f.method == "session.create")
+        .count();
+    assert_eq!(created, 2, "{frames:?}");
+    let prompts: Vec<&str> = frames
+        .iter()
+        .filter(|f| f.method == "prompt.submit")
+        .filter_map(|f| f.params["text"].as_str())
+        .collect();
+    assert_eq!(prompts.len(), 2, "{prompts:?}");
+    assert!(!prompts[0].contains("ran out of context"), "{}", prompts[0]);
+    assert!(
+        prompts[1].starts_with("Note: an earlier attempt at this task ran out of context"),
+        "{}",
+        prompts[1]
+    );
+    assert!(prompts[1].contains("review overflow"), "{}", prompts[1]);
+    // The restart is in the scheduler stream, the journal and the run's output.
+    assert!(events.iter().any(|e| e["event"] == "scheduler"
+        && e["value"]["event"] == "agent_restarted"
+        && e["value"]["restart"] == 1
+        && e["value"]["max"] == 3
+        && e["value"]["label"] == "review"));
+    let r = records(&folder);
+    assert_eq!(
+        r.iter()
+            .filter(|v| v["t"] == "call_finished" && v["retry"] == true)
+            .count(),
+        1
+    );
+    assert!(r.iter().any(
+        |v| v["event"]["message"] == "agent review: restarted 1 of 3 after a context overflow"
+    ));
+    // Both attempts' tokens count toward the run.
+    assert_eq!(finished["spend"]["tokens"], 20, "{finished}");
+}
+
+#[test]
+fn a_sweep_the_gateway_refuses_is_noted_and_the_run_goes_on() {
+    let h = Harness::new(
+        "return await agent('review overflow sweepfails', {label:'review', tier:'first'});",
+    );
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let notes: Vec<String> = records(&folder)
+        .iter()
+        .filter_map(|r| r["event"]["message"].as_str().map(str::to_owned))
+        .filter(|m| m.starts_with("runner: untracked work: "))
+        .collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains(
+            "could not check whether anything else was still running on session session-1"
+        ),
+        "{notes:?}"
+    );
+    assert!(notes[0].contains("look in "), "{notes:?}");
+    // The restart still ran and answered.
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["result"], "READY", "{finished}");
+}
+
+#[test]
+fn an_ordinary_agent_leaves_nothing_to_report_from_its_route() {
+    let h = Harness::new("return await agent('review', {label:'review', tier:'first'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    assert!(
+        !h.wire
+            .frames()
+            .iter()
+            .any(|f| f.method == "prompt.cancel" || f.method == "session.stats")
+    );
+    assert!(!records(&folder).iter().any(|r| {
+        r["event"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("untracked work"))
+    }));
+    let finished = events
+        .iter()
+        .find(|e| e["event"] == "run_finished")
+        .unwrap();
+    assert_eq!(finished["spend"]["tokens"], 10, "{finished}");
+}
+
+#[test]
+fn a_worktree_with_uncommitted_edits_is_listed_when_the_run_ends() {
+    let h = Harness::new(
+        "return await agent('hold review', {label:'review', tier:'first', toolsets:['file'], isolation:'worktree'});",
+    );
+    let repo = h.root.join("source-repo");
+    init_repository(&repo);
+    // The run's own directory is a git repository too; it is not an agent worktree.
+    let mut request = h.request();
+    request.cwd = repo.canonicalize().unwrap();
+    let worker = Worker::start(Start::New(request), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| h.wire.frames().iter().any(|f| f.method == "session.create"));
+    let worktree = PathBuf::from(
+        h.wire
+            .frames()
+            .iter()
+            .find(|f| f.method == "session.create")
+            .unwrap()
+            .params["cwd"]
+            .as_str()
+            .unwrap(),
+    );
+    // The agent leaves two edits behind, and a file in the shared repository too.
+    fs::write(worktree.join("one.txt"), "x").unwrap();
+    fs::write(worktree.join("two.txt"), "x").unwrap();
+    fs::write(repo.join("shared.txt"), "x").unwrap();
+    h.wire.release("hold review");
+    let (exit, events) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let outcome: Value =
+        serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
+    let listed = outcome["leftover_edits"].as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{outcome}");
+    assert_eq!(listed[0]["path"], worktree.to_string_lossy().as_ref());
+    assert_eq!(listed[0]["changed_files"], 2, "{outcome}");
+    let said = |m: &str| m.starts_with("uncommitted changes left in an agent working folder: ");
+    assert!(
+        events
+            .iter()
+            .any(|e| e["event"] == "log" && e["message"].as_str().is_some_and(said))
+    );
+    assert!(
+        records(&folder)
+            .iter()
+            .any(|r| r["event"]["message"].as_str().is_some_and(said))
+    );
+    // Nothing was deleted or committed.
+    assert!(worktree.join("one.txt").exists() && repo.join("shared.txt").exists());
+
+    // An agent that ran in the shared directory lists nothing: Talaria did not make it.
+    let h = Harness::new("return await agent('review', {label:'review', tier:'first'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    let outcome: Value =
+        serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
+    assert!(outcome.get("leftover_edits").is_none(), "{outcome}");
 }
 
 #[test]

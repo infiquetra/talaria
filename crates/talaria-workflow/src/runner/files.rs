@@ -97,6 +97,13 @@ pub(crate) struct OutcomeFile {
     pub reason: Option<String>,
     pub finished_at_ms: i64,
     pub summary: Value,
+    /// Agent working folders that still held uncommitted changes when the run ended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leftover_edits: Vec<super::leftover::LeftoverFolder>,
+    /// What Talaria found running on an agent's route that the run was not following, as the
+    /// journal notes it: the session, its working folder and what was done about it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub untracked_work: Vec<String>,
 }
 /// An agent that needs a reader's attention, and why.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -187,6 +194,8 @@ mod tests {
             reason: None,
             finished_at_ms: 0,
             summary: Value::Null,
+            leftover_edits: Vec::new(),
+            untracked_work: Vec::new(),
         };
         let bytes = serde_json::to_vec(&result).unwrap();
         let loaded: OutcomeFile = serde_json::from_slice(&bytes).unwrap();

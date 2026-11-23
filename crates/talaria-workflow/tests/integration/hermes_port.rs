@@ -449,3 +449,109 @@ async fn wire_fixtures_decode_as_contract_types() {
         }
     }
 }
+
+/// The session as Hermes reports it after it reset the conversation: a fresh stored session,
+/// with the notice nobody tracked either running or waiting behind nothing.
+fn moved_snapshot(running: bool, queued: bool) -> serde_json::Value {
+    let mut value = common::read_json("wire/create_ok.json");
+    value["stored_session_id"] = json!("stored-2");
+    value["running"] = json!(running);
+    if queued {
+        value["pending"] = json!([{"admission_id":"notice","ref":{"profile_id":"fixture","session_id":"session"},
+            "sequence":2,"status":"queued","outcome":null,"authority_epoch":1,"execution_generation":null,
+            "input_id":"input","text":"[a background process finished]"}]);
+    }
+    value
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_sweep_interrupts_a_running_turn_on_a_moved_route_and_reads_its_usage() {
+    let wire = Arc::new(
+        ScriptedWire::from_value(
+            &common::data(""),
+            json!({"steps":[
+                {"expect":"runtime.describe","reply":"describe_ok.json"},
+                {"expect":"session.resume","reply":moved_snapshot(true, false)},
+                {"expect":"session.resume","reply":moved_snapshot(true, false)},
+                {"expect":"session.resume","reply":moved_snapshot(true, false)},
+                {"expect":"session.interrupt","reply":"interrupt_ok.json",
+                    "match":{"session_id":"session","execution_generation":1}},
+                {"expect":"session.resume","reply":moved_snapshot(false, false)},
+                {"expect":"session.stats","reply":{"total_tokens":77}}
+            ]}),
+        )
+        .unwrap(),
+    );
+    let (port, _feed) = HermesPort::with_wires(cfg(), wire.clone(), "fixture")
+        .await
+        .unwrap();
+    let sweep = port
+        .sweep_route("fixture".into(), "session".into(), "stored".into())
+        .await
+        .unwrap();
+    assert_eq!(sweep.moved_to.as_deref(), Some("stored-2"));
+    assert_eq!(sweep.cancelled, 0);
+    assert_eq!(sweep.moved_tokens, Some(77));
+    assert!(!sweep.still_active, "{sweep:?}");
+    assert!(sweep.problems.is_empty(), "{sweep:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_route_that_cannot_be_stopped_is_reported_still_active() {
+    let refused =
+        json!({"error":{"code":4001,"message":"refused","data":{"reason":"stale_generation"}}});
+    let mut steps = vec![json!({"expect":"runtime.describe","reply":"describe_ok.json"})];
+    // Twenty reads each find the notice waiting and fail to cancel it; the next one gives up.
+    for _ in 0..20 {
+        steps.push(json!({"expect":"session.resume","reply":moved_snapshot(true, true)}));
+        steps.push(json!({"expect":"prompt.cancel","reply":refused}));
+    }
+    steps.push(json!({"expect":"session.resume","reply":moved_snapshot(true, true)}));
+    steps.push(json!({"expect":"session.stats","reply":{"total_tokens":0}}));
+    let wire =
+        Arc::new(ScriptedWire::from_value(&common::data(""), json!({ "steps": steps })).unwrap());
+    let (port, _feed) = HermesPort::with_wires(cfg(), wire.clone(), "fixture")
+        .await
+        .unwrap();
+    let sweep = port
+        .sweep_route("fixture".into(), "session".into(), "stored".into())
+        .await
+        .unwrap();
+    assert!(sweep.still_active, "{sweep:?}");
+    assert_eq!(sweep.cancelled, 0);
+    assert_eq!(sweep.problems.len(), 20, "{sweep:?}");
+    assert!(sweep.problems[0].contains("notice"), "{sweep:?}");
+    // A zero reading is no reading: nothing is counted.
+    assert_eq!(sweep.moved_tokens, None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_turn_that_has_only_just_settled_is_not_interrupted() {
+    let mut running = common::read_json("wire/create_ok.json");
+    running["running"] = json!(true);
+    let wire = Arc::new(
+        ScriptedWire::from_value(
+            &common::data(""),
+            json!({"steps":[
+                {"expect":"runtime.describe","reply":"describe_ok.json"},
+                {"expect":"session.resume","reply":running},
+                {"expect":"session.resume","reply":"create_ok.json"}
+            ]}),
+        )
+        .unwrap(),
+    );
+    let (port, _feed) = HermesPort::with_wires(cfg(), wire.clone(), "fixture")
+        .await
+        .unwrap();
+    let sweep = port
+        .sweep_route("fixture".into(), "session".into(), "stored".into())
+        .await
+        .unwrap();
+    assert_eq!(sweep, talaria_workflow::journal::RouteSweep::default());
+    assert!(
+        !wire
+            .outbound()
+            .iter()
+            .any(|f| f.method == "session.interrupt" || f.method == "prompt.cancel")
+    );
+}

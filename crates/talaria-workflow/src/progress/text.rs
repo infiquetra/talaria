@@ -1,6 +1,18 @@
 //! Plain text shared by terminal presentation and offline journal inspection.
 use super::{AgentNode, format_money, format_tokens, live::ProgressState};
 
+/// The note on an agent's row when Talaria started it again after it ran out of context.
+fn restart_note(a: &AgentNode) -> String {
+    if a.overflow_restarts == 0 {
+        return String::new();
+    }
+    format!(
+        " · restarted {} of {} after a context overflow",
+        a.overflow_restarts,
+        crate::journal::MAX_OVERFLOW_RESTARTS
+    )
+}
+
 pub fn agent_line(a: &AgentNode, now_ms: i64) -> String {
     let provider = a
         .provider
@@ -8,7 +20,7 @@ pub fn agent_line(a: &AgentNode, now_ms: i64) -> String {
         .map(|p| format!(" on {p}"))
         .unwrap_or_default();
     format!(
-        "{} {} · {}{provider} · {} · {:.1}s · {} tokens · {}",
+        "{} {} · {}{provider} · {} · {:.1}s · {} tokens · {}{}",
         a.state.glyph(),
         a.label,
         a.model.as_deref().unwrap_or("model unknown"),
@@ -20,6 +32,7 @@ pub fn agent_line(a: &AgentNode, now_ms: i64) -> String {
             format_tokens(a.tokens)
         },
         format_money(a.money),
+        restart_note(a),
     ) + &a
         .progress_note()
         .map(|note| format!(" · {note}"))

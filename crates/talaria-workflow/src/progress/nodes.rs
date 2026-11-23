@@ -169,8 +169,12 @@ pub struct AgentNode {
     pub tail: VecDeque<String>,
     pub subagents: SubagentTree,
     pub restart_requested: bool,
+    /// How many times Talaria started this agent again after it ran out of context. Kept
+    /// across attempts, unlike the rest of an attempt's state.
+    pub overflow_restarts: u32,
     pub stopped: bool,
     pub controls_disabled: bool,
+    pub(crate) failure_reason: Option<String>,
     pub(crate) timeout_seq: Option<u64>,
     pub(crate) ended: bool,
     pub(crate) live_active: bool,
@@ -217,8 +221,10 @@ impl AgentNode {
             tail: VecDeque::new(),
             subagents: SubagentTree::new(),
             restart_requested: false,
+            overflow_restarts: 0,
             stopped: false,
             controls_disabled: false,
+            failure_reason: None,
             timeout_seq: None,
             ended: false,
             live_active: false,

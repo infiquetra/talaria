@@ -144,6 +144,18 @@ pub enum SchedulerEvent {
         attempt: u32,
         reason: String,
     },
+    /// An agent whose turn ran out of context starts again in a fresh session.
+    AgentRestarted {
+        key: String,
+        label: String,
+        /// The attempt number the restart runs as.
+        attempt: u32,
+        /// Which restart this is, counting from 1.
+        restart: u32,
+        /// The most restarts one agent call gets.
+        max: u32,
+        reason: String,
+    },
     /// A turn settled before its session streamed any usage, so only settlement counts it.
     UsageUnmetered {
         key: String,

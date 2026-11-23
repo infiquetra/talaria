@@ -5,7 +5,8 @@ use super::{
     wire::{Cursor, LinkWireFactory, Wire, WireError, WireFactory},
 };
 use crate::journal::{
-    AdmissionState, CreateSession, GatewayPort, PortError, Receipt, SessionBound, SubmitTurn,
+    AdmissionState, CreateSession, GatewayPort, PortError, Receipt, RouteSweep, SessionBound,
+    SubmitTurn,
 };
 use futures::future::BoxFuture;
 use hermes_contract::methods::canonical::session_detach;
@@ -432,6 +433,18 @@ impl HermesPort {
         session_id: &str,
         resync: bool,
     ) -> Result<(), PortError> {
+        self.resume_inner(profile, session_id, resync)
+            .await
+            .map(|_| ())
+    }
+    /// Resume the session and bind its snapshot; `None` when the port already followed it on
+    /// this connection and no fresh read was asked for.
+    async fn resume_inner(
+        &self,
+        profile: &str,
+        session_id: &str,
+        resync: bool,
+    ) -> Result<Option<CanonicalSnapshot>, PortError> {
         let key = (profile.into(), session_id.into());
         let gate = self
             .request(|reply| Command::Gate(key.clone(), reply))
@@ -446,7 +459,7 @@ impl HermesPort {
                 .as_ref()
                 .is_some_and(|s| s.resumed_on == wire.generation())
         {
-            return Ok(());
+            return Ok(None);
         }
         let _pending = self.pending(profile).await?;
         let value = self
@@ -487,12 +500,12 @@ impl HermesPort {
             let _ = self.inner.feed.send(AgentFeedItem::Resynced {
                 profile: profile.into(),
                 session_id: session_id.into(),
-                snapshot: Box::new(snapshot),
+                snapshot: Box::new(snapshot.clone()),
             });
         } else {
             wire.track(session_id, position);
         }
-        Ok(())
+        Ok(Some(snapshot))
     }
     pub fn session_info(&self, session_id: &str) -> Option<SessionInfo> {
         self.inner
@@ -793,6 +806,130 @@ impl GatewayPort for HermesPort {
             port.request(|reply| Command::Forget((profile, session_id), reply))
                 .await
         })
+    }
+    fn sweep_route(
+        &self,
+        profile: String,
+        session_id: String,
+        stored_session_id: String,
+    ) -> BoxFuture<'static, Result<RouteSweep, PortError>> {
+        let port = self.clone();
+        Box::pin(async move { port.sweep(&profile, &session_id, &stored_session_id).await })
+    }
+}
+/// How many times a sweep reads the route again while something there is still stopping.
+const SWEEP_ROUNDS: u32 = 20;
+/// The pause between those reads.
+const SWEEP_PAUSE: Duration = Duration::from_millis(500);
+impl HermesPort {
+    /// Read the session as Hermes holds it now and stop whatever runs there that this run did
+    /// not start. Hermes keeps a local session's owner when it resets the conversation, so the
+    /// session id stays the same while its stored session changes; a notice that was queued
+    /// behind the failed turn then starts on the fresh stored session. A viewer can cancel
+    /// queued and started admissions (`prompt.cancel`) and interrupt a turn
+    /// (`session.interrupt`); nothing here ends a stored session directly, but the detach that
+    /// follows ends an idle one.
+    async fn sweep(
+        &self,
+        profile: &str,
+        session_id: &str,
+        stored: &str,
+    ) -> Result<RouteSweep, PortError> {
+        let mut sweep = RouteSweep::default();
+        let mut cancelled = std::collections::BTreeSet::new();
+        let mut round = 0;
+        // Reads in a row that found the session running with no admission to cancel.
+        let mut unexplained = 0;
+        loop {
+            let Some(snapshot) = self.resume_inner(profile, session_id, true).await? else {
+                break;
+            };
+            if snapshot.stored_session_id != stored {
+                sweep.moved_to = Some(snapshot.stored_session_id.clone());
+            }
+            let live: Vec<_> = snapshot
+                .pending
+                .iter()
+                .filter(|p| {
+                    matches!(
+                        p.status,
+                        hermes_contract::schemas::Status::Queued
+                            | hermes_contract::schemas::Status::Started
+                    )
+                })
+                .collect();
+            if live.is_empty() && !snapshot.running {
+                sweep.still_active = false;
+                break;
+            }
+            if round >= SWEEP_ROUNDS {
+                sweep.still_active = true;
+                break;
+            }
+            round += 1;
+            let wire = self.wire(profile).await?;
+            for admission in &live {
+                let params = json!({"session_id":session_id,"admission_id":admission.admission_id})
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default();
+                match self
+                    .call(
+                        &wire,
+                        "prompt.cancel",
+                        params,
+                        self.inner.cfg.timeouts.cancel,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        if cancelled.insert(admission.admission_id.clone()) {
+                            sweep.cancelled += 1;
+                        }
+                    }
+                    Err(e) => sweep.problems.push(format!(
+                        "could not cancel admission {}: {e}",
+                        admission.admission_id
+                    )),
+                }
+            }
+            // A turn that just settled can read as running for an instant; only a session that
+            // stays running with nothing queued behind it is interrupted.
+            unexplained = if live.is_empty() { unexplained + 1 } else { 0 };
+            if unexplained > 2
+                && let Err(e) = self
+                    .interrupt(profile, session_id, snapshot.execution_generation)
+                    .await
+            {
+                sweep
+                    .problems
+                    .push(format!("could not interrupt the running turn: {e}"));
+            }
+            tokio::time::sleep(SWEEP_PAUSE).await;
+        }
+        // Failures along the way that ended with the route quiet and nothing found are noise.
+        if !sweep.still_active && sweep.cancelled == 0 && sweep.moved_to.is_none() {
+            sweep.problems.clear();
+        }
+        if sweep.moved_to.is_some() {
+            let wire = self.wire(profile).await?;
+            let stats = self
+                .call(
+                    &wire,
+                    "session.stats",
+                    json!({"session_id":session_id})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                    self.inner.cfg.timeouts.poll,
+                )
+                .await;
+            sweep.moved_tokens = stats
+                .ok()
+                .and_then(|v| v["total_tokens"].as_u64())
+                .filter(|n| *n > 0);
+        }
+        Ok(sweep)
     }
 }
 impl HermesPort {

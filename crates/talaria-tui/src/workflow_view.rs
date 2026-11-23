@@ -495,6 +495,13 @@ fn node_line(s: &ProgressState, node: &NodeKey) -> String {
                 if a.attempt > 0 {
                     state.push_str(&format!(" · attempt {}", a.attempt));
                 }
+                if a.overflow_restarts > 0 {
+                    state.push_str(&format!(
+                        " · restarted {} of {} after a context overflow",
+                        a.overflow_restarts,
+                        talaria_workflow::journal::MAX_OVERFLOW_RESTARTS
+                    ));
+                }
                 if let Some(cause) = &a.attention {
                     state.push_str(&format!(" · {cause}"));
                 }

@@ -732,6 +732,54 @@ impl AdmissionGate for Scheduler {
         self.inner.wake.notify_one();
         allowed
     }
+    fn authorise_restart(
+        &self,
+        request: &AgentRequest,
+        launch: &ResolvedLaunch,
+        _last: &SettledTurn,
+        attempt: u32,
+        restart: u32,
+        max: u32,
+    ) -> bool {
+        let key = journal_key(&request.call_id, launch);
+        let id = (
+            launch.profile.clone(),
+            launch.provider.clone().unwrap_or_default(),
+        );
+        let mut s = self.inner.lock();
+        if let Err(e) = self.inner.fold(&mut s, false) {
+            s.journal_error = Some(e);
+            return false;
+        }
+        // A restart is new work: it needs the same room a rate-limit retry needs.
+        let allowed = self.inner.reached(&s).is_none()
+            && s.journal_error.is_none()
+            && !self
+                .inner
+                .lane(&mut s, &id)
+                .pause
+                .as_ref()
+                .is_some_and(|(_, c)| *c == PauseCause::OutOfCredit);
+        if allowed {
+            self.inner.event(
+                &mut s,
+                SchedulerEvent::AgentRestarted {
+                    key,
+                    label: request.label.clone(),
+                    attempt: attempt.saturating_add(1),
+                    restart,
+                    max,
+                    reason: "context_overflow".into(),
+                },
+            );
+        }
+        drop(s);
+        self.inner.wake.notify_one();
+        allowed
+    }
+    fn count_untracked_usage(&self, id: &str, tokens: u64) {
+        self.observe_usage(id, tokens);
+    }
 }
 struct Cancel {
     inner: Weak<Inner>,
