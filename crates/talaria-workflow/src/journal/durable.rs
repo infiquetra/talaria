@@ -238,9 +238,8 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         })
         .await
         .unwrap_or_else(|e| Err(format!("the save stopped unexpectedly: {e}")));
-        let branch = match saved {
-            Ok(Some(branch)) => branch,
-            Ok(None) => return outcome,
+        let saved = match saved {
+            Ok(saved) => saved,
             Err(error) => {
                 self.note_route(format!(
                     "runner: could not save the uncommitted work of agent {label} to a branch: {error}"
@@ -249,8 +248,21 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 return outcome;
             }
         };
+        let skipped = saved
+            .skipped_note()
+            .map(|note| format!("; {note}"))
+            .unwrap_or_default();
+        let Some(branch) = saved.branch else {
+            if !skipped.is_empty() {
+                self.note_route(format!(
+                    "runner: saved nothing of the uncommitted work of agent {label}{skipped}"
+                ))
+                .await;
+            }
+            return outcome;
+        };
         self.note_route(format!(
-            "runner: saved the uncommitted work of agent {label} to branch {branch}"
+            "runner: saved the uncommitted work of agent {label} to branch {branch}{skipped}"
         ))
         .await;
         // Leave room for the branch, so the length cap on recorded reasons never cuts it off.

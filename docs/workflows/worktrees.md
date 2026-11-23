@@ -80,6 +80,25 @@ configured identity. When none is configured, it is written as `Talaria workflow
 repository's configuration is never changed. No hook runs (`core.hooksPath` points nowhere for
 these commands) and no signing program starts.
 
+A path Git cannot read does not stop the save. A file the user may not open, a folder that
+cannot be listed, or a nested repository with no commit is left out, and everything else is
+still saved. The saved commit's message lists the paths that were left out, under "Git could not
+read these paths", and the journal note that names the branch says how many there were and names
+the first few. Those paths are still in the worktree. When nothing else changed, no branch is
+made and the note still names them. The save fails only when Git cannot write the snapshot at
+all.
+
+The save does not run filter programs that the repository's own configuration names. An agent
+can write `filter.<name>.clean` or `filter.<name>.process` into the repository's configuration
+(or a file it includes) and point `.gitattributes` at it, so for every such filter the save's
+commands set the clean and process programs to nothing and `required` to false, through
+`GIT_CONFIG_COUNT` for those commands only. A file such a filter manages is saved as it is in the
+folder. Filters from the user's global or system configuration, such as Git LFS, still run: they
+are the user's own programs, and without them every file they manage would be saved in its raw
+form. The read-only `git status` checks (the leftover-edits list, `worktrees list`) do not set
+these overrides, so Git can run a repository's clean filter there on a file whose recorded
+details changed, as it would for any `git status` the user runs.
+
 The branch name is carried everywhere the call's end is reported: in the journal's
 `call_finished` record (as `saved_branch` in the `cut_short` mark of a call cut short, or at the
 end of the reason of a failed or stopped call, as "(uncommitted work saved to branch ...)"), in
@@ -97,10 +116,12 @@ refuses, the folder is not one of the run's worktrees), the journal and the run'
 why, and the run carries on. Only a folder inside the run's own `worktrees` folder is saved.
 
 An agent without worktree isolation, including every agent of a run whose folder is not a Git
-repository, edits the run's folder directly. Its edits are already where the run's caller looks,
-so nothing is saved and nothing is missing. When such an agent ends badly, `leftover_edits`
-lists that folder once with `"in_place": true` and the agents' labels, and the text output says
-so in a separate list; no Git command runs in that folder.
+repository, runs in the run's folder itself. Anything it changed is already where the run's
+caller looks, and nothing is saved for it. When such an agent ends badly, `leftover_edits` lists
+that folder once with `"in_place": true` and the agents' labels, and the text output says they
+ran there without worktree isolation, that anything they changed is already there, and that
+nothing was saved. Talaria does not check whether they changed anything; no Git command runs in
+that folder.
 
 ## Listing, diffing and explicit removal
 
@@ -181,8 +202,13 @@ checked-out commit is contained in the source checkout's `HEAD`, the folder is r
 branch is then judged on its own. The run's recorded branch is deleted with `git branch -d`
 only when `HEAD` contains it; otherwise it is kept with its sidecar, so it is still listed, and
 the output says how many commits it holds. The agent's branch is deleted the same way, and only
-when its reflog shows it was created no earlier than the run's own branch; a branch that existed
-before the run is never deleted. Nothing unmerged is ever force-deleted without `--force`.
+when the oldest line of its reflog records its creation (its old object id is all zeros) at a
+time no earlier than the run's own branch was made. In every other case the branch is kept and
+the output says why: its reflog shows it was created before the run; its reflog no longer holds
+its creation, because older entries expired (`git gc` and `git reflog expire` drop them), so the
+branch may have existed long before; or Talaria can read no reflog entry for it (a repository
+using the reftable format keeps no reflog files Talaria reads). A branch that existed before the
+run is never deleted. Nothing unmerged is ever force-deleted without `--force`.
 `list --json` shows the agent's branch as `folder_branch`, and `remove --json` names the branches
 in `deleted_branches` and `kept_branches`. The closing sentence of `remove` names only the
 reasons the kept worktrees actually have (uncommitted changes, commits the source checkout

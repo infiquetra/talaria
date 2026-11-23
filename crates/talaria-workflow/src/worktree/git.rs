@@ -10,7 +10,7 @@ use std::{
 mod manage;
 mod save;
 pub use manage::{CleanupAction, CleanupEntry, IgnoredEntry, IgnoredKind, WorktreeReport};
-pub use save::{SAVED_SUFFIX, save_uncommitted};
+pub use save::{SAVED_SUFFIX, SavedWork, save_uncommitted};
 
 /// One provider owns a run's provenance and serialises its local Git operations.
 pub struct GitWorktrees {

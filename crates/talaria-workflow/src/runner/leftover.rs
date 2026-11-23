@@ -12,23 +12,23 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// One agent working folder with edits nobody committed, or a folder agents without worktree
-/// isolation edited directly.
+/// One agent working folder with edits nobody committed, or a folder agents ran in without
+/// worktree isolation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeftoverFolder {
     pub path: String,
     /// Entries `git status` reports in an agent worktree. Not counted (zero) for a folder
-    /// edited in place, where no git command is run.
+    /// agents ran in without isolation, where no git command is run.
     pub changed_files: usize,
     /// The branch that holds a copy of the changes, when the agent ended badly (cut short,
     /// failed, stopped or never finished) and they were saved. The folder keeps its changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saved_branch: Option<String>,
-    /// For a folder edited in place: the agents that ended badly there.
+    /// For a folder agents ran in without isolation: the agents that ended badly there.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<String>,
-    /// True for a folder agents edited directly, without worktree isolation: their edits are
-    /// already there, so nothing was saved and nothing is missing.
+    /// True for a folder agents ran in without worktree isolation. Talaria does not look at
+    /// what they changed there: anything they changed is already there, and nothing was saved.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub in_place: bool,
 }
@@ -83,14 +83,14 @@ fn calls(records: &[RecordLine]) -> Vec<Call<'_>> {
     calls.into_values().collect()
 }
 
-/// What the run left in agent folders, in path order, and notes about saves that could not be
-/// made. A worktree Talaria made for one of the run's agents is listed when it holds
+/// What the run left in agent folders, in path order, and notes about saves (one that could
+/// not be made, or paths git could not read). A worktree Talaria made for one of the run's agents is listed when it holds
 /// uncommitted changes; when that agent ended badly, the changes are also saved to a branch
 /// (see `save_agent_worktree`), or the branch saved when the call ended is named again. Only
 /// folders under the run's own `worktrees` folder, named by the journal's records, are
 /// inspected with git: an agent can write repository configuration, so no other folder is
-/// trusted with a git command. A folder agents without isolation edited directly is listed
-/// once, with those that ended badly, and no git command runs in it. Nothing is deleted.
+/// trusted with a git command. A folder agents ran in without isolation is listed once, with
+/// those that ended badly, and no git command runs in it. Nothing is deleted.
 pub(crate) fn leftover_folders(
     records: &[RecordLine],
     run_dir: &Path,
@@ -101,7 +101,8 @@ pub(crate) fn leftover_folders(
     let calls = calls(records);
     let root = run_dir.join("worktrees").canonicalize().ok();
     // A folder inside the run's worktrees folder is an agent worktree whatever the launch
-    // says; any other folder is edited in place unless the launch asked for isolation.
+    // says; any other folder is one agents ran in without isolation unless the launch asked
+    // for isolation.
     let inside = |path: &str| {
         root.as_ref().is_some_and(|root| {
             Path::new(path)
@@ -133,7 +134,15 @@ pub(crate) fn leftover_folders(
             );
             match crate::worktree::save_agent_worktree(run_dir, Path::new(path), &branch, &message)
             {
-                Ok(branch) => saved_branch = branch,
+                Ok(saved) => {
+                    if let Some(note) = saved.skipped_note() {
+                        problems.push(format!(
+                            "runner: saving the uncommitted work of agent {}: {note}",
+                            call.label
+                        ));
+                    }
+                    saved_branch = saved.branch;
+                }
                 Err(error) => problems.push(format!(
                     "runner: could not save the uncommitted work of agent {} to a branch: {error}",
                     call.label
@@ -231,7 +240,7 @@ fn changed_files(folder: &Path) -> Option<usize> {
 pub(crate) fn describe(folder: &LeftoverFolder) -> String {
     if folder.in_place {
         return format!(
-            "agents without worktree isolation edited {} directly ({}): their edits are already there, so nothing was saved and nothing is missing",
+            "agents ran in {} without worktree isolation ({}): anything they changed is already there, and nothing was saved",
             folder.path,
             folder.agents.join(", ")
         );
@@ -409,7 +418,7 @@ mod tests {
                 script.to_str().unwrap(),
             ],
         );
-        // Both agents completed, so nothing is saved and the folder edited in place is not
+        // Both agents completed, so nothing is saved and the folder run in without isolation is not
         // listed.
         let records = [
             call(&own, 'a', "own", None),
@@ -469,12 +478,17 @@ mod tests {
             vec!["writer".to_string(), "checker".to_string()]
         );
         let said = describe(folder);
+        // Nothing checked whether they changed anything, so the sentence does not say they did.
+        assert!(!said.contains("edited"), "{said}");
         assert!(
-            said.contains("edited") && said.contains("directly"),
+            said.starts_with(&format!(
+                "agents ran in {} without worktree isolation (writer, checker): ",
+                plain.display()
+            )),
             "{said}"
         );
         assert!(
-            said.contains("nothing was saved and nothing is missing"),
+            said.ends_with("anything they changed is already there, and nothing was saved"),
             "{said}"
         );
         assert!(!said.contains("uncommitted changes left"), "{said}");
