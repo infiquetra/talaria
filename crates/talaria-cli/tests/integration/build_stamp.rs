@@ -53,9 +53,25 @@ fn the_build_script_watches_the_commit_and_sources_but_not_the_index() {
     assert!(!watched.iter().any(|p| p.ends_with("index")), "{watched:?}");
     // A packed reference is watched through packed-refs; a missing loose file is not named.
     git(&root, &["pack-refs", "--all"]);
+    assert!(!git_dir.join("refs/heads/main").exists());
     let packed = build_script::watched(&root, true);
     assert!(packed.contains(&git_dir.join("packed-refs")), "{packed:?}");
     assert!(packed.iter().all(|p| p.exists()), "{packed:?}");
+    // The next commit writes the loose file again and leaves HEAD and packed-refs alone, so
+    // the folder it appears in is watched.
+    assert!(packed.contains(&git_dir.join("refs/heads")), "{packed:?}");
+    // A branch whose name has a slash: the nearest folder that exists is watched.
+    git(&root, &["switch", "-q", "-c", "topic/one"]);
+    git(&root, &["pack-refs", "--all"]);
+    let nested = build_script::watched(&root, true);
+    let topic = git_dir.join("refs/heads/topic");
+    let expected = if topic.is_dir() {
+        topic
+    } else {
+        git_dir.join("refs/heads")
+    };
+    assert!(nested.contains(&expected), "{nested:?}");
+    assert!(nested.iter().all(|p| p.exists()), "{nested:?}");
     // Without a commit, only the source paths are watched.
     assert_eq!(
         build_script::watched(&root, false),
