@@ -10,6 +10,18 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Talaria no longer treats a newer Hermes gateway as a problem. `talaria doctor` shows one plain
+  line, for example "Hermes 0.23.3; this Talaria was tested against v0.23.1", and its overall result
+  is unchanged by the gateway's version. The connect notice for a gateway newer than the tested
+  release is gone. A gateway older than the oldest tested release still gets one plain note that
+  some features may be missing, as a warning instead of a failure.
+- `talaria --version` reports "hermes: tested against v0.23.1 (3b421578)" instead of a pin and a
+  supported range. The doctor JSON keeps its `hermes_tag` and `hermes_commit` fields.
+- The weekly contract drift workflow reports in its run summary and no longer turns the run red
+  because a newer Hermes release changes the contract.
+
 ## [0.9.1] — 2026-11-21
 
 Talaria 0.9.1 is the packaged binary and Homebrew release of 0.9.0 after
