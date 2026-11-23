@@ -2,6 +2,51 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-23 — Hermes reports a turn's tokens per turn and its cache reads as a session running total
+
+**Evidence.** A settled turn's `usage` holds that turn's input, output and total tokens, with
+cache reads folded in. The `result` beside it holds `cache_read_tokens` for the whole session so
+far (`crates/talaria-workflow/tests/data/hermes/recorded/live_text_agent_on_fixture.jsonl`: total
+3,170, cache reads 1,601). Talaria now journals the running total with each turn and takes the
+difference from the same attempt's previous turn (`crates/talaria-workflow/src/tokens.rs`). This
+corrects the entry below, which said a settled turn has no breakdown. The running-total reading
+rests on the Hermes source; both recordings in the repository are single-turn.
+
+**Mechanism.** Two fields in one message count different spans, and both are called tokens.
+
+**Generalizable rule.** Before subtracting one count from another, find out whether each is per
+turn or running, and keep the raw running value so a replay derives the same share.
+
+## 2026-11-23 — A test that passes alone and fails in a full run may be a race, not a slow machine
+
+**Evidence.** `progress_detach_keeps_runner_alive` failed in four full runs and passed alone every
+time, so it was put down to load and its 20 second limit was raised to 60. It then failed at 60
+seconds. A backtrace named the wait: the test pressed the pause key, waited for the pause file,
+and pressed the key again to resume. The view learns that its pause was written from a message
+that arrives after the file exists, so a second key before that message asked to pause again and
+the file never went away (`crates/talaria-workflow/src/progress/live.rs`,
+`ProgressKey::PauseRun`). The test now waits for the view to show the pause; it passed 8 of 8
+where it had failed about one run in two.
+
+**Mechanism.** The test waited on a file the effect wrote, not on the state the next key reads.
+
+**Generalizable rule.** When a timeout is raised and the test still fails, stop calling it load
+and get a backtrace. In a test that types keys, wait for the screen to show the state the next key
+depends on.
+
+## 2026-11-23 — Parse git output with `-z`, and a folder of only ignored files is one entry
+
+**Evidence.** `git status --porcelain` quotes a path with a space or a non-ASCII letter, so a name
+compared against the quoted text never matched; the cleanup command now uses `-z`
+(`crates/talaria-workflow/src/worktree/git/manage.rs`). Git also reports an untracked folder that
+holds only ignored content as one entry for the parent, so `app/` with only `node_modules` inside
+shows as `app/`.
+
+**Mechanism.** The human format is escaped for a terminal, and git collapses what it can.
+
+**Generalizable rule.** Use `-z` whenever a program reads git's output, and check what git reports
+for a nested case before matching on a folder name.
+
 ## 2026-11-23 — "Not running" is not "finished": a free lock says only that no runner is alive
 
 **Evidence.** The first version of `workflow worktrees remove` refused a run only while a process

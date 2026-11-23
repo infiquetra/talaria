@@ -2,6 +2,56 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-23 — The token budget counts tokens except cache reads
+
+**Decision.** A run's token budget, `spend.tokens`, `tokens_spent` in `workflow list` and
+`budget.spent()` in a script all leave cache reads out. Cache reads are reported beside them as
+`cache_read_tokens`, and text output reads "N tokens + M cache reads". Cache writes stay counted.
+A turn whose cache reads Hermes did not report is counted in full and the output says for how many
+turns that happened (`cache_unknown_turns`). Journals written before this change have no figure,
+so every one of their turns shows as unknown.
+
+**Rationale.** In a real run cache reads were about 95% of the total and cost a fraction of other
+tokens, so a budget that counted them measured mostly cache reads.
+
+**Rejected.** Estimating the split when it is unknown. A `session.stats` call after every turn.
+Keeping `tokens` as the folded total and adding a second field for the counted part (the budget's
+own messages compare against `tokens`).
+
+**Revisit when.** Hermes reports per-turn cache reads in a settled turn's usage, or a provider
+bills cache reads at a rate worth budgeting.
+
+## 2026-11-23 — An ignored build folder is deleted only when it is verified
+
+**Decision.** `workflow worktrees remove` without `--force` treats an ignored folder as build
+output only when its name is on the list and a marker on disk confirms it: `CACHEDIR.TAG` or
+`.rustc_info.json` in `target`; `CACHEDIR.TAG` in `.pytest_cache`, `.mypy_cache` and
+`.ruff_cache`; `pyvenv.cfg` in `.venv`; only compiled files in `__pycache__`; `package.json`
+beside `node_modules`; a project manifest beside `dist` or `build`. A symbolic link is never build
+output. A listed name that fails its check keeps the worktree, and the output says why.
+
+**Rationale.** A name says nothing about contents. A hand-made folder called `build` would have
+been deleted without a word.
+
+**Rejected.** Reading the marker's contents. Walking the folder (too slow for `node_modules` and
+`target`).
+
+**Revisit when.** A tool changes its marker, or a real build folder is refused (a monorepo whose
+manifest is a link, for example).
+
+## 2026-11-23 — A run that completes with failures exits 5
+
+**Decision.** `workflow run` and `workflow resume` exit 5 when the script returned but at least
+one agent failed. The result and the failed agents are printed exactly as before. The other codes
+are unchanged: 0 completed, 1 failed, 2 refused, 3 aborted, 4 budget exhausted.
+
+**Rationale.** With exit 0 a caller that reads only the exit code, a shell chain or the gateway's
+"process finished" notice, took a run with a failed agent for a clean one.
+
+**Rejected.** Reusing 1 (it means the run itself failed and has no result).
+
+**Revisit when.** A caller is found that starts a run again on any non-zero code.
+
 ## 2026-11-23 — No job follows Hermes releases
 
 **Decision.** The daily `Hermes sync` workflow is deleted, with its tests. It compared the newest

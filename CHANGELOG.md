@@ -65,8 +65,14 @@ with the usual caveat that a `0.x` line may break anything between releases.
   reads as changed until `/hivecode reinstall`.
 - File tool headers keep the file name: a long path is shortened in the middle, and the line
   counts say "partial" when Hermes cut the preview.
-- Token totals in text output say that they include cache reads, and a run's status reads
-  "completed with failures" in words there.
+- The workflow token budget and every token total leave cache reads out and report them as their
+  own number (`cache_read_tokens`; "N tokens + M cache reads" in text). `spend.tokens` and
+  `tokens_spent` change meaning with this. A turn whose cache reads are unknown is counted in
+  full, and the output says so.
+- A run's status reads "completed with failures" in words in text output, and `workflow run` and
+  `workflow resume` exit 5 for that outcome instead of 0. The result is still printed.
+- `workflow worktrees remove` deletes an ignored build folder only after a marker on disk confirms
+  what it is; a folder that only has the name keeps the worktree, with the reason.
 - The notice about locking the installed skill also shows the command to type in a session.
 
 ### Removed
