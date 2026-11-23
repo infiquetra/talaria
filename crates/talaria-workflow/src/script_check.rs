@@ -354,7 +354,8 @@ pub async fn check_script(source: &str, options: &CheckOptions) -> CheckReport {
             report.errors.push(finding("route", problem, (None, None)));
         }
     }
-    for call in &calls {
+    // A nested workflow has phases of its own; only the top-level script's calls count here.
+    for call in calls.iter().filter(|call| call.workflow_path.is_empty()) {
         if let Some(phase) = &call.phase
             && !report.phases.contains(phase)
         {
@@ -425,7 +426,7 @@ fn warn_max_turns(report: &mut CheckReport, calls: &[AgentRequest], lines: &[u32
         report.warnings.push(finding(
             "option",
             format!(
-                "the script sets maxTurns at line {line}, in code the trial run did not reach. {advice}"
+                "the script writes maxTurns at line {line}; no agent call the trial run made had it set. {advice}"
             ),
             (Some(line), None),
         ));

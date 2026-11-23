@@ -329,8 +329,64 @@ async fn max_turns_in_code_the_trial_run_did_not_reach_still_warns_with_its_line
     assert!(report.ok);
     let text = warnings(&report);
     assert_eq!(text.len(), 1, "{text:?}");
-    assert!(text[0].contains("at line 4"), "{}", text[0]);
-    assert!(text[0].contains("did not reach"), "{}", text[0]);
+    assert!(text[0].contains("writes maxTurns at line 4"), "{}", text[0]);
+    assert!(!text[0].contains("did not reach"), "{}", text[0]);
+}
+
+#[tokio::test]
+async fn max_turns_from_an_argument_the_probe_lacks_does_not_claim_the_code_was_unreached() {
+    // The call runs, but without --args its maxTurns is undefined, so no call carries a cap. The
+    // warning must say only where the script writes the option.
+    let report = check(
+        "const input = {};\nawait agent('one', { label: 'x', maxTurns: input.cap });\nreturn 1;\n",
+    )
+    .await;
+    assert!(report.ok, "{:?}", report.errors);
+    assert_eq!(report.probe.agent_calls, 1);
+    let text = warnings(&report);
+    assert_eq!(text.len(), 1, "{text:?}");
+    assert!(text[0].contains("writes maxTurns at line 3"), "{}", text[0]);
+    assert!(!text[0].contains("did not reach"), "{}", text[0]);
+}
+
+/// A child workflow that enters its own `Review` phase and calls one agent there.
+fn child_with_review_phase() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("child.js"),
+        "export const meta = { name: 'child', description: 'x' };\nphase('Review');\nawait agent('look');\nreturn 1;\n",
+    )
+    .unwrap();
+    dir
+}
+const PLAN_REVIEW: &str = "export const meta = { name: 'sample', description: 'A sample.', phases: [{title:'Plan'},{title:'Review'}] };\n";
+
+#[tokio::test]
+async fn a_nested_workflows_phase_does_not_count_as_the_parents() {
+    let dir = child_with_review_phase();
+    let mut opts = options(TIERS);
+    opts.workflows_dir = dir.path().into();
+    let report = check_script(
+        &format!("{PLAN_REVIEW}phase('Plan');\nawait workflow('child');\nreturn 1;\nphase('Review');\n"),
+        &opts,
+    )
+    .await;
+    assert!(report.ok, "{:?}", report.errors);
+    assert_eq!(report.phases, ["Plan"]);
+    let text = warnings(&report);
+    assert_eq!(text.len(), 1, "{text:?}");
+    assert!(text[0].contains("phase Review was not exercised"), "{}", text[0]);
+}
+
+#[tokio::test]
+async fn a_parent_that_never_calls_phase_is_not_warned_because_of_its_childs_phases() {
+    let dir = child_with_review_phase();
+    let mut opts = options(TIERS);
+    opts.workflows_dir = dir.path().into();
+    let report = check_script(&format!("{PLAN_REVIEW}await workflow('child');\nreturn 1;\n"), &opts).await;
+    assert!(report.ok, "{:?}", report.errors);
+    assert!(report.phases.is_empty(), "{:?}", report.phases);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
 }
 
 #[tokio::test]
