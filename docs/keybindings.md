@@ -48,7 +48,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 |---|---|---|---|
 | Submit | Enter | Submit the draft. | `submit` |
 | Newline | Shift+Enter, Alt+Enter, Ctrl+J | Insert a newline. | `newline` |
-| Interrupt | Esc | Interrupt the running turn. Press it twice within two seconds: the first press only asks for confirmation, and the turn is interrupted a moment (110 ms) after the second press if no further press follows, so holding the key never interrupts. Ctrl+C interrupts on one press. | `interrupt` |
+| Interrupt | Esc | Interrupt the running turn. Press it twice within two seconds: the first press only asks for confirmation, and the turn is interrupted a moment (110 ms) after the second press if no further press follows, so holding the key does not interrupt (a hold that starts within two seconds of a tap counts as that tap's second press). Ctrl+C interrupts on one press. | `interrupt` |
 | Cancel | Ctrl+C | Clear the draft, interrupt, or exit on a second press. | `cancel` |
 | Move left | Left | Move the caret left. | `move_left` |
 | Move right | Right | Move the caret right. | `move_right` |

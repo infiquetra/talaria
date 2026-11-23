@@ -1429,13 +1429,13 @@ impl AppState {
 
     /// The view the screen draws from.
     #[inline(never)]
-    #[must_use]
     /// Tell the application that input is waiting to be read, so a tick does not settle the
     /// interrupt key before that input is seen. The loop sets this around each tick.
     pub fn set_keys_waiting(&mut self, waiting: bool) {
         self.keys_waiting = waiting;
     }
 
+    #[must_use]
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {

@@ -117,7 +117,23 @@ fn the_idle_screen_writes_nothing_after_the_effort_scale_and_a_thinking_row_clos
         "no thinking row while the thinking streams:\n{}",
         terminal.screen_text()
     );
-    // Esc asks for a second press before it interrupts.
+    // A held key reaches the program as a stream of presses: one, a pause, then fast repeats.
+    // It interrupts nothing.
+    terminal.type_keys("\x1b");
+    std::thread::sleep(Duration::from_millis(400));
+    for _ in 0..20 {
+        terminal.type_keys("\x1b");
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        gateway.requests("session.interrupt").is_empty(),
+        "a held interrupt key interrupted the turn"
+    );
+    // Let the confirmation lapse, so the two taps below start from nothing.
+    std::thread::sleep(Duration::from_millis(2_100));
+    // Esc asks for a second press before it interrupts, and the interrupt follows the second
+    // press with no further input.
     terminal.type_keys("\x1b");
     std::thread::sleep(Duration::from_millis(300));
     terminal.type_keys("\x1b");
