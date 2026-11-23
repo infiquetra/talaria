@@ -463,6 +463,7 @@ impl Harness {
             runs_dir: self.runs.clone(),
             workflows_dir: self.workflows.clone(),
             talaria_version: "test-version".into(),
+            build: Default::default(),
             json: true,
             record: None,
             settle_bound: Duration::from_millis(600),
@@ -1273,6 +1274,13 @@ fn run_completes_and_journals() {
     assert_eq!(manifest["profile"], "fixture");
     assert_eq!(manifest["hermes"]["describe"]["instance_id"], "instance");
     assert_eq!(manifest["approval_policy"]["mode"], "finite-only");
+    // The policy is described in plain words, with no issue number or planning code.
+    let source = manifest["approval_policy"]["source"].as_str().unwrap();
+    assert!(source.contains("finite turns"), "{source}");
+    assert!(!source.contains('#') && !source.contains("PH5"), "{source}");
+    // The build that wrote the run sits beside its version; this request names none.
+    assert_eq!(manifest["talaria_commit"], "unknown");
+    assert_eq!(manifest["talaria_tree"], "unknown");
     assert!(
         records(&folder)
             .iter()

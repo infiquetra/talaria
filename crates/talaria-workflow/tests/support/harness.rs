@@ -32,6 +32,7 @@ pub fn manifest() -> NewManifest {
         profile: "fixture".into(),
         on_unknown: OnUnknown::Wait,
         talaria_version: "0.7.0".into(),
+        build: Default::default(),
         hermes: json!({}),
         roster: json!({}),
         approval_policy: json!({}),

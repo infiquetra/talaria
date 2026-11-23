@@ -196,6 +196,7 @@ async fn workflow(command: &str, o: &BTreeMap<String, String>) -> Result<i32, (i
                 profile: "fixture".into(),
                 on_unknown,
                 talaria_version: env!("CARGO_PKG_VERSION").into(),
+                build: Default::default(),
                 hermes: json!({}),
                 roster: json!({}),
                 approval_policy: json!({}),

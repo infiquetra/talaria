@@ -735,6 +735,13 @@ fn closing_line(
         safe(run_id)
     )
 }
+/// The commit and tree state this binary was built from, as the build script recorded them.
+fn build_stamp() -> talaria_workflow::journal::BuildStamp {
+    talaria_workflow::journal::BuildStamp {
+        talaria_commit: env!("TALARIA_BUILD_COMMIT").into(),
+        talaria_tree: env!("TALARIA_BUILD_TREE").into(),
+    }
+}
 /// ` --runs-dir <path>` when `runs_dir` is not the default runs folder, else nothing.
 fn custom_runs_dir_flag(runs_dir: Option<&std::path::Path>) -> String {
     let Some(used) = runs_dir.and_then(|dir| absolute(dir.to_path_buf()).ok()) else {
@@ -957,6 +964,7 @@ async fn run_command(args: RunArgs) -> u8 {
         runs_dir,
         workflows_dir,
         talaria_version: env!("CARGO_PKG_VERSION").into(),
+        build: build_stamp(),
         json: args.json,
         record: args.record,
         settle_bound: Duration::from_secs(30),
@@ -1057,6 +1065,21 @@ pub fn resolve_run_script(arg: &str, dir: &std::path::Path) -> Result<PathBuf, (
 mod leftover_text_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_build_stamp_comes_from_the_build_script() {
+        let stamp = build_stamp();
+        assert!(!stamp.talaria_commit.is_empty());
+        assert!(
+            ["clean", "modified", "unknown"].contains(&stamp.talaria_tree.as_str()),
+            "{stamp:?}"
+        );
+        // A commit is known exactly when the tree state is.
+        assert_eq!(
+            stamp.talaria_commit == "unknown",
+            stamp.talaria_tree == "unknown"
+        );
+    }
 
     #[test]
     fn leftovers_are_plain_lines_and_absent_when_empty() {

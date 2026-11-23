@@ -314,6 +314,7 @@ async fn run(options: BTreeMap<String, String>) -> Result<u8, (u8, String)> {
                 profile: profile.clone(),
                 on_unknown: OnUnknown::Wait,
                 talaria_version: env!("CARGO_PKG_VERSION").into(),
+                build: Default::default(),
                 hermes: json!({"launch_defaults":{"cwd":defaults.cwd,"toolsets":defaults.toolsets}}),
                 roster: json!({}),
                 approval_policy: json!({"finite":true}),

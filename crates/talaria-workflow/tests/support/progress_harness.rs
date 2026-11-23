@@ -182,6 +182,7 @@ impl<G: Gateway> Consumer<G> {
                 profile: profile_name(),
                 on_unknown: OnUnknown::Wait,
                 talaria_version: env!("CARGO_PKG_VERSION").into(),
+                build: Default::default(),
                 hermes: json!({}),
                 roster: json!({}),
                 approval_policy: json!({"mode":"finite-only"}),

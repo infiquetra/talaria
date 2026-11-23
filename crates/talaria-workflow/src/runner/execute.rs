@@ -42,6 +42,11 @@ use super::{
     services,
 };
 
+/// What the manifest's `approval_policy.mode` of `finite-only` means, in plain words.
+const APPROVAL_POLICY_SOURCE: &str = "workflow agents' turns are sent as finite turns: a command \
+     that needs approval is refused at once unless the Hermes profile allows it, and no approval \
+     waits for a person";
+
 pub struct RunRequest {
     pub script: PathBuf,
     pub args: Value,
@@ -57,6 +62,8 @@ pub struct RunRequest {
     pub runs_dir: PathBuf,
     pub workflows_dir: PathBuf,
     pub talaria_version: String,
+    /// The commit the running build came from and whether its tree was modified.
+    pub build: crate::journal::BuildStamp,
     pub json: bool,
     pub record: Option<PathBuf>,
     pub settle_bound: Duration,
@@ -365,9 +372,10 @@ async fn prepare(
         profile: req.profile.clone(),
         on_unknown: req.on_unknown,
         talaria_version: req.talaria_version.clone(),
+        build: req.build.clone(),
         hermes: json!({"describe":describe}),
         roster: preflight.snapshot.clone(),
-        approval_policy: json!({"mode":"finite-only","source":"operator decision on #218 (`PH5`)"}),
+        approval_policy: json!({"mode":"finite-only","source":APPROVAL_POLICY_SOURCE}),
     };
     files::private_dir(&req.runs_dir).map_err(|e| {
         output.diagnostic(e.to_string());

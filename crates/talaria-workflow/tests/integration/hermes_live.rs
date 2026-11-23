@@ -48,6 +48,7 @@ fn manifest() -> NewManifest {
         profile: hermes_contract::pinned::live_profile(),
         on_unknown: OnUnknown::Wait,
         talaria_version: env!("CARGO_PKG_VERSION").into(),
+        build: Default::default(),
         hermes: json!({}),
         roster: json!({}),
         approval_policy: json!({}),

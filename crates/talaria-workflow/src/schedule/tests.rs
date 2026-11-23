@@ -80,6 +80,7 @@ impl Context {
                 profile: "fixture".into(),
                 on_unknown: OnUnknown::Wait,
                 talaria_version: "test".into(),
+                build: Default::default(),
                 hermes: json!({}),
                 roster: json!({}),
                 approval_policy: json!({}),
