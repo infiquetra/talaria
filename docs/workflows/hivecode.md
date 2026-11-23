@@ -64,7 +64,10 @@ window.` before the last sentence. Slash commands such as `/goal` still go to He
 same as `talaria workflow skill install --force`: the installed copy is backed up first under
 Talaria's `skills/backups/`. It confirms in one line, for example
 `Reinstalled Talaria's talaria-workflows skill in profile <name>; the old copy is in <backup folder>.`
-The next routed prompt sends the reinstalled skill whole. A `--remote` session's skill lives on
+It also installs any built-in workflow that is missing, as `talaria workflow builtins install`
+does, and adds a second line naming them; a built-in you edited is kept. The same install runs
+when you answer `y` to the offer to install the skill. The next routed prompt sends the
+reinstalled skill whole. A `--remote` session's skill lives on
 the gateway's machine, so there the command prints the install command to run on that machine
 instead.
 

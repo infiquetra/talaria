@@ -74,6 +74,15 @@ pub fn local_parts(
         let (workflows, warnings) = roster_envelope::list_workflows(dir);
         local.workflows = workflows;
         local.warnings = warnings;
+        if talaria_workflow::builtins::BUILTINS.iter().all(|builtin| {
+            talaria_workflow::builtins::installed_state(dir, builtin)
+                == talaria_workflow::builtins::InstalledState::NotInstalled
+        }) {
+            local.warnings.push(
+                "no built-in workflows are installed, so the agent writes each workflow itself. Install them with: talaria workflow builtins install"
+                    .into(),
+            );
+        }
     }
     let _ = hermes_home;
     (local, error)

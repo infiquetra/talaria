@@ -817,6 +817,20 @@ pub mod notice {
             None => format!("Installed Talaria's talaria-workflows skill in profile {profile}."),
         }
     }
+    /// `/hivecode reinstall` also installed the built-in workflows that were missing.
+    pub fn builtins_installed(names: &[String]) -> String {
+        format!(
+            "Installed built-in workflows: {}.",
+            clipped_reason(&names.join(", "))
+        )
+    }
+    /// The skill went in but the built-in workflows did not.
+    pub fn builtins_failed(reason: &str) -> String {
+        format!(
+            "Could not install the built-in workflows: {} Try: talaria workflow builtins install",
+            clipped_reason(reason)
+        )
+    }
     pub fn reinstall_failed(reason: &str) -> String {
         format!(
             "Could not reinstall the talaria-workflows skill: {}",

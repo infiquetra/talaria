@@ -14534,6 +14534,7 @@ fn apply<S: Screen>(
                                         "no home folder for Talaria".into(),
                                     )
                                 })?;
+                            let builtins_home = home.clone();
                             let options = talaria_workflow::skill::InstallOptions {
                                 command: crate::hivecode_files::INSTALL_COMMAND.into(),
                                 force,
@@ -14551,8 +14552,25 @@ fn apply<S: Screen>(
                                 talaria_workflow::skill::SkillError::Template(error.to_string())
                             })??;
                             report.warnings.splice(0..0, warnings);
+                            // The built-in workflows go in with the skill, so the agent has
+                            // something to start from. A copy already there is kept.
+                            let builtins = tokio::task::spawn_blocking(move || {
+                                crate::hivecode_files::install_missing_builtins(&builtins_home)
+                            })
+                            .await
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                            let builtins_note = match builtins {
+                                Ok(names) if names.is_empty() => None,
+                                Ok(names) => {
+                                    Some(talaria_core::hivecode::notice::builtins_installed(&names))
+                                }
+                                Err(reason) => {
+                                    Some(talaria_core::hivecode::notice::builtins_failed(&reason))
+                                }
+                            };
                             // `/hivecode reinstall` confirms in one line.
-                            Ok::<_, talaria_workflow::skill::SkillError>(if force {
+                            let text = if force {
                                 talaria_core::hivecode::notice::reinstalled(
                                     &target.profile,
                                     report
@@ -14563,6 +14581,10 @@ fn apply<S: Screen>(
                                 )
                             } else {
                                 talaria_workflow::skill::report_text(&target, &report, false, false)
+                            };
+                            Ok::<_, talaria_workflow::skill::SkillError>(match builtins_note {
+                                Some(note) => format!("{text}\n{note}"),
+                                None => text,
                             })
                         }
                         .await;

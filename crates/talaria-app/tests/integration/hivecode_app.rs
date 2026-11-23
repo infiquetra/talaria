@@ -1444,3 +1444,38 @@ fn two_windows_saving_to_one_mode_file_keep_each_others_settings() {
     assert!(restarted.adopt(&SessionId::new("runtime-1"), "stored-s"));
     assert!(restarted.adopt(&SessionId::new("runtime-2"), "stored-t"));
 }
+
+#[test]
+fn the_reinstall_also_installs_the_missing_builtin_workflows_and_keeps_edited_ones() {
+    use talaria_app::hivecode_files::{install_missing_builtins, read_setup};
+    let (_temp, hermes, talaria) = installed_skill();
+    assert_eq!(
+        read_setup("default", &hermes, &talaria)
+            .missing_builtins
+            .len(),
+        4
+    );
+    let mut created = install_missing_builtins(&talaria).unwrap();
+    created.sort();
+    assert_eq!(
+        created,
+        ["fix-failing-tests", "hivecode", "research", "review-branch"]
+    );
+    assert!(
+        read_setup("default", &hermes, &talaria)
+            .missing_builtins
+            .is_empty()
+    );
+    // A second pass creates nothing, and a copy the user edited is left alone.
+    let edited = talaria.join("workflows/research.js");
+    std::fs::write(&edited, "// mine\n").unwrap();
+    assert!(install_missing_builtins(&talaria).unwrap().is_empty());
+    assert_eq!(std::fs::read_to_string(edited).unwrap(), "// mine\n");
+    assert_eq!(
+        notice::builtins_installed(&["research".to_owned(), "hivecode".to_owned()]),
+        "Installed built-in workflows: research, hivecode."
+    );
+    assert!(
+        notice::builtins_failed("disk full").ends_with("Try: talaria workflow builtins install")
+    );
+}
