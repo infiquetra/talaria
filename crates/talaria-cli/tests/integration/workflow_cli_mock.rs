@@ -734,6 +734,13 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
         )
     };
     let out = run(&["workflow", "run", "--json", "--profile", "fixture"], &fixture("scripts/one.js"));
+    // The run used a custom runs folder, so the printed command names it. The same folder can be
+    // spelled two ways (/var and /private/var on macOS), so compare the resolved folders.
+    let named = |line: &str| -> PathBuf {
+        let rest = line.split("--runs-dir ").nth(1).expect("--runs-dir in the hint");
+        fs::canonicalize(rest.split(' ').next().unwrap()).unwrap()
+    };
+    let resolved_runs = fs::canonicalize(&runs).unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let shown = text(&out.stdout);
     let lines: Vec<&str> = shown.lines().collect();
@@ -751,10 +758,24 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
         id.as_str(),
         "completed_with_failures",
         &format!("{} tokens", finished["spend"]["tokens"]),
-        &format!("talaria workflow resume --json {id}"),
+        &format!("talaria workflow resume --json --runs-dir "),
     ] {
         assert!(last.contains(part), "{part} missing from {last}");
     }
+    assert_eq!(named(last), resolved_runs, "{last}");
+    // With the default runs folder the command stays as short as it was.
+    let default_run = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture"])
+            .arg(fixture("scripts/one.js")),
+    );
+    let default_text = text(&default_run.stdout);
+    let default_last = default_text.lines().last().unwrap();
+    let default_id = run_finished(&default_run.stdout)["run_id"].as_str().unwrap().to_owned();
+    assert!(
+        default_last.ends_with(&format!("Full result: talaria workflow resume --json {default_id}")),
+        "{default_last}"
+    );
     // A replay prints the same shape, and the plain-text mode adds nothing.
     let replay = output(
         command(temp.path(), "failed-wire.json")
@@ -762,7 +783,9 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
             .arg(&runs)
             .arg(&id),
     );
-    assert!(text(&replay.stdout).lines().last().unwrap().contains("Full result: talaria workflow resume --json"));
+    let replay_last = text(&replay.stdout).lines().last().unwrap().to_owned();
+    assert!(replay_last.ends_with(&format!(" {id}")), "{replay_last}");
+    assert_eq!(named(&replay_last), resolved_runs, "{replay_last}");
     let plain = output(
         command(temp.path(), "failed-wire.json")
             .args(["workflow", "resume", "--runs-dir"])
