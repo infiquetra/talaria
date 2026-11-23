@@ -641,12 +641,7 @@ fn session(
                 state.notice(NoticeKind::System, text.to_owned(), None);
             }
         }
-        _ if !unknown
-            || name.starts_with("subagent.")
-            || matches!(
-                name,
-                "agent.step" | "session.updated" | "session.tools_changed" | "request.cancel"
-            ) => {}
+        _ if !unknown || hermes_contract::events::is_known_undrawn(name) => {}
         _ => {
             let safe = if !name.is_empty()
                 && name.len() <= 64

@@ -399,3 +399,82 @@ fn a_plain_completed_run_lists_nothing_above_its_rows() {
     );
     assert!(screen.contains("completed ·"), "{screen}");
 }
+
+#[test]
+fn a_running_agent_row_shows_its_current_step() {
+    use talaria_workflow::progress::live::{ProgressInput, update};
+    let key = "dddddddddddddddddddddddddddddddd";
+    let lines: Vec<RecordLine> = mixed_lines(RunOutcomeKind::Completed)
+        .into_iter()
+        .filter(|line| matches!(line.record, Record::RunStarted { .. }))
+        .chain(
+            [
+                Record::CallIntent {
+                    key: key.to_string(),
+                    attempt: 0,
+                    call_id: CallId {
+                        digest: key.to_string(),
+                        occurrence: 0,
+                    },
+                    label: "long reader".to_string(),
+                    phase: None,
+                    workflow_path: Vec::new(),
+                    launch: ResolvedLaunch {
+                        profile: "fixture".to_string(),
+                        model: "model-a".to_string(),
+                        provider: Some("provider-a".to_string()),
+                        effort: None,
+                        toolsets: Vec::new(),
+                        skills: Vec::new(),
+                        max_turns: None,
+                        isolation: None,
+                        cwd: None,
+                    },
+                    request_id: "wf:run:d".to_string(),
+                },
+                Record::SessionBound {
+                    key: key.to_string(),
+                    attempt: 0,
+                    session_id: "sess-d".to_string(),
+                    stored_session_id: "sess-d".to_string(),
+                },
+                Record::TurnAdmitted {
+                    key: key.to_string(),
+                    attempt: 0,
+                    turn: 0,
+                    admission_id: "adm-d".to_string(),
+                    status: AdmissionState::Started,
+                    outcome: None,
+                    execution_generation: Some(1),
+                    authority_epoch: 1,
+                },
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, record)| RecordLine {
+                v: 1,
+                seq: u64::try_from(index).expect("seq") + 2,
+                at_ms: 2_000 + i64::try_from(index).expect("time"),
+                record,
+            }),
+        )
+        .collect();
+    let mut state = ProgressState::new(RunProgress::from_records(&manifest(), &lines));
+    let before = paint(&state, 140, 24);
+    assert!(!before.contains("step "), "{before}");
+    update(
+        &mut state,
+        ProgressInput::Gateway {
+            session_id: "sess-d".to_string(),
+            event: hermes_contract::events::Notification::Unknown(serde_json::json!({
+                "type": "agent.step", "session_id": "sess-d", "payload": {"iteration": 7}
+            })),
+        },
+    );
+    let after = paint(&state, 140, 24);
+    let row = after
+        .lines()
+        .find(|row| row.contains("long reader"))
+        .unwrap_or_else(|| panic!("{after}"));
+    assert!(row.contains("running · step 7"), "{row}");
+}

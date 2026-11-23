@@ -1144,6 +1144,22 @@ fn runner_check(s: &mut ProgressState) {
         s.revision += 1;
     }
 }
+/// Show the step a running agent is on, from Hermes's `agent.step` event.
+fn note_step(s: &mut ProgressState, session: &str, params: &Value) {
+    let Some(step) = params["payload"]["iteration"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+    else {
+        return;
+    };
+    if let Some(a) = s.progress.for_session_mut(session)
+        && !a.state.terminal()
+        && a.step != Some(step)
+    {
+        a.step = Some(step);
+        s.revision += 1;
+    }
+}
 fn gateway(s: &mut ProgressState, session: &str, event: Notification) -> Vec<ProgressEffect> {
     // Broadcasts carry an empty session id; they and other sessions' events are not this run's.
     if session.is_empty() || s.progress.for_session_mut(session).is_none() {
@@ -1180,7 +1196,11 @@ fn gateway(s: &mut ProgressState, session: &str, event: Notification) -> Vec<Pro
                 .and_then(Value::as_str)
                 .unwrap_or("unknown")
                 .to_string();
-            if s.unknown_events.insert(name.clone()) {
+            if name == hermes_contract::events::AGENT_STEP {
+                note_step(s, session, params);
+            } else if !hermes_contract::events::is_known_undrawn(&name)
+                && s.unknown_events.insert(name.clone())
+            {
                 s.diagnostics.push(format!(
                     "workflow view: Hermes sent event type {name} that this Talaria does not read; ignored"
                 ));

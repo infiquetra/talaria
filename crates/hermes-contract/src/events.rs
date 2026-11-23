@@ -6,6 +6,28 @@ use std::{error::Error, fmt};
 
 pub use crate::generated::{events::Notification, server_requests::ServerRequest};
 
+/// The event Hermes sends at each step of an agent's turn, with `payload.iteration`.
+pub const AGENT_STEP: &str = "agent.step";
+
+/// Event types Hermes sends that Talaria knows about and draws nowhere, so they are neither a
+/// surprise nor worth a diagnostic. Every screen that ignores unknown events by name reads this
+/// one list, so they cannot disagree about what is expected. Events whose type starts with
+/// [`SUBAGENT_EVENT_PREFIX`] are also known; see [`is_known_undrawn`].
+pub const KNOWN_UNDRAWN_EVENTS: &[&str] = &[
+    AGENT_STEP,
+    "session.updated",
+    "session.tools_changed",
+    "request.cancel",
+];
+
+/// The prefix of every subagent event, which other code draws.
+pub const SUBAGENT_EVENT_PREFIX: &str = "subagent.";
+
+/// Whether an event type is one Talaria knows and does not draw.
+pub fn is_known_undrawn(event_type: &str) -> bool {
+    KNOWN_UNDRAWN_EVENTS.contains(&event_type) || event_type.starts_with(SUBAGENT_EVENT_PREFIX)
+}
+
 /// A known payload or its envelope failed validation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodeError {
@@ -311,4 +333,28 @@ server_requests! {
     "vault.save_login" => VaultSaveLogin,
     "vault.unlock_prompt" => VaultUnlockPrompt,
     "window.read" => WindowRead,
+}
+
+#[cfg(test)]
+mod known_undrawn_tests {
+    use super::*;
+
+    #[test]
+    fn listed_types_and_subagent_events_are_known_and_others_are_not() {
+        for name in KNOWN_UNDRAWN_EVENTS {
+            assert!(is_known_undrawn(name), "{name}");
+        }
+        assert!(is_known_undrawn("subagent.start"));
+        assert!(!is_known_undrawn("groups.changed"));
+        assert!(!is_known_undrawn("subagent"));
+    }
+
+    #[test]
+    fn the_step_event_decodes_as_unknown_so_the_list_is_what_silences_it() {
+        // If Hermes's contract grew a typed agent.step, the list entry would become dead.
+        let params =
+            serde_json::json!({"type": AGENT_STEP, "session_id": "s", "payload": {"iteration": 1}});
+        let frame = EventFrame::from_params(&params).unwrap();
+        assert!(matches!(frame.notification, Notification::Unknown(_)));
+    }
 }
