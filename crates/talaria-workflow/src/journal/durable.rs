@@ -146,6 +146,18 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         turns: u32,
         outcome: AgentOutcome,
     ) -> Result<AgentOutcome, JournalError> {
+        self.finish_call_after(key, attempt, turns, outcome, true)
+            .await
+    }
+    /// `sweep` is false when the caller has just swept the route itself.
+    async fn finish_call_after(
+        &self,
+        key: &str,
+        attempt: u32,
+        turns: u32,
+        outcome: AgentOutcome,
+        sweep: bool,
+    ) -> Result<AgentOutcome, JournalError> {
         if matches!(outcome, AgentOutcome::Abort { .. }) {
             return Ok(outcome);
         }
@@ -175,26 +187,36 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         };
         if let Ok(ended) = &finished {
             // Only a failed call can leave work behind on its route.
-            self.close_session(key, matches!(ended, AgentOutcome::Failed { .. }))
-                .await;
+            if sweep && matches!(ended, AgentOutcome::Failed { .. }) {
+                // The outcome is recorded; the caller's scheduler permit is already dropped.
+                let _ = self.route_busy(key).await;
+            }
+            self.detach_session(key).await;
         }
         finished
     }
+    /// Look at the call's route and say why it is not quiet, or `None` when nothing the run
+    /// does not follow is still running there. A check that could not be made counts as not
+    /// quiet.
+    async fn route_busy(&self, key: &str) -> Option<String> {
+        let history = self.journal.history(key).ok()?;
+        let (session, (_, launch, _, label), stored) = (
+            history.session()?,
+            history.intent()?,
+            history.stored_session()?,
+        );
+        self.sweep_route(label, launch, &session, &stored).await
+    }
     /// End the call's session in Hermes once its outcome is recorded; left open, it lingers
-    /// until the runner's connection closes. First sweep the call's route, so nothing the run
-    /// does not follow keeps working after the call. A failed end changes nothing the run
-    /// depends on, so it is only noted in the journal.
-    async fn close_session(&self, key: &str, sweep: bool) {
+    /// until the runner's connection closes. A failed end changes nothing the run depends on,
+    /// so it is only noted in the journal.
+    async fn detach_session(&self, key: &str) {
         let Ok(history) = self.journal.history(key) else {
             return;
         };
-        let (Some(session), Some((_, launch, _, label))) = (history.session(), history.intent())
-        else {
+        let (Some(session), Some((_, launch, _, _))) = (history.session(), history.intent()) else {
             return;
         };
-        if sweep && let Some(stored) = history.stored_session() {
-            self.sweep_route(label, launch, &session, &stored).await;
-        }
         let profile = launch.profile.clone();
         let failure = match tokio::time::timeout(
             Duration::from_secs(15),
@@ -212,6 +234,11 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         ))
         .await;
     }
+    /// A note about a route: journaled, and shown live in the runner's output.
+    async fn note_route(&self, message: String) {
+        self.note(message.clone()).await;
+        self.journal.notice(JournalNotice::RouteNote { message });
+    }
     async fn note(&self, message: String) {
         let _ = self
             .journal
@@ -224,8 +251,15 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
     /// Look for work on the call's route that the run is not following, stop it, and write what
     /// was found to the journal. Hermes resets a conversation that outgrew its model and then
     /// starts the next queued input on the route's fresh stored session, which the run never
-    /// bound. That session would keep editing the call's working folder.
-    async fn sweep_route(&self, label: &str, launch: &ResolvedLaunch, session: &str, stored: &str) {
+    /// bound. That session would keep editing the call's working folder. Returns why the route
+    /// is not quiet, or `None` when it is.
+    async fn sweep_route(
+        &self,
+        label: &str,
+        launch: &ResolvedLaunch,
+        session: &str,
+        stored: &str,
+    ) -> Option<String> {
         let folder = launch.cwd.as_deref().unwrap_or("its working folder");
         let swept = tokio::time::timeout(
             Duration::from_secs(60),
@@ -236,26 +270,33 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         let sweep = match swept {
             Ok(Ok(sweep)) => sweep,
             Ok(Err(e)) => {
-                self.note(format!(
-                    "{ROUTE_WARNING}agent {label}: could not check whether anything else was still running on session {session} ({e}); look in {folder}"
+                self.note_route(format!(
+                    "{ROUTE_UNCHECKED}agent {label}: could not check whether anything else was still running on session {session} ({e}); look in {folder}"
                 ))
                 .await;
-                return;
+                return Some(format!(
+                    "Talaria could not check whether Hermes is still running untracked work in {folder} (session {session}: {e})"
+                ));
             }
             Err(_) => {
-                self.note(format!(
-                    "{ROUTE_WARNING}agent {label}: no answer within 60 seconds when checking whether anything else was still running on session {session}; look in {folder}"
+                self.note_route(format!(
+                    "{ROUTE_UNCHECKED}agent {label}: no answer within 60 seconds when checking whether anything else was still running on session {session}; look in {folder}"
                 ))
                 .await;
-                return;
+                return Some(format!(
+                    "Talaria could not check whether Hermes is still running untracked work in {folder} (session {session}: no answer within 60 seconds)"
+                ));
             }
         };
         if let (Some(moved), Some(tokens)) = (&sweep.moved_to, sweep.moved_tokens) {
             self.gate
                 .count_untracked_usage(&format!("untracked:{moved}"), tokens);
         }
+        let busy = sweep.still_active.then(|| {
+            format!("Hermes is still running untracked work in {folder} (session {session})")
+        });
         if !sweep.found_untracked() && sweep.problems.is_empty() {
-            return;
+            return busy;
         }
         let mut parts = Vec::new();
         if let Some(moved) = &sweep.moved_to {
@@ -270,8 +311,9 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             ));
         }
         if let Some(tokens) = sweep.moved_tokens {
+            // The reading is kept in memory; a resumed run does not count it again.
             parts.push(format!(
-                "Hermes reports {tokens} tokens used there, now counted in the run's spend"
+                "Hermes reports {tokens} tokens used there, counted in this execution's spend"
             ));
         }
         if sweep.still_active {
@@ -280,11 +322,12 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             ));
         }
         parts.extend(sweep.problems.iter().cloned());
-        self.note(format!(
+        self.note_route(format!(
             "{ROUTE_WARNING}agent {label}, session {session}, working folder {folder}: {}",
             parts.join("; ")
         ))
         .await;
+        busy
     }
     async fn run(&self, request: AgentRequest) -> Result<AgentOutcome, JournalError> {
         let launch = match self.resolver.resolve(&request) {
@@ -642,7 +685,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                             .await;
                     }
                     let mut text = self.policy.first_turn(&request, stored_launch);
-                    if h.follows_overflow_restart() {
+                    if h.previous_attempt_overflowed() {
                         text = format!("{OVERFLOW_RESTART_NOTE}\n\n{text}");
                     }
                     self.turn_intent(&key, attempt, 0, text).await?;
@@ -806,8 +849,9 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                             {
                                 // The count comes from the journal, so a resume keeps it.
                                 let used = h.overflow_restarts();
+                                drop(permit.take());
                                 if used >= MAX_OVERFLOW_RESTARTS {
-                                    let reason = overflow_exhausted(h.overflowed(), used);
+                                    let reason = overflow_exhausted(h.overflowed());
                                     return self
                                         .finish_call(
                                             &key,
@@ -817,7 +861,23 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                                         )
                                         .await;
                                 }
-                                drop(permit.take());
+                                // Nothing untracked may keep working in the folder a restart
+                                // reuses: look at the route first, restart only when it is quiet.
+                                if let Some(why) = self.route_busy(&key).await {
+                                    return self
+                                        .finish_call_after(
+                                            &key,
+                                            attempt,
+                                            turns.len() as u32,
+                                            AgentOutcome::Failed {
+                                                reason: format!(
+                                                    "{why}, so the agent was not restarted"
+                                                ),
+                                            },
+                                            false,
+                                        )
+                                        .await;
+                                }
                                 if self.gate.authorise_restart(
                                     &request,
                                     &launch,
@@ -845,9 +905,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                                             workflow_path: request.workflow_path.clone(),
                                         })
                                         .await;
-                                    // End the old session and sweep its route first, so nothing
-                                    // untracked keeps working in the folder the restart reuses.
-                                    self.close_session(&key, true).await;
+                                    self.detach_session(&key).await;
                                     next_attempt = Some(
                                         attempt
                                             .checked_add(1)
@@ -856,7 +914,13 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                                     continue;
                                 }
                                 return self
-                                    .finish_call(&key, attempt, turns.len() as u32, outcome)
+                                    .finish_call_after(
+                                        &key,
+                                        attempt,
+                                        turns.len() as u32,
+                                        outcome,
+                                        false,
+                                    )
                                     .await;
                             }
                             if matches!(outcome, AgentOutcome::Failed { .. })
@@ -876,7 +940,8 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                                             turns: turns.len() as u32,
                                         })
                                         .await?;
-                                    self.close_session(&key, true).await;
+                                    let _ = self.route_busy(&key).await;
+                                    self.detach_session(&key).await;
                                     self.retried.lock().map_err(io_error)?.insert(key.clone());
                                     next_attempt = Some(
                                         attempt
@@ -886,11 +951,13 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                                     continue;
                                 }
                             }
+                            drop(permit.take());
                             return self
                                 .finish_call(&key, attempt, turns.len() as u32, outcome)
                                 .await;
                         }
                         NextStep::Turn { .. } if turns.len() >= MAX_TURNS_PER_CALL as usize => {
+                            drop(permit.take());
                             return self
                                 .finish_call(
                                     &key,
@@ -982,6 +1049,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         } else {
             e.to_string()
         };
+        drop(permit.take());
         self.finish_call(
             key,
             h.attempt(),
@@ -1175,10 +1243,13 @@ pub(crate) fn settled_record(key: &str, attempt: u32, turn: u32, r: Receipt) -> 
 /// Starts every journal note about work found on a route the run was not following; the run
 /// result lists these.
 pub const ROUTE_WARNING: &str = "runner: untracked work: ";
+/// Starts every journal note about a route Talaria could not check. Not untracked work: nothing
+/// was found, so the run result does not list it.
+pub const ROUTE_UNCHECKED: &str = "runner: route not checked: ";
 /// Put at the top of the first prompt of an agent started again after a context overflow.
 const OVERFLOW_RESTART_NOTE: &str = "Note: an earlier attempt at this task ran out of context and was stopped. Its working folder still holds whatever it wrote or committed. Check that folder first and continue from it rather than starting over. Keep your notes in files rather than in the conversation.";
-fn overflow_exhausted(overflowed: u32, restarts: u32) -> String {
+fn overflow_exhausted(overflowed: u32) -> String {
     format!(
-        "the agent ran out of context {overflowed} times (the first attempt and {restarts} restarts), so it was not started again"
+        "the agent ran out of context {overflowed} times; its {MAX_OVERFLOW_RESTARTS} restarts are used up, so it was not started again"
     )
 }

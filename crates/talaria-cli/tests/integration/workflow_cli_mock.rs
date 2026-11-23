@@ -787,6 +787,74 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
 }
 
 #[test]
+fn work_found_on_a_moved_route_is_printed_live_and_listed_before_the_result() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let out = output(
+        command(temp.path(), "moved-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/one.js")),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    let note = "runner: untracked work: ";
+    // Printed live, as a log event, when the sweep wrote it.
+    let live = shown
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["event"] == "log" && v["message"].as_str().is_some_and(|m| m.starts_with(note)))
+        .expect("no live route note");
+    let finished = run_finished(&out.stdout);
+    let listed = finished["untracked_work"].as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{finished}");
+    let entry = listed[0].as_str().unwrap();
+    assert_eq!(format!("{note}{entry}"), live["message"].as_str().unwrap());
+    for part in ["agent review", "session session", "new stored session session-2", "cancelled 1 turn(s)"] {
+        assert!(entry.contains(part), "{part} missing from {entry}");
+    }
+    assert!(finished.get("leftover_edits").is_none());
+    // After the failed agents, before the result.
+    let line = shown.lines().find(|l| l.contains("\"run_finished\"")).unwrap().to_owned();
+    assert!(line.find("failed_agents").unwrap() < line.find("untracked_work").unwrap(), "{line}");
+    assert!(line.find("untracked_work").unwrap() < line.find("\"result\"").unwrap(), "{line}");
+    // The plain text names it too, and so does a replay.
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+    let plain = output(
+        command(temp.path(), "moved-wire.json")
+            .args(["workflow", "resume", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    let shown = text(&plain.stdout);
+    assert!(shown.contains("Untracked work found on agent routes:\n  agent review"), "{shown}");
+    assert!(shown.find("Untracked work").unwrap() < shown.find("Result:").unwrap(), "{shown}");
+}
+
+#[test]
+fn a_route_that_could_not_be_checked_is_not_listed_as_untracked_work() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    // This wire has no answer for the sweep's session.resume.
+    let out = output(
+        command(temp.path(), "failed-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/one.js")),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let finished = run_finished(&out.stdout);
+    assert!(finished.get("untracked_work").is_none(), "{finished}");
+    assert!(
+        text(&out.stdout)
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .any(|v| v["event"] == "log"
+                && v["message"].as_str().is_some_and(|m| m.starts_with("runner: route not checked: ")))
+    );
+}
+
+#[test]
 fn an_agent_stopped_at_its_step_cap_keeps_its_reply_and_is_marked_everywhere() {
     let temp = tempfile::tempdir().unwrap();
     let runs = temp.path().join("runs");

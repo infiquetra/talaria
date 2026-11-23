@@ -88,6 +88,11 @@ pub enum JournalNotice {
         usage: Option<Value>,
     },
     Warning(JournalWarning),
+    /// A note about an agent's route (untracked work found, or a route that could not be
+    /// checked), shown live as it is journaled.
+    RouteNote {
+        message: String,
+    },
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CallHistory {
@@ -193,16 +198,13 @@ impl CallHistory {
     pub fn overflowed(&self) -> u32 {
         self.overflowed_attempts().len() as u32
     }
-    /// Whether the current attempt follows a restart after a context overflow, so its first
-    /// prompt carries the note about the earlier attempt.
-    pub fn follows_overflow_restart(&self) -> bool {
-        let Some(previous) = self.attempt().checked_sub(1) else {
-            return false;
-        };
-        self.overflowed_attempts().contains(&previous)
-            && self.records.iter().any(|r| {
-                matches!(&r.record, Record::CallRetryFinished { attempt, .. } if *attempt == previous)
-            })
+    /// Whether the previous attempt's last settled turn ran out of context, however that
+    /// attempt ended (a restart, or a failure that a resume runs again). The current attempt's
+    /// first prompt then carries the note about the earlier work in its folder.
+    pub fn previous_attempt_overflowed(&self) -> bool {
+        self.attempt()
+            .checked_sub(1)
+            .is_some_and(|previous| self.overflowed_attempts().contains(&previous))
     }
     pub fn turns(&self, dir: &Path) -> Result<Vec<SettledTurn>, JournalError> {
         self.current()
