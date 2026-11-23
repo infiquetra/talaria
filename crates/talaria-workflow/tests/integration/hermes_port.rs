@@ -477,7 +477,7 @@ async fn a_sweep_interrupts_a_running_turn_on_a_moved_route_and_reads_its_usage(
                 {"expect":"session.interrupt","reply":"interrupt_ok.json",
                     "match":{"session_id":"session","execution_generation":1}},
                 {"expect":"session.resume","reply":moved_snapshot(false, false)},
-                {"expect":"session.stats","reply":{"total_tokens":77}}
+                {"expect":"session.stats","reply":{"total_tokens":77,"cache_read_tokens":60}}
             ]}),
         )
         .unwrap(),
@@ -492,6 +492,7 @@ async fn a_sweep_interrupts_a_running_turn_on_a_moved_route_and_reads_its_usage(
     assert_eq!(sweep.moved_to.as_deref(), Some("stored-2"));
     assert_eq!(sweep.cancelled, 0);
     assert_eq!(sweep.moved_tokens, Some(77));
+    assert_eq!(sweep.moved_cache_read_tokens, Some(60));
     assert!(!sweep.still_active, "{sweep:?}");
     assert!(sweep.problems.is_empty(), "{sweep:?}");
 }

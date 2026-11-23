@@ -1,9 +1,9 @@
 //! Deterministic view state. Clocks, file observations and call results are inputs.
 use super::{
     AgentState, ControlId, ControlOutcome, ControlRequest, PendingControls, RunProgress, RunState,
-    hold_generation, live_tokens,
+    hold_generation,
 };
-use crate::journal::RecordLine;
+use crate::{journal::RecordLine, tokens::Reading};
 use hermes_contract::events::Notification;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -1217,6 +1217,7 @@ fn gateway(s: &mut ProgressState, session: &str, event: Notification) -> Vec<Pro
     let before = (
         a.state,
         a.tokens,
+        a.cache_read,
         a.last_tool.clone(),
         a.tail.clone(),
         a.prompts.clone(),
@@ -1238,27 +1239,21 @@ fn gateway(s: &mut ProgressState, session: &str, event: Notification) -> Vec<Pro
             if let Some(text) = p.text.as_ref().and_then(Value::as_str) {
                 a.push_tail(text);
             }
-            if let Some(usage) = p
+            if let Some(reading) = p
                 .usage
                 .and_then(|u| serde_json::to_value(u).ok())
-                .and_then(|u| live_tokens(&u))
+                .and_then(|u| Reading::from_status_view(&u))
             {
-                a.live_sessions
-                    .entry(a.session_id.clone().unwrap_or_else(|| session.into()))
-                    .and_modify(|n| *n = (*n).max(usage))
-                    .or_insert(usage);
+                let id = a.session_id.clone().unwrap_or_else(|| session.into());
+                let kept = Reading::latest(a.live_sessions.get(&id).copied(), reading);
+                a.live_sessions.insert(id, kept);
             }
         }
         Notification::SessionUsage(p) => {
-            let usage = p
-                .total_tokens
-                .or_else(|| Some(p.prompt_tokens? + p.completion_tokens?))
-                .or_else(|| Some(p.input_tokens? + p.output_tokens?));
-            if let Some(n) = usage.and_then(|n| u64::try_from(n).ok()) {
-                a.live_sessions
-                    .entry(a.session_id.clone().unwrap_or_else(|| session.into()))
-                    .and_modify(|old| *old = (*old).max(n))
-                    .or_insert(n);
+            if let Some(reading) = Reading::from_payload(&p) {
+                let id = a.session_id.clone().unwrap_or_else(|| session.into());
+                let kept = Reading::latest(a.live_sessions.get(&id).copied(), reading);
+                a.live_sessions.insert(id, kept);
             }
         }
         Notification::ToolStart(p) => {
@@ -1312,6 +1307,7 @@ fn gateway(s: &mut ProgressState, session: &str, event: Notification) -> Vec<Pro
         != (
             a.state,
             a.tokens,
+            a.cache_read,
             a.last_tool.clone(),
             a.tail.clone(),
             a.prompts.clone(),

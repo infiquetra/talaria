@@ -373,6 +373,29 @@ fn run_total_includes_live_usage() {
 }
 
 #[test]
+fn a_live_reading_shows_its_cache_reads_apart_from_the_tokens_the_budget_counts() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
+    update(
+        &mut state,
+        ProgressInput::Gateway {
+            session_id: "sess-running".into(),
+            event: Notification::SessionUsage(SessionUsagePayload {
+                total_tokens: Some(9_000),
+                cache_read_tokens: Some(8_500),
+                ..Default::default()
+            }),
+        },
+    );
+    let run = state.progress().run();
+    assert_eq!((run.tokens, run.cache_read), (500, 8_500));
+    assert!(
+        run_line(&state).contains("500 tokens + 8.5k cache reads"),
+        "{}",
+        run_line(&state)
+    );
+}
+
+#[test]
 fn free_lock_marks_a_running_journal_as_not_running() {
     let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 3));
     update(&mut state, ProgressInput::Clock { now_ms: 2_000 });

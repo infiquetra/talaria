@@ -267,6 +267,8 @@ fn list_output_shapes() {
             "agents_total_known",
             "parked",
             "tokens_spent",
+            "cache_read_tokens",
+            "cache_unknown_turns",
             "money_spent_usd",
             "run_dir",
             "warning",
@@ -721,6 +723,58 @@ fn run_finished(stdout: &[u8]) -> Value {
 }
 
 #[test]
+fn a_run_reports_cache_reads_as_their_own_number_live_listed_and_replayed() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let out = output(
+        command(temp.path(), "cache-wire.json")
+            .args(["workflow", "run", "--json", "--profile", "fixture", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/one.js")),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let finished = run_finished(&out.stdout);
+    // The recorded turn used 10 tokens, 6 of them cache reads: the budget sees the other 4.
+    let spend = finished["spend"].clone();
+    assert_eq!(spend["tokens"], 4, "{spend}");
+    assert_eq!(spend["cache_read_tokens"], 6, "{spend}");
+    assert_eq!(spend["cache_unknown_turns"], 0, "{spend}");
+    let shown = text(&out.stdout);
+    let last = shown.lines().last().unwrap();
+    assert!(last.contains("4 tokens + 6 cache reads,"), "{last}");
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+    let listed = output(
+        command(temp.path(), "cache-wire.json")
+            .args(["workflow", "list", "--json", "--runs-dir"])
+            .arg(&runs),
+    );
+    let rows: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(rows[0]["tokens_spent"], 4);
+    assert_eq!(rows[0]["cache_read_tokens"], 6);
+    assert_eq!(rows[0]["cache_unknown_turns"], 0);
+    let plain = text(
+        &output(
+            command(temp.path(), "cache-wire.json")
+                .args(["workflow", "list", "--runs-dir"])
+                .arg(&runs),
+        )
+        .stdout,
+    );
+    assert!(plain.contains("4 tokens + 6 cache reads"), "{plain}");
+    // Resuming a finished run rebuilds its spend from the journal and gets the same split.
+    let replay = output(
+        command(temp.path(), "cache-wire.json")
+            .env_remove("TALARIA_WORKFLOW_MOCK")
+            .args(["workflow", "resume", "--json", "--runs-dir"])
+            .arg(&runs)
+            .arg(&id),
+    );
+    assert_eq!(replay.status.code(), Some(0), "{}", text(&replay.stderr));
+    assert_eq!(run_finished(&replay.stdout)["spend"]["tokens"], 4);
+    assert_eq!(run_finished(&replay.stdout)["spend"]["cache_read_tokens"], 6);
+}
+
+#[test]
 fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
     let temp = tempfile::tempdir().unwrap();
     let runs = temp.path().join("runs");
@@ -752,12 +806,16 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
     let before = lines[lines.len() - 2];
     assert_eq!(serde_json::from_str::<Value>(before).unwrap(), finished);
     assert!(last.len() < 300, "{last}");
-    // Hermes folds cache reads into the input count, so the total says it includes them.
-    assert!(last.contains("tokens (including cache reads)"), "{last}");
+    // The recording gives no cache read total, so the line says they are unknown for that turn.
+    assert!(
+        last.contains("10 tokens (cache reads unknown for 1 turn, counted in full)"),
+        "{last}"
+    );
     for part in [
         id.as_str(),
         "completed_with_failures",
         &format!("{} tokens", finished["spend"]["tokens"]),
+        &format!("{} turn", finished["spend"]["cache_unknown_turns"]),
         &format!("talaria workflow resume --json --runs-dir "),
     ] {
         assert!(last.contains(part), "{part} missing from {last}");
@@ -844,7 +902,10 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
     );
     assert!(plain_list.contains("  completed with failures  agents "), "{plain_list}");
     assert!(!plain_list.contains("completed_with_failures"), "{plain_list}");
-    assert!(plain_list.contains("(including cache reads)"), "{plain_list}");
+    assert!(
+        plain_list.contains("10 tokens (cache reads unknown for 1 turn, counted in full)"),
+        "{plain_list}"
+    );
     let replay = output(
         command(temp.path(), "failed-wire.json")
             .env_remove("TALARIA_WORKFLOW_MOCK")

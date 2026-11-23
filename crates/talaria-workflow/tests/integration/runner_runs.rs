@@ -225,6 +225,11 @@ fn discover_summarises_each_status() {
         (rows[2].tokens_spent, rows[2].money_spent_usd),
         (Some(15), Some(0.4))
     );
+    // Journaled before cache reads were kept apart: both turns count whole and say so.
+    assert_eq!(
+        (rows[2].cache_read_tokens, rows[2].cache_unknown_turns),
+        (Some(0), 2)
+    );
     assert_eq!(
         (rows[3].tokens_spent, rows[3].money_spent_usd),
         (Some(9), None)
@@ -377,4 +382,41 @@ fn discover_runs_since_skips_runs_started_before_cutoff() {
     assert_eq!(rows[0].status, RunStatus::Completed);
     assert_eq!(discover_runs_since(temp.path(), 0).len(), 2);
     assert!(discover_runs_since(&temp.path().join("missing"), 0).is_empty());
+}
+
+#[test]
+fn a_run_row_counts_cache_reads_apart_from_the_tokens_the_budget_counts() {
+    let temp = tempfile::tempdir().unwrap();
+    let a = "a".repeat(32);
+    let run = id(7);
+    folder(
+        temp.path(),
+        &run,
+        700,
+        &[
+            started(&run),
+            intent(&a),
+            // Each turn gives its own tokens and the session's running cache read total.
+            settled(
+                &a,
+                0,
+                json!({"total_tokens":1000,"session_cache_read_tokens":800}),
+            ),
+            settled(
+                &a,
+                1,
+                json!({"total_tokens":1500,"session_cache_read_tokens":1800}),
+            ),
+            call_finished(&a, "completed"),
+            finished("completed"),
+        ],
+    );
+    let rows = discover_runs(temp.path());
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].tokens_spent, Some(700));
+    assert_eq!(rows[0].cache_read_tokens, Some(1800));
+    assert_eq!(rows[0].cache_unknown_turns, 0);
+    let value = serde_json::to_value(&rows[0]).unwrap();
+    assert_eq!(value["tokens_spent"], 700);
+    assert_eq!(value["cache_read_tokens"], 1800);
 }

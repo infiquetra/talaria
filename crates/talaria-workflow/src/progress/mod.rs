@@ -20,7 +20,10 @@ pub mod journal_tree {
     };
 }
 
-use crate::journal::{Manifest, RecordLine};
+use crate::{
+    journal::{Manifest, RecordLine},
+    tokens::Reading,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -107,13 +110,12 @@ impl RunProgress {
                 && previous != runtime
             {
                 if let Some(n) = a.settled_sessions.remove(&previous) {
-                    *a.settled_sessions.entry(runtime.into()).or_default() += n;
+                    let slot = a.settled_sessions.entry(runtime.into()).or_default();
+                    *slot = slot.plus(n);
                 }
                 if let Some(n) = a.live_sessions.remove(&previous) {
-                    a.live_sessions
-                        .entry(runtime.into())
-                        .and_modify(|old| *old = (*old).max(n))
-                        .or_insert(n);
+                    let kept = Reading::latest(a.live_sessions.get(runtime).copied(), n);
+                    a.live_sessions.insert(runtime.into(), kept);
                 }
             }
         }
@@ -314,10 +316,15 @@ impl RunProgress {
             "turn_settled" => {
                 let admission = string(&record, "admission_id");
                 if a.settlements.insert(admission) {
-                    if let Some(tokens) = settled_tokens(&record["usage"]) {
-                        a.settled_tokens = a.settled_tokens.saturating_add(tokens);
+                    let attempt = record["attempt"].as_u64().unwrap_or_default();
+                    if let Some(turn) = a.cache.settle(attempt, &record["usage"]) {
+                        a.settled = a.settled.plus(turn.tokens);
+                        if !turn.cache_known {
+                            a.cache_unknown_turns = a.cache_unknown_turns.saturating_add(1);
+                        }
                         if let Some(session) = &a.session_id {
-                            *a.settled_sessions.entry(session.clone()).or_default() += tokens;
+                            let slot = a.settled_sessions.entry(session.clone()).or_default();
+                            *slot = slot.plus(turn.tokens);
                         }
                     } else {
                         a.tokens_unknown = true;
@@ -463,6 +470,8 @@ impl RunProgress {
     pub fn recount(&mut self) {
         self.run.counts = Counts::default();
         self.run.tokens = 0;
+        self.run.cache_read = 0;
+        self.run.cache_unknown_turns = 0;
         self.run.tokens_unknown = false;
         self.run.unpriced = 0;
         self.run.budget_stopped = 0;
@@ -475,6 +484,11 @@ impl RunProgress {
             }
             // Settled plus live usage, as each agent row shows it.
             self.run.tokens = self.run.tokens.saturating_add(a.tokens);
+            self.run.cache_read = self.run.cache_read.saturating_add(a.cache_read);
+            self.run.cache_unknown_turns = self
+                .run
+                .cache_unknown_turns
+                .saturating_add(a.cache_unknown_turns);
             self.run.tokens_unknown |= a.tokens_unknown;
             if let Some(n) = a.money {
                 money += n;
@@ -516,27 +530,6 @@ fn strings(v: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-pub(crate) fn settled_tokens(v: &Value) -> Option<u64> {
-    v["total_tokens"].as_u64().or_else(|| {
-        Some(
-            v["input_tokens"]
-                .as_u64()?
-                .saturating_add(v["output_tokens"].as_u64()?),
-        )
-    })
-}
-pub(crate) fn live_tokens(v: &Value) -> Option<u64> {
-    v["total"]
-        .as_u64()
-        .or_else(|| {
-            Some(
-                v["prompt"]
-                    .as_u64()?
-                    .saturating_add(v["completion"].as_u64()?),
-            )
-        })
-        .or_else(|| Some(v["input"].as_u64()?.saturating_add(v["output"].as_u64()?)))
 }
 fn settled_money(v: &Value) -> Option<f64> {
     let c = &v["session_cost"];

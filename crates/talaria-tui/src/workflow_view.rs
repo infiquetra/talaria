@@ -12,6 +12,7 @@ use talaria_workflow::progress::{
     RunState, format_money, format_tokens,
     live::{NodeKey, ProgressState, WaitView},
 };
+use talaria_workflow::tokens::tokens_text;
 /// The failed agents a finished run lists above its rows before the rest are counted.
 const FAILED_LISTED: usize = 5;
 use unicode_width::UnicodeWidthStr;
@@ -446,9 +447,14 @@ impl WorkflowView {
                     a.admission_status.as_deref().unwrap_or("none")
                 ),
                 format!(
-                    "settled {} · displayed {} tokens · {}",
-                    format_tokens(a.settled_tokens),
-                    format_tokens(a.tokens),
+                    "settled {} · displayed {} · {}",
+                    tokens_text(
+                        a.settled.counted,
+                        a.settled.cache_read,
+                        a.cache_unknown_turns,
+                        format_tokens
+                    ),
+                    tokens_text(a.tokens, a.cache_read, a.cache_unknown_turns, format_tokens),
                     format_money(a.money)
                 ),
             ];
@@ -569,14 +575,14 @@ fn node_line(s: &ProgressState, node: &NodeKey) -> String {
                     state.push_str(&format!(" · {}", wait_text(wait)));
                 }
                 format!(
-                    "{} {} · {model}{provider} · {state} · {:.1}s · {} tokens · {} · {}",
+                    "{} {} · {model}{provider} · {state} · {:.1}s · {} · {} · {}",
                     a.state.glyph(),
                     a.label,
                     a.duration_ms(s.now_ms) as f64 / 1000.0,
                     if a.tokens_unknown {
-                        "unknown".into()
+                        "unknown tokens".into()
                     } else {
-                        format_tokens(a.tokens)
+                        tokens_text(a.tokens, a.cache_read, a.cache_unknown_turns, format_tokens)
                     },
                     format_money(a.money),
                     a.last_tool
@@ -671,7 +677,12 @@ pub fn picker_row(row: &talaria_workflow::runner::RunSummary) -> String {
         row.parked,
         row.tokens_spent.map_or_else(
             || "tokens -".into(),
-            |n| format!("{} tokens", format_tokens(n))
+            |n| tokens_text(
+                n,
+                row.cache_read_tokens.unwrap_or_default(),
+                row.cache_unknown_turns,
+                format_tokens
+            )
         ),
         row.money_spent_usd
             .map_or_else(|| "-".into(), |n| format!("{n:.4}")),

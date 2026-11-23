@@ -6,6 +6,7 @@ use crate::{
         SettledTurn, journal_key,
     },
     staffing::{Availability, Clock, LimitScope, RosterCache},
+    tokens::Reading,
 };
 use chrono::{DateTime, Utc};
 use futures_util::future::BoxFuture;
@@ -170,9 +171,9 @@ impl Scheduler {
     }
     /// Count a session's cumulative live token reading before its turn settles. Reaching a
     /// budget here refuses waiting calls at once.
-    pub fn observe_usage(&self, session_id: &str, cumulative_tokens: u64) {
+    pub fn observe_usage(&self, session_id: &str, reading: Reading) {
         let mut s = self.inner.lock();
-        if s.accounting.observe(session_id, cumulative_tokens) {
+        if s.accounting.observe(session_id, reading) {
             self.inner.budget_events(&mut s);
             self.inner.drain(&mut s);
             drop(s);
@@ -777,8 +778,8 @@ impl AdmissionGate for Scheduler {
         self.inner.wake.notify_one();
         allowed
     }
-    fn count_untracked_usage(&self, id: &str, tokens: u64) {
-        self.observe_usage(id, tokens);
+    fn count_untracked_usage(&self, id: &str, reading: Reading) {
+        self.observe_usage(id, reading);
     }
 }
 struct Cancel {

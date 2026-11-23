@@ -1,4 +1,5 @@
 use super::blobs::BlobRef;
+use crate::tokens::{CacheTracker, Reading, Tokens};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use talaria_core::subagents::SubagentTree;
@@ -108,7 +109,12 @@ pub struct RunNode {
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
     pub counts: Counts,
+    /// Tokens the budget counts: everything except cache reads.
     pub tokens: u64,
+    /// Cache reads Hermes reported, kept apart from `tokens`.
+    pub cache_read: u64,
+    /// Settled turns whose cache reads were not reported; their tokens are all in `tokens`.
+    pub cache_unknown_turns: u32,
     pub tokens_unknown: bool,
     pub money: Option<f64>,
     pub unpriced: usize,
@@ -150,8 +156,14 @@ pub struct AgentNode {
     pub execution_generation: Option<i64>,
     pub started_at_ms: i64,
     pub finished_at_ms: Option<i64>,
-    pub settled_tokens: u64,
+    /// What this agent's settled turns used.
+    pub settled: Tokens,
+    /// Tokens the budget counts, settled plus streamed so far: everything except cache reads.
     pub tokens: u64,
+    /// Cache reads Hermes reported, settled plus streamed so far.
+    pub cache_read: u64,
+    /// Settled turns whose cache reads were not reported; their tokens are all in `tokens`.
+    pub cache_unknown_turns: u32,
     pub tokens_unknown: bool,
     pub money: Option<f64>,
     pub last_outcome: Option<String>,
@@ -181,8 +193,9 @@ pub struct AgentNode {
     pub(crate) stopping: bool,
     pub(crate) prompts: HashSet<(String, String, i64)>,
     pub(crate) settlements: HashSet<String>,
-    pub(crate) settled_sessions: HashMap<String, u64>,
-    pub(crate) live_sessions: HashMap<String, u64>,
+    pub(crate) settled_sessions: HashMap<String, Tokens>,
+    pub(crate) live_sessions: HashMap<String, Reading>,
+    pub(crate) cache: CacheTracker<u64>,
 }
 impl AgentNode {
     pub(crate) fn new(key: String, at_ms: i64) -> Self {
@@ -206,8 +219,10 @@ impl AgentNode {
             execution_generation: None,
             started_at_ms: at_ms,
             finished_at_ms: None,
-            settled_tokens: 0,
+            settled: Tokens::default(),
             tokens: 0,
+            cache_read: 0,
+            cache_unknown_turns: 0,
             tokens_unknown: false,
             money: None,
             last_outcome: None,
@@ -233,6 +248,7 @@ impl AgentNode {
             settlements: HashSet::new(),
             settled_sessions: HashMap::new(),
             live_sessions: HashMap::new(),
+            cache: CacheTracker::new(),
         }
     }
     pub fn duration_ms(&self, now_ms: i64) -> i64 {
@@ -255,12 +271,17 @@ impl AgentNode {
             }
             _ => AgentState::Queued,
         };
-        self.tokens = self.settled_tokens.saturating_add(
-            self.live_sessions
-                .iter()
-                .map(|(s, n)| n.saturating_sub(*self.settled_sessions.get(s).unwrap_or(&0)))
-                .sum::<u64>(),
-        );
+        let live = self
+            .live_sessions
+            .iter()
+            .map(|(s, r)| {
+                r.tokens()
+                    .beyond(self.settled_sessions.get(s).copied().unwrap_or_default())
+            })
+            .fold(Tokens::default(), Tokens::plus);
+        let shown = self.settled.plus(live);
+        self.tokens = shown.counted;
+        self.cache_read = shown.cache_read;
     }
     /// What a row says about the agent beyond its state: the kept mark of a cut short agent, or
     /// the step a running agent is on.

@@ -1,1 +1,1 @@
-{"event":"run_finished","run_id":"<RUN_ID>","outcome":"completed","result":"READY","spend":{"tokens":10,"money_usd":0.2,"money_source":"hermes"}}
+{"event":"run_finished","run_id":"<RUN_ID>","outcome":"completed","result":"READY","spend":{"tokens":10,"cache_read_tokens":0,"cache_unknown_turns":1,"money_usd":0.2,"money_source":"hermes"}}

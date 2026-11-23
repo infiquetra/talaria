@@ -119,8 +119,8 @@ impl AdmissionGate for PausingGate {
                 .inner
                 .authorise_restart(request, launch, turn, attempt, restart, max)
     }
-    fn count_untracked_usage(&self, id: &str, tokens: u64) {
-        self.inner.count_untracked_usage(id, tokens);
+    fn count_untracked_usage(&self, id: &str, reading: crate::tokens::Reading) {
+        self.inner.count_untracked_usage(id, reading);
     }
 }
 

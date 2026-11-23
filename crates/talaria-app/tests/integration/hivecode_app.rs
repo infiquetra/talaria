@@ -702,6 +702,8 @@ fn run_row(
         agents_total_known: 10,
         parked: 0,
         tokens_spent: None,
+        cache_read_tokens: None,
+        cache_unknown_turns: 0,
         money_spent_usd: None,
         run_dir: format!("fixture-runs/{run_id}"),
         warning: None,

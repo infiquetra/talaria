@@ -1,5 +1,6 @@
 //! Plain text shared by terminal presentation and offline journal inspection.
 use super::{AgentNode, format_money, format_tokens, live::ProgressState};
+use crate::tokens::tokens_text;
 
 /// The note on an agent's row when Talaria started it again after it ran out of context.
 fn restart_note(a: &AgentNode) -> String {
@@ -20,16 +21,16 @@ pub fn agent_line(a: &AgentNode, now_ms: i64) -> String {
         .map(|p| format!(" on {p}"))
         .unwrap_or_default();
     format!(
-        "{} {} · {}{provider} · {} · {:.1}s · {} tokens (including cache reads) · {}{}",
+        "{} {} · {}{provider} · {} · {:.1}s · {} · {}{}",
         a.state.glyph(),
         a.label,
         a.model.as_deref().unwrap_or("model unknown"),
         a.state.as_str(),
         a.duration_ms(now_ms) as f64 / 1000.0,
         if a.tokens_unknown {
-            "unknown".into()
+            "unknown tokens".into()
         } else {
-            format_tokens(a.tokens)
+            tokens_text(a.tokens, a.cache_read, a.cache_unknown_turns, format_tokens)
         },
         format_money(a.money),
         restart_note(a),
@@ -80,11 +81,11 @@ pub fn run_line(s: &ProgressState) -> String {
     }
     let money = s.scheduler.as_ref().and_then(|v| v.spend_money).or(r.money);
     line.push_str(&format!(
-        " · {} tokens · {}",
+        " · {} · {}",
         if r.tokens_unknown {
-            "unknown".into()
+            "unknown tokens".into()
         } else {
-            format_tokens(r.tokens)
+            tokens_text(r.tokens, r.cache_read, r.cache_unknown_turns, format_tokens)
         },
         format_money(money)
     ));

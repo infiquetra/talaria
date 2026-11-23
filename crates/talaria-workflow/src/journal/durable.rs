@@ -290,8 +290,13 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             }
         };
         if let (Some(moved), Some(tokens)) = (&sweep.moved_to, sweep.moved_tokens) {
-            self.gate
-                .count_untracked_usage(&format!("untracked:{moved}"), tokens);
+            self.gate.count_untracked_usage(
+                &format!("untracked:{moved}"),
+                crate::tokens::Reading {
+                    total: tokens,
+                    cache_read: sweep.moved_cache_read_tokens,
+                },
+            );
         }
         let busy = sweep.still_active.then(|| {
             format!("Hermes is still running untracked work in {folder} (session {session})")
@@ -313,9 +318,14 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         }
         if let Some(tokens) = sweep.moved_tokens {
             // The reading is kept in memory; a resumed run does not count it again.
-            parts.push(format!(
-                "Hermes reports {tokens} tokens used there, counted in this execution's spend"
-            ));
+            parts.push(match sweep.moved_cache_read_tokens {
+                Some(cache) => format!(
+                    "Hermes reports {tokens} tokens used there, {cache} of them cache reads; the rest count toward this execution's budget"
+                ),
+                None => format!(
+                    "Hermes reports {tokens} tokens used there and did not say how many were cache reads, so all of them count toward this execution's budget"
+                ),
+            });
         }
         if sweep.still_active {
             parts.push(format!(

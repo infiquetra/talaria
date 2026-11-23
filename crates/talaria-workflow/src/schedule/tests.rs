@@ -703,6 +703,12 @@ async fn the_scheduler_authorises_a_restart_only_while_the_budget_has_room() {
             .any(|e| matches!(e.event, SchedulerEvent::AgentRestarted { .. }))
     );
 }
+fn reading(total: u64) -> crate::tokens::Reading {
+    crate::tokens::Reading {
+        total,
+        cache_read: None,
+    }
+}
 async fn bind(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, session: &str) {
     let key = journal_key(&q.call_id, l);
     let dir = c.journal.dir();
@@ -730,6 +736,9 @@ async fn bind(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, session: &str) 
         .unwrap();
 }
 async fn settle(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, tokens: u64) {
+    settle_usage(c, q, l, json!({"total_tokens":tokens})).await;
+}
+async fn settle_usage(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, usage: Value) {
     let key = journal_key(&q.call_id, l);
     let dir = c.journal.dir();
     c.journal
@@ -763,7 +772,7 @@ async fn settle(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, tokens: u64) 
             final_text: Some("ok".into()),
             final_text_ref: None,
             result_meta: json!({}),
-            usage: Some(json!({"total_tokens":tokens})),
+            usage: Some(usage),
         },
     ] {
         c.journal.append(record).await.unwrap();
@@ -779,13 +788,13 @@ async fn live_usage_counts_toward_the_token_budget_before_a_turn_settles() {
     bind(&c, &request(0), &l, "s-live").await;
     let mut queued = s.acquire(&request(1), &l, GateReason::Fresh);
     assert!(poll!(&mut queued).is_pending());
-    s.observe_usage("s-live", 600);
+    s.observe_usage("s-live", reading(600));
     assert_eq!(s.budget().tokens_spent, 600);
     assert_eq!(s.budget_stop(), None);
     // A lower or repeated reading never takes spend back.
-    s.observe_usage("s-live", 400);
+    s.observe_usage("s-live", reading(400));
     assert_eq!(s.budget().tokens_spent, 600);
-    s.observe_usage("s-live", 1200);
+    s.observe_usage("s-live", reading(1200));
     assert_eq!(s.budget().tokens_spent, 1200);
     assert_eq!(
         s.budget_stop().as_deref(),
@@ -811,6 +820,40 @@ async fn live_usage_counts_toward_the_token_budget_before_a_turn_settles() {
     assert_eq!(s.status().spend.tokens, 1300);
 }
 #[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_live_reading_and_the_turn_that_settles_it_count_cache_reads_once() {
+    let mut c = Context::new(data(), 1).await;
+    c.table.budget.tokens = Some(1000);
+    let (s, _events) = c.start().await;
+    let l = launch("fixture", "alpha");
+    let p = permit(s.acquire(&request(0), &l, GateReason::Fresh).await);
+    bind(&c, &request(0), &l, "s-cache").await;
+    // Nine thousand tokens in all, most of them cheap cache reads: the budget sees 500.
+    s.observe_usage(
+        "s-cache",
+        crate::tokens::Reading {
+            total: 9000,
+            cache_read: Some(8500),
+        },
+    );
+    assert_eq!(s.budget().tokens_spent, 500);
+    assert_eq!(s.budget_stop(), None);
+    assert_eq!(s.status().spend.cache_read_tokens, 8500);
+    // The settled turn replaces its live share; neither number is counted twice.
+    settle_usage(
+        &c,
+        &request(0),
+        &l,
+        json!({"total_tokens":9000,"session_cache_read_tokens":8500}),
+    )
+    .await;
+    drop(p);
+    settle_tasks().await;
+    let spend = s.status().spend;
+    assert_eq!((spend.tokens, spend.cache_read_tokens), (500, 8500));
+    assert_eq!(spend.cache_unknown_turns, 0);
+    assert_eq!(s.budget().tokens_spent, 500);
+}
+#[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn a_turn_that_settles_without_live_usage_is_reported_once() {
     let mut c = Context::new(data(), 1).await;
     c.table.budget.tokens = Some(1_000_000);
@@ -822,7 +865,7 @@ async fn a_turn_that_settles_without_live_usage_is_reported_once() {
     drop(p);
     let p = permit(s.acquire(&request(1), &l, GateReason::Fresh).await);
     bind(&c, &request(1), &l, "s-metered").await;
-    s.observe_usage("s-metered", 40);
+    s.observe_usage("s-metered", reading(40));
     settle(&c, &request(1), &l, 50).await;
     drop(p);
     settle_tasks().await;

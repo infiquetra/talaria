@@ -244,7 +244,7 @@ fn an_expired_message_gives_the_footer_back_to_the_key_hints() {
 #[test]
 fn the_run_list_reads_token_counts_in_thousands_and_millions() {
     use talaria_workflow::runner::{RunStatus, RunSummary};
-    let row = |tokens: Option<u64>| RunSummary {
+    let row = |tokens: Option<u64>, cache: Option<u64>, unknown: u32| RunSummary {
         run_id: "01JB2X9Q4M8Z7K3T5V6W8Y0A1C".into(),
         name: "review-branch".into(),
         profile: "fixture".into(),
@@ -254,17 +254,30 @@ fn the_run_list_reads_token_counts_in_thousands_and_millions() {
         agents_total_known: 3,
         parked: 0,
         tokens_spent: tokens,
+        cache_read_tokens: cache,
+        cache_unknown_turns: unknown,
         money_spent_usd: None,
         run_dir: "/runs/example".into(),
         warning: None,
     };
-    for (tokens, shown) in [
-        (Some(5_812_345), "5.8M tokens"),
-        (Some(412_345), "412.3k tokens"),
-        (Some(950), "950 tokens"),
-        (None, "tokens -"),
+    for (tokens, cache, unknown, shown) in [
+        (Some(5_812_345), Some(0), 0, "5.8M tokens + 0 cache reads"),
+        (
+            Some(412_345),
+            Some(9_100_000),
+            0,
+            "412.3k tokens + 9.1M cache reads",
+        ),
+        (Some(950), Some(0), 0, "950 tokens + 0 cache reads"),
+        (
+            Some(950),
+            Some(0),
+            2,
+            "950 tokens (cache reads unknown for 2 turns, counted in full)",
+        ),
+        (None, None, 0, "tokens -"),
     ] {
-        let text = talaria_tui::workflow_view::picker_row(&row(tokens));
+        let text = talaria_tui::workflow_view::picker_row(&row(tokens, cache, unknown));
         assert!(text.contains(&format!("  {shown}  ")), "{text}");
     }
 }
@@ -282,6 +295,8 @@ fn the_run_list_words_a_status_with_underscores_as_plain_words() {
         agents_total_known: 3,
         parked: 0,
         tokens_spent: None,
+        cache_read_tokens: None,
+        cache_unknown_turns: 0,
         money_spent_usd: None,
         run_dir: "/runs/example".into(),
         warning: None,
