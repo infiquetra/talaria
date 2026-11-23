@@ -462,6 +462,8 @@ pub struct ProgressViews {
     pub profiles: HashMap<PathBuf, String>,
     pub scoped: std::collections::HashSet<PathBuf>,
     pub last_tick_ms: u64,
+    /// The row to select once a run that is being read again has loaded.
+    pub pending_selection: Option<(PathBuf, talaria_workflow::progress::live::NodeKey)>,
 }
 impl ProgressViews {
     pub(crate) fn next_tick_ms(&self) -> Option<u64> {

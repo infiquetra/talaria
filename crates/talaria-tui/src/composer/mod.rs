@@ -865,6 +865,7 @@ impl Composer {
             | Action::ToggleMenuBar
             | Action::MenuLeft | Action::MenuRight | Action::MenuUp | Action::MenuDown
             | Action::MenuOpen | Action::MenuActivate | Action::MenuNext | Action::MenuPrev | Action::MenuClose
+            | Action::WorkflowAgentBack
             | Action::VoiceRecord => {}
         }
         false

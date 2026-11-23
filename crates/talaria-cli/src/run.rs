@@ -1210,6 +1210,34 @@ fn paste_actions(composer: &mut Composer, text: &str, now: Instant) -> Vec<UserA
     actions
 }
 
+/// What decides whether the key that goes back from a workflow agent's session is live.
+#[derive(Clone, Copy, Debug)]
+struct AgentBackGate {
+    /// The open session is an agent's, and a remembered origin exists for it.
+    origin: bool,
+    /// The draft is empty: with text in it the key moves the caret as it always did.
+    composer_empty: bool,
+    /// No overlay, menu, picker, prompt, list or other surface takes keys before the composer.
+    surfaces_free: bool,
+    /// Vim editing is off, or in a mode where an empty draft has nothing to move.
+    vim_allows: bool,
+}
+
+impl AgentBackGate {
+    fn live(self) -> bool {
+        self.origin && self.composer_empty && self.surfaces_free && self.vim_allows
+    }
+}
+
+/// The action for a key press, when the key goes back and the gate is open. At any other time
+/// the key is not claimed, so it reaches the composer unchanged.
+fn agent_back_action(keymap: &KeyMap, key: &Key, gate: AgentBackGate) -> Option<UserAction> {
+    (key.kind != KeyKind::Release
+        && gate.live()
+        && keymap.resolve_in(key, KeyContext::AgentSession) == Some(Action::WorkflowAgentBack))
+    .then_some(UserAction::WorkflowAgentBack)
+}
+
 /// A press of the key bound to the interrupt action reaches the application as
 /// [`UserAction::InterruptKey`], which asks for a second press while a turn runs. Every other
 /// route to an interrupt, Ctrl+C among them, keeps [`UserAction::Interrupt`] and acts at once.
@@ -1722,6 +1750,16 @@ impl TuiScreen {
     /// confirmation, a queue selection or edit, the slash palette, the mention list, and a vim
     /// mode other than normal. The working row offers the key only when this holds.
     fn interrupt_reaches_turn(&self, view: &View<'_>) -> bool {
+        self.composer_gets_keys(view)
+            && self
+                .composer
+                .vim_mode()
+                .is_none_or(|mode| mode == VimMode::Normal)
+    }
+
+    /// No menu, panel, selector, search, card, confirmation, queue selection, list or overlay
+    /// takes the next key before the composer does.
+    fn composer_gets_keys(&self, view: &View<'_>) -> bool {
         !Self::menu_takes_keys(view)
             && view.layout.panel != talaria_core::layout::PanelVisibility::OverlayOpen
             && !self.selector_takes_keys(view)
@@ -1731,10 +1769,27 @@ impl TuiScreen {
             && !queue_takes_keys(view)
             && !view.palette.open
             && !self.mention_list_open()
-            && self
+    }
+
+    /// The key that goes back from a workflow agent's session is live: the session was opened
+    /// from the run view, the draft is empty, and nothing else is open or taking keys.
+    fn agent_back_offered(&self, view: &View<'_>) -> bool {
+        self.agent_back_gate(view).live()
+    }
+
+    fn agent_back_gate(&self, view: &View<'_>) -> AgentBackGate {
+        AgentBackGate {
+            origin: view.agent_back,
+            composer_empty: self.composer.is_empty(),
+            surfaces_free: self.overlay == Overlay::Live
+                && view.rewind.is_none()
+                && !view.pager_open
+                && self.composer_gets_keys(view),
+            vim_allows: self
                 .composer
                 .vim_mode()
-                .is_none_or(|mode| mode == VimMode::Normal)
+                .is_none_or(|mode| matches!(mode, VimMode::Insert | VimMode::Normal)),
+        }
     }
 
     fn sync_confirmation_focus(&mut self, now: Instant) {
@@ -3265,6 +3320,11 @@ impl TuiScreen {
                     let mut actions = flush_draft_actions(&mut self.composer, now);
                     actions.push(UserAction::OpenModels);
                     return actions;
+                }
+                if let Some(action) =
+                    agent_back_action(&self.keymap, &key, self.agent_back_gate(view))
+                {
+                    return vec![action];
                 }
                 let mut actions = Vec::new();
                 if attachment_key(
@@ -4843,6 +4903,10 @@ impl Screen for TuiScreen {
         // Measured before the composer section borrows the composer.
         let interrupt_reaches_turn =
             view.link == LinkView::Connected && self.interrupt_reaches_turn(view);
+        let back_hint = self
+            .agent_back_offered(view)
+            .then(|| self.keymap.label(Action::WorkflowAgentBack))
+            .flatten();
         let composer = ThemedComposer {
             section: self
                 .composer
@@ -4936,6 +5000,7 @@ impl Screen for TuiScreen {
                 subagent_style.header,
                 subagent_style.hint,
             )
+            .with_back_key(back_hint.as_deref())
         });
         let workflow = view.workflow_run.map(|run| {
             talaria_tui::workflow_view::WorkflowDock::new(
@@ -6891,6 +6956,84 @@ mod tests {
             "",
         );
         assert_eq!((count(&old, is_key), count(&old, is_now)), (0, 0));
+    }
+
+    #[test]
+    fn the_key_that_goes_back_is_live_only_under_every_condition() {
+        use super::{AgentBackGate, agent_back_action};
+        use talaria_app::app::UserAction;
+        let open = AgentBackGate {
+            origin: true,
+            composer_empty: true,
+            surfaces_free: true,
+            vim_allows: true,
+        };
+        let left = Key::from(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        let map = KeyMap::defaults();
+        let offered = |gate: AgentBackGate| {
+            matches!(
+                agent_back_action(&map, &left, gate),
+                Some(UserAction::WorkflowAgentBack)
+            )
+        };
+        assert!(offered(open));
+        // Each condition alone closes it.
+        assert!(!offered(AgentBackGate {
+            origin: false,
+            ..open
+        }));
+        assert!(!offered(AgentBackGate {
+            composer_empty: false,
+            ..open
+        }));
+        assert!(!offered(AgentBackGate {
+            surfaces_free: false,
+            ..open
+        }));
+        assert!(!offered(AgentBackGate {
+            vim_allows: false,
+            ..open
+        }));
+        // Other keys are never claimed, and a release is not a press.
+        for other in [
+            KeyCode::Right,
+            KeyCode::Up,
+            KeyCode::Esc,
+            KeyCode::Char('b'),
+        ] {
+            let key = Key::from(KeyEvent::new(other, KeyModifiers::NONE));
+            assert!(agent_back_action(&map, &key, open).is_none(), "{other:?}");
+        }
+        let mut release = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+        release.kind = crossterm::event::KeyEventKind::Release;
+        assert!(agent_back_action(&map, &Key::from(release), open).is_none());
+
+        // The key follows a rebind: the new key goes back and Left does not.
+        let entries = BTreeMap::from([("workflow_agent_back".to_owned(), vec!["f6".to_owned()])]);
+        let (rebound, notices) = KeyMap::from_entries(&entries);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert!(agent_back_action(&rebound, &left, open).is_none());
+        let f6 = Key::from(KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE));
+        assert!(agent_back_action(&rebound, &f6, open).is_some());
+
+        // When the gate is closed by text in the draft, Left moves the caret as before.
+        let mut composer = Composer::new(map.clone());
+        composer.load("draft".into());
+        let before = composer.caret();
+        let actions = composer_key_actions(
+            &mut composer,
+            left,
+            ComposerContext {
+                turn_running: false,
+            },
+            Instant::now(),
+        );
+        assert!(composer.caret() < before, "the caret moved left");
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, UserAction::WorkflowAgentBack))
+        );
     }
 
     #[test]

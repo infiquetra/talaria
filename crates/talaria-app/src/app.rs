@@ -210,6 +210,9 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    /// In a workflow agent's session opened from the run view: go back to the session the
+    /// person came from and open the run view again.
+    WorkflowAgentBack,
     /// Toggle or reopen the client work panel.
     LayoutPanel,
     /// Toggle the menu preference.
@@ -504,6 +507,9 @@ pub struct View<'a> {
     pub workflow_agent: Option<&'a talaria_workflow::progress::agent_session::AgentSessionNote>,
     /// One press of the interrupt key is waiting for a second: the working row says so.
     pub interrupt_armed: bool,
+    /// The open session is a workflow agent's, opened from the run view, and the person can go
+    /// back to the session they came from.
+    pub agent_back: bool,
     /// The building block, while a routed turn builds a workflow and no run it started shows.
     pub authoring: Option<talaria_core::hivecode::authoring::AuthoringView>,
 }
@@ -847,6 +853,10 @@ pub struct AppState {
     pub(crate) workflow_agent: Option<crate::workflow_agent::WorkflowAgentSession>,
     /// Stored ids of workflow agent sessions the person has been warned about.
     workflow_agent_warned: HashSet<String>,
+    /// Where the person came from when the run view opened the agent session in the window.
+    pub(crate) workflow_origin: Option<crate::workflow_origin::WorkflowOrigin>,
+    /// A trip back to that place that is under way: the run view opens when it lands.
+    pub(crate) workflow_return: Option<crate::workflow_origin::WorkflowReturn>,
     /// Where workflow runs live, for finding the run a session's folder names.
     pub(crate) workflow_runs_dir: PathBuf,
     pub hivecode: crate::hivecode::HivecodeService,
@@ -1370,6 +1380,8 @@ impl AppState {
             workflow_views: crate::workflow_progress::ProgressViews::default(),
             workflow_agent: None,
             workflow_agent_warned: HashSet::new(),
+            workflow_origin: None,
+            workflow_return: None,
             workflow_runs_dir: talaria_workflow::runner::runs_dir(None),
             subagents_usage_active: 0,
             attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
@@ -1581,6 +1593,10 @@ impl AppState {
                 .and(self.workflow_agent.as_ref())
                 .map(crate::workflow_agent::WorkflowAgentSession::note),
             interrupt_armed: turn_running(self) && self.interrupt_confirm.is_armed(self.now_ms),
+            agent_back: self.workflow_agent.is_some()
+                && opened
+                    .zip(self.workflow_origin.as_ref())
+                    .is_some_and(|(opened, origin)| origin.is_away_in(&opened.session_id)),
             authoring: self.opened.as_ref().and_then(|opened| {
                 self.hivecode.authoring_view(
                     &SessionId::new(opened.session_id.clone()),
@@ -4647,6 +4663,8 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             } => {
                 state.opened = None;
                 state.workflow_agent = None;
+                state.workflow_origin = None;
+                state.workflow_return = None;
                 let notice = if left {
                     let hint = crate::launch::exit_hint(&previous_id, &state.profile);
                     format!(
@@ -7132,6 +7150,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 talaria_workflow::progress::live::ProgressInput::Key(key),
             )
         }
+        UserAction::WorkflowAgentBack => workflow_agent_back(state),
         UserAction::WorkflowView => {
             // An agent's own session opens its run's view; the lead session opens the run it
             // started; any other session opens the run list.
@@ -8676,6 +8695,7 @@ fn switched(
     state.session_action = false;
     let target = state.pending_switch.take();
     let pending_events = std::mem::take(&mut state.pending_switch_events);
+    let switched_in = matches!(&outcome, SwitchOutcome::Switched { .. }) && install.is_some();
     let mut effects = match outcome {
         SwitchOutcome::AlreadyHere => {
             end_picker_wait(state, ALREADY_HERE_NOTICE);
@@ -8684,16 +8704,26 @@ fn switched(
         SwitchOutcome::Failed { text } => {
             end_picker_wait(state, &text);
             let mut lines = Vec::new();
-            if reason.as_deref() == Some("not_found")
-                && let Some(target) = target
-            {
+            if state.workflow_return.is_some() {
+                // One line, and the person stays in the agent's session.
+                let because = reason
+                    .as_deref()
+                    .map_or_else(String::new, |reason| format!(" ({reason})"));
                 lines.push(format!(
-                    "No session with the id {} in the profile {}. Type /resume to pick from a list.",
-                    plain(&target.session_id),
-                    plain(&target.profile)
+                    "Could not go back to the session you came from{because}. You are still in the agent's session."
                 ));
+            } else {
+                if reason.as_deref() == Some("not_found")
+                    && let Some(target) = target
+                {
+                    lines.push(format!(
+                        "No session with the id {} in the profile {}. Type /resume to pick from a list.",
+                        plain(&target.session_id),
+                        plain(&target.profile)
+                    ));
+                }
+                lines.push(text);
             }
-            lines.push(text);
             vec![AppEffect::CommitLines(lines)]
         }
         SwitchOutcome::Switched { notice } => {
@@ -8720,6 +8750,7 @@ fn switched(
             effects
         }
     };
+    effects.extend(workflow_origin_settle(state, switched_in));
     for event in pending_events {
         effects.extend(link_event(
             state,
@@ -10545,6 +10576,7 @@ fn opened_session(
     mut opened: OpenedSession,
     notice: Option<String>,
 ) -> Vec<AppEffect> {
+    workflow_origin_follow(state, &opened);
     let rewind_owner = RowKey {
         profile: state.profile.clone(),
         session_id: opened.session_id.clone(),
@@ -19123,6 +19155,12 @@ fn workflow_opened(
                 .offsets
                 .insert(run.clone(), opened.offset);
             state.workflow_views.states.insert(run.clone(), view);
+            if let Some((pending, selection)) = state.workflow_views.pending_selection.take()
+                && pending == run
+                && let Some(view) = state.workflow_views.states.get_mut(&run)
+            {
+                view.selection = selection;
+            }
             state.workflow_views.active = Some(run.clone());
             state.workflow_views.last_poll_ms = state.now_ms;
             let mut effects = workflow_input(
@@ -19320,6 +19358,7 @@ fn workflow_input(
             .map(|line| AppEffect::WorkflowLog(format!("{line} (run {run_name})"))),
     );
     let opened = view.opened_session.take();
+    let selection = view.selection.clone();
     let closed = view.closed;
     if view.revision != previous {
         result.push(AppEffect::Redraw);
@@ -19342,19 +19381,180 @@ fn workflow_input(
             .filter(|p| !p.is_empty())
             .cloned()
             .unwrap_or_else(|| state.profile.clone());
-        if profile == state.profile {
-            result.extend(resume_command(state, &session));
+        let target = RowKey {
+            profile: profile.clone(),
+            session_id: session.clone(),
+        };
+        let started = if profile == state.profile {
+            resume_command(state, &session)
         } else {
-            result.extend(begin_switch(
-                state,
-                RowKey {
-                    profile,
-                    session_id: session,
-                },
-            ));
+            begin_switch(state, target.clone())
+        };
+        if started
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Switch { .. }))
+        {
+            workflow_origin_enter(state, run.clone(), selection, target);
         }
+        result.extend(started);
     }
     result
+}
+
+/// The run view's Enter has started a switch to an agent's session: remember where the person
+/// is. An agent's session is never the place to return to, so an Enter made from one keeps the
+/// place the first Enter remembered, and shows the run and row of the newest Enter.
+fn workflow_origin_enter(
+    state: &mut AppState,
+    run: PathBuf,
+    selection: talaria_workflow::progress::live::NodeKey,
+    target: RowKey,
+) {
+    use crate::workflow_origin::{WorkflowOrigin, origin_row};
+    let here = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone());
+    let kept = state
+        .workflow_origin
+        .as_mut()
+        .filter(|origin| here.as_deref().is_some_and(|id| origin.is_away_in(id)));
+    if let Some(origin) = kept {
+        origin.retarget(run, selection, target);
+        return;
+    }
+    state.workflow_origin = if state.workflow_agent.is_some() {
+        None
+    } else {
+        let profile = state
+            .opened_profile
+            .clone()
+            .unwrap_or_else(|| state.profile.clone());
+        state
+            .opened
+            .as_ref()
+            .and_then(|opened| origin_row(opened, &profile))
+            .map(|session| WorkflowOrigin::leaving(session, run, selection, target))
+    };
+}
+
+/// A switch finished. Settle the trip it belonged to: confirm the agent's session, drop the
+/// memory when the switch landed elsewhere, or open the run view when the trip back landed.
+fn workflow_origin_settle(state: &mut AppState, switched_in: bool) -> Vec<AppEffect> {
+    if let Some(plan) = state.workflow_return.take() {
+        let landed = switched_in
+            && state
+                .opened
+                .as_ref()
+                .is_some_and(|opened| plan.matches(opened, &state.profile));
+        return if landed {
+            reopen_workflow_view(state, plan.run, plan.selection)
+        } else {
+            Vec::new()
+        };
+    }
+    let Some(origin) = state.workflow_origin.as_mut() else {
+        return Vec::new();
+    };
+    if !origin.is_leaving() {
+        return Vec::new();
+    }
+    let kept = if switched_in {
+        state
+            .opened
+            .as_ref()
+            .is_some_and(|opened| origin.landed(opened, &state.profile))
+    } else {
+        origin.failed()
+    };
+    if !kept {
+        state.workflow_origin = None;
+    }
+    Vec::new()
+}
+
+/// A session opened by some route other than the trip: the memory follows the same stored
+/// session across a reconnect and ends for any other.
+fn workflow_origin_follow(state: &mut AppState, opened: &OpenedSession) {
+    let Some(origin) = state.workflow_origin.as_mut() else {
+        return;
+    };
+    if origin.is_leaving() {
+        return;
+    }
+    let same_profile = state
+        .opened_profile
+        .as_deref()
+        .is_none_or(|profile| profile == state.profile);
+    let kept = state
+        .opened
+        .as_ref()
+        .is_some_and(|old| origin.follow_reopen(old, opened, same_profile));
+    if !kept {
+        state.workflow_origin = None;
+    }
+}
+
+/// The key in an agent's session: go back to the session the person came from. Nothing is sent
+/// to the agent; the session is left as any switch leaves it.
+fn workflow_agent_back(state: &mut AppState) -> Vec<AppEffect> {
+    let Some(here) = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+    else {
+        return Vec::new();
+    };
+    let Some(target) = state
+        .workflow_origin
+        .as_ref()
+        .filter(|origin| origin.is_away_in(&here))
+        .map(|origin| origin.session().clone())
+    else {
+        return Vec::new();
+    };
+    if state.workflow_agent.is_none()
+        || !state.draft.is_empty()
+        || state.palette.open
+        || state.picker.is_some()
+    {
+        return Vec::new();
+    }
+    let effects = begin_switch(state, target);
+    if effects
+        .iter()
+        .any(|effect| matches!(effect, AppEffect::Switch { .. }))
+        && let Some(origin) = state.workflow_origin.take()
+    {
+        state.workflow_return = Some(origin.into_return());
+    }
+    effects
+}
+
+/// Open the run's view again with the row selected that was selected when Enter left it.
+fn reopen_workflow_view(
+    state: &mut AppState,
+    run: PathBuf,
+    selection: talaria_workflow::progress::live::NodeKey,
+) -> Vec<AppEffect> {
+    state.workflow_views.picker = None;
+    if !state.workflow_views.states.contains_key(&run) {
+        state.workflow_views.pending_selection = Some((run.clone(), selection));
+        return vec![AppEffect::WorkflowOpen(run)];
+    }
+    if let Some(view) = state.workflow_views.states.get_mut(&run) {
+        view.selection = selection;
+    }
+    state.workflow_views.active = Some(run.clone());
+    state.workflow_views.last_poll_ms = state.now_ms;
+    let connected = state.link_state == LinkView::Connected;
+    let mut effects = workflow_input(
+        state,
+        run,
+        talaria_workflow::progress::live::ProgressInput::Reopen { connected },
+    );
+    effects.push(AppEffect::Redraw);
+    effects
 }
 
 fn workflow_link(state: &mut AppState, event: &LinkEvent) -> Vec<AppEffect> {
@@ -22909,5 +23109,410 @@ mod workflow_agent_session_tests {
         state.caret = state.draft.len();
         let _ = open_with(&mut state, temp.path(), "runtime-new", "stored-new", true);
         assert_eq!(state.draft, "first\nsecond");
+    }
+
+    // --- Going back from an agent's session to the session the person came from. ---
+
+    const AGENT_KEY: &str = "88888888888888888888888888888888";
+
+    /// A person in an ordinary session with the run's view loaded.
+    fn from_origin(profile: &str) -> (tempfile::TempDir, AppState, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let run = run_folder(temp.path());
+        let mut state = AppState::new("agent-back");
+        state.profile = profile.into();
+        state.workflow_runs_dir = temp.path().to_owned();
+        let manifest = talaria_workflow::journal::RunDir::open(&run).unwrap();
+        let (lines, offset) = talaria_workflow::journal::JournalReader::read_from(&run, 0).unwrap();
+        workflow_opened(
+            &mut state,
+            Ok(crate::workflow_progress::OpenedRun {
+                path: run.clone(),
+                profile: profile.into(),
+                state: talaria_workflow::progress::live::ProgressState::new(
+                    talaria_workflow::progress::RunProgress::from_records(
+                        manifest.manifest(),
+                        &lines,
+                    ),
+                ),
+                offset,
+            }),
+        );
+        let _ = opened_session(
+            &mut state,
+            session("runtime-origin", "stored-origin", None),
+            None,
+        );
+        (temp, state, run)
+    }
+
+    /// Enter on the agent row: the run view's key.
+    fn press_enter(state: &mut AppState, run: &Path, session: &str) -> Vec<AppEffect> {
+        let view = state.workflow_views.states.get_mut(run).unwrap();
+        view.selection = talaria_workflow::progress::live::NodeKey::Agent(AGENT_KEY.into());
+        workflow_input(
+            state,
+            run.to_owned(),
+            talaria_workflow::progress::live::ProgressInput::Opened(session.into()),
+        )
+    }
+
+    fn switch_target(effects: &[AppEffect]) -> Option<(String, String)> {
+        effects.iter().find_map(|effect| match effect {
+            AppEffect::Switch { key } => Some((key.profile.clone(), key.session_id.clone())),
+            _ => None,
+        })
+    }
+
+    /// The executor opened `opened` and the switch finished.
+    fn land(state: &mut AppState, opened: OpenedSession) -> Vec<AppEffect> {
+        let effects = update(
+            state,
+            AppMessage::Switched {
+                outcome: SwitchOutcome::Switched {
+                    notice: "Switched.".into(),
+                },
+                install: Some(SwitchInstall {
+                    opened,
+                    service: SessionService::new("launch"),
+                    link: None,
+                }),
+                reason: None,
+            },
+        );
+        let reads: Vec<AppEffect> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::WorkflowAgentRead { stored_id, request } => {
+                    Some(AppEffect::WorkflowAgentRead {
+                        stored_id: stored_id.clone(),
+                        request: request.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        answer_reads(state, reads);
+        effects
+    }
+
+    fn agent_session(runs: &Path) -> OpenedSession {
+        let _ = runs;
+        session("runtime-bound", "stored-bound", None)
+    }
+
+    /// The key did nothing: at most the screen is drawn again.
+    fn only_redraws(effects: &[AppEffect]) -> bool {
+        effects
+            .iter()
+            .all(|effect| matches!(effect, AppEffect::Redraw))
+    }
+
+    fn back(state: &mut AppState) -> Vec<AppEffect> {
+        update(state, AppMessage::User(UserAction::WorkflowAgentBack))
+    }
+
+    #[test]
+    fn back_returns_to_the_origin_and_reopens_the_view_with_the_agent_selected() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let entered = press_enter(&mut state, &run, "runtime-bound");
+        assert_eq!(
+            switch_target(&entered),
+            Some(("fixture".into(), "runtime-bound".into()))
+        );
+        assert!(!state.view().agent_back, "not confirmed until it lands");
+        let _ = land(&mut state, agent_session(temp.path()));
+        assert!(state.view().workflow_agent.is_some());
+        assert!(state.view().agent_back);
+        assert_eq!(state.workflow_views.active, None, "Enter closed the view");
+        // The person moves the selection elsewhere while away; the view comes back as left.
+        state.workflow_views.states.get_mut(&run).unwrap().selection =
+            talaria_workflow::progress::live::NodeKey::Run;
+
+        let sent = back(&mut state);
+        assert_eq!(
+            switch_target(&sent),
+            Some(("fixture".into(), "stored-origin".into())),
+            "{sent:?}"
+        );
+        assert!(
+            !sent
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Interrupt(_) | AppEffect::Send(_))),
+            "nothing is sent to the agent: {sent:?}"
+        );
+        // The origin is dropped as the trip starts, so a second press does nothing.
+        assert!(state.workflow_origin.is_none());
+        assert!(!state.view().agent_back);
+
+        let _ = land(
+            &mut state,
+            session("runtime-origin-2", "stored-origin", None),
+        );
+        assert_eq!(state.workflow_views.active.as_deref(), Some(run.as_path()));
+        let view = &state.workflow_views.states[&run];
+        assert!(!view.closed);
+        assert_eq!(
+            view.selection,
+            talaria_workflow::progress::live::NodeKey::Agent(AGENT_KEY.into())
+        );
+        assert!(state.workflow_return.is_none());
+        assert!(state.workflow_agent.is_none());
+        assert!(!state.view().agent_back);
+    }
+
+    #[test]
+    fn back_does_nothing_with_a_draft_or_a_palette_and_keeps_the_memory() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        state.draft = "half a thought".into();
+        assert!(only_redraws(&back(&mut state)));
+        state.draft.clear();
+        state.palette.open = true;
+        assert!(only_redraws(&back(&mut state)));
+        state.palette.open = false;
+        assert!(state.view().agent_back, "the memory is still there");
+        assert!(switch_target(&back(&mut state)).is_some());
+    }
+
+    #[test]
+    fn back_without_a_remembered_origin_does_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        run_folder(temp.path());
+        let mut state = AppState::new("agent-back");
+        // An agent's session reached by /resume or a picker, with no Enter behind it.
+        open(&mut state, temp.path(), "runtime-new", "stored-new", true);
+        assert!(state.view().workflow_agent.is_some());
+        assert!(!state.view().agent_back);
+        assert!(only_redraws(&back(&mut state)));
+        // An ordinary session has nowhere to go back to either.
+        let _ = opened_session(&mut state, session("runtime-1", "stored-1", None), None);
+        assert!(only_redraws(&back(&mut state)));
+    }
+
+    #[test]
+    fn any_other_route_to_a_different_session_drops_the_memory() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        assert!(state.view().agent_back);
+        // A picker, /resume or a new session opens another session.
+        let _ = opened_session(&mut state, session("runtime-9", "stored-9", None), None);
+        assert!(state.workflow_origin.is_none());
+        // Coming back to the agent's session by that route does not bring the memory back.
+        let _ = opened_session(&mut state, agent_session(temp.path()), None);
+        assert!(!state.view().agent_back);
+        assert!(only_redraws(&back(&mut state)));
+    }
+
+    #[test]
+    fn a_reconnect_of_the_agents_session_keeps_the_memory() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        // The same stored session reopens under a new runtime id.
+        let _ = opened_session(
+            &mut state,
+            session("runtime-bound-2", "stored-bound", None),
+            None,
+        );
+        assert!(state.view().agent_back);
+        let sent = back(&mut state);
+        assert_eq!(
+            switch_target(&sent),
+            Some(("fixture".into(), "stored-origin".into()))
+        );
+    }
+
+    #[test]
+    fn entering_another_agent_keeps_the_original_session_as_the_origin() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        // The person opens the run view from the agent's session and enters another agent,
+        // whose session sits in the run's worktrees.
+        let second = press_enter(&mut state, &run, "runtime-agent-2");
+        assert_eq!(
+            switch_target(&second),
+            Some(("fixture".into(), "runtime-agent-2".into()))
+        );
+        let worktree = temp
+            .path()
+            .join(RUN)
+            .join("worktrees")
+            .join(format!("{}-0", digest()))
+            .to_string_lossy()
+            .into_owned();
+        let _ = land(
+            &mut state,
+            session("runtime-agent-2", "stored-agent-2", Some(worktree)),
+        );
+        assert!(state.view().workflow_agent.is_some());
+        assert!(state.view().agent_back);
+        let sent = back(&mut state);
+        assert_eq!(
+            switch_target(&sent),
+            Some(("fixture".into(), "stored-origin".into())),
+            "never the first agent's session: {sent:?}"
+        );
+    }
+
+    #[test]
+    fn a_second_enter_that_fails_leaves_the_first_trip_standing() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        let _ = press_enter(&mut state, &run, "runtime-agent-2");
+        let _ = update(
+            &mut state,
+            AppMessage::Switched {
+                outcome: SwitchOutcome::Failed {
+                    text: "could not open".into(),
+                },
+                install: None,
+                reason: None,
+            },
+        );
+        assert!(
+            state.view().agent_back,
+            "still in the first agent's session"
+        );
+        assert!(switch_target(&back(&mut state)).is_some());
+    }
+
+    #[test]
+    fn a_first_enter_that_fails_remembers_nothing() {
+        let (_temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = update(
+            &mut state,
+            AppMessage::Switched {
+                outcome: SwitchOutcome::Failed {
+                    text: "could not open".into(),
+                },
+                install: None,
+                reason: None,
+            },
+        );
+        assert!(state.workflow_origin.is_none());
+    }
+
+    #[test]
+    fn back_works_when_the_agent_runs_on_another_profile() {
+        let (temp, mut state, run) = from_origin("fixture");
+        // The run was started on another profile: Enter takes the begin_switch path.
+        state
+            .workflow_views
+            .profiles
+            .insert(run.clone(), "other".into());
+        let entered = press_enter(&mut state, &run, "runtime-bound");
+        assert_eq!(
+            switch_target(&entered),
+            Some(("other".into(), "runtime-bound".into()))
+        );
+        let _ = land(&mut state, agent_session(temp.path()));
+        assert_eq!(state.profile, "other");
+        assert!(state.view().agent_back);
+
+        // The key switches back to the profile and stored session the person left.
+        let sent = back(&mut state);
+        assert_eq!(
+            switch_target(&sent),
+            Some(("fixture".into(), "stored-origin".into())),
+            "{sent:?}"
+        );
+        let _ = land(
+            &mut state,
+            session("runtime-origin-3", "stored-origin", None),
+        );
+        assert_eq!(state.profile, "fixture");
+        assert_eq!(state.workflow_views.active.as_deref(), Some(run.as_path()));
+        assert_eq!(
+            state.workflow_views.states[&run].selection,
+            talaria_workflow::progress::live::NodeKey::Agent(AGENT_KEY.into())
+        );
+    }
+
+    #[test]
+    fn an_origin_that_cannot_be_opened_says_so_once_and_the_person_stays() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        let _ = back(&mut state);
+        let effects = update(
+            &mut state,
+            AppMessage::Switched {
+                outcome: SwitchOutcome::Failed {
+                    text: "Could not open \"stored-origin\": Hermes refused the resume (not_found). Still in the old session.".into(),
+                },
+                install: None,
+                reason: Some("not_found".into()),
+            },
+        );
+        let lines: Vec<String> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::CommitLines(lines) => Some(lines.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("Could not go back"), "{lines:?}");
+        assert_eq!(
+            state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.as_str()),
+            Some("runtime-bound")
+        );
+        assert!(state.workflow_origin.is_none() && state.workflow_return.is_none());
+        assert!(!state.view().agent_back);
+        assert!(state.workflow_views.active.is_none(), "no view opened");
+    }
+
+    #[test]
+    fn an_origin_with_no_stored_id_of_its_own_is_not_offered() {
+        let (temp, mut state, run) = from_origin("fixture");
+        // A brand new session: Hermes has not given it a stored id yet.
+        let _ = opened_session(
+            &mut state,
+            session("runtime-new-origin", "runtime-new-origin", None),
+            None,
+        );
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let _ = land(&mut state, agent_session(temp.path()));
+        assert!(state.workflow_origin.is_none());
+        assert!(!state.view().agent_back);
+        assert!(only_redraws(&back(&mut state)));
+    }
+
+    #[test]
+    fn going_back_leaves_the_agents_turn_alone() {
+        let (temp, mut state, run) = from_origin("fixture");
+        let _ = press_enter(&mut state, &run, "runtime-bound");
+        let mut running = agent_session(temp.path());
+        running.state = SessionState::from_snapshot(
+            serde_json::from_value(json!({
+                "session_id": "runtime-bound", "stored_session_id": "stored-bound",
+                "messages": [], "display_messages": [], "message_count": 0, "running": true,
+                "authority_epoch": 1, "replay_epoch": "epoch-1", "last_sequence": 1,
+                "subscription_id": "sub-1", "revision": 1, "execution_generation": 2,
+                "pending": [], "prompts": [], "info": {"desktop_protocol": "1", "cwd": "/work/proj"}
+            }))
+            .unwrap(),
+        );
+        let _ = land(&mut state, running);
+        assert!(turn_running(&state));
+        let sent = back(&mut state);
+        assert!(switch_target(&sent).is_some());
+        assert!(
+            !sent.iter().any(|effect| matches!(
+                effect,
+                AppEffect::Interrupt(_) | AppEffect::Send(_) | AppEffect::Queue(_)
+            )),
+            "{sent:?}"
+        );
     }
 }
