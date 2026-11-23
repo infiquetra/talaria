@@ -95,6 +95,8 @@ mod commands_parse;
 mod commands_state;
 #[path = "integration/composer_chips.rs"]
 mod composer_chips;
+#[path = "integration/config_check.rs"]
+mod config_check;
 #[path = "integration/configure_brief.rs"]
 mod configure_brief;
 #[path = "integration/configure_props.rs"]

@@ -9,6 +9,7 @@ pub mod background;
 pub mod capabilities;
 pub mod checklist;
 pub mod commands;
+pub mod config_check;
 pub mod configure;
 pub mod connectors;
 pub mod context;

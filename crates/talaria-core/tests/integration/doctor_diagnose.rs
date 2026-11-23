@@ -63,6 +63,7 @@ fn ready() -> DoctorFacts {
             describe_ms: 7,
         },
         status: StatusFacts::Read(status()),
+        config: talaria_core::config_check::ConfigFacts::NotTried,
     }
 }
 fn row(facts: &DoctorFacts, id: CheckId) -> Check {

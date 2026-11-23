@@ -225,6 +225,7 @@ async fn preflight(
         return Err(2);
     }
     output.diagnostic(estimate_run_cost(&table, &roster, budget.tokens).to_string());
+    warn_harmful_settings(services, profile, output).await;
     let snapshot = roster.snapshot_with(&table, &budget);
     Ok(Preflight {
         table,
@@ -232,6 +233,19 @@ async fn preflight(
         roster,
         snapshot,
     })
+}
+/// Warns, before any agent starts, about a Hermes setting that makes workflow agents fail late.
+/// It is a warning only: a configuration that cannot be read, or reads fine, adds nothing, and
+/// the run starts either way.
+async fn warn_harmful_settings(services: &RunnerServices, profile: &str, output: &mut Output<'_>) {
+    let Ok(effective) = services.config.effective(profile).await else {
+        return;
+    };
+    for finding in talaria_core::config_check::findings(&effective) {
+        if let Some(warning) = finding.workflow_warning(profile) {
+            output.diagnostic(warning);
+        }
+    }
 }
 /// The roster with the session's model as its current pair, when the run has one.
 fn session_roster(roster: Arc<Roster>, session_model: Option<&(String, String)>) -> Arc<Roster> {
