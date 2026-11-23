@@ -500,8 +500,11 @@ fn event_value(event: &RunnerEvent) -> Value {
             key,
             attempt,
             episode,
+            cause,
+            reason,
+            choices,
         } => {
-            json!({"event":"parked","run_id":run_id,"label":label,"key":key,"attempt":attempt,"episode":episode})
+            json!({"event":"parked","run_id":run_id,"label":label,"key":key,"attempt":attempt,"episode":episode,"cause":cause,"reason":reason,"choices":choices})
         }
         RunnerEvent::Finished {
             run_id,
@@ -2233,9 +2236,20 @@ fn progress_restart_waits_for_resume() {
         .unwrap()
         .to_owned();
 
+    // Restart on the running agent: confirmed, then the view notes that it is stopping the
+    // agent to restart it, then it sends the stop.
     let (dir, mut view, _) = progress_view(&folder);
     view.select_agent(&retry);
-    let stop = update(&mut view, ProgressInput::Key(ProgressKey::StopAgent));
+    assert!(update(&mut view, ProgressInput::Key(ProgressKey::RestartAgent)).is_empty());
+    let note = view_write(
+        update(&mut view, ProgressInput::Key(ProgressKey::Confirm)),
+        &ControlRequest::AgentStop {
+            key: retry.clone(),
+            restart: true,
+        },
+    );
+    let noted = RunControl::note_agent_stop(&dir, &retry, true, 1).unwrap();
+    let stop = update(&mut view, ProgressInput::ControlDone(note, noted));
     let (session, generation) = match stop.as_slice() {
         [
             ProgressEffect::Interrupt {
@@ -2259,13 +2273,19 @@ fn progress_restart_waits_for_resume() {
             .await
             .unwrap()
     });
-    update(
-        &mut view,
-        ProgressInput::GatewayDone {
-            key: retry.clone(),
-            result: Ok(reply),
-        },
+    // The view would now ask for the restart; this test asks for it below, after the run.
+    view_write(
+        update(
+            &mut view,
+            ProgressInput::GatewayDone {
+                key: retry.clone(),
+                result: Ok(reply),
+            },
+        ),
+        &ControlRequest::Restart { key: retry.clone() },
     );
+    // A stop sent to restart the agent fails its call, as before: it does not wait for an
+    // operator, and the journal says the view stopped it to restart it.
     wait_for(|| {
         records(&folder).iter().any(|r| {
             r["t"] == "call_finished" && r["key"] == retry && r["outcome"]["kind"] == "failed"
@@ -2273,6 +2293,9 @@ fn progress_restart_waits_for_resume() {
     });
     let (exit, _) = worker.finish();
     assert_eq!(exit.code, 1);
+    assert!(records(&folder).iter().any(|r| r["t"] == "turn_settled"
+        && r["key"] == retry
+        && r["result_meta"]["stopped_by"] == "workflow_view_restart"));
 
     let (_, mut view, _) = progress_view(&folder);
     assert_eq!(
@@ -2334,6 +2357,87 @@ fn progress_restart_waits_for_resume() {
         .map(|r| r["attempt"].as_u64().unwrap())
         .collect();
     assert_eq!(attempts, [0, 1]);
+}
+
+#[test]
+fn a_stop_from_the_view_parks_the_agent_until_the_operator_answers() {
+    let h = Harness::new("return await agent('hold stopped',{label:'stopped'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "turn_admitted"));
+    let key = key_for(&folder, "stopped");
+    let (dir, mut view, _) = progress_view(&folder);
+    view.select_agent(&key);
+    // The stop-agent key asks first, naming the agent.
+    assert!(update(&mut view, ProgressInput::Key(ProgressKey::StopAgent)).is_empty());
+    assert_eq!(
+        view.confirmation_text(),
+        Some("stop agent stopped? x or y confirms · esc cancels")
+    );
+    let note = view_write(
+        update(&mut view, ProgressInput::Key(ProgressKey::StopAgent)),
+        &ControlRequest::AgentStop {
+            key: key.clone(),
+            restart: false,
+        },
+    );
+    let noted = RunControl::note_agent_stop(&dir, &key, false, 1).unwrap();
+    let (session, generation) =
+        match update(&mut view, ProgressInput::ControlDone(note, noted)).as_slice() {
+            [
+                ProgressEffect::Interrupt {
+                    session_id,
+                    generation,
+                },
+            ] => (session_id.clone(), *generation),
+            other => panic!("expected the viewer's interrupt, got {other:?}"),
+        };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let wire = h.wire.open("fixture").await.unwrap();
+        let params = json!({"session_id":session,"execution_generation":generation})
+            .as_object()
+            .unwrap()
+            .clone();
+        wire.call("session.interrupt", params, Duration::from_secs(1))
+            .await
+            .unwrap()
+    });
+    wait_for(|| worker.events().iter().any(|e| e["event"] == "parked"));
+    let parked = worker
+        .events()
+        .into_iter()
+        .find(|e| e["event"] == "parked")
+        .unwrap();
+    assert_eq!(parked["cause"], "stopped");
+    assert_eq!(
+        parked["choices"],
+        json!(["fail", "rerun", "abort", "use-reply"])
+    );
+    assert!(
+        parked["reason"].as_str().unwrap().starts_with(
+            "agent stopped: it was stopped with the stop-agent key in the Talaria workflow view"
+        ),
+        "{parked}"
+    );
+    // Parked means waiting: nothing ends the run until it is answered.
+    thread::sleep(Duration::from_millis(400));
+    assert!(!worker.events().iter().any(|e| e["event"] == "run_finished"));
+    let run_id = folder.file_name().unwrap().to_string_lossy().into_owned();
+    answer_parked(
+        &h.runs,
+        &run_id,
+        &key,
+        parked["attempt"].as_u64().unwrap() as u32,
+        parked["episode"].as_u64().unwrap() as u32,
+        Resolution::Fail,
+    )
+    .unwrap();
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 5, "the script returned and the agent failed");
 }
 
 #[test]

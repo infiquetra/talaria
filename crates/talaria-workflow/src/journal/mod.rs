@@ -10,6 +10,8 @@ mod record;
 mod replay;
 mod run_dir;
 mod store;
+/// A finished call's kept outcome, with a value kept in a blob read back.
+pub(crate) use blobs::outcome as stored_outcome;
 pub use durable::*;
 pub use keys::*;
 pub use port::*;

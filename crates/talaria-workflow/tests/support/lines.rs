@@ -683,3 +683,61 @@ pub fn live_filter() -> Vec<RecordLine> {
         admitted(1_500, KEY_RUNNING, "adm-running", 4),
     ])
 }
+
+/// A running row whose turn a stop ended, then parked for the operator.
+pub fn live_stopped_parked(key: &str, session: &str) -> Vec<RecordLine> {
+    stamp(vec![
+        run_started(RUN_STARTED_MS),
+        intent(1_100, key, "stopped-row", "plan", Vec::new()),
+        bound(1_200, key, session),
+        admitted(1_300, key, "adm-1", 7),
+        (
+            1_400,
+            Record::TurnSettled {
+                key: key.to_string(),
+                attempt: 0,
+                turn: 0,
+                admission_id: "adm-1".to_string(),
+                outcome: "interrupted".to_string(),
+                final_text: None,
+                final_text_ref: None,
+                result_meta: json!({"interrupted": true, "stopped_by": "workflow_view"}),
+                usage: None,
+            },
+        ),
+        (
+            1_500,
+            Record::CallAttention {
+                key: key.to_string(),
+                attempt: 0,
+                episode: 0,
+                cause: AttentionCause::Stopped,
+                turn: Some(0),
+                admission_id: Some("adm-1".to_string()),
+                execution_generation: Some(7),
+                detail: "agent stopped".to_string(),
+            },
+        ),
+    ])
+}
+
+/// Press the stop-agent key, confirm it, and let the view's note about the stop be written:
+/// what the view then sends to stop the agent. A refused or unconfirmed stop sends nothing.
+pub fn confirm_stop(
+    state: &mut talaria_workflow::progress::live::ProgressState,
+) -> Vec<talaria_workflow::progress::ProgressEffect> {
+    use talaria_workflow::progress::live::{ProgressInput, ProgressKey, update};
+    use talaria_workflow::progress::{ControlOutcome, ControlRequest, ProgressEffect};
+    let armed = update(state, ProgressInput::Key(ProgressKey::StopAgent));
+    if !armed.is_empty() || state.confirmation_text().is_none() {
+        return armed;
+    }
+    let noted = update(state, ProgressInput::Key(ProgressKey::Confirm));
+    match noted.as_slice() {
+        [ProgressEffect::WriteControl(id, ControlRequest::AgentStop { .. })] => update(
+            state,
+            ProgressInput::ControlDone(*id, ControlOutcome::Published),
+        ),
+        _ => noted,
+    }
+}

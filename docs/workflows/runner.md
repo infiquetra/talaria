@@ -28,9 +28,12 @@ talaria workflow list --json
 talaria workflow resume <run-id>
 talaria workflow stop <run-id>
 talaria workflow resolve <run-id> --key <key> --attempt 0 --episode 0 --resolution fail
+talaria workflow restart <run-id> review
+talaria workflow result <run-id> --agent review --json
 ```
 
-`run`, `resume`, `list`, `stop`, and `resolve` work without a terminal on standard input.
+`run`, `resume`, `list`, `stop`, `resolve`, `restart`, and `result` work without a terminal on
+standard input.
 Use `--help` on a verb for its flags. The runner performs no gateway administration and never
 changes gateway configuration.
 
@@ -53,7 +56,7 @@ Each run folder holds:
 | `outcome.json` | Latest completed execution's result, failure detail, or abort reason; a `budget_exhausted` run keeps its result and the budget reason; a `completed_with_failures` run keeps its result and a `failed_agents` list, and any run with agents Hermes stopped at their step cap lists them in `cut_short_agents`. Both lists hold `label` and `reason` and come right after `outcome`. |
 | `runner.json` | Detached child's process id; discovery does not trust it as liveness evidence. |
 | `runner.log` | Detached child's appended human output. |
-| `control/` | Shared pause, stop, and next-resume restart requests. |
+| `control/` | Shared pause, stop, and next-resume restart requests, and the workflow view's note that it is stopping an agent. |
 
 Runner-owned JSON files are written through a synced temporary file and atomic replacement.
 The journal remains the authority for execution status. A stale process-id file does not make
@@ -148,6 +151,90 @@ execution. The live runner consumes the answer; no second runner is launched. A 
 answer is refused. `--on-unknown fail` at initial launch selects the journal's automatic
 failure policy; it does not itself fail the entire workflow. Resume keeps that stored policy.
 
+A parked call waits until it is answered. Nothing times the wait out, and the runner adds no
+limit of its own.
+
+### Stopped agents
+
+Hermes ends a turn as `interrupted` (or a queued one as `cancelled`) when someone asks it to
+stop. The reason Talaria gives says that a stop was requested, who asked when Talaria knows,
+Hermes's exit reason, and the first line of Hermes's final text, and it says that this was not
+a timeout: Hermes's text such as `waiting for model response (80.0s elapsed)` gives how long
+the turn had run, not a limit. For example:
+
+```text
+agent stopped: a stop was requested from outside the runner, for example a key press in a window showing the agent's session; Hermes ended the turn as 'interrupted' (interrupted_during_api_call): Operation interrupted: waiting for model response (80.0s elapsed). This was a requested stop, not a timeout: a time in Hermes's text is how long the turn had run
+```
+
+Talaria records who sent a stop it knows about in the settled turn's `result_meta.stopped_by`:
+`run_stop` when the runner stopped the turn because the run was being stopped (`workflow stop`,
+the stop-run key, or a signal), `workflow_view` for the workflow view's stop-agent key, and
+`workflow_view_restart` when the view stopped a running agent to restart it. A stop from
+anywhere else, such as a key press in a Talaria window that shows the agent's session, leaves
+the key out and the reason says the stop came from outside the runner.
+
+A stopped agent is not failed at once. Unless the stop was part of the runner stopping the run
+(a run stop, a budget stop, which ends the call as `stopped`, or the view's restart), the call
+parks as needing the operator, with cause `stopped`, through the same parked-call mechanism as
+an unknown admission. A stop from the view's stop-agent key parks too. The answers are `fail`,
+`rerun` and `abort` as above, and `use-reply`:
+
+```sh
+talaria workflow resolve <run-id> --key <key> --attempt <n> --episode <n> --resolution use-reply
+```
+
+`use-reply` takes the next turn that settles on the agent's same Hermes session as the call's
+result. Continue the session, for example by typing `continue` into it from a Talaria window,
+before or after answering: a reply that already settled is used at once, and otherwise the
+runner waits for one, with no time limit. The adopted reply goes through the same checks as the
+agent's own reply, including the schema check and its one correction turn. If that turn is
+stopped too, the call parks again with the next episode. `use-reply` is refused for a call
+parked for any other cause. A run started with `--on-unknown fail` answers every parked call
+with `fail` at once, a stopped agent included, and the reason keeps the stop's reason.
+
+The runner sees the other window's turn through the session's events, whose envelopes name the
+admission that produced them, and Hermes serves the receipt of any admission on the session to
+the same owner. The runner must be running when that turn starts: a turn that started and
+settled while no runner had the run open is not seen, so continue the session again after the
+resume.
+
+In `--json` mode the runner prints one line when a call parks:
+
+```json
+{"event":"parked","run_id":"…","label":"review","key":"…","attempt":0,"episode":0,"cause":"stopped","reason":"agent stopped: …","waiting_for":"operator","choices":["fail","rerun","abort","use-reply"],"answer":"talaria workflow resolve … --resolution <choice>","use_reply":"continue the agent's Hermes session …"}
+```
+
+`answer` names `--runs-dir` when the run is not in the default runs folder; `use_reply` appears
+only when `use-reply` is one of the choices. Text mode prints the `needs operator` line with the
+same command, then the cause and reason, a line saying the run waits for the answer, and what
+`use-reply` does. When the agent's session is open in a Talaria window, the line above the
+composer calls the agent `stopped, waiting for you`, and the first message sent there says that
+its reply counts as the agent's result only once the parked call is answered with `use-reply`.
+
+### Running a failed agent again
+
+`talaria workflow restart <run-id> <label-or-key>` writes the same `restart-<key>.json` request
+the workflow view's restart key writes. `--all-failed` asks for every agent whose latest attempt
+failed or was stopped by the budget, and `--json` prints one `restart_requested` object with
+`requested` (each `label`, `key`, and `written`, false when the request was already there),
+`also_run_again`, and `next`. Then run `talaria workflow resume <run-id>`, as `next` says: the
+pending request opens a new execution even for a run that completed with failures, the failed
+agent runs again, and finished agents are replayed from the journal without another gateway
+call. A finished (completed or skipped) agent is refused, because it is kept and running it
+again would pay for its work twice; a running or parked agent is refused too, since the view's
+restart key and `resolve` handle those. A label more than one agent shares is refused with
+their keys. A new execution runs every failed agent the script reaches again, not only the ones
+asked for; `also_run_again` lists the other failed agents so this is not a surprise. Exit 0
+written, 1 unreadable journal, 2 refusal or unknown run or agent.
+
+`talaria workflow result <run-id> --agent <label-or-key>` prints the value one agent's call
+returned to the script, read from the journal: the pretty JSON value in text mode, or with
+`--json` one `agent_result` object with `run_id`, `label`, `key`, `state`, and `value`, or
+`reason` when the agent did not complete, and `cut_short` for a reply kept at Hermes's step
+cap. It exits 0 when a value was printed and 1 when the agent has none (failed, skipped,
+stopped, parked, or unfinished). A `completed_with_failures` result already lists each failed
+agent's `label` and `reason` in `failed_agents`, also on a replaying `resume --json`.
+
 ## Shared controls and confirmed stopping
 
 The progress view and CLI use the same durable writer. Requests are published without
@@ -160,7 +247,15 @@ overwriting an existing request:
 ```
 
 The corresponding names are `pause.json`, `stop.json`, and `restart-<key>.json` under
-`control/`. The runner polls every 250 ms. A pause gates fresh admissions without consuming
+`control/`. Before the workflow view sends a stop to an agent, from the stop-agent key or as the
+first step of restarting a running agent, it writes `agent-stop-<key>.json` (kind `agent_stop`
+or `agent_restart`) and sends the stop once the note is written, or could not be. The runner
+reads the note when the stopped turn settles, records `stopped_by` from it, and removes it.
+
+In the workflow view, the stop-agent key (`x`, `workflow_stop_agent`) asks first, like restart
+and stop-run: the footer reads `stop agent <label>? x or y confirms · esc cancels`, and the
+question lapses after three seconds. A subagent's stop is not asked about. Once the stopped turn
+settles, the footer says the run waits for an answer and the agent shows as needing you. The runner polls every 250 ms. A pause gates fresh admissions without consuming
 a scheduler permit; already admitted work and reattachments continue. Removing `pause.json`
 resumes fresh admissions. Restart files remain pending until the next resume; completed and
 skipped calls remain kept. No second stop file or gateway-wide pause operation exists.

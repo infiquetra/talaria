@@ -551,6 +551,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     cause: parked.cause,
                     session_id: parked.session_id.clone(),
                     admission_id: parked.admission_id.clone(),
+                    detail: parked.detail.clone(),
                 });
                 drop(permit.take());
                 self.journal.await_resolution(&parked).await?;
@@ -649,7 +650,9 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                         continue;
                     }
                 }
-                if restart_requested && resolution == Resolution::Fail {
+                if restart_requested
+                    && matches!(resolution, Resolution::Fail | Resolution::UseReply)
+                {
                     self.finish_call(
                         &key,
                         attempt,
@@ -663,29 +666,58 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 }
                 match resolution {
                     Resolution::Fail => {
-                        let reason = if source == ResolutionSource::Policy {
-                            "on_unknown is fail"
-                        } else {
-                            match parked.cause {
-                                AttentionCause::Unknown => {
-                                    "operator marked an unknown turn as failed"
-                                }
-                                AttentionCause::Lost => "operator marked a lost session as failed",
-                                AttentionCause::IdentityConflict => {
-                                    "operator marked a conflicting retry as failed"
-                                }
+                        let reason = match (source, parked.cause) {
+                            (ResolutionSource::Policy, AttentionCause::Stopped) => format!(
+                                "{}; the run's on-unknown policy is fail, so it did not wait for an operator",
+                                parked.detail
+                            ),
+                            (ResolutionSource::Policy, _) => "on_unknown is fail".into(),
+                            (_, AttentionCause::Unknown) => {
+                                "operator marked an unknown turn as failed".into()
                             }
+                            (_, AttentionCause::Lost) => {
+                                "operator marked a lost session as failed".into()
+                            }
+                            (_, AttentionCause::IdentityConflict) => {
+                                "operator marked a conflicting retry as failed".into()
+                            }
+                            (_, AttentionCause::Stopped) => format!(
+                                "operator marked a stopped agent as failed: {}",
+                                parked.detail
+                            ),
                         };
                         return self
                             .finish_call(
                                 &key,
                                 attempt,
                                 h.turns(self.journal.dir().path())?.len() as u32,
-                                AgentOutcome::Failed {
-                                    reason: reason.into(),
-                                },
+                                AgentOutcome::Failed { reason },
                             )
                             .await;
+                    }
+                    Resolution::UseReply => {
+                        match self.adopt_reply(&key, &h, &parked, &mut runner).await? {
+                            Adopted::Settled => continue,
+                            Adopted::Abort(reason) => return Ok(AgentOutcome::Abort { reason }),
+                            Adopted::Failed(reason) => {
+                                return self
+                                    .finish_call(
+                                        &key,
+                                        attempt,
+                                        h.turns(self.journal.dir().path())?.len() as u32,
+                                        AgentOutcome::Failed { reason },
+                                    )
+                                    .await;
+                            }
+                            Adopted::PortError(e) => {
+                                if let Some(outcome) =
+                                    self.handle_error(&key, &h, &e, &mut permit).await?
+                                {
+                                    return Ok(outcome);
+                                }
+                                continue;
+                            }
+                        }
                     }
                     Resolution::Abort
                         if h.execution == self.journal.execution() && !restart_requested =>
@@ -931,6 +963,21 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                             )
                             .await;
                     }
+                    // A stop that was not part of stopping the run parks the call for the
+                    // operator instead of failing it; the parked call waits until answered.
+                    if let NextStep::Finish(AgentOutcome::Failed { reason }) = &next
+                        && let Some(last) = turns.last()
+                        && stopped_outcome(&last.outcome)
+                        && !matches!(
+                            StopSource::from_meta(&last.result_meta),
+                            Some(StopSource::RunStop | StopSource::WorkflowViewRestart)
+                        )
+                        && !self.gate.run_stopping()
+                    {
+                        self.park(&key, &h, AttentionCause::Stopped, None, reason, &mut permit)
+                            .await?;
+                        continue;
+                    }
                     match next {
                         NextStep::Finish(outcome) => {
                             if matches!(outcome, AgentOutcome::Failed { .. })
@@ -1105,10 +1152,89 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         turn: u32,
         r: Receipt,
     ) -> Result<(), JournalError> {
-        self.journal
-            .append(settled_record(key, attempt, turn, r))
-            .await?;
+        let mut record = settled_record(key, attempt, turn, r);
+        // A stop the workflow view sent left a note before it was sent; the settled turn
+        // keeps who sent it. While the run is being stopped, the stop is the run's.
+        let note = self.journal.dir().agent_stop(key);
+        let source = if self.gate.run_stopping() {
+            Some(StopSource::RunStop)
+        } else {
+            note
+        };
+        if let (
+            Record::TurnSettled {
+                outcome,
+                result_meta,
+                ..
+            },
+            Some(source),
+        ) = (&mut record, source)
+            && stopped_outcome(outcome)
+            && let Some(meta) = result_meta.as_object_mut()
+        {
+            meta.insert(STOPPED_BY.into(), source.as_str().into());
+        }
+        self.journal.append(record).await?;
+        if note.is_some() {
+            let _ = self.journal.dir().clear_agent_stop(key);
+        }
         Ok(())
+    }
+    /// Wait for the next turn on the stopped agent's session that the run did not submit, and
+    /// settle the stopped turn with it. There is no time limit: the call waits as a parked call
+    /// does, until such a turn settles.
+    async fn adopt_reply(
+        &self,
+        key: &str,
+        h: &CallHistory,
+        parked: &ParkedCall,
+        runner: &mut PortRunner<'_, P>,
+    ) -> Result<Adopted, JournalError> {
+        if parked.cause != AttentionCause::Stopped {
+            return Ok(Adopted::Failed(
+                "use-reply answers only an agent that was stopped; this call was not".into(),
+            ));
+        }
+        let (Some(session), Some((_, launch, _, label))) = (h.session(), h.intent()) else {
+            return Ok(Adopted::Failed(
+                "use-reply could not find the stopped agent's session in the run journal".into(),
+            ));
+        };
+        let profile = launch.profile.clone();
+        let known = h.known_admissions();
+        self.note(format!(
+            "runner: agent {label}: waiting for the next reply on session {session} to use as its result"
+        ))
+        .await;
+        let receipt = runner
+            .call(
+                || {
+                    self.port
+                        .next_reply(profile.clone(), session.clone(), known.clone())
+                },
+                Some((profile.clone(), session.clone())),
+            )
+            .await;
+        match receipt {
+            Ok(receipt) if receipt.status == AdmissionState::Terminal => {
+                self.note(format!(
+                    "runner: agent {label}: using the reply of admission {} as its result",
+                    receipt.admission_id
+                ))
+                .await;
+                self.settle(key, h.attempt(), parked.turn.unwrap_or_default(), receipt)
+                    .await?;
+                Ok(Adopted::Settled)
+            }
+            Ok(_) => Ok(Adopted::PortError(PortError::Transport(
+                "the next reply was returned before it settled".into(),
+            ))),
+            Err(StepError::Abort(reason)) => Ok(Adopted::Abort(reason)),
+            Err(StepError::Port(e)) if e.reason() == "unsupported" => Ok(Adopted::Failed(format!(
+                "use-reply is not available here ({e}); answer fail, rerun or abort instead"
+            ))),
+            Err(StepError::Port(e)) => Ok(Adopted::PortError(e)),
+        }
     }
     async fn handle_error(
         &self,
@@ -1200,6 +1326,13 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
 enum StepError {
     Port(PortError),
     Abort(String),
+}
+/// What waiting for a stopped agent's next reply came to.
+enum Adopted {
+    Settled,
+    Failed(String),
+    Abort(String),
+    PortError(PortError),
 }
 struct PortRunner<'a, P> {
     port: &'a P,

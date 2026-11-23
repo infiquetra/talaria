@@ -12,6 +12,27 @@ pub enum AttentionCause {
     Unknown,
     Lost,
     IdentityConflict,
+    /// A stop request ended the agent's turn, and the runner did not send that stop as part of
+    /// stopping the run.
+    Stopped,
+}
+impl AttentionCause {
+    /// The answers an operator may give a call parked for this cause, as the command line
+    /// spells them.
+    pub fn choices(self) -> &'static [&'static str] {
+        match self {
+            Self::Stopped => &["fail", "rerun", "abort", "use-reply"],
+            _ => &["fail", "rerun", "abort"],
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Lost => "lost",
+            Self::IdentityConflict => "identity_conflict",
+            Self::Stopped => "stopped",
+        }
+    }
 }
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ReplaySummary {
@@ -35,6 +56,8 @@ pub struct ParkedCall {
     pub session_id: Option<String>,
     pub admission_id: Option<String>,
     pub execution_generation: Option<i64>,
+    /// Why the call was parked, in plain words.
+    pub detail: String,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct OrphanCall {
@@ -73,6 +96,8 @@ pub enum JournalNotice {
         cause: AttentionCause,
         session_id: Option<String>,
         admission_id: Option<String>,
+        /// Why the call was parked, in plain words.
+        detail: String,
     },
     Resolved {
         key: String,
@@ -157,6 +182,7 @@ impl CallHistory {
                 turn,
                 admission_id,
                 execution_generation,
+                detail,
                 ..
             } => Some(ParkedCall {
                 key: key.clone(),
@@ -168,9 +194,29 @@ impl CallHistory {
                 session_id: self.session(),
                 admission_id: admission_id.clone(),
                 execution_generation: *execution_generation,
+                detail: detail.clone(),
             }),
             _ => None,
         })
+    }
+    /// Every admission this call has made or adopted, across all its attempts.
+    pub fn known_admissions(&self) -> Vec<String> {
+        let mut known: Vec<String> = Vec::new();
+        for r in &self.records {
+            let id = match &r.record {
+                Record::TurnAdmitted { admission_id, .. }
+                | Record::TurnSettled { admission_id, .. } => admission_id,
+                Record::CallAttention {
+                    admission_id: Some(id),
+                    ..
+                } => id,
+                _ => continue,
+            };
+            if !known.contains(id) {
+                known.push(id.clone());
+            }
+        }
+        known
     }
     /// The attempts whose last settled turn failed with a context overflow.
     fn overflowed_attempts(&self) -> BTreeSet<u32> {
@@ -213,7 +259,20 @@ impl CallHistory {
             .checked_sub(1)
             .is_some_and(|previous| self.overflowed_attempts().contains(&previous))
     }
+    /// The current attempt's settled turns, one per turn number. A turn settles twice only when
+    /// an operator answered a stopped turn with `use_reply`: the adopted reply replaces the
+    /// stopped settlement.
     pub fn turns(&self, dir: &Path) -> Result<Vec<SettledTurn>, JournalError> {
+        let mut turns: Vec<SettledTurn> = Vec::new();
+        for turn in self.settlements(dir)? {
+            match turns.iter_mut().find(|t| t.turn == turn.turn) {
+                Some(slot) => *slot = turn,
+                None => turns.push(turn),
+            }
+        }
+        Ok(turns)
+    }
+    fn settlements(&self, dir: &Path) -> Result<Vec<SettledTurn>, JournalError> {
         self.current()
             .filter_map(|r| match &r.record {
                 Record::TurnSettled {
@@ -637,11 +696,21 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
         Record::CallAttention { episode, .. } => {
             matches!(next,Record::CallResolved{episode:e,..} if e==episode)
         }
-        Record::CallResolved { episode, .. } => {
+        Record::CallResolved {
+            episode,
+            resolution,
+            ..
+        } => {
             let parked = h.attention();
+            // An adopted reply settles the stopped turn again, under the admission another
+            // client made on the same session.
+            let adopted = *resolution == Resolution::UseReply
+                && parked
+                    .as_ref()
+                    .is_some_and(|p| p.cause == AttentionCause::Stopped);
             failed
                 || matches!(next,Record::CallAttention{episode:e,..} if episode.checked_add(1)==Some(*e))
-                || matches!(next,Record::TurnSettled{turn,admission_id,..} if parked.is_some_and(|p|p.turn==Some(*turn)&&p.admission_id.as_ref()==Some(admission_id)))
+                || matches!(next,Record::TurnSettled{turn,admission_id,..} if parked.as_ref().is_some_and(|p|p.turn==Some(*turn)&&(adopted||p.admission_id.as_ref()==Some(admission_id))))
         }
         _ => false,
     };
@@ -683,8 +752,12 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
     if let Record::CallFinished { turns, .. } = next {
         let settled = h
             .current()
-            .filter(|r| matches!(r.record, Record::TurnSettled { .. }))
-            .count();
+            .filter_map(|r| match r.record {
+                Record::TurnSettled { turn, .. } => Some(turn),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .len();
         if *turns as usize != settled {
             return Err(corrupt(
                 line,

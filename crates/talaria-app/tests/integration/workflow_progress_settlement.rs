@@ -10,7 +10,7 @@ use talaria_app::{
 use talaria_workflow::{
     journal::{CallOutcome, Record, RecordLine},
     progress::{
-        AgentState, RunProgress,
+        AgentState, ControlOutcome, ControlRequest, RunProgress,
         live::{self, ProgressEffect, ProgressInput, ProgressKey, ProgressState},
     },
 };
@@ -46,9 +46,31 @@ fn app_polls_each_tick_and_after_stop_ack_then_redraws_the_settled_row() {
             result: Ok(empty),
         },
     );
-    let stop = app::update(
+    // The stop is confirmed, then noted in the run folder, and only then sent.
+    app::update(
         &mut app,
         AppMessage::User(UserAction::Workflow(ProgressKey::StopAgent)),
+    );
+    let note = app::update(
+        &mut app,
+        AppMessage::User(UserAction::Workflow(ProgressKey::Confirm)),
+    );
+    let id = note
+        .iter()
+        .find_map(|e| match e {
+            AppEffect::WorkflowExecute { effects, .. } => match effects.as_slice() {
+                [ProgressEffect::WriteControl(id, ControlRequest::AgentStop { .. })] => Some(*id),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("the stop note");
+    let stop = app::update(
+        &mut app,
+        AppMessage::WorkflowProgress {
+            run: run.clone(),
+            input: ProgressInput::ControlDone(id, ControlOutcome::Published),
+        },
     );
     assert!(stop.iter().any(|e|matches!(e,AppEffect::WorkflowExecute {effects,..} if matches!(effects.as_slice(),[ProgressEffect::Interrupt {..}]))));
     let ack = app::update(

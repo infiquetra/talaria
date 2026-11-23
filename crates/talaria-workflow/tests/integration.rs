@@ -106,6 +106,8 @@ mod journal_restart;
 mod journal_resume;
 #[path = "integration/journal_retry.rs"]
 mod journal_retry;
+#[path = "integration/journal_stopped.rs"]
+mod journal_stopped;
 #[path = "integration/journal_store.rs"]
 mod journal_store;
 #[path = "integration/journal_unknown.rs"]

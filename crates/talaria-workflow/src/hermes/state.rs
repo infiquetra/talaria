@@ -35,6 +35,19 @@ pub(super) struct Session {
     pub observing: bool,
     pub expected_model: Option<String>,
     pub expected_provider: Option<String>,
+    /// Every admission seen on the session, in the order first seen: in a frame's envelope or
+    /// in a snapshot's pending list. It includes turns other clients started.
+    pub admissions: Vec<String>,
+}
+impl Session {
+    /// Remember an admission; true when it was not seen before.
+    fn saw(&mut self, admission: &str) -> bool {
+        if admission.is_empty() || self.admissions.iter().any(|a| a == admission) {
+            return false;
+        }
+        self.admissions.push(admission.to_owned());
+        true
+    }
 }
 #[derive(Clone, Default)]
 pub(super) struct View {
@@ -108,7 +121,11 @@ impl State {
         }
         match event {
             WireEvent::Event { frame, .. } => {
-                if frame.type_name() == Some("message.complete")
+                let new_admission = frame
+                    .admission_id
+                    .as_deref()
+                    .is_some_and(|id| session.saw(id));
+                if (new_admission || frame.type_name() == Some("message.complete"))
                     && let Some(owner) = self.owner.upgrade()
                 {
                     owner.wake(&key);
@@ -234,6 +251,8 @@ impl State {
             tracing::warn!("Hermes provider differs from the requested provider");
         }
         let latest = previous.and_then(|s| s.latest.clone());
+        let known = previous.map(|s| s.admissions.clone()).unwrap_or_default();
+        let seen_before = known.len();
         self.view.sessions.insert(
             key.clone(),
             Session {
@@ -252,8 +271,19 @@ impl State {
                 observing: true,
                 expected_model,
                 expected_provider,
+                admissions: known,
             },
         );
+        if let Some(session) = self.view.sessions.get_mut(&key) {
+            for pending in &snapshot.pending {
+                session.saw(&pending.admission_id);
+            }
+            if session.admissions.len() > seen_before
+                && let Some(owner) = self.owner.upgrade()
+            {
+                owner.wake(&key);
+            }
+        }
         if let Some(events) = self.held.remove(&key) {
             for event in events {
                 self.event(profile.clone(), event);
@@ -355,6 +385,7 @@ pub(super) fn start(
                             observing: false,
                             expected_model: None,
                             expected_provider: None,
+                            admissions: Vec::new(),
                         });
                     if submitted
                         || session

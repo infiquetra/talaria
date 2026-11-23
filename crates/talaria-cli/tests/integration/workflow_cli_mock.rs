@@ -1200,3 +1200,187 @@ fn a_run_outside_a_git_repository_warns_but_still_runs() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(!text(&out.stderr).contains("not inside a git repository"));
 }
+
+fn json_line(stdout: &[u8]) -> Value {
+    serde_json::from_slice(stdout).unwrap_or_else(|_| panic!("not one JSON line: {}", text(stdout)))
+}
+
+#[test]
+fn restart_runs_only_the_failed_agent_again_and_kept_values_are_readable_by_label() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let out = output(
+        command(temp.path(), "restart-run-wire.json")
+            .args(["workflow", "run", "--profile", "fixture", "--json", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/restart.js")),
+    );
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
+    let finished = run_finished(&out.stdout);
+    assert_eq!(finished["failed_agents"][0]["label"], "review");
+    let id = finished["run_id"].as_str().unwrap().to_owned();
+    let folder = runs.join(&id);
+    let workflow = |args: &[&str]| {
+        output(
+            command(temp.path(), "restart-resume-wire.json")
+                .arg("workflow")
+                .args(args)
+                .arg("--runs-dir")
+                .arg(&runs),
+        )
+    };
+
+    // A finished agent's kept value is readable by its label, without the journal by hand.
+    let plan = workflow(&["result", &id, "--agent", "plan", "--json"]);
+    assert_eq!(plan.status.code(), Some(0), "{}", text(&plan.stderr));
+    let plan = json_line(&plan.stdout);
+    assert_eq!(
+        (plan["state"].clone(), plan["value"].clone()),
+        (json!("completed"), json!("PLAN READY"))
+    );
+    let review = workflow(&["result", &id, "--agent", "review", "--json"]);
+    assert_eq!(review.status.code(), Some(1));
+    let review = json_line(&review.stdout);
+    assert_eq!(review["state"], "failed");
+    assert!(review["reason"].as_str().unwrap().starts_with("agent failed:"));
+    assert!(review.get("value").is_none());
+    let unknown = workflow(&["result", &id, "--agent", "nobody"]);
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(text(&unknown.stderr).contains("no agent labelled or keyed 'nobody'"));
+
+    // A finished agent is refused: running it again would pay for its work twice.
+    let kept = workflow(&["restart", &id, "plan"]);
+    assert_eq!(kept.status.code(), Some(2));
+    assert!(
+        text(&kept.stderr).contains("finished agents are kept — restart would pay for the work twice"),
+        "{}",
+        text(&kept.stderr)
+    );
+    // The failed one is asked for, and the caller is told to resume next.
+    let asked = workflow(&["restart", &id, "review", "--json"]);
+    assert_eq!(asked.status.code(), Some(0), "{}", text(&asked.stderr));
+    let asked = json_line(&asked.stdout);
+    let key = asked["requested"][0]["key"].as_str().unwrap().to_owned();
+    assert_eq!(asked["requested"][0]["label"], "review");
+    assert_eq!(asked["requested"][0]["written"], true);
+    assert_eq!(asked["also_run_again"], json!([]));
+    assert!(
+        asked["next"]
+            .as_str()
+            .unwrap()
+            .starts_with("talaria workflow resume --runs-dir "),
+        "{asked}"
+    );
+    assert!(asked["next"].as_str().unwrap().ends_with(&id));
+    let restart_file = folder.join("control").join(format!("restart-{key}.json"));
+    assert!(restart_file.exists());
+    // Asking again is not an error; it says the request was already there.
+    let again = workflow(&["restart", &id, "--all-failed"]);
+    assert_eq!(again.status.code(), Some(0), "{}", text(&again.stderr));
+    assert!(
+        text(&again.stdout).contains("restart already requested for agent review"),
+        "{}",
+        text(&again.stdout)
+    );
+
+    // The resume runs the failed agent again. The finished one is replayed from the journal:
+    // the resume's scripted gateway serves exactly one new session, so a second call for it
+    // would fail the run.
+    let resumed = workflow(&["resume", "--json", &id]);
+    assert_eq!(resumed.status.code(), Some(0), "{}", text(&resumed.stderr));
+    let finished = run_finished(&resumed.stdout);
+    assert_eq!(finished["outcome"], "completed");
+    assert_eq!(
+        finished["result"],
+        json!({"plan": "PLAN READY", "review": "REVIEW FIXED"})
+    );
+    assert!(!restart_file.exists());
+    let journal = records(&folder);
+    let intents = |label: &str| {
+        journal
+            .iter()
+            .filter(|r| r["t"] == "call_intent" && r["label"] == label)
+            .map(|r| r["attempt"].as_u64().unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(intents("plan"), [0]);
+    assert_eq!(intents("review"), [0, 1]);
+    let fixed = workflow(&["result", &id, "--agent", "review"]);
+    assert_eq!(fixed.status.code(), Some(0));
+    assert_eq!(text(&fixed.stdout), "\"REVIEW FIXED\"\n");
+    // Nothing failed any more.
+    let none = workflow(&["restart", &id, "--all-failed"]);
+    assert_eq!(none.status.code(), Some(2));
+    assert!(text(&none.stderr).contains("has no failed agents"));
+}
+
+#[test]
+fn a_stopped_agent_parks_and_tells_the_caller_it_waits_for_an_answer() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let child = command(temp.path(), "stopped-wire.json")
+        .args(["workflow", "run", "--profile", "fixture", "--json", "--runs-dir"])
+        .arg(&runs)
+        .arg(fixture("scripts/one.js"))
+        .spawn()
+        .unwrap();
+    let folder = || {
+        fs::read_dir(&runs)
+            .ok()?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .find(|p| p.is_dir())
+    };
+    wait_for(|| folder().is_some_and(|f| records(&f).iter().any(|r| r["t"] == "call_attention")));
+    let folder = folder().unwrap();
+    let parked = records(&folder)
+        .into_iter()
+        .find(|r| r["t"] == "call_attention")
+        .unwrap();
+    assert_eq!(parked["cause"], "stopped");
+    let id = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let key = parked["key"].as_str().unwrap().to_owned();
+    let resolve = |answer: &str| {
+        output(
+            command(temp.path(), "stopped-wire.json")
+                .args(["workflow", "resolve", &id, "--key", &key])
+                .args(["--attempt", "0", "--episode", "0", "--resolution", answer])
+                .arg("--runs-dir")
+                .arg(&runs),
+        )
+    };
+    let answered = resolve("fail");
+    assert_eq!(answered.status.code(), Some(0), "{}", text(&answered.stderr));
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
+    let lines: Vec<Value> = text(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let event = lines.iter().find(|l| l["event"] == "parked").expect("a parked line");
+    assert_eq!(event["cause"], "stopped");
+    assert_eq!(event["waiting_for"], "operator");
+    assert_eq!(event["choices"], json!(["fail", "rerun", "abort", "use-reply"]));
+    assert!(
+        event["answer"].as_str().unwrap().starts_with(&format!(
+            "talaria workflow resolve {id} --runs-dir "
+        )),
+        "{event}"
+    );
+    assert!(event["answer"].as_str().unwrap().ends_with(&format!(
+        "--key {key} --attempt 0 --episode 0 --resolution <choice>"
+    )));
+    assert!(event["use_reply"].as_str().unwrap().contains("continue"));
+    let reason = event["reason"].as_str().unwrap();
+    assert!(reason.contains("a stop was requested"), "{reason}");
+    assert!(reason.contains("not a timeout"), "{reason}");
+    assert!(reason.contains("80.0s elapsed"), "{reason}");
+    let finished = run_finished(&out.stdout);
+    assert!(
+        finished["failed_agents"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("operator marked a stopped agent as failed: agent stopped:"),
+        "{finished}"
+    );
+}

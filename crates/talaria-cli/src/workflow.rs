@@ -45,9 +45,14 @@ pub enum WorkflowCommand {
     List(ListArgs),
     /// Stop a running workflow.
     Stop(StopArgs),
-    /// Answer an agent call a run parked because its outcome is unknown: fail it, run it again,
-    /// or abort the run.
+    /// Answer an agent call a run parked because its outcome is unknown or because it was
+    /// stopped: fail it, run it again, abort the run, or use the stopped agent's next reply.
     Resolve(ResolveArgs),
+    /// Ask a finished run to run a failed agent again; `workflow resume` then runs it while
+    /// finished agents stay kept.
+    Restart(RestartArgs),
+    /// Print the value one agent of a run returned, read from the run's journal.
+    Result(ResultArgs),
     /// Turn a workflow's agent calls into kanban board cards. Kanban boards only; it does not
     /// validate a script, so use `check` for that.
     Compile(CompileArgs),
@@ -167,6 +172,35 @@ pub enum ResolutionArg {
     Fail,
     Rerun,
     Abort,
+    /// For an agent that was stopped: its session's next reply becomes its result.
+    UseReply,
+}
+#[derive(Clone, Debug, Args)]
+pub struct RestartArgs {
+    #[arg(value_name = "RUN", value_parser = required_text)]
+    pub target: String,
+    /// The failed agent's label or key.
+    #[arg(value_name = "AGENT", value_parser = required_text, required_unless_present = "all_failed", conflicts_with = "all_failed")]
+    pub agent: Option<String>,
+    /// Ask for every failed agent of the run.
+    #[arg(long)]
+    pub all_failed: bool,
+    #[arg(long)]
+    pub json: bool,
+    #[arg(long, value_parser = required_path)]
+    pub runs_dir: Option<PathBuf>,
+}
+#[derive(Clone, Debug, Args)]
+pub struct ResultArgs {
+    #[arg(value_name = "RUN", value_parser = required_text)]
+    pub target: String,
+    /// The agent's label or key.
+    #[arg(long, value_parser = required_text)]
+    pub agent: String,
+    #[arg(long)]
+    pub json: bool,
+    #[arg(long, value_parser = required_path)]
+    pub runs_dir: Option<PathBuf>,
 }
 #[derive(Clone, Debug, Args)]
 pub struct ResolveArgs {
@@ -481,7 +515,17 @@ impl Renderer {
                 key,
                 attempt,
                 episode,
+                cause,
+                reason,
+                choices,
             } => {
+                let runs_dir = custom_runs_dir_flag(self.dir.as_deref().and_then(Path::parent));
+                let answer = format!(
+                    "talaria workflow resolve {}{runs_dir} --key {} --attempt {attempt} --episode {episode} --resolution",
+                    safe(run_id),
+                    safe(key)
+                );
+                let use_reply = choices.iter().any(|c| c == "use-reply");
                 if self.json {
                     #[derive(Serialize)]
                     struct Parked<'a> {
@@ -491,6 +535,13 @@ impl Renderer {
                         key: &'a str,
                         attempt: u32,
                         episode: u32,
+                        cause: &'a str,
+                        reason: &'a str,
+                        waiting_for: &'static str,
+                        choices: &'a [String],
+                        answer: String,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        use_reply: Option<&'static str>,
                     }
                     self.json(&Parked {
                         event: "parked",
@@ -499,9 +550,30 @@ impl Renderer {
                         key,
                         attempt: *attempt,
                         episode: *episode,
+                        cause,
+                        reason,
+                        waiting_for: "operator",
+                        choices,
+                        answer: format!("{answer} <choice>"),
+                        use_reply: use_reply.then_some(USE_REPLY_HELP),
                     });
                 } else {
-                    self.text(&format!("needs operator: run {} agent {} key {} attempt {} episode {} - answer: talaria workflow resolve {} --key {} --attempt {} --episode {} --resolution fail|rerun|abort\n",safe(run_id),safe(label),safe(key),attempt,episode,safe(run_id),safe(key),attempt,episode));
+                    self.text(&format!(
+                        "needs operator: run {} agent {} key {} attempt {attempt} episode {episode} - answer: {answer} {}\n",
+                        safe(run_id),
+                        safe(label),
+                        safe(key),
+                        choices.join("|")
+                    ));
+                    self.text(&format!(
+                        "  agent {} is parked ({}): {}\n  the run waits for this answer and nothing ends the wait for you\n",
+                        safe(label),
+                        safe(cause),
+                        safe(reason)
+                    ));
+                    if use_reply {
+                        self.text(&format!("  use-reply: {USE_REPLY_HELP}\n"));
+                    }
                 }
             }
             RunnerEvent::Finished {
@@ -763,7 +835,13 @@ mod money_text_tests {
 
     #[test]
     fn unknown_money_names_the_price_list_not_the_tiers() {
-        let line = closing_line("r1", "completed", &spend(500, None), None);
+        let line = closing_line(
+            "r1",
+            "completed",
+            &spend(500, None),
+            None,
+            &Default::default(),
+        );
         assert!(
             line.contains(
                 "money unknown (Hermes reported no cost and has no price for the models used)"
@@ -771,15 +849,23 @@ mod money_text_tests {
             "{line}"
         );
         assert!(!line.contains("tier"), "{line}");
-        let idle = closing_line("r1", "failed", &spend(0, None), None);
+        let idle = closing_line("r1", "failed", &spend(0, None), None, &Default::default());
         assert!(
             idle.contains("money unknown (no agent turn has finished)"),
             "{idle}"
         );
-        let known = closing_line("r1", "completed", &spend(500, Some(0.5)), None);
+        let known = closing_line(
+            "r1",
+            "completed",
+            &spend(500, Some(0.5)),
+            None,
+            &Default::default(),
+        );
         assert!(known.contains("money $0.5000 (none)"), "{known}");
     }
 }
+/// What `use-reply` does, printed with a parked stopped agent.
+const USE_REPLY_HELP: &str = "continue the agent's Hermes session (for example type \"continue\" into it from a Talaria window); its next reply becomes the agent's result and is checked like any reply. A reply that already came is used at once.";
 /// The short plain-text line printed after the `run_finished` object in JSON mode. Hermes keeps the
 /// last 2,000 characters of a background command's output and then cuts back to the first newline,
 /// so a single very long final line reached the lead as nothing; this line is always short.
@@ -976,6 +1062,7 @@ pub async fn run(args: WorkflowArgs) -> u8 {
                 ResolutionArg::Fail => Resolution::Fail,
                 ResolutionArg::Rerun => Resolution::Rerun,
                 ResolutionArg::Abort => Resolution::Abort,
+                ResolutionArg::UseReply => Resolution::UseReply,
             };
             match runner::answer_parked(
                 &runner::runs_dir(args.runs_dir.as_deref()),
@@ -987,9 +1074,12 @@ pub async fn run(args: WorkflowArgs) -> u8 {
             ) {
                 Ok(()) => 0,
                 Err(runner::AnswerError::Target(e)) => fail(e, 2),
+                Err(e @ runner::AnswerError::NotStopped { .. }) => fail(e, 2),
                 Err(e) => fail(e, 1),
             }
         }
+        WorkflowCommand::Restart(args) => restart_command(args),
+        WorkflowCommand::Result(args) => result_command(args),
         WorkflowCommand::Resume(args) => {
             let mut renderer = Renderer::new(args.json);
             let req = ResumeRequest {
@@ -1015,6 +1105,118 @@ pub async fn run(args: WorkflowArgs) -> u8 {
         WorkflowCommand::Check(args) => crate::workflow_check::execute(args).await,
         WorkflowCommand::Worktrees(args) => crate::workflow_worktrees::execute(args),
         WorkflowCommand::Lessons(args) => crate::workflow_lessons::execute(args),
+    }
+}
+fn agent_error(e: runner::agents::AgentError) -> u8 {
+    use runner::agents::AgentError;
+    let code = match e {
+        AgentError::Journal(_) | AgentError::Io(_) => 1,
+        _ => 2,
+    };
+    fail(e, code)
+}
+fn print(text: &str) -> u8 {
+    match io::stdout().write_all(text.as_bytes()) {
+        Ok(()) => 0,
+        Err(e) => fail(e, 1),
+    }
+}
+fn restart_command(args: RestartArgs) -> u8 {
+    use runner::agents::{RestartTarget, request_restart};
+    let runs = runner::runs_dir(args.runs_dir.as_deref());
+    let which = match args.agent {
+        Some(agent) => RestartTarget::Agent(agent),
+        None => RestartTarget::AllFailed,
+    };
+    let report = match request_restart(&runs, &args.target, &which) {
+        Ok(report) => report,
+        Err(e) => return agent_error(e),
+    };
+    let flag = custom_runs_dir_flag(absolute(runs).ok().as_deref());
+    let next = format!("talaria workflow resume{flag} {}", safe(&report.run_id));
+    if args.json {
+        let line = json!({
+            "event": "restart_requested",
+            "run_id": report.run_id,
+            "requested": report.requested,
+            "also_run_again": report.also_run_again,
+            "next": next,
+        });
+        return print(&format!("{line}\n"));
+    }
+    let mut text = String::new();
+    for agent in &report.requested {
+        text.push_str(&format!(
+            "{} for agent {} (key {})\n",
+            if agent.written {
+                "restart requested"
+            } else {
+                "restart already requested"
+            },
+            safe(&agent.label),
+            safe(&agent.key)
+        ));
+    }
+    if !report.also_run_again.is_empty() {
+        text.push_str(&format!(
+            "note: the resume also runs these failed agents again when the script reaches them: {}\n",
+            report
+                .also_run_again
+                .iter()
+                .map(|l| safe(l))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    text.push_str(&format!("finished agents stay kept. Next: {next}\n"));
+    print(&text)
+}
+fn result_command(args: ResultArgs) -> u8 {
+    let runs = runner::runs_dir(args.runs_dir.as_deref());
+    let result = match runner::agents::agent_result(&runs, &args.target, &args.agent) {
+        Ok(result) => result,
+        Err(e) => return agent_error(e),
+    };
+    let kept = result.value.is_some();
+    let code = if kept { 0 } else { 1 };
+    if args.json {
+        let mut line = serde_json::to_value(&result).unwrap_or(Value::Null);
+        if let Some(object) = line.as_object_mut() {
+            object.insert("event".into(), json!("agent_result"));
+        }
+        return match print(&format!("{line}\n")) {
+            0 => code,
+            failed => failed,
+        };
+    }
+    let text = match &result.value {
+        Some(value) => format!(
+            "{}{}\n",
+            result
+                .cut_short
+                .as_ref()
+                .map(|c| format!(
+                    "agent {}: {}; its reply was kept\n",
+                    safe(&result.label),
+                    safe(c)
+                ))
+                .unwrap_or_default(),
+            serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".into())
+        ),
+        None => format!(
+            "agent {} is {} and has no kept value{}\n",
+            safe(&result.label),
+            result.state,
+            result
+                .reason
+                .as_ref()
+                .map(|r| format!(": {}", safe(r)))
+                .unwrap_or_default()
+        ),
+    };
+    match print(&text) {
+        0 => code,
+        failed => failed,
     }
 }
 async fn run_command(args: RunArgs) -> u8 {

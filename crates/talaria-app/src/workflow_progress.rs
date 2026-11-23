@@ -197,6 +197,9 @@ async fn perform(
                 ControlRequest::Resume => RunControl::request_resume(&dir),
                 ControlRequest::Stop => RunControl::request_stop(&dir, at_ms),
                 ControlRequest::Restart { key } => RunControl::request_restart(&dir, &key, at_ms),
+                ControlRequest::AgentStop { key, restart } => {
+                    RunControl::note_agent_stop(&dir, &key, restart, at_ms)
+                }
             };
             (outcome, RunControl::pending(&dir))
         })
