@@ -8,7 +8,7 @@ use std::{
 };
 
 mod manage;
-pub use manage::{CleanupAction, CleanupEntry, WorktreeReport};
+pub use manage::{CleanupAction, CleanupEntry, IgnoredEntry, IgnoredKind, WorktreeReport};
 
 /// One provider owns a run's provenance and serialises its local Git operations.
 pub struct GitWorktrees {

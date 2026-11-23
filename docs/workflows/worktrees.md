@@ -108,11 +108,25 @@ interrupted run is cleaned anyway and the output says the run did not finish; `-
 follows the same rules. Without `--force` it removes a worktree, its branch and its sidecar only when the folder
 is clean and everything it holds is already contained in the source checkout's `HEAD`; the
 branch goes with `git branch -d`, which refuses unmerged work a second time. A folder that holds ignored
-files is also kept, because removal deletes them, unless every ignored entry is a folder
-named like regenerable build output (`target`, `node_modules`, `__pycache__`,
-`.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `dist`, `build`, `.venv`); those are deleted
-with the folder and the output says so. `list` shows the ignored count and how many of them
-are build output. Every worktree
+files is also kept, because removal deletes them, unless every ignored entry is verified
+build output: a folder with one of the names `target`, `node_modules`, `__pycache__`,
+`.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `dist`, `build` or `.venv` whose contents
+or neighbours confirm what it is. A name alone is not enough, because a hand-made folder
+can be called `build`. The evidence is: `target` holds `CACHEDIR.TAG` or `.rustc_info.json`
+(Cargo writes both); `.pytest_cache`, `.mypy_cache` and `.ruff_cache` hold `CACHEDIR.TAG`;
+`.venv` holds `pyvenv.cfg`; `node_modules` has a `package.json` in the folder that holds
+it; `dist` and `build` have a project manifest beside them (`package.json`,
+`pyproject.toml`, `setup.py`, `setup.cfg`, `Cargo.toml`, `CMakeLists.txt`, `build.gradle`,
+`build.gradle.kts`, `pom.xml`, `Makefile` or `meson.build`); `__pycache__` holds only
+`.pyc` and `.pyo` files. A symbolic link with one of these names is never build output,
+and the checks never follow a link or read file contents. Verified folders are deleted with
+the worktree and the output says so. A listed name that fails its check is an ordinary
+ignored entry: it keeps the worktree, and the reason names the folder and what is missing,
+for example "build/ was not accepted as build output: it has no project manifest beside it".
+`list` shows the ignored count, how many are verified build output and how many are not;
+`--json` adds `ignored_unverified` and an `ignored_details` list whose entries carry a
+`path`, a `kind` (`build_output`, `unverified_build_output` or `other`) and, for an
+unverified entry, the `reason`. Every worktree
 with uncommitted changes or unmerged commits is kept and listed with the reason, and so is a
 folder that no longer sits on its recorded branch. With `--force` it removes everything for
 that run and prints what was discarded: the changed-file count, the ignored entries, the

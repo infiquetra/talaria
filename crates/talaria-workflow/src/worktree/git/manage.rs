@@ -28,9 +28,17 @@ pub struct WorktreeReport {
     /// Ignored files and folders in the folder (a whole ignored folder counts once). Removal
     /// deletes them with the folder.
     pub ignored_entries: usize,
-    /// How many of `ignored_entries` are folders named like regenerable build output
-    /// (see `BUILD_OUTPUT`); they do not stop a removal without `--force`.
+    /// How many of `ignored_entries` are verified build output: a folder with a listed name
+    /// (see `BUILD_OUTPUT`) whose contents or neighbours confirm what it is. They do not stop a
+    /// removal without `--force`.
     pub ignored_build_output: usize,
+    /// How many of `ignored_entries` have a listed build output name but failed the check on
+    /// disk (for example a `build` folder with no project manifest beside it). They keep the
+    /// worktree like any other ignored entry.
+    pub ignored_unverified: usize,
+    /// Every ignored entry, saying whether it is verified build output and, when a listed name
+    /// was not accepted, why.
+    pub ignored_details: Vec<IgnoredEntry>,
     /// Commits on the branch, or checked out in the folder, that the source checkout's current
     /// HEAD does not contain.
     pub unmerged_commits: usize,
@@ -39,6 +47,27 @@ pub struct WorktreeReport {
     pub folder_head: Option<String>,
     /// Why this worktree could not be examined completely, when that happened.
     pub problem: Option<String>,
+}
+
+/// How one ignored entry in a worktree was classified.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IgnoredKind {
+    /// A listed name, and the evidence on disk confirms it is regenerable build output.
+    BuildOutput,
+    /// A listed name, but the evidence is missing; treated like any other ignored entry.
+    UnverifiedBuildOutput,
+    /// Anything else: an environment file, a note, a folder with an unlisted name.
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct IgnoredEntry {
+    /// Path inside the worktree, with a trailing slash for a folder.
+    pub path: String,
+    pub kind: IgnoredKind,
+    /// For an unverified entry: why it was not accepted as build output.
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -65,9 +94,11 @@ fn plural(count: usize, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
-/// Ignored folders with these names are regenerable build output: a removal without `--force`
-/// deletes them and says so, rather than keeping the worktree. Any other ignored entry (an
-/// environment file, a note, an unlisted folder) keeps the worktree until `--force`.
+/// Ignored folders with these names are candidates for regenerable build output. A name alone
+/// is not enough: `verify_build_output` also needs evidence on disk. A verified folder is
+/// deleted by a removal without `--force`, which says so; every other ignored entry (an
+/// environment file, a note, an unlisted folder, a listed name without its evidence) keeps the
+/// worktree until `--force`.
 const BUILD_OUTPUT: &[&str] = &[
     "target",
     "node_modules",
@@ -80,20 +111,154 @@ const BUILD_OUTPUT: &[&str] = &[
     ".venv",
 ];
 
+/// Files a project keeps beside a `dist` or `build` folder.
+const PROJECT_MANIFESTS: &[&str] = &[
+    "package.json",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "Cargo.toml",
+    "CMakeLists.txt",
+    "build.gradle",
+    "build.gradle.kts",
+    "pom.xml",
+    "Makefile",
+    "meson.build",
+];
+
 struct FolderStatus {
     changed: usize,
-    ignored: usize,
-    build_output: usize,
+    ignored: Vec<IgnoredEntry>,
 }
 
-fn is_build_output(path: &[u8]) -> bool {
-    let Ok(path) = std::str::from_utf8(path) else {
-        return false;
+impl FolderStatus {
+    fn count(&self, kind: IgnoredKind) -> usize {
+        self.ignored.iter().filter(|e| e.kind == kind).count()
+    }
+}
+
+/// A regular file, judged without following a link.
+fn is_file(path: &Path) -> bool {
+    path.symlink_metadata()
+        .is_ok_and(|meta| meta.file_type().is_file())
+}
+
+fn has_any(folder: &Path, names: &[&str]) -> bool {
+    names.iter().any(|name| is_file(&folder.join(name)))
+}
+
+/// Check that `entry`, an ignored folder whose name is `name`, really is what the name says.
+/// The error says what evidence is missing. Nothing here follows a link, reads file contents
+/// or walks into the folder, except that a `__pycache__` folder is listed once.
+fn verify_build_output(entry: &Path, name: &str) -> Result<(), String> {
+    let meta = entry
+        .symlink_metadata()
+        .map_err(|error| format!("it cannot be inspected ({error})"))?;
+    if meta.file_type().is_symlink() {
+        return Err("it is a symbolic link".to_string());
+    }
+    if !meta.is_dir() {
+        return Err("it is not a folder".to_string());
+    }
+    let beside = |names: &[&str]| entry.parent().is_some_and(|parent| has_any(parent, names));
+    let missing = |what: &str| Err(format!("it {what}"));
+    match name {
+        "target" => {
+            if has_any(entry, &["CACHEDIR.TAG", ".rustc_info.json"]) {
+                Ok(())
+            } else {
+                missing("holds neither CACHEDIR.TAG nor .rustc_info.json")
+            }
+        }
+        ".pytest_cache" | ".mypy_cache" | ".ruff_cache" => {
+            if has_any(entry, &["CACHEDIR.TAG"]) {
+                Ok(())
+            } else {
+                missing("holds no CACHEDIR.TAG")
+            }
+        }
+        ".venv" => {
+            if has_any(entry, &["pyvenv.cfg"]) {
+                Ok(())
+            } else {
+                missing("holds no pyvenv.cfg")
+            }
+        }
+        "node_modules" => {
+            if beside(&["package.json"]) {
+                Ok(())
+            } else {
+                missing("has no package.json beside it")
+            }
+        }
+        "dist" | "build" => {
+            if beside(PROJECT_MANIFESTS) {
+                Ok(())
+            } else {
+                missing(
+                    "has no project manifest beside it (such as package.json, pyproject.toml or Cargo.toml)",
+                )
+            }
+        }
+        "__pycache__" => {
+            let only_bytecode = fs::read_dir(entry)
+                .map_err(|error| format!("it cannot be listed ({error})"))?
+                .all(|item| {
+                    item.is_ok_and(|item| {
+                        is_file(&item.path())
+                            && item
+                                .path()
+                                .extension()
+                                .is_some_and(|ext| ext == "pyc" || ext == "pyo")
+                    })
+                });
+            if only_bytecode {
+                Ok(())
+            } else {
+                missing("holds something other than .pyc or .pyo files")
+            }
+        }
+        _ => missing("is not a known build output folder"),
+    }
+}
+
+fn os_path(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        PathBuf::from(OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+/// Classify one ignored entry reported by `git status`, given its path relative to `folder`.
+fn classify_ignored(folder: &Path, raw: &[u8]) -> IgnoredEntry {
+    let relative = os_path(raw);
+    let shown = relative.to_string_lossy().into_owned();
+    let other = IgnoredEntry {
+        path: shown.clone(),
+        kind: IgnoredKind::Other,
+        reason: None,
     };
-    let Some(folder) = path.trim_matches('"').strip_suffix('/') else {
-        return false;
-    };
-    BUILD_OUTPUT.contains(&folder.rsplit('/').next().unwrap_or(folder))
+    let trimmed = shown.strip_suffix('/').unwrap_or(&shown);
+    let name = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    if !BUILD_OUTPUT.contains(&name) {
+        return other;
+    }
+    match verify_build_output(&folder.join(trimmed), name) {
+        Ok(()) => IgnoredEntry {
+            kind: IgnoredKind::BuildOutput,
+            ..other
+        },
+        Err(why) => IgnoredEntry {
+            kind: IgnoredKind::UnverifiedBuildOutput,
+            reason: Some(format!("{shown} was not accepted as build output: {why}")),
+            ..other
+        },
+    }
 }
 
 fn folder_status(folder: &Path) -> Result<FolderStatus, String> {
@@ -102,21 +267,25 @@ fn folder_status(folder: &Path) -> Result<FolderStatus, String> {
         &[
             "status".as_ref(),
             "--porcelain".as_ref(),
+            "-z".as_ref(),
             "--ignored".as_ref(),
             "--ignore-submodules=all".as_ref(),
         ],
     )?;
     let mut status = FolderStatus {
         changed: 0,
-        ignored: 0,
-        build_output: 0,
+        ignored: Vec::new(),
     };
-    for line in out.split(|&b| b == b'\n').filter(|line| !line.is_empty()) {
-        if let Some(path) = line.strip_prefix(b"!! ") {
-            status.ignored += 1;
-            status.build_output += usize::from(is_build_output(path));
+    let mut fields = out.split(|&b| b == 0).filter(|field| !field.is_empty());
+    while let Some(field) = fields.next() {
+        if let Some(path) = field.strip_prefix(b"!! ") {
+            status.ignored.push(classify_ignored(folder, path));
         } else {
             status.changed += 1;
+            // A rename or copy entry is followed by a second field holding the old path.
+            if field.iter().take(2).any(|&b| b == b'R' || b == b'C') {
+                fields.next();
+            }
         }
     }
     Ok(status)
@@ -173,6 +342,8 @@ impl GitWorktrees {
             changed_files: 0,
             ignored_entries: 0,
             ignored_build_output: 0,
+            ignored_unverified: 0,
+            ignored_details: Vec::new(),
             unmerged_commits: 0,
             branch_tip: None,
             folder_head: None,
@@ -209,8 +380,10 @@ impl GitWorktrees {
             match folder_status(&report.path) {
                 Ok(status) => {
                     report.changed_files = status.changed;
-                    report.ignored_entries = status.ignored;
-                    report.ignored_build_output = status.build_output;
+                    report.ignored_entries = status.ignored.len();
+                    report.ignored_build_output = status.count(IgnoredKind::BuildOutput);
+                    report.ignored_unverified = status.count(IgnoredKind::UnverifiedBuildOutput);
+                    report.ignored_details = status.ignored;
                 }
                 Err(error) => problems.push(format!("cannot read the folder's status: {error}")),
             }
@@ -333,9 +506,15 @@ impl GitWorktrees {
         let other_ignored = report.ignored_entries - report.ignored_build_output;
         if other_ignored > 0 {
             reasons.push(format!(
-                "holds {} that removal would delete (not known build output such as target or node_modules)",
+                "holds {} that removal would delete (not verified build output)",
                 plural(other_ignored, "ignored file or folder")
             ));
+            reasons.extend(
+                report
+                    .ignored_details
+                    .iter()
+                    .filter_map(|entry| entry.reason.clone()),
+            );
         }
         let mut discarded = Vec::new();
         if force {
@@ -357,7 +536,7 @@ impl GitWorktrees {
             }
             if report.ignored_entries > 0 {
                 discarded.push(format!(
-                    "{} in {} ({} of them known build output)",
+                    "{} in {} ({} of them verified build output)",
                     plural(report.ignored_entries, "ignored file or folder"),
                     report.path.display(),
                     report.ignored_build_output
@@ -380,7 +559,7 @@ impl GitWorktrees {
         } else if report.ignored_build_output > 0 {
             discarded.push(format!(
                 "{} deleted with the folder",
-                plural(report.ignored_build_output, "ignored build output folder")
+                plural(report.ignored_build_output, "verified build output folder")
             ));
         }
         if dry_run {
@@ -777,6 +956,7 @@ mod tests {
         let build = f.tree(0);
         fs::create_dir(build.join("target")).unwrap();
         fs::write(build.join("target").join("out.bin"), "x").unwrap();
+        fs::write(build.join("target").join("CACHEDIR.TAG"), "tag").unwrap();
         let secret = f.tree(1);
         fs::write(secret.join(".env"), "TOKEN=1").unwrap();
         let rows = f.provider.inspect().unwrap();
@@ -802,7 +982,7 @@ mod tests {
             preview[0]
                 .discarded
                 .join(" ")
-                .contains("1 ignored build output folder")
+                .contains("1 verified build output folder")
         );
         assert_eq!(preview[1].action, CleanupAction::Kept);
         assert!(
@@ -827,16 +1007,410 @@ mod tests {
         assert!(!secret.exists());
     }
 
-    #[test]
-    fn only_listed_folder_names_count_as_build_output() {
-        assert!(is_build_output(b"target/"));
-        assert!(is_build_output(b"crates/app/node_modules/"));
-        assert!(
-            !is_build_output(b"target"),
-            "a file named target is not output"
+    /// A worktree whose source repository ignores every listed name, plus `.env`.
+    fn ignoring_fixture() -> (Fixture, PathBuf) {
+        let f = fixture();
+        fs::write(
+            f.repo.join(".gitignore"),
+            "target\nnode_modules\n__pycache__\n.pytest_cache\n.mypy_cache\n.ruff_cache\n\
+             dist\nbuild\n.venv\n.env\nnotes\n",
+        )
+        .unwrap();
+        git(&f.repo, &["add", ".gitignore"]);
+        git(
+            &f.repo,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "ignore",
+            ],
         );
-        assert!(!is_build_output(b".env"));
-        assert!(!is_build_output(b"secrets/"));
+        let tree = f.tree(0);
+        (f, tree)
+    }
+
+    fn make(tree: &Path, relative: &str, files: &[&str]) {
+        let folder = tree.join(relative);
+        fs::create_dir_all(&folder).unwrap();
+        for file in files {
+            fs::write(folder.join(file), "x").unwrap();
+        }
+    }
+
+    /// Commit a project file in the worktree and merge it into the source checkout, so the
+    /// worktree stays clean and has no unmerged commits.
+    fn track(f: &Fixture, tree: &Path, relative: &str) {
+        let file = tree.join(relative);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "x").unwrap();
+        git(tree, &["add", "--", relative]);
+        git(
+            tree,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                relative,
+            ],
+        );
+        git(&f.repo, &["merge", "--ff-only", &f.branch(0)]);
+    }
+
+    /// The preview of a removal without `--force`; it changes nothing.
+    fn preview(f: &Fixture) -> CleanupEntry {
+        f.provider.clean_up(false, true).unwrap().remove(0)
+    }
+
+    fn assert_accepted(f: &Fixture, name: &str) {
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert_eq!(
+            (
+                report.ignored_entries,
+                report.ignored_build_output,
+                report.ignored_unverified
+            ),
+            (1, 1, 0),
+            "{name}: {report:?}"
+        );
+        assert_eq!(report.ignored_details[0].kind, IgnoredKind::BuildOutput);
+        assert_eq!(report.ignored_details[0].reason, None);
+        let entry = preview(f);
+        assert_eq!(
+            entry.action,
+            CleanupAction::WouldRemove,
+            "{name}: {entry:?}"
+        );
+    }
+
+    fn assert_rejected(f: &Fixture, name: &str, why: &str) {
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert_eq!(
+            (
+                report.ignored_entries,
+                report.ignored_build_output,
+                report.ignored_unverified
+            ),
+            (1, 0, 1),
+            "{name}: {report:?}"
+        );
+        assert_eq!(
+            report.ignored_details[0].kind,
+            IgnoredKind::UnverifiedBuildOutput
+        );
+        let entry = preview(f);
+        assert_eq!(entry.action, CleanupAction::Kept, "{name}: {entry:?}");
+        let said = entry.reasons.join("; ");
+        assert!(
+            said.contains(&format!("{name}/ was not accepted as build output")),
+            "{said}"
+        );
+        assert!(said.contains(why), "{said}");
+        assert!(
+            report.ignored_details[0]
+                .reason
+                .as_deref()
+                .is_some_and(|r| r.contains(why))
+        );
+    }
+
+    #[test]
+    fn target_needs_a_cache_tag_or_cargo_info_file() {
+        let (f, tree) = ignoring_fixture();
+        make(&tree, "target", &["out.bin"]);
+        assert_rejected(&f, "target", "neither CACHEDIR.TAG nor .rustc_info.json");
+        make(&tree, "target", &["CACHEDIR.TAG"]);
+        assert_accepted(&f, "target");
+        fs::remove_file(tree.join("target/CACHEDIR.TAG")).unwrap();
+        make(&tree, "target", &[".rustc_info.json"]);
+        assert_accepted(&f, "target");
+    }
+
+    #[test]
+    fn node_modules_needs_a_package_json_beside_it() {
+        let (f, tree) = ignoring_fixture();
+        make(&tree, "node_modules", &["left-pad.js"]);
+        assert_rejected(&f, "node_modules", "no package.json beside it");
+        track(&f, &tree, "package.json");
+        assert_accepted(&f, "node_modules");
+    }
+
+    #[test]
+    fn a_nested_folder_is_checked_against_the_folder_that_holds_it() {
+        let (f, tree) = ignoring_fixture();
+        track(&f, &tree, "app/main.js");
+        make(&tree, "app/node_modules", &["x.js"]);
+        // A manifest at the top does not vouch for a folder deeper down.
+        track(&f, &tree, "package.json");
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert_eq!(
+            (report.ignored_build_output, report.ignored_unverified),
+            (0, 1),
+            "{report:?}"
+        );
+        assert_eq!(report.ignored_details[0].path, "app/node_modules/");
+        track(&f, &tree, "app/package.json");
+        assert_accepted(&f, "app/node_modules");
+    }
+
+    #[test]
+    fn pycache_must_hold_only_bytecode() {
+        let (f, tree) = ignoring_fixture();
+        make(
+            &tree,
+            "__pycache__",
+            &["mod.cpython-314.pyc", "mod.cpython-38.pyo"],
+        );
+        assert_accepted(&f, "__pycache__");
+        make(&tree, "__pycache__", &["notes.txt"]);
+        assert_rejected(&f, "__pycache__", "something other than .pyc or .pyo files");
+        fs::remove_file(tree.join("__pycache__/notes.txt")).unwrap();
+        make(&tree, "__pycache__/inner", &["mod.pyc"]);
+        assert_rejected(&f, "__pycache__", "something other than .pyc or .pyo files");
+    }
+
+    #[test]
+    fn an_empty_pycache_folder_is_accepted() {
+        let temp = tempfile::tempdir().unwrap();
+        make(temp.path(), "__pycache__", &[]);
+        assert_eq!(
+            verify_build_output(&temp.path().join("__pycache__"), "__pycache__"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn tool_caches_need_a_cache_tag() {
+        for name in [".pytest_cache", ".mypy_cache", ".ruff_cache"] {
+            let (f, tree) = ignoring_fixture();
+            make(&tree, name, &["data.json"]);
+            assert_rejected(&f, name, "no CACHEDIR.TAG");
+            make(&tree, name, &["CACHEDIR.TAG"]);
+            assert_accepted(&f, name);
+        }
+    }
+
+    #[test]
+    fn a_virtual_environment_needs_pyvenv_cfg() {
+        let (f, tree) = ignoring_fixture();
+        make(&tree, ".venv", &["notes.txt"]);
+        assert_rejected(&f, ".venv", "no pyvenv.cfg");
+        make(&tree, ".venv", &["pyvenv.cfg"]);
+        assert_accepted(&f, ".venv");
+    }
+
+    #[test]
+    fn dist_and_build_need_a_project_manifest_beside_them() {
+        for name in ["dist", "build"] {
+            let (f, tree) = ignoring_fixture();
+            make(&tree, name, &["hand-made.txt"]);
+            assert_rejected(&f, name, "no project manifest beside it");
+            let entry = preview(&f);
+            assert!(tree.join(name).join("hand-made.txt").exists());
+            assert_eq!(entry.action, CleanupAction::Kept);
+            track(&f, &tree, "Makefile");
+            assert_accepted(&f, name);
+        }
+    }
+
+    #[test]
+    fn every_manifest_name_vouches_for_a_build_folder() {
+        for manifest in PROJECT_MANIFESTS {
+            let (f, tree) = ignoring_fixture();
+            make(&tree, "dist", &["out.js"]);
+            track(&f, &tree, manifest);
+            assert_accepted(&f, manifest);
+        }
+    }
+
+    #[test]
+    fn a_manifest_that_is_a_folder_does_not_vouch() {
+        let (f, tree) = ignoring_fixture();
+        make(&tree, "build", &["out.o"]);
+        make(&tree, "Makefile", &[]);
+        assert_rejected(&f, "build", "no project manifest beside it");
+    }
+
+    #[test]
+    fn a_rejected_folder_keeps_the_worktree_and_its_files_without_force() {
+        let (f, tree) = ignoring_fixture();
+        make(&tree, "build", &["hand-made.txt"]);
+        let entry = f.provider.clean_up(false, false).unwrap().remove(0);
+        assert_eq!(entry.action, CleanupAction::Kept);
+        assert!(tree.join("build/hand-made.txt").exists());
+        assert!(f.has_branch(0) && f.sidecar(0).exists());
+        let forced = f.provider.clean_up(true, false).unwrap().remove(0);
+        assert_eq!(forced.action, CleanupAction::Removed);
+        let said = forced.discarded.join(" ");
+        assert!(said.contains("1 ignored file or folder"), "{said}");
+        assert!(said.contains("0 of them verified build output"), "{said}");
+        assert!(!tree.exists());
+    }
+
+    #[test]
+    fn unlisted_ignored_entries_are_other_and_carry_no_reason() {
+        let (f, tree) = ignoring_fixture();
+        make(&tree, "notes", &["a.txt"]);
+        fs::write(tree.join(".env"), "TOKEN=1").unwrap();
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert_eq!(report.ignored_entries, 2);
+        assert!(
+            report
+                .ignored_details
+                .iter()
+                .all(|e| e.kind == IgnoredKind::Other && e.reason.is_none()),
+            "{report:?}"
+        );
+        assert_eq!(
+            (report.ignored_build_output, report.ignored_unverified),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn a_file_with_a_listed_name_is_not_build_output() {
+        let (f, tree) = ignoring_fixture();
+        fs::write(tree.join("target"), "not a folder").unwrap();
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert_eq!(
+            (report.ignored_build_output, report.ignored_unverified),
+            (0, 1),
+            "{report:?}"
+        );
+        assert!(
+            report.ignored_details[0]
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("it is not a folder")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_with_a_listed_name_is_never_build_output_and_is_not_followed() {
+        for name in ["target", "node_modules", ".venv", "build"] {
+            let (f, tree) = ignoring_fixture();
+            // The link's destination has every piece of evidence; it must still not count.
+            let outside = f
+                .repo
+                .parent()
+                .unwrap()
+                .join(format!("outside-{}", name.trim_matches('.')));
+            fs::create_dir(&outside).unwrap();
+            for file in [
+                "CACHEDIR.TAG",
+                ".rustc_info.json",
+                "pyvenv.cfg",
+                "precious.txt",
+            ] {
+                fs::write(outside.join(file), "x").unwrap();
+            }
+            track(&f, &tree, "package.json");
+            track(&f, &tree, "Makefile");
+            std::os::unix::fs::symlink(&outside, tree.join(name)).unwrap();
+            let report = f.provider.inspect().unwrap().remove(0);
+            assert_eq!(
+                (report.ignored_build_output, report.ignored_unverified),
+                (0, 1),
+                "{name}: {report:?}"
+            );
+            assert!(
+                report.ignored_details[0]
+                    .reason
+                    .as_deref()
+                    .unwrap()
+                    .contains("it is a symbolic link"),
+                "{name}: {report:?}"
+            );
+            let kept = f.provider.clean_up(false, false).unwrap().remove(0);
+            assert_eq!(kept.action, CleanupAction::Kept, "{name}");
+            assert!(outside.join("precious.txt").exists());
+            let forced = f.provider.clean_up(true, false).unwrap().remove(0);
+            assert_eq!(forced.action, CleanupAction::Removed, "{name}");
+            assert!(
+                outside.join("precious.txt").exists(),
+                "{name}: removal followed the link"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_inside_pycache_is_not_bytecode() {
+        let (f, tree) = ignoring_fixture();
+        make(&tree, "__pycache__", &[]);
+        let outside = f.repo.parent().unwrap().join("outside.pyc");
+        fs::write(&outside, "x").unwrap();
+        std::os::unix::fs::symlink(&outside, tree.join("__pycache__/mod.pyc")).unwrap();
+        assert_rejected(&f, "__pycache__", "something other than .pyc or .pyo files");
+    }
+
+    #[test]
+    fn a_verified_folder_next_to_an_unverified_one_still_keeps_the_worktree() {
+        let (f, tree) = ignoring_fixture();
+        make(&tree, "target", &["CACHEDIR.TAG"]);
+        make(&tree, "dist", &["out.js"]);
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert_eq!(
+            (
+                report.ignored_entries,
+                report.ignored_build_output,
+                report.ignored_unverified
+            ),
+            (2, 1, 1)
+        );
+        let entry = preview(&f);
+        assert_eq!(entry.action, CleanupAction::Kept);
+        let said = entry.reasons.join("; ");
+        assert!(
+            said.contains("dist/ was not accepted as build output"),
+            "{said}"
+        );
+        assert!(!said.contains("target/ was not accepted"), "{said}");
+        let body = serde_json::to_value(&report).unwrap();
+        assert_eq!(body["ignored_unverified"], 1);
+        let kinds: Vec<_> = body["ignored_details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["kind"].as_str().unwrap().to_string())
+            .collect();
+        assert!(kinds.contains(&"build_output".to_string()), "{kinds:?}");
+        assert!(
+            kinds.contains(&"unverified_build_output".to_string()),
+            "{kinds:?}"
+        );
+    }
+
+    #[test]
+    fn a_path_with_unusual_characters_is_checked_where_it_really_is() {
+        let (f, tree) = ignoring_fixture();
+        // A space and a non-ASCII letter make git quote the path without -z.
+        make(&tree, "my app/caf\u{e9}/node_modules", &["x.js"]);
+        track(&f, &tree, "my app/caf\u{e9}/package.json");
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert_eq!(
+            (report.ignored_build_output, report.ignored_unverified),
+            (1, 0),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn a_renamed_file_is_one_changed_entry() {
+        let f = fixture();
+        let tree = f.tree(0);
+        git(&tree, &["mv", "base.txt", "moved.txt"]);
+        let report = f.provider.inspect().unwrap().remove(0);
+        assert_eq!(report.changed_files, 1, "{report:?}");
+        assert_eq!(report.ignored_entries, 0);
     }
 
     #[test]
