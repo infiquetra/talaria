@@ -15,13 +15,20 @@ fn installed_binary_reports_its_version() {
         .unwrap_or_else(|_| panic!("the talaria binary could not be started"));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let current = hermes_contract::compat::CURRENT;
+    let newest = if current.newest_tested == current.pinned_tag {
+        String::new()
+    } else {
+        format!(", newest tested {}", current.newest_tested)
+    };
     let expected = format!(
-        "talaria {}\nhermes: pinned {} ({}), supported from {}, tested to {}\n",
+        "talaria {}\nhermes: tested against {} ({}){newest}\n",
         env!("CARGO_PKG_VERSION"),
         current.pinned_tag,
         &current.pinned_commit[..8],
-        current.floor,
-        current.newest_tested,
+    );
+    assert!(
+        !stdout.contains("pinned") && !stdout.contains("supported from"),
+        "{stdout}"
     );
     assert_eq!(stdout.as_ref(), expected, "stdout");
     assert_eq!(output.status.code(), Some(0), "exit code");

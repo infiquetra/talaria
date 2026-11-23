@@ -1671,7 +1671,7 @@ async fn gap_resumes_rebuilds_resyncs_without_duplicates() {
         resumes[1].params,
         json!({"session_id": "local-session-1", "display_projection": true})
     );
-    let compat_notice = "notice: This gateway runs Hermes 0.22.4. This Talaria supports v0.23.0 and later, and some features will not work. See docs/compatibility.md.".to_string();
+    let compat_notice = "notice: This gateway runs Hermes 0.22.4, older than v0.23.0, the oldest this Talaria was tested against, so some features may not work. See docs/compatibility.md.".to_string();
     let initial_len = SessionState::from_snapshot(snapshot_of(&first))
         .cells()
         .len();

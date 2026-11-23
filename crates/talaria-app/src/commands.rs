@@ -51,8 +51,8 @@ pub fn no_session_notice(name: &str) -> String {
 }
 
 /// The notice when neither `slash.exec` nor `command.dispatch` exists on the gateway.
-pub const NO_SLASH_METHODS: &str = "This Hermes gateway does not run slash commands. Check that \
-                                    it is at the release Talaria is pinned to.";
+pub const NO_SLASH_METHODS: &str = "This Hermes gateway does not run slash commands. It may \
+                                    differ from the Hermes release Talaria was tested against.";
 
 /// What a slash outcome asks the application loop to apply.
 ///

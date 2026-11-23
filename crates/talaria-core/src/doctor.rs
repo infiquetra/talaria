@@ -69,6 +69,8 @@ impl Report {
     }
 }
 
+/// The Hermes release and commit this Talaria was generated from and tested against.
+/// Talaria does not require the gateway to match it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pin {
     pub tag: String,
@@ -164,12 +166,11 @@ pub struct DoctorFacts {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionVerdict {
-    Pinned,
-    SameReleaseOtherCommit,
-    SameReleaseUnknownCommit,
-    OlderThanPin,
-    TooOld,
-    NewerThanPin,
+    /// The gateway is at or above the oldest Hermes release this Talaria was tested against.
+    /// A newer gateway is not a problem, so it lands here too.
+    AtOrAboveOldestTested,
+    /// The gateway is older than the oldest Hermes release this Talaria was tested against.
+    OlderThanTested,
     Unknown,
 }
 
@@ -201,20 +202,15 @@ pub fn connect_notice(
     let parse = |text: &str| self::version(text.strip_prefix('v').unwrap_or(text));
     let running = parse(raw)?;
     let floor = parse(row.floor)?;
-    let newest = parse(row.newest_tested)?;
-    let notice = if running < floor {
-        format!(
-            "This gateway runs Hermes {raw}. This Talaria supports {} and later, and some features will not work. See docs/compatibility.md.",
-            row.floor
-        )
-    } else if running > newest {
-        format!(
-            "This gateway runs Hermes {raw}. This Talaria was tested up to {}. See docs/compatibility.md.",
-            row.newest_tested
-        )
-    } else {
+    // A gateway newer than the tested release is never announced: Talaria works with
+    // the user's gateway or it gets fixed. Only an older gateway gets a plain note.
+    if running >= floor {
         return None;
-    };
+    }
+    let notice = format!(
+        "This gateway runs Hermes {raw}, older than {}, the oldest this Talaria was tested against, so some features may not work. See docs/compatibility.md.",
+        row.floor
+    );
     *shown = true;
     Some(notice)
 }
@@ -231,26 +227,20 @@ pub fn compare_hermes_version(
                 .to_ascii_lowercase()
                 .starts_with(&sha.to_ascii_lowercase())
     }) {
-        return VersionVerdict::Pinned;
+        return VersionVerdict::AtOrAboveOldestTested;
     }
     let Some(running) = code_version.and_then(version) else {
         return VersionVerdict::Unknown;
     };
     if running < hermes_contract::pinned::OLDEST_SUPPORTED {
-        return VersionVerdict::TooOld;
-    }
-    let Some(built) = version(pin.tag.strip_prefix('v').unwrap_or(&pin.tag)) else {
-        return VersionVerdict::Unknown;
-    };
-    if running < built {
-        VersionVerdict::OlderThanPin
-    } else if running > built {
-        VersionVerdict::NewerThanPin
-    } else if code_sha.is_some() {
-        VersionVerdict::SameReleaseOtherCommit
+        VersionVerdict::OlderThanTested
     } else {
-        VersionVerdict::SameReleaseUnknownCommit
+        VersionVerdict::AtOrAboveOldestTested
     }
+}
+
+fn version_text(triple: (u64, u64, u64)) -> String {
+    format!("{}.{}.{}", triple.0, triple.1, triple.2)
 }
 
 fn path_end(c: char) -> bool {
@@ -436,63 +426,36 @@ fn version_check(facts: &DoctorFacts) -> Check {
         .map(short)
         .unwrap_or_else(|| "no commit".into());
     let tag = &facts.pin.tag;
-    let pin = short(&facts.pin.commit);
-    let ordinary_fix = format!(
-        "Talaria usually works with this build. If something misbehaves, install Hermes {tag} and restart the gateway."
-    );
-    let unknown_fix = format!("Run hermes --version and compare it with {tag}.");
+    let tested_commit = short(&facts.pin.commit);
+    let unknown_fix = "Run hermes --version to see which Hermes this is.";
     let (severity, summary, fix) = match compare_hermes_version(
         identity.code_version.as_deref(),
         identity.code_sha.as_deref(),
         &facts.pin,
     ) {
-        VersionVerdict::Pinned => (
+        VersionVerdict::AtOrAboveOldestTested => (
             Severity::Ok,
-            format!("{v} ({sha}), the release Talaria was built for"),
+            format!("Hermes {v}; this Talaria was tested against {tag}"),
             None,
         ),
-        VersionVerdict::SameReleaseOtherCommit => (
+        VersionVerdict::OlderThanTested => (
             Severity::Warn,
-            format!("{v} at commit {sha}; Talaria was built for {tag} ({pin})"),
-            Some(ordinary_fix.as_str()),
-        ),
-        VersionVerdict::SameReleaseUnknownCommit => (
-            Severity::Warn,
-            format!("{v}; the gateway did not report its commit"),
-            Some(ordinary_fix.as_str()),
-        ),
-        VersionVerdict::OlderThanPin => (
-            Severity::Warn,
-            format!("{v}, older than {tag} that Talaria was built for"),
-            Some("Run hermes update, then restart the gateway."),
-        ),
-        VersionVerdict::TooOld => (
-            Severity::Fail,
             format!(
-                "{v}; Talaria needs {}.{}.{} or later",
-                hermes_contract::pinned::OLDEST_SUPPORTED.0,
-                hermes_contract::pinned::OLDEST_SUPPORTED.1,
-                hermes_contract::pinned::OLDEST_SUPPORTED.2
+                "Hermes {v}, older than {}, the oldest this Talaria was tested against; some methods may be missing",
+                version_text(hermes_contract::pinned::OLDEST_SUPPORTED)
             ),
             Some("Run hermes update, then restart the gateway."),
-        ),
-        VersionVerdict::NewerThanPin => (
-            Severity::Warn,
-            format!("{v}, newer than {tag} that Talaria was built for"),
-            Some(
-                "Newer gateways usually work; the Capabilities row shows anything missing. Report problems with both versions named.",
-            ),
         ),
         VersionVerdict::Unknown => (
             Severity::Warn,
             "the gateway did not report a version Talaria can read".into(),
-            Some(unknown_fix.as_str()),
+            Some(unknown_fix),
         ),
     };
     let mut row = check(CheckId::HermesVersion, severity, summary, fix);
     row.details = vec![
         format!("running: {v} at {sha}"),
-        format!("built for: {tag} ({pin})"),
+        format!("tested against: {tag} ({tested_commit})"),
     ];
     row
 }
@@ -903,7 +866,7 @@ pub fn diagnose(facts: &DoctorFacts) -> Report {
             CheckId::Talaria,
             Severity::Ok,
             format!(
-                "Talaria {}, built for Hermes {} ({})",
+                "Talaria {}, tested against Hermes {} ({})",
                 facts.talaria_version,
                 facts.pin.tag,
                 short(&facts.pin.commit)

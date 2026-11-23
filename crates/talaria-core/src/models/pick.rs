@@ -108,7 +108,7 @@ fn notice(session_id: &str, level: NoticeLevel, text: impl Into<String>) -> Mode
 }
 fn unknown_method(action: &str) -> String {
     format!(
-        "This Hermes gateway cannot {action} (unknown method). Update Hermes to the pinned release."
+        "This Hermes gateway cannot {action} (unknown method). It may differ from the Hermes release Talaria was tested against."
     )
 }
 fn effort_value(level: Option<Effort>) -> Value {
