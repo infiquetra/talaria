@@ -14,7 +14,7 @@ The stop's source is kept in the settled turn's `result_meta.stopped_by`, and th
 note file before it sends a stop.
 
 **Rationale.** One accidental keypress ended a run and threw away the plan the agent wrote after
-the owner typed "continue". The owner's rule is to report and recover, with no time limits.
+a person typed "continue". The project's rule is to report and recover, with no time limits.
 
 **Rejected.** Failing as before. Rerunning automatically (it pays again and ignores why the agent
 was stopped). Any timer on the parked call. A new journal record field for the stop source (about

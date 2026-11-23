@@ -54,8 +54,8 @@ hyphen word.
 the text "waiting for model response (80.0s elapsed)". Talaria's reason was the fixed text
 "stopped in Hermes (outcome 'interrupted')" (`crates/talaria-workflow/src/hermes/policy.rs`). The
 calling agent found the 80 seconds in the journal, concluded the provider had an 80 second limit,
-moved every long phase to other models and told the owner so. The Hermes log showed an explicit
-stop request sent from the owner's own Talaria window.
+moved every long phase to other models and reported that as fact. The stop was an explicit stop
+request sent from a Talaria window showing the agent's session.
 
 **Mechanism.** Talaria dropped Hermes's detail and did not say who asked for the stop, so the
 only number the reader could find was an elapsed time, which reads like a limit.

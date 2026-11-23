@@ -55,7 +55,7 @@ Talaria checks every reply against `opts.schema` with a full JSON Schema validat
 
 ## Reading a failed agent
 
-A stop that ends an agent's turn gives a reason starting "agent stopped: ", which names who asked for the stop when Talaria knows (for example "agent stopped: it was stopped with the stop-agent key in the Talaria workflow view; Hermes ended the turn as 'interrupted'"). When Talaria did not send the stop, it may have been a person or Hermes itself. It is not a provider limit or a timeout. Such a call no longer fails: it parks with cause `stopped` and waits for the developer's answer, unless the runner sent the stop because the run was being stopped (or so that the workflow view could restart the agent); only then does the agent fail with that reason. Report it, ask the developer what happened, and do not reroute models because of it.
+A stop that ends an agent's turn gives a reason starting "agent stopped: ", which names who asked for the stop when Talaria knows (for example "agent stopped: it was stopped with the stop-agent key in the Talaria workflow view; Hermes ended the turn as 'interrupted'"). When Talaria did not send the stop, it may have been a person or Hermes itself. It is not a provider limit or a timeout. Such a call no longer fails: it parks with cause `stopped` and waits for the developer's answer, unless the runner sent the stop itself: because the run was being stopped, because the budget ran out, or so that the workflow view could restart the agent. Only then does the agent end without parking, with that reason. Report it, ask the developer what happened, and do not reroute models because of it.
 
 ## Worktree and new project rules
 

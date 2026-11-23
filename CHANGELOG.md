@@ -50,8 +50,8 @@ with the usual caveat that a `0.x` line may break anything between releases.
 - While a workflow run is running, the Workflow line above the composer shows a spinner and the
   time since the run started.
 
-- A workflow agent that someone stops is no longer failed at once. Unless the stop was part of
-  stopping the run, the run waits for you with no time limit and prints the choices: `fail`,
+- A workflow agent that someone stops is no longer failed at once. Unless Talaria's runner
+  sent the stop itself (stopping the run, or the budget running out), the run waits for you with no time limit and prints the choices: `fail`,
   `rerun`, `abort`, or the new `use-reply`, which takes the agent's next reply in its own Hermes
   session (for example after you type "continue" there) as its result.
 - `talaria workflow restart <run> <agent>` (or `--all-failed`) asks for failed agents to run again;
@@ -61,7 +61,8 @@ with the usual caveat that a `0.x` line may break anything between releases.
   line of a run now points at it.
 - When an agent working in its own worktree is cut short, fails or is stopped with uncommitted
   changes, Talaria saves them to a branch and names the branch in the result. The worktree is not
-  changed. Agents without a worktree edit the run's folder directly, and the result now says so.
+  changed. For agents without a worktree, the result lists the folder they ran in:
+  anything they changed is already there, and nothing was saved.
 - The closing line of `workflow run --json` and the rows of `workflow list` show what a run left
   behind: failed agents, agents cut short, uncommitted edits, declared phases that never started,
   and the script's own status. Failed agents, cut-short agents and uncommitted edits are marked
@@ -109,8 +110,8 @@ with the usual caveat that a `0.x` line may break anything between releases.
   raw JSON.
 
 - The stop-agent key (`x`) in the workflow view asks for confirmation, like restart and stop-run.
-- A stopped agent's reason says that a stop was requested, who sent it when Talaria knows, and
-  that it was not a timeout. It used to read "stopped in Hermes (outcome 'interrupted')".
+- A stopped agent's reason names who sent the stop when Talaria knows, says otherwise that
+  Talaria's runner did not send it, and says that it was a stop and not a timeout. It used to read "stopped in Hermes (outcome 'interrupted')".
 - `talaria workflow worktrees remove` now clears a clean worktree whose agent switched to its own
   branch, once the source checkout contains that work. It deletes only merged branches and never a
   branch that existed before the run. Its closing text names the real reasons folders were kept.
