@@ -185,7 +185,8 @@ impl RunJournal {
     /// Queue explicit operator restarts before starting the resumed engine.
     ///
     /// The runner must establish that ordinary in-flight turns have ended before
-    /// selecting them. Completed/skipped calls and unknown keys are unchanged.
+    /// selecting them. Completed/skipped calls, calls whose latest turn completed and unknown
+    /// keys are unchanged.
     /// A synced failed marker makes the next attempt survive another runner crash.
     /// Parked calls use a rerun resolution and still recover any saved result first.
     /// Repeated requests for a key in one execution are idempotent.
@@ -195,13 +196,16 @@ impl RunJournal {
         for key in keys {
             let history = self.history(key)?;
             let Some(last) = history.last() else { continue };
+            // A kept finish, and a turn that completed, are not run again: the resume keeps
+            // the reply, so a restart would pay for it twice.
             if matches!(
                 &last.record,
                 Record::CallFinished {
                     outcome: CallOutcome::Completed { .. } | CallOutcome::Skipped,
                     ..
                 }
-            ) {
+            ) || matches!(&last.record, Record::TurnSettled { outcome, .. } if outcome == "completed")
+            {
                 continue;
             }
             if self
@@ -225,10 +229,13 @@ impl RunJournal {
                     })
                     .await?;
                 }
+                // A retry finish already closes the attempt: a plain resume runs the agent
+                // again, and another finish after it would leave the journal unreadable.
                 Record::CallFinished {
                     outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
                     ..
                 }
+                | Record::CallRetryFinished { .. }
                 | Record::CallResolved { .. } => {}
                 _ => {
                     let turns = history.turns(self.dir.path())?.len() as u32;
@@ -351,6 +358,9 @@ impl RunJournal {
         })
         .await
         .map_err(io_error)??;
+        // Check the call's grammar before the line reaches the file: a record written first
+        // and rejected after would leave a journal that can never be opened again.
+        self.index.lock().map_err(io_error)?.check_next(&record)?;
         #[cfg(feature = "fake-gateway")]
         let observed = self
             .observer
@@ -802,5 +812,59 @@ pub mod testing {
 impl Drop for testing::Writer {
     fn drop(&mut self) {
         self.stop_and_wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SOURCE: &str =
+        "export const meta = {name:'journal', description:'test', phases:[]}; return null;";
+
+    #[tokio::test]
+    async fn a_record_its_call_cannot_take_is_refused_before_it_reaches_the_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = RunDir::create(
+            temp.path(),
+            NewManifest {
+                workflow_name: "journal".into(),
+                args: None,
+                started_at_ms: 0,
+                seed: 1,
+                profile: "fixture".into(),
+                on_unknown: OnUnknown::Wait,
+                talaria_version: "test".into(),
+                build: Default::default(),
+                hermes: serde_json::json!({}),
+                roster: serde_json::json!({}),
+                approval_policy: serde_json::json!({}),
+            },
+            SOURCE,
+        )
+        .unwrap();
+        let (journal, _, _) = RunJournal::open(dir.clone(), SOURCE).await.unwrap();
+        let path = dir.path().join("journal.jsonl");
+        let before = fs::read(&path).unwrap();
+        // A turn for a call that never started breaks the call grammar.
+        let refused = journal
+            .append(Record::TurnIntent {
+                key: "a".repeat(32),
+                attempt: 0,
+                turn: 0,
+                submission_id: "submission".into(),
+                text: Some("prompt".into()),
+                text_ref: None,
+            })
+            .await;
+        assert!(
+            matches!(refused, Err(JournalError::Corrupt { .. })),
+            "{refused:?}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+        // The journal stays usable and can be opened again.
+        journal.check().unwrap();
+        drop(journal);
+        RunJournal::open(dir, SOURCE).await.unwrap();
     }
 }

@@ -331,6 +331,22 @@ pub(crate) struct Index {
     refused: usize,
 }
 impl Index {
+    /// Check a record against its call's history before it is written, with the same rules
+    /// `apply` uses. Only call records are checked; the sequence is the writer's.
+    pub fn check_next(&self, record: &Record) -> Result<(), JournalError> {
+        let n = self.records.len() as u64 + 1;
+        record.validate(n)?;
+        if let Some((key, attempt)) = record.identity() {
+            match self.calls.get(key) {
+                Some(h) => validate_transition(h, record, n)?,
+                None if attempt != 0 || !is_start(record) => {
+                    return Err(corrupt(n, "attempt must start with intent or short finish"));
+                }
+                None => {}
+            }
+        }
+        Ok(())
+    }
     pub fn apply(&mut self, line: RecordLine, dir: &Path) -> Result<(), JournalError> {
         let n = line.seq;
         if n != self.records.len() as u64 + 1 {

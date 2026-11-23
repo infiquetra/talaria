@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::{
     engine::AgentOutcome,
-    journal::{CallOutcome, JournalError, Record, RecordLine},
+    journal::{CallOutcome, JournalError, Record, RecordLine, stopped_outcome},
 };
 
 use super::{
@@ -27,6 +27,8 @@ pub struct AgentEntry {
     pub outcome: Option<CallOutcome>,
     /// The journal line of that finish, which a value kept in a blob needs.
     seq: u64,
+    /// Whether a restart request can be granted for it, read from its latest record.
+    restartable: bool,
 }
 impl AgentEntry {
     /// The agent's state in one word: `completed`, `failed`, `skipped`, `stopped`, `parked`
@@ -52,13 +54,45 @@ impl AgentEntry {
             Some(CallOutcome::Failed { .. } | CallOutcome::Stopped { .. })
         )
     }
-    /// Whether a restart request can be granted for it, exactly as the resume that reads the
-    /// request grants it: every agent that is not kept, also one the run's own stop left
-    /// unfinished, one parked for the operator and one waiting for a reply after a use-reply
-    /// answer. Only a turn whose admission Hermes has not confirmed is refused: the resume
-    /// must recover that admission first.
-    fn restartable(&self) -> bool {
-        !self.kept() && self.last != "turn_intent"
+    /// Why a restart request for it is refused, or `None` when one can be granted.
+    fn refusal(&self) -> Option<String> {
+        if self.restartable {
+            return None;
+        }
+        Some(if self.kept() {
+            format!(
+                "agent {} {}: finished agents are kept — restart would pay for the work twice",
+                self.label,
+                self.state()
+            )
+        } else if self.last == "call_attention" {
+            format!(
+                "agent {} is parked: answer it with talaria workflow resolve; the rerun answer runs it again",
+                self.label
+            )
+        } else {
+            format!(
+                "agent {} is unfinished: talaria workflow resume continues it; if it then fails, ask again",
+                self.label
+            )
+        })
+    }
+}
+
+/// Whether an agent whose latest record is `last` can be restarted: its attempt failed or was
+/// stopped, a stop that was journaled ended its turn, or it waits after an operator's answer.
+/// Anything else is either kept, parked for the operator, or still unfinished: a resume
+/// continues an unfinished agent, and restarting one whose turn completed would throw its
+/// paid reply away.
+fn restartable(last: &Record) -> bool {
+    match last {
+        Record::CallFinished { outcome, .. } => matches!(
+            outcome,
+            CallOutcome::Failed { .. } | CallOutcome::Stopped { .. }
+        ),
+        Record::TurnSettled { outcome, .. } => stopped_outcome(outcome),
+        Record::CallResolved { .. } => true,
+        _ => false,
     }
 }
 
@@ -79,12 +113,14 @@ pub fn agents(records: &[RecordLine]) -> Vec<AgentEntry> {
             last: "",
             outcome: None,
             seq: 0,
+            restartable: false,
         });
         if let Record::CallIntent { label, .. } = &line.record {
             entry.label = label.clone();
         }
         entry.last = line.record.kind();
         entry.seq = line.seq;
+        entry.restartable = restartable(&line.record);
         entry.outcome = match &line.record {
             Record::CallFinished { outcome, .. } => Some(outcome.clone()),
             _ => None,
@@ -158,8 +194,8 @@ fn open(
 pub enum RestartTarget {
     /// One agent, by label or key.
     Agent(String),
-    /// Every agent whose latest attempt failed or was stopped by the budget, and every agent
-    /// a run stop or a use-reply answer left unfinished. Parked agents are left out.
+    /// Every agent a restart by name accepts: its latest attempt failed or was stopped by the
+    /// budget, a journaled stop ended its turn, or it waits after a use-reply answer.
     AllFailed,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -179,8 +215,10 @@ pub struct RestartReport {
 }
 
 /// Write the same restart request the workflow view's restart key writes, for agents that
-/// failed or did not finish. A finished agent is refused: it is kept, and running it again would
-/// pay for its work twice. The request waits for the next `talaria workflow resume`.
+/// failed, were stopped, or wait after a use-reply answer. A finished agent is refused: it is
+/// kept, and running it again would pay for its work twice. A parked agent is refused: its
+/// answer belongs to `talaria workflow resolve`. Any other unfinished agent is refused: a resume
+/// continues it. The request waits for the next `talaria workflow resume`.
 pub fn request_restart(
     runs_dir: &Path,
     target: &str,
@@ -190,29 +228,13 @@ pub fn request_restart(
     let chosen: Vec<&AgentEntry> = match which {
         RestartTarget::Agent(name) => {
             let entry = pick(&run, &all, name)?;
-            if entry.kept() {
-                return Err(AgentError::Refused(format!(
-                    "agent {} {}: finished agents are kept — restart would pay for the work twice",
-                    entry.label,
-                    entry.state()
-                )));
-            }
-            if !entry.restartable() {
-                return Err(AgentError::Refused(format!(
-                    "agent {} is {}: its turn was sent but Hermes has not confirmed it yet; resume the run first so the runner can recover that turn, then ask again",
-                    entry.label,
-                    entry.state()
-                )));
+            if let Some(why) = entry.refusal() {
+                return Err(AgentError::Refused(why));
             }
             vec![entry]
         }
         RestartTarget::AllFailed => {
-            // A parked agent waits for its operator's answer, so only a request by name
-            // restarts it.
-            let failed: Vec<_> = all
-                .iter()
-                .filter(|e| e.restartable() && e.last != "call_attention")
-                .collect();
+            let failed: Vec<_> = all.iter().filter(|e| e.restartable).collect();
             if failed.is_empty() {
                 return Err(AgentError::Refused(format!(
                     "run {run} has no failed agents to restart"
@@ -294,6 +316,7 @@ pub fn agent_result(runs_dir: &Path, target: &str, name: &str) -> Result<AgentRe
 mod tests {
     use super::*;
     use crate::journal::{AdmissionState, AttentionCause, Resolution, ResolutionSource};
+    use serde_json::json;
 
     fn line(seq: u64, record: Record) -> RecordLine {
         RecordLine {
@@ -306,58 +329,77 @@ mod tests {
     fn key(n: u8) -> String {
         char::from(b'a' + n).to_string().repeat(32)
     }
-    fn settled(key: String, meta: Value) -> Record {
+    fn settled(key: String, outcome: &str, meta: Value) -> Record {
         Record::TurnSettled {
             key,
             attempt: 0,
             turn: 0,
             admission_id: "admission".into(),
-            outcome: "interrupted".into(),
+            outcome: outcome.into(),
             final_text: None,
             final_text_ref: None,
             result_meta: meta,
             usage: None,
         }
     }
+    fn finished(key: String, outcome: CallOutcome) -> Record {
+        Record::CallFinished {
+            key,
+            attempt: 0,
+            turns: 1,
+            outcome,
+        }
+    }
 
     #[test]
-    fn a_restart_accepts_every_state_the_resume_grants_it_for() {
+    fn a_restart_accepts_only_a_failed_stopped_or_answered_agent() {
+        let failed = || CallOutcome::Failed {
+            reason: "agent failed".into(),
+        };
         let records = vec![
-            // The run's own stop settled this turn; the call never finished.
-            line(
-                1,
-                settled(key(0), serde_json::json!({"stopped_by":"run_stop"})),
-            ),
-            // The run stopped while this turn ran and could not confirm it settled.
+            line(1, finished(key(0), failed())),
             line(
                 2,
-                Record::TurnAdmitted {
-                    key: key(1),
-                    attempt: 0,
-                    turn: 0,
-                    admission_id: "admission".into(),
-                    status: AdmissionState::Started,
-                    outcome: None,
-                    execution_generation: None,
-                    authority_epoch: 0,
-                },
+                finished(
+                    key(1),
+                    CallOutcome::Stopped {
+                        reason: "token budget exhausted".into(),
+                    },
+                ),
             ),
-            // Answered with use-reply, this one waits for a reply.
+            // The run's own stop settled this turn; the call never finished.
             line(
                 3,
+                settled(key(2), "interrupted", json!({"stopped_by": "run_stop"})),
+            ),
+            line(4, settled(key(3), "cancelled", json!({}))),
+            // Answered with use-reply, this one waits for a reply.
+            line(
+                5,
                 Record::CallResolved {
-                    key: key(2),
+                    key: key(4),
                     attempt: 0,
                     episode: 0,
                     resolution: Resolution::UseReply,
                     source: ResolutionSource::Operator,
                 },
             ),
-            // A parked one: a restart by name answers it with a rerun.
+            // Its turn completed: a resume keeps the paid reply.
+            line(6, settled(key(5), "completed", json!({}))),
+            // A retry is already due: a plain resume runs it again.
             line(
-                4,
+                7,
+                Record::CallRetryFinished {
+                    key: key(6),
+                    attempt: 0,
+                    outcome: failed(),
+                    turns: 1,
+                },
+            ),
+            line(
+                8,
                 Record::CallAttention {
-                    key: key(3),
+                    key: key(7),
                     attempt: 0,
                     episode: 0,
                     cause: AttentionCause::Stopped,
@@ -368,11 +410,23 @@ mod tests {
                     seen_admissions: Vec::new(),
                 },
             ),
-            // A turn Hermes has not confirmed: the resume must recover it first.
             line(
-                5,
+                9,
+                Record::TurnAdmitted {
+                    key: key(8),
+                    attempt: 0,
+                    turn: 0,
+                    admission_id: "admission".into(),
+                    status: AdmissionState::Started,
+                    outcome: None,
+                    execution_generation: None,
+                    authority_epoch: 0,
+                },
+            ),
+            line(
+                10,
                 Record::TurnIntent {
-                    key: key(4),
+                    key: key(9),
                     attempt: 0,
                     turn: 0,
                     submission_id: "submission".into(),
@@ -381,23 +435,105 @@ mod tests {
                 },
             ),
             line(
-                6,
-                Record::CallFinished {
-                    key: key(5),
-                    attempt: 0,
-                    turns: 1,
-                    outcome: CallOutcome::Completed {
-                        value: Some(serde_json::json!("kept")),
+                11,
+                finished(
+                    key(10),
+                    CallOutcome::Completed {
+                        value: Some(json!("kept")),
                         value_ref: None,
                         cut_short: None,
                     },
-                },
+                ),
             ),
         ];
         let all = agents(&records);
-        let restartable: Vec<bool> = all.iter().map(AgentEntry::restartable).collect();
-        assert_eq!(restartable, [true, true, true, true, false, false]);
-        // Only failed or budget-stopped agents are run again unasked by a new execution.
-        assert!(all.iter().all(|e| !e.failed()));
+        let restartable: Vec<bool> = all.iter().map(|e| e.restartable).collect();
+        assert_eq!(
+            restartable,
+            [
+                true, true, true, true, true, false, false, false, false, false, false
+            ]
+        );
+        let refusal = |n: usize| all[n].refusal().unwrap_or_default();
+        assert!(
+            refusal(5)
+                .contains("talaria workflow resume continues it; if it then fails, ask again")
+        );
+        assert!(refusal(6).contains("talaria workflow resume continues it"));
+        assert!(
+            refusal(7).contains(
+                "answer it with talaria workflow resolve; the rerun answer runs it again"
+            )
+        );
+        assert!(refusal(8).contains("talaria workflow resume continues it"));
+        assert!(refusal(9).contains("talaria workflow resume continues it"));
+        assert!(refusal(10).contains("finished agents are kept"));
+    }
+
+    #[test]
+    fn a_completed_turn_or_a_due_retry_is_refused_by_name_and_left_out_of_every_failed() {
+        let temp = tempfile::tempdir().unwrap();
+        let run = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let dir = temp.path().join(run);
+        std::fs::create_dir_all(&dir).unwrap();
+        let intent = |n: u8, label: &str| Record::CallIntent {
+            key: key(n),
+            attempt: 0,
+            call_id: crate::engine::CallId {
+                digest: "0".repeat(64),
+                occurrence: u32::from(n),
+            },
+            label: label.into(),
+            phase: None,
+            workflow_path: Vec::new(),
+            launch: crate::journal::ResolvedLaunch {
+                profile: "fixture".into(),
+                model: "fixture-model".into(),
+                provider: None,
+                effort: None,
+                toolsets: Vec::new(),
+                skills: Vec::new(),
+                max_turns: None,
+                isolation: None,
+                cwd: None,
+            },
+            request_id: format!("request-{n}"),
+        };
+        let records = [
+            Record::RunStarted {
+                run_id: run.into(),
+                script_sha256: "0".repeat(64),
+            },
+            intent(0, "answered"),
+            settled(key(0), "completed", json!({})),
+            intent(1, "retrying"),
+            Record::CallRetryFinished {
+                key: key(1),
+                attempt: 0,
+                outcome: CallOutcome::Failed {
+                    reason: "rate limited".into(),
+                },
+                turns: 1,
+            },
+        ];
+        let text: String = records
+            .into_iter()
+            .enumerate()
+            .map(|(n, record)| serde_json::to_string(&line(n as u64 + 1, record)).unwrap() + "\n")
+            .collect();
+        std::fs::write(dir.join("journal.jsonl"), text).unwrap();
+        for name in ["answered", "retrying"] {
+            let refused = request_restart(temp.path(), run, &RestartTarget::Agent(name.into()));
+            assert!(
+                matches!(&refused, Err(AgentError::Refused(why)) if why.contains("talaria workflow resume continues it")),
+                "{name}: {refused:?}"
+            );
+        }
+        let none = request_restart(temp.path(), run, &RestartTarget::AllFailed);
+        assert!(
+            matches!(&none, Err(AgentError::Refused(why)) if why.contains("has no failed agents")),
+            "{none:?}"
+        );
+        assert!(!dir.join("control").exists());
     }
 }
