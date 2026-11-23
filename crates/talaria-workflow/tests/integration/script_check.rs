@@ -221,3 +221,35 @@ async fn a_syntax_error_on_the_meta_line_has_its_column_in_the_file() {
         "{error:?}"
     );
 }
+
+#[tokio::test]
+async fn a_body_that_closes_the_wrapper_early_cannot_hang_the_check() {
+    let started = std::time::Instant::now();
+    let report = check("});\nfor (;;) {}\n(async function () {\n").await;
+    assert!(!report.ok);
+    assert_eq!(report.errors[0].kind, "syntax");
+    assert!(
+        report.errors[0]
+            .message
+            .contains("while it was being compiled"),
+        "{:?}",
+        report.errors
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+}
+
+#[tokio::test]
+async fn a_nested_script_path_is_found_through_the_cwd_option() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(
+        cwd.path().join("child.js"),
+        "export const meta = { name: 'child', description: 'x' };\nreturn 1;\n",
+    )
+    .unwrap();
+    let source = format!("{META}await workflow({{ scriptPath: 'child.js' }});\n");
+    let without = check_script(&source, &options(TIERS)).await;
+    assert!(!without.ok);
+    let mut with = options(TIERS);
+    with.cwd = cwd.path().into();
+    assert!(check_script(&source, &with).await.ok);
+}
