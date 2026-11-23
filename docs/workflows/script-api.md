@@ -57,7 +57,7 @@ undefined option values are absent. Non-blank strings retain their original whit
 | `profile` | Non-blank profile. |
 | `toolsets`, `skills` | Non-empty arrays of distinct, non-blank strings. Duplicates compare exactly. |
 | `isolation` | Exactly `'worktree'`. |
-| `maxTurns` | Integer from 1 to 10,000. Omitted means the profile's turn-limit policy, which may be finite. |
+| `maxTurns` | Integer from 1 to 10,000. Omitted means no step cap: the profile's own `agent.max_turns` does not apply to workflow agents (since 0.9.2-fix.2). Leave it out. An agent stopped at a step cap cannot make another tool call, so it cannot commit or report; the token budget is the only limit. `talaria workflow check` warns about every `maxTurns` it finds. |
 | `stallMs` | Positive integer; accepted and ignored. Its first use logs an explanation. |
 
 An `agentType` option is refused: Hermes has no agent types; use `tier`, `toolsets` or `skills`.
