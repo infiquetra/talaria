@@ -558,7 +558,7 @@ async fn resume(
         // with its own budget kept, a new execution could only be refused again.
         let replay = match fold.terminal.as_deref() {
             Some("completed") => Some(("completed", 0)),
-            Some("completed_with_failures") => Some(("completed_with_failures", 0)),
+            Some("completed_with_failures") => Some(("completed_with_failures", 5)),
             Some("budget_exhausted") if req.budget_tokens.is_none() && req.budget_usd.is_none() => {
                 Some(("budget_exhausted", 4))
             }
@@ -1345,8 +1345,9 @@ async fn execute_inner(
     Ok(match file.outcome.as_str() {
         "completed" => 0,
         "budget_exhausted" => 4,
-        // The script returned; the failed agents are named in the result, not in the exit code.
-        "completed_with_failures" => 0,
+        // The script returned, so the result is printed, but an agent failed: a caller that
+        // reads only the exit code must not take the run for a clean one.
+        "completed_with_failures" => 5,
         "failed" => 1,
         _ => 3,
     })

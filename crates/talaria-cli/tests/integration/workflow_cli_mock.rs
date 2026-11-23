@@ -39,8 +39,8 @@ fn output(cmd: &mut Command) -> Output {
 fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).unwrap()
 }
-/// The limit is generous on purpose: these tests start real processes, and under a full parallel
-/// run on a loaded machine a 20 second limit was exceeded by a wait that takes 2 seconds alone.
+/// The limit is generous on purpose: these tests start real processes on what may be a loaded
+/// machine.
 fn wait_for(mut condition: impl FnMut() -> bool) {
     let until = Instant::now() + Duration::from_secs(60);
     while !condition() {
@@ -430,7 +430,7 @@ fn ctrl_c_graceful_then_resume_and_hard_kill() {
                 .arg(&runs)
                 .arg(target),
         );
-        assert!(resumed.status.success(), "{}", text(&resumed.stderr));
+        assert_eq!(resumed.status.code(), Some(if graceful { 5 } else { 0 }), "{}", text(&resumed.stderr));
         let after = records(&folder);
         assert_eq!(
             after
@@ -633,6 +633,13 @@ fn progress_detach_keeps_runner_alive() {
     terminal.type_keys("p");
     wait_for(|| folder.join("control/pause.json").exists());
     assert!(!records(&folder).iter().any(|r| r["t"] == "run_finished"));
+    // The view learns that its pause was written from a message that arrives after the file
+    // exists. A second key before that message asks to pause again, not to resume, so wait for
+    // the view to say so.
+    wait_for(|| {
+        let screen = terminal.screen_text();
+        screen.contains("pausing") || screen.contains("paused")
+    });
     terminal.type_keys("p");
     wait_for(|| !folder.join("control/pause.json").exists());
     terminal.type_keys("X");
@@ -797,7 +804,7 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
         fs::canonicalize(rest.split(' ').next().unwrap()).unwrap()
     };
     let resolved_runs = fs::canonicalize(&runs).unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
     let shown = text(&out.stdout);
     let lines: Vec<&str> = shown.lines().collect();
     let last = *lines.last().unwrap();
@@ -818,7 +825,7 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
         "completed_with_failures",
         &format!("{} tokens", finished["spend"]["tokens"]),
         &format!("{} turn", finished["spend"]["cache_unknown_turns"]),
-        &format!("talaria workflow resume --json --runs-dir "),
+        "talaria workflow resume --json --runs-dir ",
     ] {
         assert!(last.contains(part), "{part} missing from {last}");
     }
@@ -868,7 +875,7 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
         output(cmd.arg("--runs-dir").arg(&runs).arg(fixture("scripts/one.js")))
     };
     let out = run(true);
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
     let finished = run_finished(&out.stdout);
     assert_eq!(finished["outcome"], "completed_with_failures");
     assert_eq!(finished["reason"], "1 agent failed");
@@ -915,7 +922,7 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
             .arg(&runs)
             .arg(&id),
     );
-    assert_eq!(replay.status.code(), Some(0), "{}", text(&replay.stderr));
+    assert_eq!(replay.status.code(), Some(5), "{}", text(&replay.stderr));
     let again = run_finished(&replay.stdout);
     assert_eq!(again["outcome"], "completed_with_failures");
     assert_eq!(again["failed_agents"], finished["failed_agents"]);
@@ -946,7 +953,7 @@ fn work_found_on_a_moved_route_is_printed_live_and_listed_before_the_result() {
             .arg(&runs)
             .arg(fixture("scripts/one.js")),
     );
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
     let shown = text(&out.stdout);
     let note = "runner: untracked work: ";
     // Printed live, as a log event, when the sweep wrote it.
@@ -992,7 +999,7 @@ fn a_route_that_could_not_be_checked_is_not_listed_as_untracked_work() {
             .arg(&runs)
             .arg(fixture("scripts/one.js")),
     );
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(out.status.code(), Some(5), "{}", text(&out.stderr));
     let finished = run_finished(&out.stdout);
     assert!(finished.get("untracked_work").is_none(), "{finished}");
     assert!(

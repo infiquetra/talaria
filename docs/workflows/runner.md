@@ -210,8 +210,9 @@ refused or stopped appear as `agent_finished` lines with state `refused` or `sto
 agent stopped at its step cap with state `cut short`. Diagnostic and refusal lines go to standard error. Detached children
 always write human output to `runner.log`; the parent prints one detached-run object or line.
 
-Exit codes are 0 completed or completed with failures, 1 failed or unconfirmed, 2 usage or refusal, 3 aborted, and 4
-budget exhausted (the script returned, but the budget refused or stopped at least one agent).
+Exit codes are 0 completed, 1 failed or unconfirmed, 2 usage or refusal, 3 aborted, 4 budget exhausted (the script
+returned, but the budget refused or stopped at least one agent), and 5 completed with failures (the script returned
+and its result is printed, but at least one agent failed).
 
 ## Integration and verification
 

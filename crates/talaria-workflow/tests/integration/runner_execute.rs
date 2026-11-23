@@ -1075,7 +1075,7 @@ fn a_sweep_that_could_not_check_the_route_stops_the_restart_and_is_not_untracked
     let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
     let folder = run_folder(&worker);
     let (exit, events) = worker.finish();
-    assert_eq!(exit.code, 0, "{:?}", exit.problems);
+    assert_eq!(exit.code, 5, "{:?}", exit.problems);
     let notes: Vec<String> = records(&folder)
         .iter()
         .filter_map(|r| r["event"]["message"].as_str().map(str::to_owned))
@@ -1558,7 +1558,7 @@ fn resolve_answers_parked_call() {
     answer_parked(&h.runs, id, key, attempt, episode, Resolution::Fail).unwrap();
     assert!(answer_parked(&h.runs, id, key, attempt, episode, Resolution::Fail).is_err());
     let (exit, events) = worker.finish();
-    assert_eq!(exit.code, 0);
+    assert_eq!(exit.code, 5);
     let finish = events
         .iter()
         .find(|e| e["event"] == "run_finished")
@@ -1584,7 +1584,7 @@ fn resolve_answers_parked_call() {
     let worker = Worker::start(Start::New(req), services(&h.wire, true));
     let folder = run_folder(&worker);
     let (exit, events) = worker.finish();
-    assert_eq!(exit.code, 0);
+    assert_eq!(exit.code, 5);
     assert_eq!(
         events
             .iter()
