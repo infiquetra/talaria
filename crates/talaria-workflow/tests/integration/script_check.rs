@@ -367,7 +367,9 @@ async fn a_nested_workflows_phase_does_not_count_as_the_parents() {
     let mut opts = options(TIERS);
     opts.workflows_dir = dir.path().into();
     let report = check_script(
-        &format!("{PLAN_REVIEW}phase('Plan');\nawait workflow('child');\nreturn 1;\nphase('Review');\n"),
+        &format!(
+            "{PLAN_REVIEW}phase('Plan');\nawait workflow('child');\nreturn 1;\nphase('Review');\n"
+        ),
         &opts,
     )
     .await;
@@ -375,7 +377,11 @@ async fn a_nested_workflows_phase_does_not_count_as_the_parents() {
     assert_eq!(report.phases, ["Plan"]);
     let text = warnings(&report);
     assert_eq!(text.len(), 1, "{text:?}");
-    assert!(text[0].contains("phase Review was not exercised"), "{}", text[0]);
+    assert!(
+        text[0].contains("phase Review was not exercised"),
+        "{}",
+        text[0]
+    );
 }
 
 #[tokio::test]
@@ -383,7 +389,11 @@ async fn a_parent_that_never_calls_phase_is_not_warned_because_of_its_childs_pha
     let dir = child_with_review_phase();
     let mut opts = options(TIERS);
     opts.workflows_dir = dir.path().into();
-    let report = check_script(&format!("{PLAN_REVIEW}await workflow('child');\nreturn 1;\n"), &opts).await;
+    let report = check_script(
+        &format!("{PLAN_REVIEW}await workflow('child');\nreturn 1;\n"),
+        &opts,
+    )
+    .await;
     assert!(report.ok, "{:?}", report.errors);
     assert!(report.phases.is_empty(), "{:?}", report.phases);
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);

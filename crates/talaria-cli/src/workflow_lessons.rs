@@ -416,7 +416,12 @@ mod tests {
             error,
             Err(LessonError::RelativeFolder(PathBuf::from(".talaria")))
         );
-        assert!(error.unwrap_err().to_string().contains("nothing was written"));
+        assert!(
+            error
+                .unwrap_err()
+                .to_string()
+                .contains("nothing was written")
+        );
     }
 
     #[test]
