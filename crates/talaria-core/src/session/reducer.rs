@@ -740,6 +740,21 @@ fn complete(state: &mut SessionState, payload: &Value) {
         }
         TurnOutcome::Interrupted => interrupted_notice(state),
         TurnOutcome::Failed => {
+            // Hermes marks an error reply partial when its text is the answer produced before
+            // the failure, not the error itself. Keep it ahead of the notice unless this turn
+            // already shows a reply.
+            if !unknown
+                && payload["partial"] == Value::Bool(true)
+                && let Some(reply) = nonblank(payload, "text")
+            {
+                let start = state.turn_start.min(state.cells.len());
+                let answered = state.cells[start..]
+                    .iter()
+                    .any(|cell| matches!(cell, Cell::Assistant(_)));
+                if !answered {
+                    add_assistant(state, reply.to_owned(), true, false, false);
+                }
+            }
             let text = if unknown {
                 "Hermes ended the turn with a status this version of Talaria does not recognise."
             } else {
