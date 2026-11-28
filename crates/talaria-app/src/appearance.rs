@@ -306,9 +306,11 @@ impl AppearanceService {
                 match skin_names(client, &format!("/skin {prefix}"), session).await {
                     Ok(names) if names.iter().any(|item| item == name) => Some(true),
                     Ok(names) if names.len() < 30 => Some(false),
+                    Err(CallError::NotConnected) => return vec![NOT_REACHED.to_owned()],
                     _ => None,
                 }
             }
+            Err(CallError::NotConnected) => return vec![NOT_REACHED.to_owned()],
             Err(_) => None,
         };
         if validation == Some(false) {
@@ -319,20 +321,9 @@ impl AppearanceService {
             }
             return lines;
         }
-        let previous = if validation.is_none() {
-            match configured_skin(client, session).await {
-                Ok(value) => Some(value),
-                Err(CallError::NotConnected) => return vec![NOT_REACHED.to_owned()],
-                Err(_) => {
-                    return vec![
-                        "Talaria could not read the previous skin, so nothing was changed."
-                            .to_owned(),
-                    ];
-                }
-            }
-        } else {
-            None
-        };
+        if validation.is_none() {
+            return vec!["The skin could not be checked, so nothing was changed.".to_owned()];
+        }
         let mut params = Map::new();
         if let Some(session) = session {
             params.insert("session_id".to_owned(), json!(session));
@@ -373,41 +364,19 @@ impl AppearanceService {
                     error if not_sent(error) => "not connected".to_owned(),
                     _ => "no answer".to_owned(),
                 };
-                if validation == Some(true) {
-                    lines.push(success);
-                    lines.push(format!(
-                        "Talaria could not fetch the new skin ({why}). Run /skin to refresh."
-                    ));
-                } else {
-                    lines.push(format!("The skin may have been saved, but Talaria could not verify it ({why}). Run /skin to refresh."));
-                }
+                lines.push(success);
+                lines.push(format!(
+                    "Talaria could not fetch the new skin ({why}). Run /skin to refresh."
+                ));
                 return lines;
             }
         };
-        let prior_state = self.state.clone();
         let change = self.update(AppearanceInput::Described {
             payload,
             requested: Some(value.clone()),
         });
         let unknown = matches!(change, AppearanceChange::UnknownSkin { .. });
-        let unverified = validation.is_none() && self.skin().is_none();
         match (self.skin(), change) {
-            (_, AppearanceChange::UnknownSkin { requested, .. }) if previous.is_some() => {
-                let previous = previous.as_deref().unwrap_or("default");
-                let mut params = Map::new();
-                if let Some(session) = session {
-                    params.insert("session_id".to_owned(), json!(session));
-                }
-                params.insert("key".to_owned(), json!("skin"));
-                params.insert("value".to_owned(), json!(previous));
-                match call(client, "config.set", Value::Object(params)).await {
-                    Ok(result) if result.get("value").and_then(Value::as_str) == Some(previous) => {
-                        self.state = prior_state;
-                        lines.push(format!("The skin was not kept. Hermes has no skin named \"{requested}\", and the list of skins could not be fetched. The profile is still \"{previous}\"."));
-                    }
-                    _ => lines.push(format!("Hermes has no skin named \"{requested}\". Talaria could not confirm restoration of \"{previous}\"; run /skin to check.")),
-                }
-            }
             (
                 _,
                 AppearanceChange::UnknownSkin {
@@ -424,9 +393,7 @@ impl AppearanceService {
             }
             _ => {}
         }
-        if unverified {
-            lines.insert(0, "The skin may have been saved, but Talaria could not verify it. Run /skin to check.".to_owned());
-        } else if !unknown {
+        if !unknown {
             lines.insert(0, success);
         }
         lines
@@ -651,21 +618,6 @@ async fn call(client: &Client, method: &str, params: Value) -> Result<Value, Cal
     client
         .call_raw(method, params, CallOptions { timeout: None })
         .await
-}
-
-async fn configured_skin(client: &Client, session: Option<&str>) -> Result<String, CallError> {
-    let mut params = Map::new();
-    params.insert("key".to_owned(), json!("skin"));
-    if let Some(session) = session {
-        params.insert("session_id".to_owned(), json!(session));
-    }
-    let result = call(client, "config.get", Value::Object(params)).await?;
-    result
-        .get("value")
-        .and_then(Value::as_str)
-        .filter(|name| !name.trim().is_empty())
-        .map(str::to_owned)
-        .ok_or(CallError::Encode)
 }
 
 async fn skin_names(
