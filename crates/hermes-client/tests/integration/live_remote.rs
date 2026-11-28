@@ -3,7 +3,8 @@
 use crate::remote_round_trip;
 
 use hermes_client::remote::{
-    RemoteConfig, RemoteName, TokenStore, connect, native_auth, profile_injector, status, ws_ticket,
+    RefreshError, RemoteConfig, RemoteError, RemoteName, TokenStore, connect, native_auth,
+    profile_injector, status, ws_ticket,
 };
 use hermes_client::{Client, Inbound, Recorder, RecorderOptions, rpc::CallOptions};
 use serde_json::{Value, json};
@@ -36,6 +37,108 @@ fn read_config(home: &std::path::Path, name: &str) -> RemoteConfig {
             .and_then(toml::Value::as_str)
             .map(str::to_owned),
     }
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_two_processes_refresh_once() {
+    let Some(name) = std::env::var_os("TALARIA_LIVE_REMOTE").filter(|v| !v.is_empty()) else {
+        skip("TALARIA_LIVE_REMOTE not set; operator precondition missing");
+        return;
+    };
+    let name = name.to_string_lossy().into_owned();
+    let cfg = read_config(&config_dir(), &name);
+    let exe = std::env::current_exe().expect("test binary path");
+    // Both children start before either is waited on; start order is the index.
+    let children: Vec<_> = (0..2)
+        .map(|_| {
+            std::process::Command::new(&exe)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "live_remote::flt3_child",
+                    "--nocapture",
+                ])
+                .env("TALARIA_FLT3_CHILD", "1")
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .expect("start child")
+        })
+        .collect();
+    let outputs: Vec<_> = children
+        .into_iter()
+        .map(|child| child.wait_with_output().expect("wait for child"))
+        .collect();
+    for (index, output) in outputs.iter().enumerate() {
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("FLT3_CHILD_RAN=ok"),
+            "child {index} never ran the child test; was it renamed?"
+        );
+    }
+    let codes: Vec<Option<i32>> = outputs.iter().map(|o| o.status.code()).collect();
+    if codes != [Some(0), Some(0)] {
+        println!(
+            "child exit statuses: {:?} and {:?}",
+            outputs[0].status, outputs[1].status
+        );
+        panic!("both children must exit 0, got {codes:?}");
+    }
+    let sign_in_refusals = codes.iter().filter(|c| **c == Some(3)).count();
+    let mut shown = cfg.base_url.clone();
+    shown
+        .set_host(Some("gateway.example.com"))
+        .expect("replacement host");
+    let record = json!({
+        "endpoint": hermes_client::redact_url(shown.as_str()),
+        "statuses": ["ok", "ok"],
+        "sign_in_refusals": sign_in_refusals,
+    });
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/remote/two-process-refresh.json");
+    std::fs::create_dir_all(path.parent().unwrap()).expect("fixtures/remote folder");
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&record).expect("record") + "\n",
+    )
+    .expect("write record");
+    println!("LIVE_REMOTE_RESULT: PASSED");
+}
+
+/// Child half of `live_two_processes_refresh_once`; does nothing unless started by it.
+#[tokio::test]
+#[ignore]
+async fn flt3_child() {
+    if std::env::var_os("TALARIA_FLT3_CHILD").is_none() {
+        return;
+    }
+    println!("FLT3_CHILD_RAN=ok");
+    let name = std::env::var("TALARIA_LIVE_REMOTE").expect("remote name");
+    let home = config_dir();
+    let cfg = read_config(&home, &name);
+    let store = TokenStore::new(&home, cfg.name.clone());
+    let Some(tokens) = store.load().ok().flatten() else {
+        std::process::exit(4);
+    };
+    loop {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        if now >= tokens.expires_at - 60 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let code = match ws_ticket::mint_ws_ticket(&cfg, &store).await {
+        Ok(_) => 0,
+        Err(
+            RemoteError::RefusedAfterRefresh { .. }
+            | RemoteError::Refresh(RefreshError::SessionExpired { .. })
+            | RemoteError::NotSignedIn { .. },
+        ) => 3,
+        Err(_) => 4,
+    };
+    std::process::exit(code);
 }
 
 #[tokio::test]

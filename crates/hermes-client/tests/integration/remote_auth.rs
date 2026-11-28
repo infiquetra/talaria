@@ -560,10 +560,65 @@ async fn refresh_session_expired_clears_store() {
         .expect("expired");
     assert!(matches!(
         error,
-        hermes_client::remote::RefreshError::SessionExpired
+        hermes_client::remote::RefreshError::SessionExpired { .. }
     ));
     assert!(!store.path().exists());
     assert!(error.to_string().contains("talaria remote login"));
+    assert!(
+        error
+            .to_string()
+            .contains(&hermes_client::redact_url(g.base().as_str()))
+    );
+}
+
+#[tokio::test]
+async fn refresh_waits_on_the_token_lock() {
+    use std::os::unix::fs::OpenOptionsExt;
+    let home = tempfile::tempdir().unwrap();
+    let store = store(home.path());
+    seed(&store, now() - 1, 1, 0o600);
+    let g = MockGateway::start(Options::default()).await;
+    let cfg = config(g.base());
+    // Another process holds the exclusive lock on the lock file beside the token.
+    let lock_path = store.lock_path();
+    std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(&lock_path)
+        .unwrap();
+    lock.lock().unwrap();
+    let mut refresh = tokio::spawn({
+        let store = store.clone();
+        async move { native_auth::refresh(&cfg, &store).await }
+    });
+    // The lock is taken on a blocking thread, so wait in real time.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), &mut refresh)
+            .await
+            .is_err(),
+        "refresh must wait while another process holds the token lock"
+    );
+    // The other process finishes: it saves a newer token and releases the lock.
+    let newer = TokenSet::for_test(
+        "SENTINEL-access-newer",
+        "SENTINEL-refresh-newer",
+        now() + 1000,
+        5,
+    );
+    store.save(&newer).unwrap();
+    lock.unlock().unwrap();
+    drop(lock);
+    let found = tokio::time::timeout(Duration::from_secs(10), refresh)
+        .await
+        .expect("refresh finishes after the lock is released")
+        .unwrap()
+        .expect("refresh");
+    assert!(found == newer, "refresh must return the token on disk");
+    assert_eq!(g.counts().refresh, 0);
 }
 
 #[tokio::test]
