@@ -8091,7 +8091,12 @@ fn apply_hivecode(
                     },
                 ));
             }
-            Action::RestoreComposer(text) => effects.extend(load_draft(state, text)),
+            // A draft typed while the command was in flight is never replaced.
+            Action::RestoreComposer(text) => {
+                if state.draft.is_empty() {
+                    effects.extend(load_draft(state, text));
+                }
+            }
             Action::Changed => effects.push(AppEffect::Redraw),
             action @ Action::RunCommand { .. } => {
                 if clear_composer {
