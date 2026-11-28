@@ -241,6 +241,8 @@ mod model_roles_subagents;
 mod model_saved;
 #[path = "integration/mutation_fences.rs"]
 mod mutation_fences;
+#[path = "integration/pager_copy.rs"]
+mod pager_copy;
 #[path = "integration/permissions_command.rs"]
 mod permissions_command;
 #[path = "integration/permissions_profile.rs"]

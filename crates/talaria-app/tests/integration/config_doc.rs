@@ -212,6 +212,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("pager_prev_match", &["shift+n"][..]),
         ("pager_details", &["t"][..]),
         ("pager_close", &["q"][..]),
+        ("pager_copy", &["y"][..]),
         ("toggle_tasks", &["ctrl+t"][..]),
         ("approvals_toggle", &["shift+tab"][..]),
         ("composer_send_now", &["ctrl+enter"][..]),

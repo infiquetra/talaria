@@ -2980,7 +2980,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 216);
+        assert_eq!(Action::ALL.len(), 217);
         for (index, action) in Action::ALL.iter().enumerate() {
             assert_eq!(action.index(), index, "{}", action.config_name());
         }
@@ -3030,7 +3030,8 @@ mod tests {
                 | Action::PagerNextMatch
                 | Action::PagerPrevMatch
                 | Action::PagerDetails
-                | Action::PagerClose => KeyContext::Pager,
+                | Action::PagerClose
+                | Action::PagerCopy => KeyContext::Pager,
                 Action::QueueEdit
                 | Action::QueueRemove
                 | Action::QueueSteer
@@ -3212,7 +3213,8 @@ mod tests {
                 | Action::PagerNextMatch
                 | Action::PagerPrevMatch
                 | Action::PagerDetails
-                | Action::PagerClose => KeyContext::Pager,
+                | Action::PagerClose
+                | Action::PagerCopy => KeyContext::Pager,
                 Action::QueueEdit
                 | Action::QueueRemove
                 | Action::QueueSteer
@@ -3401,6 +3403,7 @@ mod tests {
             (Action::PagerPrevMatch, vec!["Shift+N"]),
             (Action::PagerDetails, vec!["T"]),
             (Action::PagerClose, vec!["Q"]),
+            (Action::PagerCopy, vec!["Y"]),
             (Action::ToggleTasks, vec!["Ctrl+T"]),
             (Action::ApprovalsToggle, vec!["Shift+Tab"]),
             (Action::QueueEdit, vec!["Enter", "E"]),
@@ -3604,7 +3607,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 216);
+        assert_eq!(Action::ALL.len(), 217);
     }
 
     #[test]

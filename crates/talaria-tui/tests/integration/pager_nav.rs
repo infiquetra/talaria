@@ -295,7 +295,7 @@ fn close_keys_never_interrupt() {
         "Control-O while typing does nothing"
     );
     match stayed {
-        PagerOutcome::Stay { .. } | PagerOutcome::Close => {}
+        PagerOutcome::Stay { .. } | PagerOutcome::Copy { .. } | PagerOutcome::Close => {}
     }
     let _ = assistant(9, "unused", true);
 }
