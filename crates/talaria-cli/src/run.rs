@@ -4687,11 +4687,21 @@ impl Screen for TuiScreen {
             .as_ref()
             .is_some_and(|key| fleet_peek_is_foreground(key, view.profile, view.session_id));
         let clock = unix_now();
+        let subagents = peeked
+            .as_ref()
+            .and_then(|key| view.subagents.and_then(|hub| hub.counts(key)))
+            .map(|counts| counts.live);
         let panel = if foreground {
-            view.state.map(|session| PeekPanel {
-                session,
-                stack: Some(&self.prompts),
-                now: clock,
+            view.state.map(|session| {
+                // Only the foreground session's summary is kept true by its reducer effects.
+                let summary = session.background().summary();
+                PeekPanel {
+                    session,
+                    stack: Some(&self.prompts),
+                    now: clock,
+                    subagents,
+                    background: Some(summary.running + summary.bg_running),
+                }
             })
         } else {
             view.peek
@@ -4700,6 +4710,8 @@ impl Screen for TuiScreen {
                     session: &frame.state,
                     stack: Some(&self.peek_prompts),
                     now: clock,
+                    subagents,
+                    background: None,
                 })
         };
         // A review opened from the fleet list draws in its place; Esc returns to the list.

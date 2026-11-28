@@ -702,6 +702,8 @@ fn narrow_selected_peek_keeps_its_title_model_and_status() {
             session: &session,
             stack: None,
             now: NOW,
+            subagents: None,
+            background: None,
         }),
         60,
         24,
@@ -758,6 +760,8 @@ fn peek_panel_tail_card_and_outcome() {
             session: &session,
             stack: None,
             now: NOW,
+            subagents: None,
+            background: None,
         }),
         80,
         24,
@@ -792,6 +796,8 @@ fn peek_panel_tail_card_and_outcome() {
             session: &session,
             stack: Some(&stack),
             now: NOW,
+            subagents: None,
+            background: None,
         }),
         80,
         24,
@@ -828,11 +834,128 @@ fn peek_panel_tail_card_and_outcome() {
             session: &session,
             stack: None,
             now: NOW,
+            subagents: None,
+            background: None,
         }),
         80,
         24,
     );
     assert_drawn(&actual, &expected);
+}
+
+/// The rows under the peek separator for a finished session with these counts.
+fn peek_lines(subagents: Option<u32>, background: Option<usize>) -> Vec<String> {
+    let session = finished_session();
+    let completed = peek_row(Outcome::Completed);
+    let state = hold(vec![completed], listed(&["fixture"]), None, None);
+    let (screen, _) = paint(
+        &state,
+        Some(PeekPanel {
+            session: &session,
+            stack: None,
+            now: NOW,
+            subagents,
+            background,
+        }),
+        80,
+        24,
+    );
+    let separator = screen
+        .iter()
+        .position(|row| row.contains("\u{2500}\u{2500} peek \u{2500}\u{2500}"))
+        .expect("the peek separator is drawn");
+    screen[separator + 1..].to_vec()
+}
+
+const PEEK_HEADER: &str =
+    "\u{2713} compile \u{b7} fixture \u{b7} ollama-cloud/minimax-m3.1-flash \u{b7} completed now";
+
+#[test]
+fn peek_count_line_under_the_header() {
+    let completed = peek_row(Outcome::Completed);
+    let profiles = listed(&["fixture"]);
+    let tail = [
+        "\u{2500}\u{2500} peek \u{2500}\u{2500}".to_owned(),
+        PEEK_HEADER.to_owned(),
+        "3 sub-agents \u{b7} 2 background".to_owned(),
+        "peek-ok".to_owned(),
+        "\u{2713} completed".to_owned(),
+    ];
+    let (expected, _) = expect_screen(Expect {
+        rows: std::slice::from_ref(&completed),
+        queue: &[],
+        profiles: &profiles,
+        scope_note: None,
+        link_note: None,
+        peek: &tail,
+        answer: false,
+        snapshot: true,
+        width: 80,
+        height: 24,
+    });
+    let session = finished_session();
+    let state = hold(vec![completed], profiles.clone(), None, None);
+    let (actual, buffer) = paint(
+        &state,
+        Some(PeekPanel {
+            session: &session,
+            stack: None,
+            now: NOW,
+            subagents: Some(3),
+            background: Some(2),
+        }),
+        80,
+        24,
+    );
+    assert_drawn(&actual, &expected);
+    let count_row = actual
+        .iter()
+        .position(|row| row == "3 sub-agents \u{b7} 2 background")
+        .expect("the count line is drawn");
+    assert_eq!(
+        actual[count_row - 1],
+        PEEK_HEADER,
+        "the header line is unchanged"
+    );
+    assert!(
+        buffer[(0, count_row as u16)]
+            .modifier
+            .contains(Modifier::DIM),
+        "the count line is dim"
+    );
+
+    let lines = peek_lines(Some(1), Some(1));
+    assert_eq!(lines[0], PEEK_HEADER);
+    assert_eq!(lines[1], "1 sub-agent \u{b7} 1 background");
+}
+
+#[test]
+fn peek_omits_a_zero_or_unknown_part() {
+    let lines = peek_lines(Some(0), Some(0));
+    assert_eq!(lines[0], PEEK_HEADER);
+    assert_eq!(lines[1], "peek-ok", "zero counts draw no line: {lines:?}");
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("sub-agent") || line.contains("background")),
+        "{lines:?}"
+    );
+
+    let lines = peek_lines(None, Some(2));
+    assert_eq!(lines[0], PEEK_HEADER);
+    assert_eq!(lines[1], "2 background");
+    assert!(
+        !lines.iter().any(|line| line.contains("sub-agent")),
+        "{lines:?}"
+    );
+
+    let lines = peek_lines(Some(1), None);
+    assert_eq!(lines[0], PEEK_HEADER);
+    assert_eq!(lines[1], "1 sub-agent");
+    assert!(
+        !lines.iter().any(|line| line.contains("background")),
+        "{lines:?}"
+    );
 }
 
 #[test]
@@ -863,6 +986,8 @@ fn peek_approval_card_clause_follows_focus() {
             session: &session,
             stack: Some(&stack),
             now: NOW,
+            subagents: None,
+            background: None,
         }),
         80,
         24,
@@ -891,6 +1016,8 @@ fn peek_approval_card_clause_follows_focus() {
             session: &session,
             stack: Some(&stack),
             now: NOW,
+            subagents: None,
+            background: None,
         }),
         80,
         24,
@@ -914,6 +1041,8 @@ fn peek_approval_card_clause_follows_focus() {
             session: &session,
             stack: Some(&stack),
             now: NOW,
+            subagents: None,
+            background: None,
         }),
         80,
         24,
@@ -948,6 +1077,8 @@ fn peek_approval_card_clause_follows_focus() {
             session: &session,
             stack: Some(&stack),
             now: NOW,
+            subagents: None,
+            background: None,
         }),
         80,
         24,

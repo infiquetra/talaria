@@ -1125,6 +1125,8 @@ pub struct AppState {
     pub peek_timeouts: crate::peek::PeekTimeouts,
     /// The peeked session, as the worker last reported it.
     pub peek_frame: Option<crate::fleet_actions::PeekFrame>,
+    /// The peeked row attached to `subagents` on behalf of the fleet peek.
+    peek_subagent_key: Option<RowKey>,
     /// The foreground reply the overlay sent: its submission id and row.
     fleet_fg_reply: Option<(String, RowKey)>,
     /// The foreground row whose stop the overlay sent.
@@ -1408,6 +1410,7 @@ impl AppState {
             peek_worker: None,
             peek_timeouts: crate::peek::PeekTimeouts::default(),
             peek_frame: None,
+            peek_subagent_key: None,
             fleet_fg_reply: None,
             fleet_fg_stop: None,
             launch_ui: crate::bg::dialog::LaunchUi::default(),
@@ -16820,9 +16823,22 @@ pub(crate) fn peek_worker(state: &mut AppState) -> &crate::fleet_actions::PeekWo
     }
 }
 
+/// Detach the sub-agent tracker opened for the fleet peek, keeping the foreground row's tracker.
+fn detach_peek_subagent(state: &mut AppState) {
+    let Some(old) = state.peek_subagent_key.take() else {
+        return;
+    };
+    if foreground_row(state).as_ref() != Some(&old)
+        && let Some(hub) = state.subagents.as_mut()
+    {
+        hub.detach(&old);
+    }
+}
+
 /// Close the peek worker: its queued work runs, then it closes the peek and ends.
 pub(crate) fn drop_peek_worker(state: &mut AppState) {
     state.peek_worker = None;
+    detach_peek_subagent(state);
 }
 
 /// What the peek worker reported between results.
@@ -16830,6 +16846,19 @@ fn peek_report(state: &mut AppState, report: crate::fleet_actions::PeekReport) -
     use crate::fleet_actions::PeekReport;
     use talaria_core::fleet_view::{FleetViewInput, Focus};
     match report {
+        PeekReport::Attached { key, client } => {
+            if state.fleet.is_none() {
+                return Vec::new();
+            }
+            if state.peek_subagent_key.as_ref() != Some(&key) {
+                detach_peek_subagent(state);
+                if let Some(hub) = state.subagents.as_mut() {
+                    hub.attach(key.clone(), client);
+                    state.peek_subagent_key = Some(key);
+                }
+            }
+            Vec::new()
+        }
         PeekReport::Frame(frame) => {
             if state.fleet.is_none() {
                 return Vec::new();
@@ -16861,6 +16890,7 @@ fn peek_report(state: &mut AppState, report: crate::fleet_actions::PeekReport) -
         }
         PeekReport::Gone => {
             state.peek_frame = None;
+            detach_peek_subagent(state);
             vec![AppEffect::Redraw]
         }
         PeekReport::Input(input) => fleet_input(state, input),

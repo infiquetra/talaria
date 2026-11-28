@@ -39,6 +39,11 @@ pub struct PeekFrame {
 
 /// What the worker tells the app between effect results.
 pub enum PeekReport {
+    /// The peek attached a session on its link, so the app can track its live sub-agents.
+    Attached {
+        key: RowKey,
+        client: hermes_client::Client,
+    },
     /// The peeked session changed.
     Frame(Box<PeekFrame>),
     /// The peek closed.
@@ -106,6 +111,7 @@ async fn work(
     reports: Option<mpsc::UnboundedSender<PeekReport>>,
 ) {
     let mut events: Option<mpsc::Receiver<LinkEvent>> = None;
+    let mut attached_key: Option<RowKey> = None;
     let mut last_frame = Instant::now() - FRAME_GAP;
     let mut frame_due = false;
     loop {
@@ -131,7 +137,21 @@ async fn work(
                     events = Some(taken);
                 }
                 frame_due = true;
-                if peek.state().is_none() {
+                if let Some((key, _)) = peek.state() {
+                    if attached_key.as_ref() != Some(key)
+                        && let Some(client) = peek.client()
+                    {
+                        attached_key = Some(key.clone());
+                        send(
+                            &reports,
+                            PeekReport::Attached {
+                                key: key.clone(),
+                                client,
+                            },
+                        );
+                    }
+                } else {
+                    attached_key = None;
                     send(&reports, PeekReport::Gone);
                     frame_due = false;
                 }

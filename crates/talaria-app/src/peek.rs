@@ -248,6 +248,12 @@ impl PeekService {
         self.session.as_ref().map(|session| &session.key)
     }
 
+    /// The client for the currently attached peek session's profile.
+    #[must_use]
+    pub fn client(&self) -> Option<Client> {
+        self.link.as_ref().map(|link| link.client.clone())
+    }
+
     /// Detach any other peek, then resume `key`. A link of the same profile is reused.
     pub async fn open(&mut self, key: RowKey) -> Result<(), PeekError> {
         if self
