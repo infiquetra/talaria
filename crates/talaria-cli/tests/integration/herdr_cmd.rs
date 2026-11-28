@@ -7,12 +7,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use talaria_app::fleet::{FleetLinkState, FleetSnapshot};
-use talaria_app::side_connection::SideScope;
-use talaria_core::fleet::{
-    FleetRegistry,
-    herdr::{HerdrPane, project},
-};
 
 fn mock_binary() -> PathBuf {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
@@ -90,36 +84,6 @@ fn calls(root: &Path) -> Vec<Vec<String>> {
 }
 
 #[test]
-fn fleet_list_json_includes_herdr_backend() {
-    let pane = HerdrPane {
-        pane_id: "wfixture:p1".into(),
-        workspace_id: "wfixture".into(),
-        tab_id: "wfixture:t1".into(),
-        agent: "codex".into(),
-        name: "fixture".into(),
-        status: "working".into(),
-        title: "Task".into(),
-    };
-    let mut registry = FleetRegistry::new();
-    registry.observe_herdr(project(&pane, "hello", 1.0));
-    let snapshot = FleetSnapshot {
-        version: 1,
-        scope: SideScope::Host { profiles: vec![] },
-        link: FleetLinkState::Connected,
-        profiles: vec![],
-        rows: registry.rows().into_iter().cloned().collect(),
-        queue: vec![],
-        counts: registry.counts(),
-        diagnostics: vec![],
-        as_of: 1.0,
-    };
-    let json = talaria_cli::fleet_cmd::snapshot_json(&snapshot);
-    assert_eq!(json["rows"][0]["backend"], "herdr");
-    assert_eq!(json["rows"][0]["agent"], "codex");
-    assert!(talaria_cli::fleet_cmd::render_text(&snapshot, None, 1.0).contains("[herdr codex]"));
-}
-
-#[test]
 fn panes_diagnostics_and_probe_are_read_only() {
     let tmp = tempfile::tempdir().expect("temporary directory");
     prepare(tmp.path());
@@ -140,7 +104,7 @@ fn panes_diagnostics_and_probe_are_read_only() {
 }
 
 #[test]
-fn fleet_list_command_includes_live_terminal_agents() {
+fn fleet_list_json_omits_herdr() {
     let tmp = tempfile::tempdir().expect("temporary directory");
     prepare(tmp.path());
     let gateway = mock_gateway::StandaloneGateway::start(tmp.path());
@@ -159,11 +123,7 @@ fn fleet_list_command_includes_live_terminal_agents() {
     let value: Value = serde_json::from_slice(&output.stdout).expect("fleet snapshot");
     let rows = value["rows"].as_array().expect("rows");
     assert!(
-        rows.iter()
-            .any(|row| row["backend"] == "herdr" && row["session_id"] == "wfixture:p1")
-    );
-    assert!(
-        rows.iter()
-            .any(|row| row["backend"] == "hermes" && row["session_id"] == "session-1")
+        !rows.iter().any(|row| row["backend"] == "herdr"),
+        "fleet list must not include Herdr pane rows: {rows:?}"
     );
 }

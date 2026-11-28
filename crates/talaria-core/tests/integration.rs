@@ -173,8 +173,6 @@ mod fleet_view_keys;
 mod fleet_view_pane;
 #[path = "integration/fleet_view_rows.rs"]
 mod fleet_view_rows;
-#[path = "integration/herdr_mapping.rs"]
-mod herdr_mapping;
 #[path = "integration/hivecode_authoring.rs"]
 mod hivecode_authoring;
 #[path = "integration/hivecode_notices.rs"]

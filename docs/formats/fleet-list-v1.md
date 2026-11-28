@@ -35,10 +35,10 @@ Field values:
 | Field | Values |
 | --- | --- |
 | profile `status` | `loading`, `listed`, `failed`, `parked`, `out_of_scope`. `reason` is set for `failed` and `parked`, is `"outside the profile-only view"` for `out_of_scope`, else `null`. `truncated` is true only for a `listed` profile whose list returned 200 sessions, Hermes's limit; a working session beyond them has no row. |
-| row `backend` | `hermes`, `acp`, or `herdr`. Herdr identities use profile `herdr:<pane-id>` and the pane ID as `session_id`. |
+| row `backend` | `hermes` or `acp`. |
 | row `agent` | External agent display name, or `null` for Hermes. |
 | row `state` | `needs_you`, `working`, `failed`, `done`, `idle`. |
-| row `outcome` | `completed`, `interrupted`, `failed`, `unknown`, `null`. An unknown Herdr state is `idle` with an `unknown` outcome; it is never reported as completed. |
+| row `outcome` | `completed`, `interrupted`, `failed`, `unknown`, `null`. |
 | row `stale` | The last read of the row's profile failed, or the link dropped; the state is the last one known. |
 | row `gone` | The session left the list while its finished turn was not acknowledged. |
 | row `unlisted` | A waiting session the list does not show (hidden, or past the 200-row limit). |

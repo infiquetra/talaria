@@ -1,4 +1,4 @@
-//! Live comforts: alerts and Herdr state against a running gateway.
+//! Live comforts: alerts against a running gateway.
 //!
 //! Ignored unless a person asks for it. Prints `LIVE_COMFORTS_RESULT: PASSED` or
 //! `SKIPPED (<reason>)`; with `TALARIA_LIVE_REQUIRE=1` a skip fails the test.
@@ -9,7 +9,7 @@
 
 use crate::support;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -158,44 +158,6 @@ fn wait_idle(terminal: &mut Terminal, quiet: Duration, limit: Duration) -> bool 
     false
 }
 
-/// The id after `talaria --resume ` in the resume hint.
-fn resume_id(text: &str) -> String {
-    let marker = "talaria --resume ";
-    let start = text
-        .find(marker)
-        .unwrap_or_else(|| panic!("no resume hint in the output:\n{text}"))
-        + marker.len();
-    text[start..]
-        .split_whitespace()
-        .next()
-        .unwrap_or_else(|| panic!("the resume hint has no id:\n{text}"))
-        .to_owned()
-}
-
-/// Complete fake-Herdr runs: argument lists split on `--end--`.
-fn read_runs(log: &Path) -> Vec<Vec<String>> {
-    let Ok(text) = std::fs::read_to_string(log) else {
-        return Vec::new();
-    };
-    let mut runs = Vec::new();
-    let mut current = Vec::new();
-    for line in text.lines() {
-        if line == "--end--" {
-            runs.push(std::mem::take(&mut current));
-        } else {
-            current.push(line.to_owned());
-        }
-    }
-    runs
-}
-
-fn flag(run: &[String], name: &str) -> Option<String> {
-    run.iter()
-        .skip_while(|arg| arg.as_str() != name)
-        .nth(1)
-        .cloned()
-}
-
 #[ignore = "needs a running gateway"]
 #[test]
 fn live_alerts_and_herdr_state() {
@@ -226,10 +188,6 @@ fn live_alerts_and_herdr_state() {
         return;
     }
 
-    let fake = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../talaria-app/tests/support/fake_herdr.sh");
-    assert!(fake.is_file(), "missing {}", fake.display());
-
     let home = tempfile::tempdir().unwrap();
     let project = home.path().join("proj");
     std::fs::create_dir(&project).unwrap();
@@ -241,7 +199,6 @@ fn live_alerts_and_herdr_state() {
             .is_ok_and(|status| status.success()),
         "a temporary git project"
     );
-    let log = home.path().join("herdr.log");
 
     // A clean environment: no config file, history under the temporary home, no TMUX.
     let mut terminal = Launch::new(home.path())
@@ -249,16 +206,6 @@ fn live_alerts_and_herdr_state() {
         .cwd(&project)
         .size(60, 160)
         .answer_queries()
-        .env("HERDR_ENV", "1")
-        .env("HERDR_PANE_ID", "p_live")
-        .env(
-            "HERDR_BIN_PATH",
-            fake.to_str().expect("a printable fake path"),
-        )
-        .env(
-            "FAKE_HERDR_LOG",
-            log.to_str().expect("a printable log path"),
-        )
         .args(&[
             "--no-ensure",
             "--profile",
@@ -316,76 +263,10 @@ fn live_alerts_and_herdr_state() {
     type_line(&mut terminal, "/quit");
     let screen = terminal.finish(Duration::from_secs(20));
     assert_eq!(screen.exit_code, Some(0), "{}", screen.text);
-    let text = screen.text;
-    let id = resume_id(&text);
     assert!(
         project.join(".pytest_cache/x").is_file(),
         "the denied command never ran"
     );
-
-    let runs = read_runs(&log);
-    assert!(!runs.is_empty(), "Herdr saw reports");
-    let states: Vec<Option<String>> = runs.iter().map(|run| flag(run, "--state")).collect();
-    assert!(states.contains(&Some("idle".to_owned())), "{runs:?}");
-    assert!(states.contains(&Some("working".to_owned())), "{runs:?}");
-    assert!(states.contains(&Some("blocked".to_owned())), "{runs:?}");
-
-    let seqs: Vec<u64> = runs
-        .iter()
-        .filter_map(|run| flag(run, "--seq"))
-        .map(|seq| seq.parse().expect("a numeric seq"))
-        .collect();
-    assert!(
-        seqs.windows(2).all(|pair| pair[0] < pair[1]),
-        "the sequence rises: {seqs:?}"
-    );
-
-    let with_session: Vec<&Vec<String>> = runs
-        .iter()
-        .filter(|run| flag(run, "--agent-session-id").as_deref() == Some(id.as_str()))
-        .collect();
-    assert!(!with_session.is_empty(), "a report carries the session id");
-    assert!(
-        with_session.iter().any(|run| {
-            let tail: Vec<&str> = run
-                .iter()
-                .skip_while(|arg| arg.as_str() != "--")
-                .map(|arg| arg.as_str())
-                .collect();
-            tail == [
-                "--",
-                "talaria",
-                "--resume",
-                id.as_str(),
-                "--profile",
-                &hermes_contract::pinned::live_profile(),
-            ]
-        }),
-        "a session report carries the resume list: {runs:?}"
-    );
-
-    let blocked = runs
-        .iter()
-        .find(|run| flag(run, "--state").as_deref() == Some("blocked"))
-        .expect("a blocked report");
-    assert!(
-        flag(blocked, "--message")
-            .as_deref()
-            .is_some_and(|message| message.starts_with("approval:")),
-        "the blocked report carries the approval message: {blocked:?}"
-    );
-    let idle_after_blocked = runs
-        .iter()
-        .skip_while(|run| flag(run, "--state").as_deref() != Some("blocked"))
-        .skip(1)
-        .any(|run| flag(run, "--state").as_deref() == Some("idle"));
-    assert!(idle_after_blocked, "idle follows the denial: {runs:?}");
-
-    let releases = runs
-        .iter()
-        .filter(|run| run.iter().any(|arg| arg == "release-agent"))
-        .count();
-    assert_eq!(releases, 1, "one release on exit: {runs:?}");
 
     println!("LIVE_COMFORTS_RESULT: PASSED");
 }

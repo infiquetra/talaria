@@ -90,8 +90,6 @@ mod fleet_pane_screens;
 mod fleet_pr_column;
 #[path = "integration/fleet_view_screens.rs"]
 mod fleet_view_screens;
-#[path = "integration/herdr_peek.rs"]
-mod herdr_peek;
 #[path = "integration/history_search.rs"]
 mod history_search;
 #[path = "integration/history_text.rs"]

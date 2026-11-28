@@ -2,6 +2,19 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-28 — The status record is Talaria's only report to Herdr
+
+**Context.** Talaria reported its state to old Herdr by running `herdr pane report-agent`, and
+listed old Herdr's terminals as fleet rows.
+
+**Decision.** Both are removed. The status record that a terminal which answered the startup
+probe receives is the only report, and `[herdr] report_state` switches it. The fleet lists
+Hermes and Agent Client Protocol (ACP) sessions. `talaria herdr panes` stays as a read-only
+listing.
+
+**Costs and revisit conditions.** A terminal that did not answer the startup probe gets no
+report. Revisit if an operator needs fleet rows for terminals that are not Talaria sessions.
+
 ## 2026-11-24 — Use the same workflow selection across terminal widths
 
 Wide windows show the run, phases and agents as connected cards. Narrow windows

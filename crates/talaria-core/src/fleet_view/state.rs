@@ -1219,18 +1219,11 @@ fn stop_start(state: &mut FleetViewState) -> Vec<FleetViewEffect> {
     let external = state
         .row(&key)
         .is_some_and(|row| row.backend() == FleetBackend::Acp);
-    let terminal = state
-        .row(&key)
-        .is_some_and(|row| row.backend() == FleetBackend::Herdr);
     state.target = Some(key);
     state.focus = Focus::ConfirmStop;
     state.notice = Some(if external {
         format!(
             "Stop \"{title}\"? Open permissions will be cancelled. Press x again to stop, any other key to keep it running."
-        )
-    } else if terminal {
-        format!(
-            "Send Ctrl+C to \"{title}\"? Press x again to interrupt, any other key to keep it running."
         )
     } else {
         confirm_text(&title)
@@ -1275,13 +1268,6 @@ fn answer_start(state: &mut FleetViewState) -> Vec<FleetViewEffect> {
         state.notice = Some(NOTHING_TO_ANSWER.to_owned());
         return Vec::new();
     };
-    if state
-        .find_row(&key)
-        .is_some_and(|row| row.backend() == crate::fleet::FleetBackend::Herdr)
-    {
-        state.cursor = Some(key);
-        return reply_start(state);
-    }
     if state.is_foreground(&key) {
         // The foreground card takes the keys once the overlay is gone.
         return vec![FleetViewEffect::Close];

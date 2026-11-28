@@ -25,7 +25,7 @@ use talaria_app::app::{
 use talaria_app::appearance::{AppearanceView, ThemeFileSession};
 use talaria_app::attachments::{Action as AttachmentAction, LabelStyle};
 use talaria_app::bg::dialog::{DialogEvent, DialogStatus, LaunchSubmit};
-use talaria_app::comforts::{editor, herdr::HerdrReporter, prompt_history::PromptHistory, suspend};
+use talaria_app::comforts::{editor, prompt_history::PromptHistory, suspend};
 use talaria_app::config::{self, LoadedConfig};
 use talaria_app::connection::OpenConnection;
 use talaria_app::context::ContextBlock;
@@ -362,7 +362,6 @@ pub struct TuiScreen {
     search: Option<HistorySearch>,
     config: config::Config,
     folder: std::path::PathBuf,
-    reporter: Option<HerdrReporter>,
     pane: PaneReport,
     report_session: Option<(String, String)>,
     expected: Arc<AtomicBool>,
@@ -6156,9 +6155,6 @@ impl Screen for TuiScreen {
     fn restore(&mut self) {
         let _ = self.terminal.restore();
         let _ = self.guard.leave_raw();
-        if let Some(reporter) = self.reporter.take() {
-            reporter.release(Duration::from_millis(500));
-        }
     }
 
     fn toggle_label(&self) -> Option<String> {
@@ -6236,12 +6232,6 @@ impl Screen for TuiScreen {
     fn report_pane(&mut self, pane: &PaneReport, session: Option<(&str, &str)>) {
         self.pane = pane.clone();
         self.report_session = session.map(|(id, profile)| (id.into(), profile.into()));
-        if let Some(reporter) = &self.reporter {
-            reporter.report(pane, session);
-            for notice in reporter.take_notices() {
-                let _ = self.sender.send(ScreenInput::ComfortNotice(notice));
-            }
-        }
     }
 
     fn report_seat(&mut self, state: SeatState) {
@@ -6301,14 +6291,6 @@ impl TuiScreen {
         self.released.store(false, Ordering::SeqCst);
         if let Some(input) = &self.input {
             input.resume();
-        }
-        if let Some(reporter) = &self.reporter {
-            reporter.report(
-                &self.pane,
-                self.report_session
-                    .as_ref()
-                    .map(|(id, profile)| (id.as_str(), profile.as_str())),
-            );
         }
     }
 
@@ -6726,17 +6708,6 @@ fn session(
         history,
         search: None,
         folder: launch.folder.clone(),
-        reporter: HerdrReporter::from_env_with_notices(
-            config.herdr.report_state,
-            &|key| std::env::var(key).ok(),
-            unix_millis,
-            {
-                let sender = sender.clone();
-                move |notice| {
-                    let _ = sender.send(ScreenInput::ComfortNotice(notice));
-                }
-            },
-        ),
         config,
         pane: PaneReport {
             state: PaneState::Idle,
@@ -6911,12 +6882,6 @@ fn should_record_submission(text: &str, has_session: bool) -> bool {
             _ => true,
         },
     }
-}
-
-fn unix_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 #[cfg(test)]

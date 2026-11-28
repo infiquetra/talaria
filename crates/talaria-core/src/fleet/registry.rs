@@ -187,8 +187,6 @@ pub enum FleetInput {
     },
     /// An independently owned session changed.
     External(ExternalSession),
-    /// An observation and terminal location from a live pane owner.
-    Herdr(super::herdr::HerdrProjection),
     /// An external owner ended a session.
     RemoveExternal { key: RowKey },
     /// Retain a stopped external process's row until acknowledgement.
@@ -1021,17 +1019,6 @@ pub fn update(reg: &mut FleetRegistry, input: FleetInput) -> Vec<FleetEffect> {
             on_subscribed(reg, key, view, at, &mut effects, &mut dirty)
         }
         FleetInput::External(session) => on_external(reg, session, &mut effects, &mut dirty),
-        FleetInput::Herdr(projection) => {
-            let key = projection.session.key.clone();
-            on_external(reg, projection.session, &mut effects, &mut dirty);
-            touch(&mut reg.rows, &key, &mut dirty, |entry| {
-                let location = format!(
-                    "{} {} {}",
-                    projection.workspace, projection.tab, projection.pane
-                );
-                entry.row.terminal_location = Some(crate::text::sanitize(&location).into_owned());
-            });
-        }
         FleetInput::RemoveExternal { key } => {
             if reg
                 .rows

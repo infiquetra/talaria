@@ -1,10 +1,8 @@
 //! Fleet transcripts wait for Enter and stay off the Hermes session wire.
 
 use crate::acp_harness;
-use crate::herdr_harness;
 use crate::mock_gateway;
 
-use std::panic::AssertUnwindSafe;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -121,7 +119,7 @@ async fn acp_transcript_waits_for_enter() {
         entered: false,
         delivery: FleetVoiceDelivery::Prompt,
     };
-    commit_fleet_transcript(&waiting, Some(&mut harness.service), None).await;
+    commit_fleet_transcript(&waiting, Some(&mut harness.service)).await;
     acp_harness::settle().await;
     assert!(
         !prompt_texts().iter().any(|text| text == "ship the fix"),
@@ -131,99 +129,13 @@ async fn acp_transcript_waits_for_enter() {
         entered: true,
         ..waiting
     };
-    commit_fleet_transcript(&entered, Some(&mut harness.service), None).await;
+    commit_fleet_transcript(&entered, Some(&mut harness.service)).await;
     acp_harness::settle().await;
     assert!(
         prompt_texts().iter().any(|text| text == "ship the fix"),
         "Enter sends the ACP transcript"
     );
     harness.service.close().await;
-}
-
-#[tokio::test]
-async fn herdr_transcript_waits_for_enter() {
-    let name = "voice_multi_backend::herdr_transcript_waits_for_enter";
-    if !herdr_harness::in_child(name) {
-        herdr_harness::run_case(name, "");
-        return;
-    }
-    let mut service = herdr_harness::service(None);
-    service.poll_once().await.expect("discovery");
-    let row = herdr_harness::key("wfixture:p3");
-    let waiting = FleetVoiceCommit {
-        key: row,
-        text: "ship the fix".to_owned(),
-        entered: false,
-        delivery: FleetVoiceDelivery::Prompt,
-    };
-    commit_fleet_transcript(&waiting, None, Some(&mut service)).await;
-    herdr_harness::settle().await;
-    assert!(
-        !herdr_harness::calls()
-            .iter()
-            .any(|call| call.get(1).is_some_and(|part| part == "prompt")),
-        "a Herdr transcript is not sent before Enter"
-    );
-    let entered = FleetVoiceCommit {
-        entered: true,
-        ..waiting
-    };
-    commit_fleet_transcript(&entered, None, Some(&mut service)).await;
-    herdr_harness::settle().await;
-    let calls = herdr_harness::calls();
-    assert!(
-        calls
-            .iter()
-            .any(|call| { call == &["agent", "prompt", "wfixture:p3", "ship the fix"] }),
-        "Enter sends the Herdr transcript: {calls:?}"
-    );
-    service.close().await;
-}
-
-#[tokio::test]
-async fn blocked_herdr_transcript_uses_answer() {
-    let name = "voice_multi_backend::blocked_herdr_transcript_uses_answer";
-    if !herdr_harness::in_child(name) {
-        herdr_harness::run_case(name, "");
-        return;
-    }
-    let mut service = herdr_harness::service(None);
-    service.poll_once().await.expect("discovery");
-    let row = herdr_harness::key("wfixture:p2");
-    let waiting = FleetVoiceCommit {
-        key: row,
-        text: "yes".to_owned(),
-        entered: false,
-        delivery: FleetVoiceDelivery::Answer,
-    };
-    commit_fleet_transcript(&waiting, None, Some(&mut service)).await;
-    herdr_harness::settle().await;
-    assert!(
-        !herdr_harness::calls()
-            .iter()
-            .any(|call| call.get(1).is_some_and(|part| part == "send-keys")),
-        "a blocked pane is not answered before Enter"
-    );
-    let entered = FleetVoiceCommit {
-        entered: true,
-        ..waiting
-    };
-    commit_fleet_transcript(&entered, None, Some(&mut service)).await;
-    herdr_harness::settle().await;
-    let calls = herdr_harness::calls();
-    assert!(
-        calls
-            .iter()
-            .any(|call| { call == &["agent", "send-keys", "wfixture:p2", "y", "e", "s", "enter"] }),
-        "Enter answers a blocked pane through the answer path: {calls:?}"
-    );
-    assert!(
-        !calls
-            .iter()
-            .any(|call| call.get(1).is_some_and(|part| part == "prompt")),
-        "a blocked pane is not sent as a prompt: {calls:?}"
-    );
-    service.close().await;
 }
 
 #[tokio::test]
@@ -276,7 +188,7 @@ async fn permission_answer_waits_for_enter() {
             options: options.clone(),
         },
     };
-    commit_fleet_transcript(&waiting, Some(&mut harness.service), None).await;
+    commit_fleet_transcript(&waiting, Some(&mut harness.service)).await;
     acp_harness::settle().await;
     assert!(
         acp_harness::responses(7).is_empty(),
@@ -286,7 +198,7 @@ async fn permission_answer_waits_for_enter() {
         entered: true,
         ..waiting
     };
-    commit_fleet_transcript(&entered, Some(&mut harness.service), None).await;
+    commit_fleet_transcript(&entered, Some(&mut harness.service)).await;
     acp_harness::settle().await;
     let answers = acp_harness::responses(7);
     assert!(!answers.is_empty(), "Enter sends the permission answer");
@@ -304,28 +216,7 @@ async fn zero_hermes_traffic_on_external_voice() {
         external_acp_sends_no_hermes_frames().await;
         return;
     }
-    if herdr_harness::in_child(name) {
-        external_herdr_sends_no_hermes_frames().await;
-        return;
-    }
-    let acp_result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        acp_harness::run_case(name, "", |_| follow_up_script());
-    }));
-    let herdr_result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        herdr_harness::run_case(name, "");
-    }));
-    let mut failures = Vec::new();
-    if let Err(payload) = acp_result {
-        failures.push(panic_text(payload));
-    }
-    if let Err(payload) = herdr_result {
-        failures.push(panic_text(payload));
-    }
-    assert!(
-        failures.is_empty(),
-        "external voice missed its backend or touched Hermes:\n{}",
-        failures.join("\n")
-    );
+    acp_harness::run_case(name, "", |_| follow_up_script());
 }
 
 async fn external_acp_sends_no_hermes_frames() {
@@ -344,7 +235,7 @@ async fn external_acp_sends_no_hermes_frames() {
         entered: true,
         delivery: FleetVoiceDelivery::Prompt,
     };
-    commit_fleet_transcript(&entered, Some(&mut harness.service), None).await;
+    commit_fleet_transcript(&entered, Some(&mut harness.service)).await;
     acp_harness::settle().await;
     assert!(
         prompt_texts().iter().any(|text| text == "ship the fix"),
@@ -352,38 +243,4 @@ async fn external_acp_sends_no_hermes_frames() {
     );
     assert_no_hermes_session_frames(&gateway, before);
     harness.service.close().await;
-}
-
-async fn external_herdr_sends_no_hermes_frames() {
-    let gateway = mock_gateway::StandaloneGateway::start(&herdr_harness::root());
-    let mut service = herdr_harness::service(None);
-    service.poll_once().await.expect("discovery");
-    let before = gateway.frame_count();
-    let entered = FleetVoiceCommit {
-        key: herdr_harness::key("wfixture:p3"),
-        text: "ship the fix".to_owned(),
-        entered: true,
-        delivery: FleetVoiceDelivery::Prompt,
-    };
-    commit_fleet_transcript(&entered, None, Some(&mut service)).await;
-    herdr_harness::settle().await;
-    let calls = herdr_harness::calls();
-    assert!(
-        calls
-            .iter()
-            .any(|call| { call == &["agent", "prompt", "wfixture:p3", "ship the fix"] }),
-        "Enter delivers the Herdr transcript before the gateway is checked: {calls:?}"
-    );
-    assert_no_hermes_session_frames(&gateway, before);
-    service.close().await;
-}
-
-fn panic_text(payload: Box<dyn std::any::Any + Send>) -> String {
-    if let Some(text) = payload.downcast_ref::<String>() {
-        return text.clone();
-    }
-    if let Some(text) = payload.downcast_ref::<&str>() {
-        return (*text).to_owned();
-    }
-    "isolated test panicked".to_owned()
 }

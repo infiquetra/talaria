@@ -1115,7 +1115,6 @@ pub struct AppState {
     acp_manager: Option<crate::fleet::ExternalHandle>,
     acp_agents: Vec<(String, String)>,
     acp_views: BTreeMap<RowKey, talaria_core::fleet::acp::AcpMapping>,
-    herdr_service: Option<crate::herdr::HerdrService>,
     /// The latest fleet snapshot.
     pub fleet_snapshot: Option<Arc<crate::fleet::FleetSnapshot>>,
     /// The foreground row and view last reported to the fleet service.
@@ -1404,7 +1403,6 @@ impl AppState {
             acp_manager: None,
             acp_agents: Vec::new(),
             acp_views: BTreeMap::new(),
-            herdr_service: None,
             fleet_snapshot: None,
             fleet_reported: None,
             peek_worker: None,
@@ -2395,8 +2393,6 @@ pub enum AppEffect {
     Models(ModelsEffect),
     /// One peek effect for the peek worker; its results come back as [`AppMessage::FleetView`].
     FleetPeek(talaria_core::fleet_view::FleetViewEffect),
-    /// An explicit action for a terminal agent.
-    Herdr(talaria_core::fleet_view::FleetViewEffect),
     /// The foreground row's reply or stop, through the foreground's own paths.
     FleetForeground(ForegroundJob),
     /// An input for the overlay, known without a call.
@@ -7201,18 +7197,6 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                             "The selected permission is no longer available.".into(),
                         );
                     }
-                }
-                if let Some(target) = state.client_voice_target.as_mut()
-                    && target.backend == talaria_core::fleet::FleetBackend::Herdr
-                    && target.need.is_none()
-                {
-                    target.need = state.fleet_snapshot.as_ref().and_then(|snapshot| {
-                        snapshot
-                            .queue
-                            .iter()
-                            .find(|item| item.id.key == target.key)
-                            .map(|item| item.id.clone())
-                    });
                 }
             }
             let input = talaria_core::voice::client::Input::Cutoff(
@@ -15409,130 +15393,6 @@ fn apply<S: Screen>(
                 executor.spawn(async move { link.close().await });
             }
             AppEffect::BindLinkServices => bind_link_services(state, executor),
-            AppEffect::Herdr(effect) => {
-                use talaria_core::fleet_view::{
-                    FleetViewEffect, FleetViewInput, PeekStatus, ReplyOutcome, StopOutcome,
-                };
-                let Some(client) = state
-                    .herdr_service
-                    .as_ref()
-                    .and_then(crate::herdr::HerdrService::client)
-                else {
-                    if let FleetViewEffect::SendReply { key, .. } = &effect {
-                        state.client_voice_inflight.remove(key);
-                        let _ = executor.sender.send(AppMessage::FleetView(
-                            FleetViewInput::ReplyDone {
-                                key: key.clone(),
-                                outcome: ReplyOutcome::NotAttached {
-                                    reason: "the terminal agent is unavailable".into(),
-                                },
-                            },
-                        ));
-                    }
-                    continue;
-                };
-                let snapshot = state.fleet_snapshot.clone();
-                let voice_blocked = match &effect {
-                    FleetViewEffect::SendReply { key, .. } => state
-                        .client_voice_drafts
-                        .get(key)
-                        .map(|target| target.need.is_some()),
-                    _ => None,
-                };
-                executor.send_later(async move {
-                    let input = match effect {
-                        FleetViewEffect::OpenPeek(key) => {
-                            let row = snapshot.as_ref().and_then(|snapshot| {
-                                snapshot.rows.iter().find(|row| row.key == key)
-                            });
-                            let has_open_prompt = row.is_some_and(|row| {
-                                row.state == talaria_core::fleet::RowState::NeedsYou
-                            });
-                            let running = row.is_some_and(|row| {
-                                row.state == talaria_core::fleet::RowState::Working
-                            });
-                            match client.peek(&key).await {
-                                Ok(text) => FleetViewInput::ExternalPeek {
-                                    key,
-                                    text,
-                                    has_open_prompt,
-                                    running,
-                                },
-                                Err(error) => FleetViewInput::Peek {
-                                    key,
-                                    status: PeekStatus::Failed {
-                                        text: error.to_string(),
-                                    },
-                                },
-                            }
-                        }
-                        FleetViewEffect::SendReply { key, text } => {
-                            let blocked = snapshot.as_ref().is_some_and(|snapshot| {
-                                snapshot.rows.iter().any(|row| {
-                                    row.key == key
-                                        && row.state == talaria_core::fleet::RowState::NeedsYou
-                                })
-                            });
-                            let outcome = if let Some(expected) = voice_blocked {
-                                match client.is_blocked(&key).await {
-                                    Ok(actual) if actual == expected => {
-                                        if expected {
-                                            client.answer(&key, &text).await
-                                        } else {
-                                            client.prompt(&key, &text).await
-                                        }
-                                    }
-                                    Ok(_) => Err(crate::herdr::HerdrError(
-                                        "terminal agent state changed since recording".into(),
-                                    )),
-                                    Err(error) => Err(error),
-                                }
-                            } else if blocked {
-                                client.answer(&key, &text).await
-                            } else {
-                                client.prompt(&key, &text).await
-                            };
-                            FleetViewInput::ReplyDone {
-                                key,
-                                outcome: match outcome {
-                                    Ok(()) => ReplyOutcome::Sent,
-                                    Err(error) => ReplyOutcome::Refused {
-                                        reason: error.to_string(),
-                                    },
-                                },
-                            }
-                        }
-                        FleetViewEffect::Stop(key) => {
-                            let outcome = client.interrupt(&key).await;
-                            FleetViewInput::StopDone {
-                                key,
-                                outcome: match outcome {
-                                    Ok(()) => StopOutcome::Stopping,
-                                    Err(error) => StopOutcome::Refused {
-                                        reason: error.to_string(),
-                                    },
-                                },
-                            }
-                        }
-                        FleetViewEffect::Open(key) | FleetViewEffect::OpenInPane(key) => {
-                            FleetViewInput::Notice(match client.focus(&key).await {
-                                Ok(()) => "Focused terminal agent.".into(),
-                                Err(error) => error.to_string(),
-                            })
-                        }
-                        FleetViewEffect::ResendReply(key) => FleetViewInput::ReplyDone {
-                            key,
-                            outcome: ReplyOutcome::Refused {
-                                reason: "check the terminal before sending again".into(),
-                            },
-                        },
-                        _ => FleetViewInput::Notice(
-                            "That action is unavailable for this terminal agent.".into(),
-                        ),
-                    };
-                    AppMessage::FleetView(input)
-                });
-            }
             AppEffect::FleetPeek(effect) => {
                 use talaria_core::fleet_view::FleetViewEffect;
                 let closing = matches!(effect, FleetViewEffect::Close);
@@ -16561,14 +16421,7 @@ pub(crate) fn fleet_effect(
                 answer,
             }];
         }
-        if target.backend == talaria_core::fleet::FleetBackend::Herdr {
-            let blocked =
-                row.is_some_and(|row| row.state == talaria_core::fleet::RowState::NeedsYou);
-            if blocked != target.need.is_some() {
-                return refuse("the terminal agent state changed since recording");
-            }
-            state.client_voice_inflight.insert(key.clone());
-        } else if target.backend == talaria_core::fleet::FleetBackend::Acp {
+        if target.backend == talaria_core::fleet::FleetBackend::Acp {
             if let Some(need) = &target.need {
                 let talaria_core::fleet::NeedSlot::External(responder) = &need.slot else {
                     return refuse("the recorded permission is no longer available");
@@ -16620,31 +16473,6 @@ pub(crate) fn fleet_effect(
             }
             state.client_voice_inflight.insert(key.clone());
         }
-    }
-    let external_key = match &effect {
-        FleetViewEffect::OpenPeek(key)
-        | FleetViewEffect::Open(key)
-        | FleetViewEffect::OpenInPane(key)
-        | FleetViewEffect::Stop(key)
-        | FleetViewEffect::ResendReply(key)
-        | FleetViewEffect::Review(key)
-        | FleetViewEffect::SendReply { key, .. } => Some(key),
-        _ => None,
-    };
-    let external = external_key.is_some_and(|key| {
-        key.profile.strip_prefix("herdr:") == Some(key.session_id.as_str())
-            || state.fleet_snapshot.as_ref().is_some_and(|snapshot| {
-                snapshot.rows.iter().any(|row| {
-                    row.key == *key && row.backend() == talaria_core::fleet::FleetBackend::Herdr
-                })
-            })
-    });
-    if external {
-        if matches!(effect, FleetViewEffect::OpenPeek(_)) {
-            drop_peek_worker(state);
-            state.peek_frame = None;
-        }
-        return vec![AppEffect::Herdr(effect)];
     }
     let foreground = fleet_foreground_key(state);
     let is_foreground = |key: &RowKey| foreground.as_ref() == Some(key);
@@ -17279,14 +17107,6 @@ async fn run_inner<S: Screen>(
         ));
         state.fleet_service = Some(fleet);
     }
-    if let Some(config) = setup.herdr.take().filter(|config| config.enabled)
-        && let Some(fleet) = state.fleet_service.as_ref()
-    {
-        state.herdr_service = Some(crate::herdr::HerdrService::with_reporter(
-            config,
-            fleet.reporter(),
-        ));
-    }
     let mut pending = Some(tokio::spawn(connect_and_open(
         launch,
         setup.home,
@@ -17576,9 +17396,6 @@ async fn run_inner<S: Screen>(
     let unfinished = state.launch_ui.shutdown().await;
     if let Some(manager) = state.acp_manager.take() {
         manager.close().await;
-    }
-    if let Some(mut herdr) = state.herdr_service.take() {
-        herdr.close().await;
     }
     if let Some(fleet) = state.fleet_service.take() {
         fleet.close().await;
@@ -22214,36 +22031,6 @@ mod external_fleet_route_tests {
     use talaria_core::fleet::RowKey;
     use talaria_core::fleet::acp::AcpMapping;
     use talaria_core::fleet_view::FleetViewEffect;
-
-    #[test]
-    fn terminal_actions_keep_their_owner_alongside_acp_sessions() {
-        let key = RowKey {
-            profile: "herdr:wfixture:p1".into(),
-            session_id: "wfixture:p1".into(),
-        };
-        let mut state = AppState::new("launch");
-        state.acp_views.insert(
-            RowKey {
-                profile: "acp:example".into(),
-                session_id: "s1".into(),
-            },
-            AcpMapping::default(),
-        );
-        for action in [
-            FleetViewEffect::OpenPeek(key.clone()),
-            FleetViewEffect::SendReply {
-                key: key.clone(),
-                text: "hello".into(),
-            },
-            FleetViewEffect::Stop(key.clone()),
-            FleetViewEffect::Open(key.clone()),
-            FleetViewEffect::OpenInPane(key.clone()),
-            FleetViewEffect::ResendReply(key.clone()),
-        ] {
-            let effects = fleet_effect(&mut state, action.clone());
-            assert!(matches!(effects.as_slice(), [AppEffect::Herdr(routed)] if *routed == action));
-        }
-    }
 
     #[test]
     fn external_actions_never_fall_through_to_the_hermes_peek_worker() {

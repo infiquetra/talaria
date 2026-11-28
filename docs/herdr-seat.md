@@ -6,7 +6,7 @@ A seat is one Talaria session running in a Herdr terminal. Herdr is a terminal m
 
 Talaria writes a status record into the terminal. It does not call `hc` to report. A status record is one Operating System Command 7501 (OSC 7501). Talaria writes one only when the terminal answered its startup question. No answer means no record is ever written, including inside tmux and in a plain terminal. There is no environment variable and no setting that forces reporting on.
 
-`[herdr] report_state` is a boolean and defaults to true. It switches both this record and the older reporter. Set it to false and Talaria sends neither. The five states go to a Herdr terminal that answered the startup question. The older reporter still sends `blocked`, `working` or `idle` through `herdr pane report-agent` when that earlier program is present. See [herdr settings](configuration.md#herdr).
+`[herdr] report_state` is a boolean and defaults to true. It switches this record. Set it to false and Talaria sends none. The five states go to a terminal that answered the startup question. See [herdr settings](configuration.md#herdr).
 
 Talaria writes a record only when the state or the kind changes. An unchanged state writes nothing. On exit, and whenever the terminal is restored, Talaria writes a clear once, and only if it ever wrote a status record. `hc get --json` shows the state on `status.state` and the program on `status.app`. A blocked seat also has `status.kind`. Before any record, `status` is null.
 
@@ -66,5 +66,3 @@ This page describes the behavior. It is not the record of a live run.
 ## Limits in this release
 
 This release sends no `progress`, no `title`, no `msg`, and no `id` in a status record. Prompt text and approval text never go into a status record.
-
-The older reporter still runs `herdr pane report-agent` when the earlier `herdr` program is present. It is unchanged in this release. It still sends only `blocked`, `working` or `idle`. It is not the status record on this page.
