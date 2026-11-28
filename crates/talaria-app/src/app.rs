@@ -10003,8 +10003,10 @@ fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
         return vec![AppEffect::ThemeReport];
     }
     let background = matches!(argument, "light" | "dark" | "auto");
-    if matches!(argument.split_whitespace().next(), Some("use" | "reload"))
-        || (background && (state.appearance.theme_files().is_some() || state.home.is_some()))
+    if matches!(
+        argument.split_whitespace().next(),
+        Some("use" | "new" | "reload")
+    ) || (background && (state.appearance.theme_files().is_some() || state.home.is_some()))
     {
         return vec![AppEffect::ThemeFileCommand(argument.to_owned())];
     }
