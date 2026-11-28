@@ -535,7 +535,8 @@ async fn live_answer_approval_from_peek() {
         PromptIntent::Approve { key, choice, note } => CardAnswer::Approve { key, choice, note },
         PromptIntent::Clarify { .. }
         | PromptIntent::Masked { .. }
-        | PromptIntent::Connect { .. } => {
+        | PromptIntent::Connect { .. }
+        | PromptIntent::UsageLimit { .. } => {
             fail(NAME_ANSWER, "the approval intent was not an approval");
         }
     };

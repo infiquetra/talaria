@@ -359,6 +359,8 @@ mod text_sanitize;
 mod tool_generating;
 #[path = "integration/tool_view.rs"]
 mod tool_view;
+#[path = "integration/usage_limit_card.rs"]
+mod usage_limit_card;
 #[path = "integration/voice_barge_in.rs"]
 mod voice_barge_in;
 #[path = "integration/voice_client_core.rs"]
