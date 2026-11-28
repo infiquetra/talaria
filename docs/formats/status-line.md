@@ -2,7 +2,7 @@
 
 Status: `active`
 Authority: `contract`
-Version: 1
+Version: 2
 
 Talaria can run an operator-supplied external command on an interval and show its output in the
 status region — the same idea as a shell prompt's `git`/Kubernetes-context integration, applied to
@@ -37,20 +37,21 @@ for the read).
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "mode": "replay",
   "connection": "connected",
   "session": { "id": "sess-1", "title": "a title" },
   "turn": "idle",
   "pending_prompts": 0,
   "subagents": { "active": 0, "terminal": 0 },
-  "usage": { "input_tokens": 120, "output_tokens": 340 }
+  "usage": { "input_tokens": 120, "output_tokens": 340 },
+  "working_dir": null
 }
 ```
 
 | field                | type                                                                              | meaning                                              |
 | --------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `version`              | `int`                                                                              | Always `1` for this document shape. First field, so a consumer can branch before parsing anything else. |
+| `version`              | `int`                                                                              | Always `2` for this document shape. First field, so a consumer can branch before parsing anything else. |
 | `mode`                 | `"replay"` \| `"live"`                                                            | Whether Talaria is replaying a recorded corpus or attached to a live gateway. |
 | `connection`           | `"disconnected"` \| `"connecting"` \| `"connected"` \| `"reconnecting"` \| `"auth_failed"` | The attach state.                                     |
 | `session`              | `{ "id": str, "title": str \| null }`                                              | The focused session's identifier and human-facing title. |
@@ -58,6 +59,9 @@ for the read).
 | `pending_prompts`      | `int`                                                                              | Count of outstanding prompts **in the focused session** — never the install-wide total. No prompt content is ever included here. |
 | `subagents`            | `{ "active": int, "terminal": int }`                                              | Sub-agent counts by state, not the rows themselves.   |
 | `usage`                | `{ "input_tokens": int, "output_tokens": int }` \| `null`                        | `null` until usage has been observed at least once.  |
+| `working_dir`          | `str` \| `null`                                                                    | The working folder on the gateway's machine, or `null` when none is set, copied unchanged. It is not the shortened text the bar draws, and not the command's own working directory. |
+
+Version 2 adds working_dir. A command which ignores unknown fields needs no change.
 
 ### `pending_prompts` counts the focused session, and only the focused session
 
@@ -86,8 +90,8 @@ Both truncations are marked visibly rather than silently cut. Plain-text output 
 in-body status region, exactly as it always has.
 
 A command that wants its rows on the true-bottom bar instead writes one JSON document of the
-form below (version 2 of the *output* document — a separate version namespace from the version-1
-*input* document above, which is unchanged). Anything that is not a JSON object stays on the
+form below (version 2 of the *output* document — a separate version namespace from the
+*input* document above). Anything that is not a JSON object stays on the
 plain-text path above, byte for byte: a script printing a bare number or a bare word never trips
 this protocol.
 

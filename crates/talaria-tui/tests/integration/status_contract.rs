@@ -130,11 +130,12 @@ fn stdin_document_has_exactly_the_frozen_field_set() {
         "pending_prompts",
         "subagents",
         "usage",
+        "working_dir",
     ];
     let bytes = encoded(&session_inputs());
     let text = String::from_utf8(bytes.clone()).expect("UTF-8");
     assert!(
-        text.starts_with("{\"version\":1,"),
+        text.starts_with("{\"version\":2,"),
         "version is the first field: {text}"
     );
 
@@ -142,9 +143,9 @@ fn stdin_document_has_exactly_the_frozen_field_set() {
     let object = value.as_object().expect("an object");
     let keys: BTreeSet<&str> = object.keys().map(String::as_str).collect();
     let wanted: BTreeSet<&str> = expected.iter().copied().collect();
-    assert_eq!(keys, wanted, "exactly the eight frozen fields");
+    assert_eq!(keys, wanted, "exactly the nine frozen fields");
     let declared: BTreeSet<&str> = DOCUMENT_FIELDS.iter().copied().collect();
-    assert_eq!(keys, declared, "DOCUMENT_FIELDS names the same eight");
+    assert_eq!(keys, declared, "DOCUMENT_FIELDS names the same nine");
 
     // The fields appear in the frozen order in the text.
     let mut last = 0;
@@ -159,10 +160,35 @@ fn stdin_document_has_exactly_the_frozen_field_set() {
     // The documented sample, byte for byte.
     assert_eq!(
         text,
-        "{\"version\":1,\"mode\":\"live\",\"connection\":\"connected\",\
+        "{\"version\":2,\"mode\":\"live\",\"connection\":\"connected\",\
          \"session\":{\"id\":\"sess-1\",\"title\":null},\"turn\":\"idle\",\
-         \"pending_prompts\":0,\"subagents\":{\"active\":0,\"terminal\":0},\"usage\":null}\n"
+         \"pending_prompts\":0,\"subagents\":{\"active\":0,\"terminal\":0},\"usage\":null,\
+         \"working_dir\":null}\n"
     );
+}
+
+#[test]
+fn stdin_document_carries_the_working_folder_at_version_2() {
+    let mut inputs = session_inputs();
+    inputs.working_dir = Some("/work/app".to_string());
+    let value = encoded_json(&inputs);
+    assert_eq!(value["version"], 2, "the document is version 2");
+    assert_eq!(value["working_dir"], "/work/app");
+
+    // No folder is a present key holding null, not an omitted key.
+    let value = encoded_json(&session_inputs());
+    let object = value.as_object().expect("an object");
+    assert!(object.contains_key("working_dir"), "the key is present");
+    assert!(object["working_dir"].is_null(), "an unset folder is null");
+    assert_eq!(value["version"], 2, "the document is version 2");
+
+    // The folder is copied unchanged: empty and blank strings are not trimmed or dropped.
+    let mut inputs = session_inputs();
+    inputs.working_dir = Some(String::new());
+    assert_eq!(encoded_json(&inputs)["working_dir"], "");
+    let mut inputs = session_inputs();
+    inputs.working_dir = Some("  ".to_string());
+    assert_eq!(encoded_json(&inputs)["working_dir"], "  ");
 }
 
 #[test]
@@ -343,7 +369,7 @@ fn stdin_document_fields_match_the_format_document() {
         }
         fields.push(first);
     }
-    assert_eq!(fields.len(), 8, "the table lists eight fields: {fields:?}");
+    assert_eq!(fields.len(), 9, "the table lists nine fields: {fields:?}");
     let declared: Vec<String> = DOCUMENT_FIELDS.iter().map(|s| (*s).to_string()).collect();
     assert_eq!(
         fields, declared,

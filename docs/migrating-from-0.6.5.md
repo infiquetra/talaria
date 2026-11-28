@@ -67,7 +67,7 @@ A file holding every 0.6.5 default shows 25 notices.
 
 ## Your status-line command
 
-The command is split without a shell, runs in the launch folder, receives a version 1 JSON document, and has a 2 second timeout. Its environment is default-deny. It may return text rows or version 2 JSON, with at most eight rows. Check [status-line.md](formats/status-line.md); its repository-config and `TALARIA_STATUS_INTERVAL_SECONDS` descriptions apply to 0.6.5 only. Fetch the old starter from a clone with `git show v0.6.5:docs/examples/status_bar_starter.py`.
+The command is split without a shell, runs in the launch folder, receives a version 2 JSON document, and has a 2 second timeout. Its environment is default-deny. It may return text rows or version 2 JSON, with at most eight rows. Check [status-line.md](formats/status-line.md); its repository-config and `TALARIA_STATUS_INTERVAL_SECONDS` descriptions apply to 0.6.5 only. Fetch the old starter from a clone with `git show v0.6.5:docs/examples/status_bar_starter.py`.
 
 A missing, invalid, or timed-out command displays a status marker; escape characters in its output are shown visibly. The current built-in status line adjusts to the available width.
 
