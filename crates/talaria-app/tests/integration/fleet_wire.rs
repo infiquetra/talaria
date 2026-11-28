@@ -862,8 +862,10 @@ async fn one_shot_does_not_wait_past_the_probe_deadline() {
     let gateway = StandaloneGateway::start(home.path());
     finished_earlier(&gateway);
     gateway.set_silent_profile("fixture", "session.events.since", true);
-    let cfg = one_shot(FleetConfig::scaled_for_tests());
-    let bound = cfg.connect_timeout + cfg.call_timeout + Duration::from_secs(1);
+    let mut cfg = one_shot(FleetConfig::scaled_for_tests());
+    cfg.call_timeout = Duration::from_secs(2);
+    cfg.probe_deadline = Duration::from_millis(150);
+    let bound = Duration::from_millis(1500);
     let started = Instant::now();
     let snapshot = talaria_app::fleet::list_once(home.path(), &cfg)
         .await
@@ -881,8 +883,44 @@ async fn one_shot_does_not_wait_past_the_probe_deadline() {
     assert_eq!((row.state, row.outcome), (RowState::Idle, None), "{row:?}");
     assert!(
         elapsed < bound,
-        "the listing waited {elapsed:?}, past {bound:?}"
+        "the listing waited {elapsed:?}, past {bound:?} (probe_deadline {:?}, call_timeout {:?})",
+        cfg.probe_deadline,
+        cfg.call_timeout
     );
+}
+
+#[tokio::test]
+async fn one_shot_silent_probes_on_one_profile_do_not_starve_another_profile() {
+    let home = home();
+    let gateway = StandaloneGateway::start(home.path());
+    gateway.set_fleet_profiles(vec!["slow".into(), "healthy".into()]);
+    for i in 0..10 {
+        gateway.set_fleet_session("slow", session(&format!("slow-{i}"), "idle", 2));
+    }
+    gateway.set_fleet_session("healthy", session("healthy-work", "running", 1));
+    gateway.set_silent_profile("slow", "session.events.since", true);
+
+    let mut cfg = FleetConfig::scaled_for_tests();
+    cfg.call_timeout = Duration::from_secs(2);
+    cfg.probe_deadline = Duration::from_millis(150);
+    let snapshot = talaria_app::fleet::list_once(home.path(), &cfg)
+        .await
+        .expect("multi-profile one-shot list succeeds");
+    assert!(
+        snapshot
+            .profiles
+            .iter()
+            .any(|(name, status)| name == "healthy"
+                && matches!(status, ProfileStatus::Listed { .. })),
+        "healthy profile must be listed, not starved in loading: {:?}",
+        snapshot.profiles
+    );
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|row| row.key.profile == "healthy" && row.key.session_id == "healthy-work")
+        .expect("healthy profile's running session must appear");
+    assert_eq!(row.state, RowState::Working, "{row:?}");
 }
 
 #[tokio::test]

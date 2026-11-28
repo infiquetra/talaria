@@ -25,7 +25,9 @@ use tokio::task::JoinSet;
 
 use super::config::FleetConfig;
 use super::host_dial::{DialReport, HostDial, lock};
-use super::schedule::{CLASS_COLD, CLASS_HOT, CLASS_PROMPT, CLASS_ROUND, Schedule, Work};
+use super::schedule::{
+    CLASS_COLD, CLASS_FIRST_SIGHT, CLASS_HOT, CLASS_PROMPT, CLASS_ROUND, Schedule, Work,
+};
 use crate::side_connection::SideScope;
 
 /// Most diagnostic texts a snapshot carries.
@@ -948,8 +950,9 @@ impl FleetTask {
                         },
                     );
                     if self.guard(&key) {
+                        let class = self.probe_class();
                         self.schedule
-                            .trigger(Work::ProbeHead { key, probe_id }, CLASS_PROMPT, now);
+                            .trigger(Work::ProbeHead { key, probe_id }, class, now);
                     } else {
                         self.probed(key, probe_id, Outcome::Unknown, false);
                     }
@@ -1007,6 +1010,14 @@ impl FleetTask {
         self.effects(effects);
     }
 
+    fn probe_class(&self) -> u8 {
+        if self.cfg.first_sight_outcomes && self.gate.is_some() {
+            CLASS_FIRST_SIGHT
+        } else {
+            CLASS_PROMPT
+        }
+    }
+
     /// Start every pending read a free slot allows.
     fn pump(&mut self) {
         let (Some(tag), Some(client)) = (self.tag, self.client.clone()) else {
@@ -1017,7 +1028,12 @@ impl FleetTask {
             self.request += 1;
             let request = self.request;
             let (method, params) = self.call_for(&work);
-            let timeout = self.cfg.call_timeout;
+            let timeout = match &work {
+                Work::ProbeHead { .. } | Work::ProbeTail { .. } => {
+                    self.cfg.probe_deadline.min(self.cfg.call_timeout)
+                }
+                _ => self.cfg.call_timeout,
+            };
             let client = client.clone();
             self.calls.spawn(async move {
                 let outcome = client
@@ -1235,6 +1251,7 @@ impl FleetTask {
         match epoch {
             Some(epoch) if latest > 0 && self.guard(&key) => {
                 let from = latest.saturating_sub(PROBE_TAIL);
+                let class = self.probe_class();
                 self.schedule.trigger(
                     Work::ProbeTail {
                         key,
@@ -1242,7 +1259,7 @@ impl FleetTask {
                         epoch,
                         from,
                     },
-                    CLASS_PROMPT,
+                    class,
                     now,
                 );
             }
