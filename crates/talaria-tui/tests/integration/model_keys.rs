@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use talaria_tui::keys::{KeyChord, KeyContext, KeyMap, ModelAction};
 struct Action;
 impl Action {
-    const ALL: [(); 212] = [(); talaria_tui::keys::Action::ALL.len()
+    const ALL: [(); 216] = [(); talaria_tui::keys::Action::ALL.len()
         + (10 - talaria_tui::keys::ProvidersAction::ALL.len())];
 }
 
@@ -19,6 +19,8 @@ fn fixed_picker_keys_and_filter_text_cannot_be_shadowed() {
         "esc",
         "backspace",
         "up",
+        "shift+up",
+        "shift+down",
         "pagedown",
     ] {
         let (map, notices) = KeyMap::from_entries(&BTreeMap::from([(
@@ -66,7 +68,7 @@ fn new_actions_resolve_only_inside_the_picker() {
         );
         assert_eq!(map.resolve_model(KeyContext::Composer, &key), None);
     }
-    assert_eq!(Action::ALL.len(), 212);
+    assert_eq!(Action::ALL.len(), 216);
 }
 
 #[test]
@@ -117,7 +119,7 @@ mod independent {
     use talaria_tui::keys::{KeyChord, KeyContext, KeyMap, ModelAction};
     struct Action;
     impl Action {
-        const ALL: [(); 212] = [(); talaria_tui::keys::Action::ALL.len()
+        const ALL: [(); 216] = [(); talaria_tui::keys::Action::ALL.len()
             + (10 - talaria_tui::keys::ProvidersAction::ALL.len())];
     }
 
@@ -126,7 +128,7 @@ mod independent {
         let map = KeyMap::defaults();
         assert_eq!(
             Action::ALL.len(),
-            212,
+            216,
             "model actions must not change the general action count"
         );
         let doc = std::fs::read_to_string(

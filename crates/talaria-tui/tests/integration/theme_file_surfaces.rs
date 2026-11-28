@@ -68,6 +68,7 @@ fn concrete_styles(theme: &Theme) -> BTreeMap<&'static str, Style> {
         glyph_muted,
         title,
         subject,
+        shell_operator: _,
         meta,
         output,
         error,

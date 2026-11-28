@@ -10,9 +10,15 @@ mod record;
 mod replay;
 mod run_dir;
 mod store;
+pub(crate) use blobs::event as stored_engine_event;
+pub(crate) use blobs::load as load_report_blob;
+/// A finished call's kept outcome, with a value kept in a blob read back.
+pub(crate) use blobs::outcome as stored_outcome;
+pub(crate) use blobs::put as put_report_blob;
 pub use durable::*;
 pub use keys::*;
 pub use port::*;
+pub(crate) use reader::read_bytes as read_journal_bytes;
 pub use reader::*;
 pub use record::*;
 pub use replay::*;
@@ -63,4 +69,10 @@ pub(crate) fn now_ms() -> i64 {
 }
 pub(crate) fn cut(text: &str, n: usize) -> String {
     text.chars().take(n).collect()
+}
+pub(crate) fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }

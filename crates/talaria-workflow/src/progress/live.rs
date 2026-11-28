@@ -63,12 +63,28 @@ pub struct VisibleNode {
     pub key: NodeKey,
     pub depth: u16,
 }
+fn first_child<'a>(rows: &'a [VisibleNode], selection: &NodeKey) -> Option<&'a VisibleNode> {
+    let index = rows.iter().position(|row| &row.key == selection)?;
+    rows.get(index + 1)
+        .filter(|next| next.depth > rows[index].depth)
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProgressKey {
     Up,
     Down,
     Left,
     Right,
+    SelectNode(NodeKey),
+    NextAttention,
+    Details,
+    ViewResult,
+    ViewReport(String),
+    ScrollEvidence(usize),
+    EvidencePageUp,
+    EvidencePageDown,
+    EvidenceHome,
+    EvidenceEnd,
+    ScrollDetails(usize),
     OpenAgent,
     Steer,
     StopAgent,
@@ -100,6 +116,9 @@ pub struct GatewayFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingStage {
     Ready,
+    /// Writing the note that tells the runner the view is about to stop the agent; the stop
+    /// is sent once the note is written.
+    Noting,
     Refreshing,
     Calling,
     Settling,
@@ -116,10 +135,18 @@ struct PendingAgent {
     receipt_at_ms: i64,
     receipt_in_flight: bool,
 }
+/// What the view says once an agent it stopped has ended its turn: the runner parks the call
+/// until someone answers it.
+pub const STOPPED_PARKED: &str = "stopped — the run waits for an answer: fail, rerun, abort or use-reply (talaria workflow resolve)";
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Confirmation {
     Restart(String),
     StopRun,
+    /// Stop the agent with this key; the prompt names it.
+    StopAgent {
+        key: String,
+        prompt: String,
+    },
 }
 
 pub struct ProgressState {
@@ -128,6 +155,9 @@ pub struct ProgressState {
     pub collapsed: HashSet<NodeKey>,
     pub filter: Filter,
     pub connected: bool,
+    pub detail_offset: Option<usize>,
+    pub evidence: Option<EvidenceView>,
+    next_evidence: u64,
     pub now_ms: i64,
     pub opened_at_ms: i64,
     pub last_journal_seen_ms: i64,
@@ -156,6 +186,43 @@ pub struct ProgressState {
     attaching: HashSet<String>,
     warned_controls: HashSet<String>,
 }
+pub struct EvidenceView {
+    pub id: u64,
+    pub title: String,
+    pub lines: Option<Vec<String>>,
+    pub offset: usize,
+    layout: std::sync::Mutex<Option<EvidenceLayout>>,
+}
+struct EvidenceLayout {
+    width: u16,
+    rows: std::sync::Arc<[String]>,
+}
+impl EvidenceView {
+    /// Reuse the same wrapped document for painting and scrolling until the viewport changes.
+    pub fn rows(
+        &self,
+        width: u16,
+        wrap: impl FnOnce(&[String]) -> Vec<String>,
+    ) -> std::sync::Arc<[String]> {
+        let mut layout = self
+            .layout
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(current) = layout.as_ref().filter(|cache| cache.width == width) {
+            return current.rows.clone();
+        }
+        let rows = self
+            .lines
+            .as_ref()
+            .map_or_else(|| vec!["Loading evidence…".into()], |lines| wrap(lines));
+        let rows = std::sync::Arc::<[String]>::from(rows);
+        *layout = Some(EvidenceLayout {
+            width,
+            rows: rows.clone(),
+        });
+        rows
+    }
+}
 impl ProgressState {
     pub fn blank(manifest: &crate::journal::Manifest) -> Self {
         Self::new(RunProgress::from_records(manifest, &[]))
@@ -178,6 +245,9 @@ impl ProgressState {
             collapsed: HashSet::new(),
             filter: Filter::All,
             connected: false,
+            detail_offset: None,
+            evidence: None,
+            next_evidence: 0,
             now_ms: 0,
             opened_at_ms: 0,
             last_journal_seen_ms: 0,
@@ -220,10 +290,17 @@ impl ProgressState {
             _ => None,
         }
     }
-    pub fn confirmation_text(&self) -> Option<&'static str> {
+    /// Agents that need an answer or ended with work that may require intervention.
+    pub fn agent_needs_attention(agent: &super::AgentNode) -> bool {
+        agent.state.needs_you()
+            || agent.guardrail_halt.is_some()
+            || matches!(agent.state, AgentState::Failed | AgentState::Ended)
+    }
+    pub fn confirmation_text(&self) -> Option<&str> {
         self.confirmation.as_ref().map(|(c, _)| match c {
             Confirmation::Restart(_) => "restart? r or y confirms · esc cancels",
             Confirmation::StopRun => "stop run? shift+x or y confirms · esc cancels",
+            Confirmation::StopAgent { prompt, .. } => prompt.as_str(),
         })
     }
     fn matches(&self, a: &super::AgentNode) -> bool {
@@ -395,6 +472,65 @@ impl ProgressState {
             }
         }
     }
+    fn select_node(&mut self, node: NodeKey) {
+        if self.selection != node {
+            let previous = std::mem::replace(&mut self.selection, node);
+            let previous_agent = match &previous {
+                NodeKey::Agent(key) | NodeKey::Subagent { key, .. } => Some(key.as_str()),
+                _ => None,
+            };
+            if self.selected_agent_key() != previous_agent {
+                self.prompt_first_line = None;
+            }
+            self.revision += 1;
+        }
+    }
+
+    fn next_attention(&mut self) {
+        // Search the full structure in display order. A folded branch or active filter must
+        // never keep an operator from reaching an agent that needs them.
+        let collapsed = std::mem::take(&mut self.collapsed);
+        let filter = std::mem::take(&mut self.filter);
+        let rows = self.visible_nodes();
+        self.collapsed = collapsed;
+        self.filter = filter;
+        let start = rows
+            .iter()
+            .position(|row| row.key == self.selection)
+            .unwrap_or(0)
+            + 1;
+        let next = rows[start..].iter().chain(&rows[..start]).find_map(|row| {
+            if let NodeKey::Agent(key) = &row.key
+                && let Some(agent) = self
+                    .progress
+                    .agent(key)
+                    .filter(|a| Self::agent_needs_attention(a))
+            {
+                Some((row.key.clone(), self.matches(agent)))
+            } else {
+                None
+            }
+        });
+        let Some((node, matches_filter)) = next else {
+            self.refuse("no agents need attention");
+            return;
+        };
+        if !matches_filter {
+            self.filter = Filter::All;
+            self.revision += 1;
+        }
+        let mut parent = self.parent(&node);
+        loop {
+            if self.collapsed.remove(&parent) {
+                self.revision += 1;
+            }
+            if parent == NodeKey::Run {
+                break;
+            }
+            parent = self.parent(&parent);
+        }
+        self.select_node(node);
+    }
     fn write(&mut self, request: ControlRequest) -> ProgressEffect {
         self.next_control += 1;
         let id = ControlId(self.next_control);
@@ -410,6 +546,11 @@ impl ProgressState {
 }
 #[allow(clippy::large_enum_variant)]
 pub enum ProgressInput {
+    Verdict(crate::runner::evidence::Verdict),
+    EvidenceLoaded {
+        id: u64,
+        result: Result<Vec<String>, String>,
+    },
     Journal(Vec<RecordLine>),
     Gateway {
         session_id: String,
@@ -482,6 +623,10 @@ pub enum ProgressInput {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProgressEffect {
+    LoadEvidence {
+        id: u64,
+        agent: Option<String>,
+    },
     Attach {
         session_id: String,
     },
@@ -523,6 +668,24 @@ pub enum ProgressEffect {
 pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEffect> {
     let mut effects = vec![];
     match input {
+        ProgressInput::Verdict(verdict) => {
+            if state.progress.run.state != RunState::Running {
+                verdict.apply(&mut state.progress);
+                state.revision += 1;
+            }
+        }
+        ProgressInput::EvidenceLoaded { id, result } => {
+            if let Some(view) = state.evidence.as_mut().filter(|view| view.id == id) {
+                *view
+                    .layout
+                    .get_mut()
+                    .unwrap_or_else(|error| error.into_inner()) = None;
+                view.lines = Some(
+                    result.unwrap_or_else(|error| vec![format!("Evidence unavailable: {error}")]),
+                );
+                state.revision += 1;
+            }
+        }
         ProgressInput::Journal(lines) => {
             if !lines.is_empty() {
                 let before = state.progress.last_seq;
@@ -582,10 +745,11 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                     .pending_agents
                     .keys()
                     .filter(|key| {
+                        // A stopped agent's call parks for the operator: that settles a stop.
                         state
                             .progress
                             .agent(key)
-                            .is_some_and(|a| a.state.terminal())
+                            .is_some_and(|a| a.state.terminal() || a.attention.is_some())
                     })
                     .cloned()
                     .collect();
@@ -601,8 +765,14 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                                 a.state == AgentState::Done
                                     || a.last_outcome.as_deref() == Some("completed")
                             });
+                            let parked = state
+                                .progress
+                                .agent(&key)
+                                .is_some_and(|a| a.attention.is_some());
                             state.refuse(if completed {
                                 "finished before stop"
+                            } else if parked {
+                                STOPPED_PARKED
                             } else {
                                 "stopped — restart (r) runs it again"
                             });
@@ -734,7 +904,11 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                     )
                 }) {
                     state.pending_agents.remove(&key);
-                    if let Some(a) = state.progress.agent_mut(&key) {
+                    if let Some(a) = state.progress.agent_mut(&key)
+                        && a.attention.is_none()
+                    {
+                        // Until the journal says more, the stopped turn shows as ended here;
+                        // the runner parks the call and the journal then shows it as waiting.
                         a.stopped = outcome != "completed";
                         a.last_outcome =
                             Some(if a.stopped { "failed" } else { "completed" }.into());
@@ -747,7 +921,7 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                     state.refuse(if outcome == "completed" {
                         "finished before stop"
                     } else {
-                        "stopped — restart (r) runs it again"
+                        STOPPED_PARKED
                     });
                 }
             }
@@ -808,6 +982,7 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
             state.closed = false;
             // A reopened view starts unfolded and quiet; only the selection is kept.
             state.collapsed.clear();
+            state.detail_offset = None;
             state.footer = None;
             state.confirmation = None;
             state.revision += 1;
@@ -845,6 +1020,13 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
         }
         ProgressInput::ControlDone(id, outcome) => {
             if let Some((request, at_ms)) = state.pending_files.remove(&id) {
+                // The note only names who stopped the agent: the stop goes out either way.
+                if let (ControlRequest::AgentStop { key, .. }, false) =
+                    (&request, matches!(outcome, ControlOutcome::Published))
+                {
+                    let key = key.clone();
+                    effects.extend(noted(state, &key));
+                }
                 match outcome {
                     ControlOutcome::Published => {
                         state.refuse("requested");
@@ -872,6 +1054,9 @@ pub fn update(state: &mut ProgressState, input: ProgressInput) -> Vec<ProgressEf
                                     a.restart_requested = true;
                                     state.refuse("restart requested — runs again on resume");
                                 }
+                            }
+                            ControlRequest::AgentStop { key, .. } => {
+                                effects.extend(noted(state, &key));
                             }
                             ControlRequest::Resume => {}
                         }
@@ -1326,18 +1511,41 @@ fn key_input(s: &mut ProgressState, key: ProgressKey) -> Vec<ProgressEffect> {
         }
         return vec![];
     }
+    if let Some(view) = &mut s.evidence {
+        match key {
+            ProgressKey::CloseView => {
+                s.evidence = None;
+                s.revision += 1;
+            }
+            ProgressKey::ScrollEvidence(offset) if view.offset != offset => {
+                view.offset = offset;
+                s.revision += 1;
+            }
+            _ => {}
+        }
+        return vec![];
+    }
+    if matches!(key, ProgressKey::SelectNode(_))
+        && (s.confirmation.is_some() || s.steer_input.is_some())
+    {
+        return vec![];
+    }
     if let Some((confirmation, _)) = s.confirmation.take() {
         let accepted = matches!(key, ProgressKey::Confirm | ProgressKey::Char('y'))
             || matches!(
                 (&confirmation, &key),
                 (Confirmation::Restart(_), ProgressKey::RestartAgent)
                     | (Confirmation::StopRun, ProgressKey::StopRun)
+                    | (Confirmation::StopAgent { .. }, ProgressKey::StopAgent)
             );
         s.revision += 1;
         if accepted {
             return match confirmation {
                 Confirmation::StopRun => vec![s.write(ControlRequest::Stop)],
                 Confirmation::Restart(key) => restart(s, &key),
+                Confirmation::StopAgent { key, .. } => {
+                    start_agent(s, &key, GatewayAction::Interrupt, None)
+                }
             };
         }
         return vec![];
@@ -1371,7 +1579,48 @@ fn key_input(s: &mut ProgressState, key: ProgressKey) -> Vec<ProgressEffect> {
         s.revision += 1;
         return vec![];
     }
+    if let Some(current) = s.detail_offset {
+        match key {
+            ProgressKey::Details | ProgressKey::CloseView => {
+                s.detail_offset = None;
+                s.revision += 1;
+            }
+            ProgressKey::ScrollDetails(offset) if current != offset => {
+                s.detail_offset = Some(offset);
+                s.revision += 1;
+            }
+            _ => {}
+        }
+        return vec![];
+    }
     match key {
+        ProgressKey::ViewResult | ProgressKey::ViewReport(_) => {
+            let agent = match key {
+                ProgressKey::ViewReport(agent) => Some(agent),
+                _ => None,
+            };
+            s.next_evidence = s.next_evidence.wrapping_add(1);
+            let id = s.next_evidence;
+            let title = agent.as_ref().map_or_else(
+                || "Run evidence".into(),
+                |key| {
+                    let name = s
+                        .progress
+                        .agent(key)
+                        .map_or(key.as_str(), |agent| agent.label.as_str());
+                    format!("Agent report: {name}")
+                },
+            );
+            s.evidence = Some(EvidenceView {
+                id,
+                title,
+                lines: None,
+                offset: 0,
+                layout: Default::default(),
+            });
+            s.revision += 1;
+            return vec![ProgressEffect::LoadEvidence { id, agent }];
+        }
         ProgressKey::Up | ProgressKey::Down => {
             let rows = s.visible_nodes();
             if let Some(i) = rows.iter().position(|n| n.key == s.selection) {
@@ -1381,26 +1630,39 @@ fn key_input(s: &mut ProgressState, key: ProgressKey) -> Vec<ProgressEffect> {
                 } else {
                     (i + 1).min(rows.len() - 1)
                 };
-                if next != i {
-                    s.selection = rows[next].key.clone();
-                    s.prompt_first_line = None;
-                    s.revision += 1;
-                }
+                s.select_node(rows[next].key.clone());
             }
+        }
+        ProgressKey::SelectNode(node) => {
+            if node != NodeKey::Run && s.visible_nodes().iter().any(|row| row.key == node) {
+                s.select_node(node);
+            }
+        }
+        ProgressKey::NextAttention => s.next_attention(),
+        ProgressKey::Details if s.selected_agent_key().is_some() => {
+            s.detail_offset = Some(0);
+            s.revision += 1;
         }
         ProgressKey::Left => {
             // The run row is never folded: folding it hid every row behind the header.
-            if s.selection != NodeKey::Run && !s.collapsed.insert(s.selection.clone()) {
-                let parent = s.parent(&s.selection);
-                if parent != NodeKey::Run {
-                    s.selection = parent;
+            if s.selection != NodeKey::Run {
+                let rows = s.visible_nodes();
+                if first_child(&rows, &s.selection).is_some() {
+                    s.collapsed.insert(s.selection.clone());
+                    s.revision += 1;
+                } else {
+                    let parent = s.parent(&s.selection);
+                    if parent != NodeKey::Run {
+                        s.select_node(parent);
+                    }
                 }
             }
-            s.revision += 1;
         }
         ProgressKey::Right => {
             if s.collapsed.remove(&s.selection) {
                 s.revision += 1;
+            } else if let Some(child) = first_child(&s.visible_nodes(), &s.selection) {
+                s.select_node(child.key.clone());
             }
         }
         ProgressKey::CycleFilter => {
@@ -1494,11 +1756,42 @@ fn key_input(s: &mut ProgressState, key: ProgressKey) -> Vec<ProgressEffect> {
                 }
                 return vec![];
             }
-            return start_agent(s, &agent, GatewayAction::Interrupt, None);
+            // A stop ends the agent's turn and parks the call until someone answers it, so it
+            // is confirmed first, like restart and stop-run. A subagent's stop is not.
+            if matches!(s.selection, NodeKey::Subagent { .. }) {
+                return start_agent(s, &agent, GatewayAction::Interrupt, None);
+            }
+            if can_agent(s, &agent, GatewayAction::Interrupt) {
+                let label = s
+                    .progress
+                    .agent(&agent)
+                    .map_or_else(|| agent.clone(), |a| a.label.clone());
+                let prompt = format!(
+                    "stop agent {}? x or y confirms · esc cancels",
+                    talaria_core::text::sanitize_with_options(
+                        &label,
+                        talaria_core::text::SanitizeOptions::CLI,
+                        talaria_core::text::Replacement::Char('?'),
+                    )
+                );
+                s.confirmation = Some((Confirmation::StopAgent { key: agent, prompt }, s.now_ms));
+                s.revision += 1;
+            }
+            return vec![];
         }
         _ => {}
     }
     vec![]
+}
+/// The note about a stop is written (or could not be): send the stop it announced.
+fn noted(s: &mut ProgressState, key: &str) -> Vec<ProgressEffect> {
+    match s.pending_agents.get_mut(key) {
+        Some(p) if p.stage == PendingStage::Noting => {
+            p.stage = PendingStage::Ready;
+            send_pending(s, key)
+        }
+        _ => vec![],
+    }
 }
 fn can_agent(s: &mut ProgressState, key: &str, action: GatewayAction) -> bool {
     if !s.connected {
@@ -1570,6 +1863,12 @@ fn start_agent(
     } else {
         action
     };
+    // The runner can only say who stopped an agent if the view says so before the stop is
+    // sent: the note is written first, and the stop goes out when it is done.
+    let note = matches!(
+        action,
+        GatewayAction::Interrupt | GatewayAction::Cancel | GatewayAction::Restart
+    );
     s.pending_agents.insert(
         key.into(),
         PendingAgent {
@@ -1578,12 +1877,22 @@ fn start_agent(
             subagent,
             at_ms: s.now_ms,
             refreshed: false,
-            stage: PendingStage::Ready,
+            stage: if note {
+                PendingStage::Noting
+            } else {
+                PendingStage::Ready
+            },
             attempt: a.attempt,
             receipt_at_ms: s.now_ms,
             receipt_in_flight: false,
         },
     );
+    if note {
+        return vec![s.write(ControlRequest::AgentStop {
+            key: key.into(),
+            restart: action == GatewayAction::Restart,
+        })];
+    }
     send_pending(s, key)
 }
 fn send_pending(s: &mut ProgressState, key: &str) -> Vec<ProgressEffect> {
@@ -1764,4 +2073,48 @@ fn restart(s: &mut ProgressState, key: &str) -> Vec<ProgressEffect> {
     }
     s.refuse("restart needs a settled or running agent");
     vec![]
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+    #[test]
+    fn loads_on_demand_and_ignores_stale_responses_after_back() {
+        let mut state = ProgressState::new(RunProgress::empty("test".into()));
+        let selected = state.selection.clone();
+        let effects = update(&mut state, ProgressInput::Key(ProgressKey::ViewResult));
+        let [ProgressEffect::LoadEvidence { id, agent: None }] = effects.as_slice() else {
+            panic!("expected one load")
+        };
+        let first = *id;
+        update(&mut state, ProgressInput::Key(ProgressKey::CloseView));
+        assert_eq!(state.selection, selected);
+        let effects = update(
+            &mut state,
+            ProgressInput::Key(ProgressKey::ViewReport("agent".into())),
+        );
+        let [ProgressEffect::LoadEvidence { id, agent: Some(_) }] = effects.as_slice() else {
+            panic!("expected report load")
+        };
+        let second = *id;
+        update(
+            &mut state,
+            ProgressInput::EvidenceLoaded {
+                id: first,
+                result: Ok(vec!["stale".into()]),
+            },
+        );
+        assert!(state.evidence.as_ref().unwrap().lines.is_none());
+        update(
+            &mut state,
+            ProgressInput::EvidenceLoaded {
+                id: second,
+                result: Ok(vec!["report".into()]),
+            },
+        );
+        assert_eq!(
+            state.evidence.as_ref().unwrap().lines.as_ref().unwrap(),
+            &["report"]
+        );
+    }
 }

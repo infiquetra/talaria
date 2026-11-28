@@ -17,6 +17,7 @@ fn main() {
         Cell::User(UserCell {
             id: CellId::new(1),
             text: "Show me the transcript.".to_string(),
+            expanded_paste: None,
         }),
         Cell::Assistant(AssistantCell {
             id: CellId::new(2),

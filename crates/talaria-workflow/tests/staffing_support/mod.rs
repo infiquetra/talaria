@@ -53,6 +53,7 @@ pub fn request() -> AgentRequest {
         phase: None,
         prompt: "test".into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: None,
         provider: None,

@@ -37,6 +37,9 @@ const SYNC_BEGIN: &[u8] = b"\x1b[?2026h";
 const SYNC_END: &[u8] = b"\x1b[?2026l";
 const PASTE_ON: &[u8] = b"\x1b[?2004h";
 const PASTE_OFF: &[u8] = b"\x1b[?2004l";
+// Button/wheel events and extended coordinates. No pointer-motion reporting.
+const MOUSE_ON: &[u8] = b"\x1b[?1000h\x1b[?1006h";
+const MOUSE_OFF: &[u8] = b"\x1b[?1006l\x1b[?1000l";
 const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
 const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
 /// Kitty keyboard protocol: push the disambiguate-escape-codes flag, and pop it.
@@ -604,6 +607,7 @@ struct RestoreState {
     /// `top` is the viewport's real first row.
     anchored: bool,
     overlay_open: bool,
+    mouse: bool,
     flags_pushed: bool,
     in_sync: bool,
     restored: bool,
@@ -620,6 +624,9 @@ fn restore_sequence(state: &RestoreState, clear_status: bool) -> Vec<u8> {
     }
     if state.overlay_open {
         bytes.extend_from_slice(ALTERNATE_OFF);
+    }
+    if state.mouse {
+        bytes.extend_from_slice(MOUSE_OFF);
     }
     if state.placed && !state.anchored {
         // The cursor is on the viewport's first row; its row number is not known.
@@ -665,6 +672,7 @@ fn minimal_restore(clear_status: bool) -> Vec<u8> {
             b""
         },
         RESET_REGION,
+        MOUSE_OFF,
         PASTE_OFF,
         RESET_STYLE,
         SHOW_CURSOR,
@@ -853,6 +861,9 @@ pub struct InlineTerminal<W: io::Write> {
     previous: Buffer,
     /// The next live frame paints every cell.
     repaint: bool,
+    /// An opposite-polarity theme owns the active rows while native history stays transparent.
+    live_canvas: Option<Style>,
+    history_background: Option<crate::theme::Rgb>,
     /// The next live frame clears from the viewport top down before it paints.
     clear: bool,
     overlay: Option<Overlay>,
@@ -865,6 +876,7 @@ pub struct InlineTerminal<W: io::Write> {
     /// `restore` ran; nothing more is written.
     closed: bool,
     released: bool,
+    mouse: bool,
     held_alert: Option<(u8, Vec<u8>)>,
     /// True while `top` is the viewport's real first row. A resize ends that: the terminal moves
     /// the screen by rules of its own, so from then on rows are reached only from the cursor.
@@ -882,7 +894,7 @@ impl<W: io::Write> InlineTerminal<W> {
     }
 
     /// Switch on bracketed paste, hide the cursor, push keyboard flags when the terminal has the
-    /// protocol, and place the viewport from the probe's cursor. No mouse mode is ever written.
+    /// protocol, and place the viewport from the probe's cursor.
     pub fn new(
         w: W,
         size: (u16, u16),
@@ -913,6 +925,8 @@ impl<W: io::Write> InlineTerminal<W> {
             placed: false,
             previous: Buffer::empty(Rect::new(0, 0, cols, 0)),
             repaint: true,
+            live_canvas: None,
+            history_background: None,
             clear: true,
             overlay: None,
             workspace: None,
@@ -920,6 +934,7 @@ impl<W: io::Write> InlineTerminal<W> {
             dirty: false,
             closed: false,
             released: false,
+            mouse: false,
             held_alert: None,
             anchored: true,
             covered_resize: false,
@@ -1019,6 +1034,15 @@ impl<W: io::Write> InlineTerminal<W> {
         &mut self,
         render: impl FnOnce(Rect, &mut Buffer),
     ) -> io::Result<FrameStats> {
+        self.draw_workspace_with_mouse(false, render)
+    }
+
+    /// Capture the mouse for an active question in the workspace footer.
+    pub fn draw_workspace_with_mouse(
+        &mut self,
+        mouse: bool,
+        render: impl FnOnce(Rect, &mut Buffer),
+    ) -> io::Result<FrameStats> {
         if self.overlay.is_some() {
             return Ok(FrameStats::default());
         }
@@ -1026,9 +1050,17 @@ impl<W: io::Write> InlineTerminal<W> {
             return Ok(FrameStats::default());
         };
         self.overlay = Some(workspace);
-        let result = self.draw_overlay(render);
+        let result = self.draw_navigation_overlay(mouse, render);
         self.workspace = self.overlay.take();
         result
+    }
+
+    /// A preview changes only the managed viewport. Newly finished history keeps the applied theme.
+    pub fn set_inline_theme(&mut self, canvas: Option<(Style, crate::theme::Rgb)>, preview: bool) {
+        self.live_canvas = canvas.map(|(style, _)| style);
+        if !preview {
+            self.history_background = canvas.map(|(_, background)| background);
+        }
     }
 
     /// Write the lines into the scrollback above the viewport, once. Every span is sanitized
@@ -1038,7 +1070,12 @@ impl<W: io::Write> InlineTerminal<W> {
         if self.closed || lines.is_empty() {
             return Ok(());
         }
-        let lines: Vec<Line<'static>> = lines.into_iter().map(sanitize_line).collect();
+        let mut lines: Vec<Line<'static>> = lines.into_iter().map(sanitize_line).collect();
+        if let Some(background) = self.history_background {
+            for line in &mut lines {
+                crate::theme::native_history_line(line, background);
+            }
+        }
         if self.released || self.overlay.is_some() || self.workspace.is_some() || !self.placed {
             self.queued.extend(lines);
             return Ok(());
@@ -1055,12 +1092,20 @@ impl<W: io::Write> InlineTerminal<W> {
     /// Redraw the live region, writing only the cells that changed. Nothing changed, nothing
     /// written.
     pub fn draw_live(&mut self, view: &LiveView<'_>) -> io::Result<FrameStats> {
-        if self.closed
-            || self.released
-            || self.overlay.is_some()
-            || self.workspace.is_some()
-            || !self.placed
-        {
+        self.draw_live_with_mouse(view, false)
+    }
+
+    /// An inline question uses real screen coordinates for its pointer targets.
+    pub fn draw_live_with_mouse(
+        &mut self,
+        view: &LiveView<'_>,
+        mouse: bool,
+    ) -> io::Result<FrameStats> {
+        if self.closed || self.released || self.overlay.is_some() || self.workspace.is_some() {
+            return Ok(FrameStats::default());
+        }
+        self.set_mouse(mouse && self.placed)?;
+        if !self.placed {
             return Ok(FrameStats::default());
         }
         let rects = view.layout(self.cols, max_live_height(self.rows));
@@ -1075,14 +1120,33 @@ impl<W: io::Write> InlineTerminal<W> {
                 section.render(*rect, &mut frame);
             }
         }
+        if let Some(canvas) = self.live_canvas {
+            for cell in &mut frame.content {
+                if cell.bg == Color::Reset {
+                    cell.bg = canvas.bg.unwrap_or(Color::Reset);
+                }
+                if cell.fg == Color::Reset {
+                    cell.fg = canvas.fg.unwrap_or(Color::Reset);
+                }
+            }
+        }
         let resized = wanted != self.height || self.previous.area != area;
-        if !resized && !self.repaint && frame == self.previous {
+        let reanchor = mouse && !self.anchored;
+        if !resized && !self.repaint && !reanchor && frame == self.previous {
             return Ok(FrameStats::default());
         }
 
         let mut batch = self.begin();
         self.sync_on(&mut batch);
-        if resized {
+        if reanchor {
+            // Resize preserves the parked cursor but its absolute row depends on the
+            // emulator. Only the opt-in pointer pane needs an exact address. Clear the
+            // old live area from that cursor and reserve fresh rows below the history.
+            Self::clear_at_cursor(&mut batch);
+            self.height = wanted;
+            self.place_at_bottom(&mut batch);
+            self.park(&mut batch);
+        } else if resized {
             let growing = wanted > self.height;
             self.height = wanted;
             if growing {
@@ -1266,8 +1330,47 @@ impl<W: io::Write> InlineTerminal<W> {
         &mut self,
         render: impl FnOnce(Rect, &mut Buffer) -> Option<(u16, u16)>,
     ) -> io::Result<FrameStats> {
+        self.draw_overlay_frame(false, render)
+    }
+
+    /// Present a view that accepts pointer navigation when enabled by the user.
+    pub fn draw_navigation_overlay(
+        &mut self,
+        mouse: bool,
+        render: impl FnOnce(Rect, &mut Buffer),
+    ) -> io::Result<FrameStats> {
+        self.draw_overlay_frame(mouse, |area, buf| {
+            render(area, buf);
+            None
+        })
+    }
+
+    fn set_mouse(&mut self, enabled: bool) -> io::Result<()> {
+        if self.mouse == enabled {
+            return Ok(());
+        }
+        // Cleanup must cover a partially written enable sequence.
+        if enabled {
+            self.link.lock().mouse = true;
+        }
+        self.out
+            .write_all(if enabled { MOUSE_ON } else { MOUSE_OFF })?;
+        self.out.flush()?;
+        self.mouse = enabled;
+        self.link.lock().mouse = enabled;
+        Ok(())
+    }
+
+    fn draw_overlay_frame(
+        &mut self,
+        mouse: bool,
+        render: impl FnOnce(Rect, &mut Buffer) -> Option<(u16, u16)>,
+    ) -> io::Result<FrameStats> {
         if self.closed || self.released {
             return Ok(FrameStats::default());
+        }
+        if self.overlay.is_some() {
+            self.set_mouse(mouse)?;
         }
         let Some(mut overlay) = self.overlay.take() else {
             return Ok(FrameStats::default());
@@ -1325,9 +1428,11 @@ impl<W: io::Write> InlineTerminal<W> {
     /// Leave the alternate screen, clear the live region, write the lines that waited, and
     /// leave the live region for the caller's next `draw_live` to paint.
     pub fn close_overlay(&mut self) -> io::Result<()> {
-        if self.closed || self.overlay.take().is_none() {
+        if self.closed || self.overlay.is_none() {
             return Ok(());
         }
+        self.set_mouse(false)?;
+        self.overlay = None;
         if let Some(workspace) = &mut self.workspace {
             workspace.clear = true;
             return Ok(());
@@ -2209,6 +2314,7 @@ impl<W: io::Write> InlineTerminal<W> {
         if self.released || self.closed {
             return Ok(());
         }
+        self.set_mouse(false)?;
         let mut batch = self.begin();
         if self.overlay.is_some() || self.workspace.is_some() {
             batch.put(ALTERNATE_OFF);
@@ -2337,6 +2443,9 @@ impl<W: io::Write> InlineTerminal<W> {
         self.out
             .write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l")?;
         self.out.write_all(PASTE_ON)?;
+        if self.mouse {
+            self.out.write_all(MOUSE_ON)?;
+        }
         self.out.write_all(HIDE_CURSOR)?;
         if self.caps.keyboard_enhancement {
             self.out.write_all(FLAGS_POP)?;

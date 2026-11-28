@@ -1725,10 +1725,11 @@ static SPECS: &[ChoiceSpec] = &[
         "updates.pre_update_backup",
         &[
             v("quick", "Snapshot small critical state."),
-            v("full", "Quick plus a full backup zip."),
-            v("off", "No backup."),
+            v("full", "Quick plus a full backup zip.").aliases(&["true", "zip"]),
+            v("off", "No backup.").aliases(&["false", "none", "disabled"]),
         ],
-    ),
+    )
+    .fold(Fold::Word),
     one(
         "vault.key_storage",
         &[

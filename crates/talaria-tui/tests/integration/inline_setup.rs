@@ -117,6 +117,56 @@ fn setup_enables_paste_and_never_mouse() {
 }
 
 #[test]
+fn navigation_mouse_follows_overlay_ownership_and_terminal_release() {
+    let sink = ByteSink::default();
+    let mut term = InlineTerminal::new(
+        sink.clone(),
+        (80, 24),
+        2,
+        probe(false, false, Some((0, 23))),
+        RestoreLink::detached(),
+    )
+    .expect("terminal");
+    term.open_overlay().unwrap();
+    term.draw_navigation_overlay(true, |_, _| {}).unwrap();
+    term.draw_navigation_overlay(true, |_, _| {}).unwrap();
+    assert_eq!(count(&sink.take(), b"\x1b[?1000h"), 1);
+    term.draw_overlay(|_, _| {}).unwrap();
+    assert_eq!(count(&sink.take(), b"\x1b[?1000l"), 1);
+    term.draw_navigation_overlay(true, |_, _| {}).unwrap();
+    term.release().unwrap();
+    assert_eq!(count(&sink.take(), b"\x1b[?1000l"), 1);
+    term.reacquire(&mut || Ok(probe(false, false, Some((0, 23)))))
+        .unwrap();
+    term.draw_navigation_overlay(true, |_, _| {}).unwrap();
+    term.close_overlay().unwrap();
+    assert!(find(&sink.take(), b"\x1b[?1006l\x1b[?1000l").is_some());
+}
+
+#[test]
+fn an_inline_mouse_question_after_resize_has_an_exact_position_and_releases_capture() {
+    let sink = ByteSink::default();
+    let mut term = InlineTerminal::new(
+        sink.clone(),
+        (80, 24),
+        2,
+        probe(false, false, Some((0, 2))),
+        RestoreLink::detached(),
+    )
+    .unwrap();
+    let sections = live_view_sections(3);
+    let view = view_of(&sections);
+    term.draw_live(&view).unwrap();
+    term.resize(60, 16).unwrap();
+    term.draw_live_with_mouse(&view, true).unwrap();
+    assert_eq!(term.viewport().bottom(), 16);
+    assert_eq!(count(&sink.take(), b"\x1b[?1000h"), 1);
+    assert_eq!(term.draw_live_with_mouse(&view, true).unwrap().bytes, 0);
+    term.draw_live(&view).unwrap();
+    assert_eq!(count(&sink.take(), b"\x1b[?1000l"), 1);
+}
+
+#[test]
 fn keyboard_flags_pushed_only_when_supported() {
     for keyboard in [true, false] {
         for sync in [true, false] {

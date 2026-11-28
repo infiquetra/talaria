@@ -1,15 +1,138 @@
 //! Pure live region description: sections, layout and the height cap.
 
+use crate::status::{StatusPalette, Tone};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
-use crate::history::{split_lines, wrap_lines};
+use crate::history::word_wrapped;
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// One block of the live region.
 pub trait LiveSection {
     fn height(&self, width: u16) -> u16;
     fn render(&self, area: Rect, buf: &mut Buffer);
+}
+
+/// A small set of entry points for an empty, connected conversation.
+pub struct ConversationStart {
+    accent: Style,
+    text: Style,
+    muted: Style,
+    compact: bool,
+    chrome: ViewStyles,
+}
+
+impl ConversationStart {
+    pub fn new(palette: &StatusPalette) -> Self {
+        Self {
+            accent: palette.style(Tone::Accent).add_modifier(Modifier::BOLD),
+            text: palette.style(Tone::Text).add_modifier(Modifier::BOLD),
+            muted: palette.style(Tone::Muted),
+            compact: false,
+            chrome: ViewStyles::default(),
+        }
+    }
+
+    pub fn from_views(views: &ViewStyles) -> Self {
+        let mut start = Self::new(&StatusPalette::default());
+        start.chrome = views.clone();
+        start.accent = views
+            .inline(t::STATUS_ACCENT, start.accent)
+            .add_modifier(Modifier::BOLD);
+        start.text = views
+            .inline(t::WORKSPACE_EMPTY, start.text)
+            .add_modifier(Modifier::BOLD);
+        start.muted = views.inline(t::WORKSPACE_EMPTY, start.muted);
+        start
+    }
+
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
+    }
+
+    fn compact_lines(&self, width: u16) -> [Line<'static>; 2] {
+        let brand = Line::from(vec![
+            Span::styled(" ╱╱ ", self.accent),
+            Span::styled("Talaria", self.text),
+        ]);
+        let mut actions = Line::from("    ");
+        for route in ["/resume", "/workflows", "/model"] {
+            if actions.width() + route.len() > usize::from(width) {
+                break;
+            }
+            actions.spans.push(Span::styled(route, self.accent));
+            actions.spans.push(Span::raw("   "));
+        }
+        let _ = actions.spans.pop();
+        [brand, actions]
+    }
+
+    fn wide_lines(&self) -> impl Iterator<Item = Line<'static>> + '_ {
+        // Give the wing and the command column independent weight and a shared baseline.
+        let wing = [
+            "",
+            "       ╭━━━━━━╸   ",
+            "    ╭━━╯          ",
+            " ╭━━┻━━━━━╸       ",
+            " ╰━━┳━━━╸         ",
+            "    ╰━╸           ",
+        ];
+        let routes = [
+            ("/resume", "Resume a session"),
+            ("/workflows", "Browse workflows"),
+            ("/model", "Choose a model"),
+        ];
+        wing.into_iter().enumerate().map(move |(row, feather)| {
+            let feather = self.chrome.frame_text(feather);
+            let feather = match self.chrome.border_preset() {
+                crate::theme::BorderPreset::Ascii => {
+                    feather.replace(['━', '╸'], "-").replace(['┻', '┳'], "+")
+                }
+                crate::theme::BorderPreset::None => " ".repeat(feather.width()),
+                _ => feather,
+            };
+            let mut line = Line::from(Span::styled(feather, self.accent));
+            if row == 1 {
+                line.spans.push(Span::styled("Talaria", self.text));
+            } else if let Some((command, label)) =
+                row.checked_sub(3).and_then(|row| routes.get(row))
+            {
+                line.spans
+                    .push(Span::styled(format!("{command:<13}"), self.accent));
+                line.spans.push(Span::styled(*label, self.muted));
+            }
+            line
+        })
+    }
+}
+
+impl LiveSection for ConversationStart {
+    fn height(&self, width: u16) -> u16 {
+        match width {
+            0..=19 => 0,
+            52.. if !self.compact => 7,
+            _ => 3,
+        }
+    }
+
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        if self.height(area.width) == 0 || area.height == 0 {
+            return;
+        }
+        if self.height(area.width) == 7 && area.height >= 7 {
+            for (y, line) in (area.y..area.bottom()).zip(self.wide_lines()) {
+                buf.set_line(area.x, y, &line, area.width);
+            }
+        } else {
+            for (y, line) in (area.y..area.bottom()).zip(self.compact_lines(area.width)) {
+                buf.set_line(area.x, y, &line, area.width);
+            }
+        }
+    }
 }
 
 /// The sections of the live region, first (the streaming tail) to last.
@@ -126,17 +249,14 @@ pub fn tail_cut_text(hidden: usize, more: bool, transcript_key: Option<&str>) ->
 
 /// Plain text split on newlines and wrapped to the width.
 pub struct PlainTextSection {
-    lines: Vec<Line<'static>>,
+    text: String,
     cached: std::sync::Mutex<Option<(u16, Vec<Line<'static>>)>>,
 }
 
 impl PlainTextSection {
     pub fn new(text: &str) -> Self {
-        let lines = split_lines(text)
-            .map(|piece| Line::from(crate::history::sanitize(piece).into_owned()))
-            .collect();
         Self {
-            lines,
+            text: text.to_owned(),
             cached: std::sync::Mutex::new(None),
         }
     }
@@ -144,7 +264,11 @@ impl PlainTextSection {
     fn with_rows<R>(&self, width: u16, f: impl FnOnce(&[Line<'static>]) -> R) -> R {
         let mut guard = self.cached.lock().unwrap_or_else(|e| e.into_inner());
         if guard.as_ref().is_none_or(|(w, _)| *w != width) {
-            *guard = Some((width, wrap_lines(self.lines.clone(), width)));
+            let rows = word_wrapped(&self.text, width)
+                .into_iter()
+                .map(Line::from)
+                .collect();
+            *guard = Some((width, rows));
         }
         // An empty cache is filled above before its rows are borrowed.
         let (_, rows) = guard.as_ref().expect("wrapped rows were initialized");

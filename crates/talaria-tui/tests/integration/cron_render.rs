@@ -8,7 +8,7 @@ use talaria_core::cron::{
     CardFocus, CronBody, CronInput, CronKey, CronOpen, CronState, CronView, DetailView, FieldView,
     FormField, FormView, ListReply, ListView, RowView, RunRowView, RunsView, update, view,
 };
-use talaria_tui::cron::{CronFrameGate, draw_cron};
+use talaria_tui::cron::{CronFrameGate, draw_cron, new_action_hit};
 
 fn paint(shown: &CronView, cols: u16, rows: u16) -> String {
     let area = Rect::new(0, 0, cols, rows);
@@ -44,7 +44,7 @@ fn list_view(status: Option<&str>, rows: Vec<RowView>, banner: Option<&str>) -> 
         }),
         notice: None,
         question: None,
-        hints: "enter details · ctrl+n new · ctrl+t run now · ctrl+e pause/resume · ctrl+d remove · ctrl+r reload · esc close".into(),
+        hints: "Enter details · Ctrl+N new · Ctrl+T run now · Ctrl+E pause/resume · Ctrl+D remove · Ctrl+R reload · Esc close".into(),
     }
 }
 
@@ -56,6 +56,31 @@ fn row(name: &str, state: &str) -> RowView {
         state: state.into(),
         last_run: "ok 1h ago".into(),
     }
+}
+
+#[test]
+fn pointer_new_uses_the_rendered_footer_even_when_other_hints_are_hidden() {
+    let mut shown = list_view(None, vec![], None);
+    for width in [60, 100] {
+        let area = Rect::new(3, 2, width, 12);
+        let mut buffer = Buffer::empty(area);
+        draw_cron(&shown, area, &mut buffer);
+        let y = area.bottom() - 1;
+        let text: String = (area.x..area.right())
+            .map(|x| buffer[(x, y)].symbol())
+            .collect();
+        let start = text
+            .chars()
+            .collect::<Vec<_>>()
+            .windows("Ctrl+N new".len())
+            .position(|chars| chars.iter().copied().eq("Ctrl+N new".chars()))
+            .unwrap() as u16;
+        assert!(new_action_hit(&shown, area, area.x + start, y));
+        assert!(!new_action_hit(&shown, area, area.x + start - 1, y));
+        assert!(!new_action_hit(&shown, area, area.x + start, y - 1));
+    }
+    shown.question = Some("Remove this job?".into());
+    assert!(!new_action_hit(&shown, Rect::new(0, 0, 100, 12), 18, 11));
 }
 
 #[test]
@@ -94,14 +119,14 @@ fn focused_delivery_target_is_visible_in_a_short_form() {
             body: CronBody::Form(form.clone()),
             notice: None,
             question: None,
-            hints: "ctrl+s save · esc cancel".into(),
+            hints: "Ctrl+S save · Esc cancel".into(),
         };
         let screen = paint(&shown, 60, 12);
         assert!(
             screen.contains(&format!("> destination-{selected}")),
             "{screen}"
         );
-        assert!(screen.contains("ctrl+s save"), "{screen}");
+        assert!(screen.contains("Ctrl+S save"), "{screen}");
     }
 }
 
@@ -139,7 +164,7 @@ fn run_details_show_later_metadata_and_multiline_preview_when_scrolled() {
             body: CronBody::Detail(detail.clone()),
             notice: None,
             question: None,
-            hints: "esc back".into(),
+            hints: "Esc back".into(),
         };
         let screen = paint(&shown, cols, rows);
         for text in [
@@ -147,7 +172,7 @@ fn run_details_show_later_metadata_and_multiline_preview_when_scrolled() {
             "Title: daily digest",
             "Preview: first line",
             "last line",
-            "esc back",
+            "Esc back",
         ] {
             assert!(screen.contains(text), "{screen}");
         }
@@ -159,7 +184,7 @@ fn run_details_show_later_metadata_and_multiline_preview_when_scrolled() {
         body: CronBody::Detail(detail),
         notice: None,
         question: None,
-        hints: "esc back".into(),
+        hints: "Esc back".into(),
     };
     let enlarged = paint(&shown, 80, 24);
     assert!(
@@ -195,24 +220,27 @@ fn list_snapshots() {
     assert!(screen.contains("daily digest"));
     assert!(screen.contains("next in 3h 12m"));
     assert!(screen.contains("The scheduler is not running."));
-    assert!(screen.contains("ctrl+n new"));
+    assert!(screen.contains("Ctrl+N new"));
     let compact = paint(&rows, 80, 24);
     assert!(compact.contains("daily digest"));
+    assert!(compact.contains("Ctrl+N new"));
+    assert!(compact.contains("Esc close"));
     let empty = CronView {
-        body: CronBody::Message("No scheduled jobs in profile fixture. ctrl+n creates one.".into()),
+        body: CronBody::Message("No scheduled jobs in profile fixture. Ctrl+N creates one.".into()),
         ..loading.clone()
     };
     assert!(paint(&empty, 80, 24).contains("No scheduled jobs in profile fixture"));
     let failed = list_view(
-        Some("Could not load scheduled jobs: gateway down. ctrl+r tries again."),
+        Some("Could not load scheduled jobs: gateway down. Ctrl+R tries again."),
         vec![row("daily digest", "scheduled")],
         None,
     );
     assert!(paint(&failed, 80, 24).contains("Could not load scheduled jobs:"));
     let unmatched = list_view(Some("No job matches \"zz\"."), Vec::new(), None);
     assert!(paint(&unmatched, 80, 24).contains("No job matches"));
-    let tiny = paint(&rows, 59, 12);
-    assert!(tiny.contains("Make the terminal at least 60 by 12 to manage scheduled jobs."));
+    let tiny = paint(&rows, 40, 16);
+    assert!(tiny.contains("Make the terminal at least 60 by 12"));
+    assert!(tiny.contains("Esc closes scheduled jobs"));
 }
 
 #[test]

@@ -199,7 +199,8 @@ pub enum ProvidersInput {
     OauthLoaded(Result<Vec<Account>, Failure>),
     EndpointsLoaded(Result<EndpointList, Failure>),
     KeyChecked(Result<KeyCheck, Failure>),
-    KeySaved(Result<ModelOptionProvider, Failure>),
+    /// A profile key write is confirmed. Only the socket route returns a model inventory row.
+    KeySaved(Result<Option<ModelOptionProvider>, Failure>),
     Disconnected(Result<(), Failure>),
     SignInStarted {
         attempt: u64,

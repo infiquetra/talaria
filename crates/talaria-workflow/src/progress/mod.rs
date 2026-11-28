@@ -162,6 +162,7 @@ impl RunProgress {
                     self.run.previous_execution = Some(self.run.state);
                 }
                 self.run.state = RunState::Running;
+                self.run.script_status = None;
                 self.run.finished_at_ms = None;
                 self.run.refused = 0;
                 if self.run.started_at_ms.is_none() {
@@ -250,6 +251,8 @@ impl RunProgress {
             a.last_outcome = None;
             a.failure = None;
             a.cut_short = None;
+            a.guardrail_halt = None;
+            a.recovered_report = None;
             a.step = None;
             a.attention = None;
             a.ended = false;
@@ -314,6 +317,11 @@ impl RunProgress {
                 hold_generation(a, record["execution_generation"].as_i64());
             }
             "turn_settled" => {
+                if let Some(warning) =
+                    guardrail_halt(&record["result_meta"], record["final_text"].as_str())
+                {
+                    a.guardrail_halt = Some(warning);
+                }
                 let admission = string(&record, "admission_id");
                 if a.settlements.insert(admission) {
                     let attempt = record["attempt"].as_u64().unwrap_or_default();
@@ -348,10 +356,16 @@ impl RunProgress {
             }
             "call_attention" => {
                 a.attention = Some(string(&record, "cause"));
+                // A parked call has not ended, even when its stopped turn read as failed.
+                a.last_outcome = None;
+                a.finished_at_ms = None;
                 hold_generation(a, record["execution_generation"].as_i64());
             }
             "call_resolved" => {
                 a.attention = None;
+            }
+            "call_report_restart_requested" => {
+                a.restart_requested = true;
             }
             "call_finished" => {
                 // Engine outcomes and durable outcomes both use a tagged kind.
@@ -359,6 +373,16 @@ impl RunProgress {
                     .as_str()
                     .or_else(|| record["outcome"]["kind"].as_str())
                     .unwrap_or("failed");
+                a.recovered_report = if outcome == "failed_with_report" {
+                    record["outcome"]["path"].as_str().map(str::to_owned)
+                } else {
+                    None
+                };
+                let outcome = if outcome == "failed_with_report" {
+                    "failed"
+                } else {
+                    outcome
+                };
                 a.last_outcome = Some(outcome.into());
                 a.cut_short = record["outcome"]["cut_short"].is_object().then(|| {
                     crate::engine::CutShort {
@@ -368,6 +392,7 @@ impl RunProgress {
                         limit: record["outcome"]["cut_short"]["limit"]
                             .as_u64()
                             .and_then(|n| u32::try_from(n).ok()),
+                        saved_branch: None,
                     }
                     .describe()
                 });
@@ -512,6 +537,24 @@ impl RunProgress {
             }
         }
     }
+}
+
+/// Describe a stopped turn using its journaled reply when available.
+pub fn guardrail_halt(meta: &Value, final_text: Option<&str>) -> Option<String> {
+    (meta["turn_exit_reason"].as_str() == Some("guardrail_halt")).then(|| {
+        let detail = final_text.map(str::trim).filter(|text| !text.is_empty());
+        let summary = if detail.is_some_and(|text| {
+            text.contains("web_search") && text.contains("without making progress")
+        }) {
+            "Search stopped making progress"
+        } else {
+            "Worker stopped making progress"
+        };
+        detail.map_or_else(
+            || summary.to_owned(),
+            |text| format!("{summary}: {}", text.chars().take(400).collect::<String>()),
+        )
+    })
 }
 pub(crate) fn hold_generation(a: &mut AgentNode, generation: Option<i64>) {
     if let Some(g) = generation {

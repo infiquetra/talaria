@@ -10,8 +10,8 @@ impl ApplyEffect {
         match self {
             Self::Now => "applies now",
             Self::NewSessions => "new sessions",
-            Self::NeedsRestart => "needs restart",
-            Self::MayNeedRestart => "may need a restart",
+            Self::NeedsRestart => "restart the Hermes gateway to apply",
+            Self::MayNeedRestart => "may require restarting the Hermes gateway",
         }
     }
 }

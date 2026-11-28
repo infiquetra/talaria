@@ -40,7 +40,9 @@ pub struct CatalogueEntry {
 }
 fn family_area(token: &str) -> &'static str {
     match token.split('.').next().unwrap_or("") {
-        "transcript" | "composer" | "status" | "tool" | "diff" | "workspace" => "background",
+        "transcript" | "composer" | "status" | "tool" | "diff" | "workspace" | "effort" => {
+            "background"
+        }
         _ => "surface",
     }
 }
@@ -52,20 +54,21 @@ pub fn catalogue() -> &'static [CatalogueEntry] {
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
             .map(|line| {
                 let mut parts = line.split('|');
-                // Each embedded row has four fields; catalogue tests pin all 323 records.
+                // Each embedded row has four fields; the catalogue tests pin the inventory.
                 let token = parts.next().expect("catalogue token");
                 CatalogueEntry {
                     token,
                     role: parts.next().expect("catalogue role"),
                     attributes: parts.next().expect("catalogue attributes"),
                     description: parts.next().expect("catalogue description"),
-                    reserved: token.starts_with("picker.")
-                        || matches!(
-                            token,
-                            "transcript.user.label"
-                                | "transcript.assistant.label"
-                                | "transcript.system"
-                        ),
+                    reserved: matches!(
+                        token,
+                        "picker.filter.match"
+                            | "picker.row.match"
+                            | "picker.badge.provider"
+                            | "picker.badge.effort"
+                            | "transcript.system"
+                    ),
                     area: family_area(token),
                 }
             })

@@ -225,7 +225,7 @@ pub enum ColorsSetting {
 /// What decided the polarity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PolaritySource {
-    /// `/theme light` or `/theme dark` this session.
+    /// A background chosen with `/theme light` or `/theme dark`.
     Command,
     /// `TALARIA_THEME`.
     Environment,

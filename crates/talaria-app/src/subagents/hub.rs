@@ -15,6 +15,9 @@ use talaria_core::subagents::{
 use tokio::task::JoinHandle;
 
 use super::AppSender;
+use super::effort::{EffortSource, read_effort};
+
+const MAX_EFFORT_READS: usize = 4;
 
 /// Settings from `[subagents]`: list poll seconds, tail poll milliseconds,
 /// dock rows. Defaults 5, 2000, 3.
@@ -103,6 +106,13 @@ pub enum SubagentMsg {
         generation: u64,
         result: Result<SubagentListResult, CallError>,
     },
+    EffortRead {
+        key: RowKey,
+        generation: u64,
+        id: String,
+        child_session_id: String,
+        route: Option<(String, String)>,
+    },
     Tail {
         key: RowKey,
         generation: u64,
@@ -175,6 +185,8 @@ struct Tracker {
     stopping: HashSet<String>,
     armed: Option<u64>,
     jobs: Vec<JoinHandle<()>>,
+    effort_lookups: HashMap<String, String>,
+    effort_inflight: usize,
 }
 
 impl Drop for Tracker {
@@ -189,6 +201,7 @@ impl Drop for Tracker {
 pub struct SubagentHub {
     cfg: SubagentsConfig,
     tx: AppSender,
+    effort_source: Option<Arc<EffortSource>>,
     trackers: HashMap<RowKey, Tracker>,
     next_generation: u64,
     foreground: Option<RowKey>,
@@ -315,6 +328,49 @@ impl SubagentHub {
             if self.foreground.as_ref() == Some(key) {
                 self.batches.extend(batches);
             }
+        }
+    }
+    fn read_efforts(&mut self, key: &RowKey) {
+        let Some(source) = &self.effort_source else {
+            return;
+        };
+        let Some(tracker) = self.trackers.get_mut(key) else {
+            return;
+        };
+        tracker
+            .effort_lookups
+            .retain(|id, _| tracker.tree.get(id).is_some());
+        tracker.jobs.retain(|job| !job.is_finished());
+        for row in tracker.tree.rows() {
+            if tracker.effort_inflight >= MAX_EFFORT_READS {
+                break;
+            }
+            let Some(child_session_id) = &row.child_session_id else {
+                continue;
+            };
+            if row.state == RowState::Queued
+                || row.effort.is_some()
+                || tracker.effort_lookups.get(&row.id) == Some(child_session_id)
+            {
+                continue;
+            }
+            let (id, child_session_id) = (row.id.clone(), child_session_id.clone());
+            tracker
+                .effort_lookups
+                .insert(id.clone(), child_session_id.clone());
+            tracker.effort_inflight += 1;
+            let (source, tx, key) = (source.clone(), self.tx.clone(), key.clone());
+            let generation = tracker.generation;
+            tracker.jobs.push(tokio::spawn(async move {
+                let route = read_effort(&source, &key.profile, &child_session_id, &id).await;
+                let _ = tx.send(crate::app::AppMessage::Subagents(SubagentMsg::EffortRead {
+                    key,
+                    generation,
+                    id,
+                    child_session_id,
+                    route,
+                }));
+            }));
         }
     }
     fn schedule(&mut self, key: &RowKey, kind: TimerKind, delay: Duration) {
@@ -609,6 +665,7 @@ impl SubagentHub {
         Self {
             cfg,
             tx,
+            effort_source: None,
             trackers: HashMap::new(),
             next_generation: 0,
             foreground: None,
@@ -628,6 +685,11 @@ impl SubagentHub {
             panel_epoch: 0,
             elapsed_scheduled: false,
         }
+    }
+
+    pub(crate) fn with_effort_source(mut self, source: Option<EffortSource>) -> Self {
+        self.effort_source = source.map(Arc::new);
+        self
     }
 
     pub fn attach(&mut self, key: RowKey, client: Client) {
@@ -653,6 +715,8 @@ impl SubagentHub {
                 stopping: HashSet::new(),
                 armed: None,
                 jobs: Vec::new(),
+                effort_lookups: HashMap::new(),
+                effort_inflight: 0,
             },
         );
         self.list(&key);
@@ -699,6 +763,7 @@ impl SubagentHub {
         }
         let changed = before != tracker.tree.version();
         self.collect_batches(key);
+        self.read_efforts(key);
         self.schedule_poll(key);
         self.schedule_elapsed(key);
         changed
@@ -719,6 +784,8 @@ impl SubagentHub {
             tracker.poll_scheduled = false;
             tracker.tail_inflight = false;
             tracker.stopping.clear();
+            tracker.effort_lookups.clear();
+            tracker.effort_inflight = 0;
         }
         if self
             .status_owner
@@ -799,8 +866,32 @@ impl SubagentHub {
                     || was_known != (tracker.tree.hydrated() || tracker.list_disabled)
                     || previous_flash != self.flash;
                 self.collect_batches(&key);
+                self.read_efforts(&key);
                 self.schedule_poll(&key);
                 self.schedule_elapsed(&key);
+                changed
+            }
+            SubagentMsg::EffortRead {
+                key,
+                generation,
+                id,
+                child_session_id,
+                route,
+            } => {
+                let Some(tracker) = self
+                    .trackers
+                    .get_mut(&key)
+                    .filter(|t| t.generation == generation)
+                else {
+                    return false;
+                };
+                tracker.effort_inflight = tracker.effort_inflight.saturating_sub(1);
+                let changed = route.is_some_and(|(model, effort)| {
+                    tracker
+                        .tree
+                        .set_child_route(&id, &child_session_id, model, effort)
+                });
+                self.read_efforts(&key);
                 changed
             }
             SubagentMsg::Tail {

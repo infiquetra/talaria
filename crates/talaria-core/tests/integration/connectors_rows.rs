@@ -288,14 +288,38 @@ fn consent_gates_every_call() {
     let clock = now();
     let mut state = ConnectorsState::new();
     let effects = update(&mut state, open(false, ConnectorsTab::Connectors), clock);
-    assert!(effects.is_empty());
+    assert_eq!(effects, vec![ConnectorsEffect::LoadIdentity]);
     assert!(matches!(view(&state, clock).screen, Screen::Consent { .. }));
     let consent = view(&state, clock);
     let Screen::Consent { text } = consent.screen else {
         panic!("consent card");
     };
-    assert!(text.contains("Hermes creates a free guest identity for it when you continue."));
+    assert!(text.contains("may create a free guest identity"));
     assert!(text.contains("fixture"));
+    for (identity, expected) in [
+        (
+            talaria_core::connectors::NousIdentity::SignedIn,
+            "signed in to Nous",
+        ),
+        (
+            talaria_core::connectors::NousIdentity::SignedOut,
+            "no active Nous sign-in",
+        ),
+        (
+            talaria_core::connectors::NousIdentity::Guest,
+            "uses a Nous guest identity",
+        ),
+        (
+            talaria_core::connectors::NousIdentity::Unknown,
+            "may create a free guest identity",
+        ),
+    ] {
+        assert!(update(&mut state, ConnectorsInput::IdentityReply(identity), clock).is_empty());
+        let Screen::Consent { text } = view(&state, clock).screen else {
+            panic!("consent card")
+        };
+        assert!(text.contains(expected), "{text}");
+    }
     assert!(
         consent
             .footer
@@ -328,6 +352,38 @@ fn consent_gates_every_call() {
         view(&consented, clock).screen,
         Screen::Consent { .. }
     ));
+
+    let mut unconsented_messaging = ConnectorsState::new();
+    let _ = update(
+        &mut unconsented_messaging,
+        open(false, ConnectorsTab::Messaging),
+        clock,
+    );
+    assert_eq!(
+        update(
+            &mut unconsented_messaging,
+            ConnectorsInput::Key(ConnectorsKey::NextTab),
+            clock
+        ),
+        vec![ConnectorsEffect::LoadIdentity]
+    );
+    assert!(matches!(
+        view(&unconsented_messaging, clock).screen,
+        Screen::Consent { .. }
+    ));
+    let _ = update(
+        &mut unconsented_messaging,
+        ConnectorsInput::Key(ConnectorsKey::NextTab),
+        clock,
+    );
+    assert!(
+        update(
+            &mut unconsented_messaging,
+            ConnectorsInput::Key(ConnectorsKey::PrevTab),
+            clock
+        )
+        .is_empty()
+    );
 
     let mut messaging = ConnectorsState::new();
     let effects = update(&mut messaging, open(true, ConnectorsTab::Messaging), clock);

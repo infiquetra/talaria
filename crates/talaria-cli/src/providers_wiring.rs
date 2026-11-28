@@ -324,7 +324,7 @@ mod tests {
             })), now, &secret);
             assert!(effects.iter().any(|effect| matches!(effect, ProvidersEffect::SaveKey { .. })));
             let saved = serde_json::from_value(serde_json::json!({"slug":"example", "name":"Example", "models":[], "authenticated":true})).expect("saved provider fixture");
-            check_domain(&mut wiring, &mut state, ProvidersInput::KeySaved(Ok(saved)), now, &secret);
+            check_domain(&mut wiring, &mut state, ProvidersInput::KeySaved(Ok(Some(saved))), now, &secret);
             assert_eq!(wiring.secret_len(), 0);
             check_domain(&mut wiring, &mut state, ProvidersInput::Close, now, &secret);
             state = key_card(&mut wiring, now, &secret);

@@ -376,7 +376,11 @@ pub fn cells(finality: &[bool]) -> Vec<Cell> {
             let id = CellId::new(number);
             let text = format!("cell {number}");
             if is_final {
-                Cell::User(UserCell { id, text })
+                Cell::User(UserCell {
+                    id,
+                    text,
+                    expanded_paste: None,
+                })
             } else {
                 Cell::Assistant(AssistantCell {
                     id,

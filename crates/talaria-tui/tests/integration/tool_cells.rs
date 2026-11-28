@@ -6,9 +6,10 @@ use ratatui::style::{Color, Modifier};
 use ratatui::text::Line;
 use serde_json::json;
 use talaria_core::session::{Cell, CellId, ToolCell, ToolProgress, ToolStatus};
+use talaria_tui::history::{CellLines, PlainCellLines};
 use talaria_tui::live::LiveSection;
 use talaria_tui::tool_cell::{
-    Detail, DraftingLine, ToolClock, ToolRenderOptions, ToolTheme, tool_lines,
+    Detail, DraftingLine, ToolCellLines, ToolClock, ToolRenderOptions, ToolTheme, tool_lines,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -114,6 +115,25 @@ fn running_header_with_elapsed_and_progress() {
         opts.elapsed = Some(Duration::from_secs_f64(seconds));
         let lines = tool_lines(&tool, &opts);
         assert_eq!(row(&lines[0]), header);
+    }
+}
+
+#[test]
+fn conversation_tools_put_the_outcome_in_the_gutter() {
+    let render = ToolCellLines::new(Box::new(PlainCellLines), options(76)).in_conversation();
+    for (status, mark) in [
+        (ToolStatus::Running, '…'),
+        (ToolStatus::Succeeded, '✓'),
+        (ToolStatus::Failed, '✗'),
+    ] {
+        let tool = Cell::Tool(cell("terminal", status));
+        for width in [18, 76] {
+            let output = render.lines(&tool, width);
+            let header = row(&output[0]);
+            assert!(header.starts_with(&format!(" {mark} Shell")), "{header}");
+            assert_eq!(header.chars().filter(|ch| *ch == mark).count(), 1);
+            assert!(output.iter().all(|line| line.width() <= usize::from(width)));
+        }
     }
 }
 
@@ -716,6 +736,16 @@ fn full_detail_shows_arguments_output_and_whole_diff() {
     assert!(text.iter().any(|row| row.contains("head and tail")));
     assert!(text.iter().any(|row| row.contains("gamma")));
     assert!(text.iter().all(|row| !row.contains("Ctrl+O")));
+
+    tool.args = Some(json!({"code": "if ready:\n    print(\"already here\")", "timeout": 10}));
+    let text = rows(&tool_lines(&tool, &opts));
+    assert!(text.iter().any(|row| row.trim() == "code:"));
+    assert!(text.iter().any(|row| row == "    if ready:"));
+    assert!(
+        text.iter()
+            .any(|row| row == "        print(\"already here\")")
+    );
+    assert!(text.iter().any(|row| row.trim() == "timeout: 10"));
 
     let mut failed = cell("patch", ToolStatus::Failed);
     failed.context = Some("notes.txt".to_string());

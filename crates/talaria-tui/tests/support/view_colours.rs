@@ -209,7 +209,7 @@ pub const PROBES: &[(&str, &str, &str)] = &[
     ("work-panel", "Inspect the diff", "work.agent.name"),
     ("menu", "Talaria", "menu.brand"),
     ("menu", "Session", "menu.item"),
-    ("workspace", "No messages yet.", "workspace.empty"),
+    ("workspace", "Resume a session", "workspace.empty"),
     ("rewind-actions", "Uncommitted edits", "rewind.warning"),
     (
         "rewind-actions",

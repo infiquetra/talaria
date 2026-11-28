@@ -178,16 +178,18 @@ fn timeout_and_cancel_interrupt() {
         ))),
         now,
     );
-    let effects = s.update(
-        ConfigureInput::Key(ConfigureKey::Esc),
-        now + Duration::from_secs(1),
-    );
+    let effects = s.update(ConfigureInput::Interrupt, now + Duration::from_secs(1));
     assert!(
         effects
             .iter()
             .any(|e| matches!(e, ConfigureEffect::Interrupt { .. }))
     );
     assert!(format!("{:?}", s.view(now).text_lines()).contains("Cancelled. Nothing was changed."));
+    assert!(!s.is_closed());
+    assert!(s.update(ConfigureInput::Interrupt, now).is_empty());
+    assert!(!s.is_closed());
+    s.update(ConfigureInput::Key(ConfigureKey::Esc), now);
+    assert!(s.is_closed());
 }
 
 #[test]
@@ -259,6 +261,26 @@ fn every_exit_detaches_once() {
         format!("{:?} {:?}", effects, disconnected.view(now).text_lines())
             .contains("Lost the connection to Hermes")
     );
+}
+
+#[test]
+fn interrupt_during_setup_startup_detaches_a_late_session_without_submitting() {
+    let now = Instant::now();
+    let mut state = starting(now);
+    assert!(state.update(ConfigureInput::Interrupt, now).is_empty());
+    let effects = state.update(
+        ConfigureInput::Created(Box::new(snapshot(
+            Some(json!({"clarify":["clarify"]})),
+            false,
+        ))),
+        now,
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [ConfigureEffect::Detach { .. }]
+    ));
+    assert_eq!(state.view(now).phase, Phase::Cancelled);
+    assert!(!state.is_closed());
 }
 
 #[test]

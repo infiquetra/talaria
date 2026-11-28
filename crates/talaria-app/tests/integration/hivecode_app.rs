@@ -118,6 +118,7 @@ async fn routed_submit_frames() {
                 session,
                 original_text,
                 command_line,
+                ..
             } => {
                 assert_eq!(session, &id);
                 assert_eq!(original_text, "What is 2 + 2? Answer in one word.");
@@ -707,6 +708,7 @@ fn run_row(
         money_spent_usd: None,
         run_dir: format!("fixture-runs/{run_id}"),
         warning: None,
+        attention: Default::default(),
     }
 }
 

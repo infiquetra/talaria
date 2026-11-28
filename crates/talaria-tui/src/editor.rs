@@ -9,11 +9,20 @@ use ratatui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-pub(crate) fn draw(text: &str, cursor: usize, area: Rect, buf: &mut Buffer) {
+use crate::theme::surfaces::{ViewStyles, tokens as t};
+
+pub(crate) fn draw_with_theme(
+    text: &str,
+    cursor: usize,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     Clear.render(area, buf);
+    views.finish(area, buf, t::DIALOG_BACKGROUND, true);
     let before: String = text.chars().take(cursor).collect();
     let clean = crate::history::sanitize(text);
     let cursor_col = Line::raw(crate::history::sanitize(&before).as_ref()).width();
@@ -27,7 +36,12 @@ pub(crate) fn draw(text: &str, cursor: usize, area: Rect, buf: &mut Buffer) {
         skipped += Line::raw(cluster).width();
         start = at + cluster.len();
     }
-    Paragraph::new(&clean[start..]).render(area, buf);
+    Paragraph::new(&clean[start..])
+        .style(views.style(t::DIALOG_INPUT, Style::default()))
+        .render(area, buf);
     let x = cursor_col.saturating_sub(skipped).min(width - 1) as u16;
-    buf[(area.x + x, area.y)].set_style(Style::default().add_modifier(Modifier::REVERSED));
+    buf[(area.x + x, area.y)].set_style(views.style(
+        t::EDITOR_SELECTION,
+        Style::default().add_modifier(Modifier::REVERSED),
+    ));
 }

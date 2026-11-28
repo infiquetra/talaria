@@ -1,5 +1,8 @@
 //! The live subagent dock and shared row styles.
-use super::labels::goal_labels;
+use super::{
+    AgentClock,
+    labels::{GoalLabels, task_labels},
+};
 use crate::{checklist::cut_to_width, history::sanitize, live::LiveSection};
 use ratatui::{
     buffer::Buffer,
@@ -8,7 +11,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use talaria_core::subagents::{
-    Activity, ActivityKind, RowState, Spawning, SubagentCounts, SubagentRow, SubagentTree,
+    Activity, ActivityKind, RowState, Spawning, SubagentCounts, SubagentRow, SubagentTree, TreeRow,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -16,6 +19,8 @@ use unicode_width::UnicodeWidthStr;
 pub struct SubagentStyle {
     pub header: Style,
     pub hint: Style,
+    pub model: Style,
+    pub task: Style,
     pub running: Style,
     pub queued: Style,
     pub completed: Style,
@@ -64,6 +69,15 @@ pub(super) fn literal(text: &str) -> String {
         }
     }
     sanitize(&output).into_owned()
+}
+/// Protect the effort label when a long model name has to be shortened.
+pub(super) fn route_label(row: &SubagentRow, width: u16) -> String {
+    let model = literal(row.model.as_deref().unwrap_or("model ?"));
+    let effort = literal(row.effort.as_deref().unwrap_or("?"));
+    let suffix = format!(" · effort {effort}");
+    let model_cols = usize::from(width).saturating_sub(suffix.width());
+    let model = cut_to_width(&model, model_cols as u16);
+    cut_to_width(&format!("{model}{suffix}"), width)
 }
 /// Hermes sends one progress line per five tool calls, worded `🔀 [set 1 · 3/10] terminal, read_file`.
 /// It repeats tool events that already arrived, so it is not the line to show first.
@@ -160,11 +174,18 @@ pub struct SubagentDock<'a> {
     style: &'a SubagentStyle,
     max_rows: u16,
     terminal_rows: u16,
+    clock: AgentClock,
+    rows: std::cell::OnceCell<(Vec<TreeRow>, GoalLabels)>,
 }
 impl<'a> SubagentDock<'a> {
     /// Use resolved styles for the existing dock projection.
     pub fn render_with_style(&self, area: Rect, buf: &mut Buffer, style: &SubagentStyle) {
-        SubagentDock { style, ..*self }.render(area, buf);
+        SubagentDock {
+            style,
+            rows: Default::default(),
+            ..*self
+        }
+        .render(area, buf);
     }
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -185,7 +206,47 @@ impl<'a> SubagentDock<'a> {
             style,
             max_rows,
             terminal_rows,
+            clock: AgentClock::default(),
+            rows: Default::default(),
         }
+    }
+    pub fn with_clock(mut self, clock: AgentClock) -> Self {
+        self.clock = clock;
+        self
+    }
+    fn rows(&self) -> &(Vec<TreeRow>, GoalLabels) {
+        self.rows.get_or_init(|| {
+            let visible: Vec<_> = self
+                .tree
+                .rows_in_order()
+                .into_iter()
+                .filter(|entry| self.tree.row(entry.index).state.is_live())
+                .take(usize::from(self.max_rows))
+                .collect();
+            let goals: Vec<_> = visible
+                .iter()
+                .map(|entry| self.tree.row(entry.index).goal.as_str())
+                .collect();
+            let labels = task_labels(&goals);
+            (visible, labels)
+        })
+    }
+    /// Only rows which fit in the final viewport can request a frame.
+    pub fn wake_after_ms(&self, width: u16, height: u16) -> Option<u64> {
+        if self.terminal_rows < 16 || height < 2 || self.counts.live == 0 {
+            return None;
+        }
+        let (rows, labels) = self.rows();
+        let visible = height.saturating_sub(1 + u16::from(labels.shared.is_some()));
+        let visible = if width < 60 {
+            visible.div_ceil(2)
+        } else {
+            visible
+        };
+        rows.iter()
+            .take(usize::from(visible))
+            .filter_map(|r| self.clock.signal(self.tree.row(r.index)).wake_ms)
+            .min()
     }
     pub fn lines(&self, width: u16) -> Vec<Line<'static>> {
         if width == 0 || self.max_rows == 0 || self.counts.live == 0 {
@@ -222,18 +283,7 @@ impl<'a> SubagentDock<'a> {
         if self.terminal_rows < 16 {
             return lines;
         }
-        let live: Vec<_> = self
-            .tree
-            .rows_in_order()
-            .into_iter()
-            .filter(|r| self.tree.row(r.index).state.is_live())
-            .collect();
-        let goals: Vec<String> = live
-            .iter()
-            .map(|entry| literal(&self.tree.row(entry.index).goal))
-            .collect();
-        let goals: Vec<&str> = goals.iter().map(String::as_str).collect();
-        let found = goal_labels(&goals);
+        let (live, found) = self.rows();
         if let Some(shared) = &found.shared {
             lines.push(Line::styled(
                 cut_to_width(&format!("  Task: {shared}"), width),
@@ -246,29 +296,70 @@ impl<'a> SubagentDock<'a> {
             .take(usize::from(self.max_rows))
         {
             let row = self.tree.row(entry.index);
+            let signal = self.clock.signal(row);
             let prefix = format!(
-                "{}{} {label} · ",
+                "{}{} {}  ",
                 " ".repeat(2 + 2 * usize::from(entry.depth.min(3))),
-                row.state.glyph(),
+                signal.glyph,
+                signal.label
             );
-            let activity_width = usize::from(width)
-                .saturating_sub(prefix.width())
-                .max(10)
-                .min(usize::from(u16::MAX)) as u16;
-            let text = format!("{prefix}{}", cut_to_width(&activity(row), activity_width));
-            lines.push(styled_row(
-                text,
-                row.state.glyph(),
-                row.state,
-                width,
-                self.style,
-                false,
-            ));
+            let room = width.saturating_sub(prefix.width() as u16);
+            let mut spans = vec![Span::styled(
+                cut_to_width(&prefix, width),
+                self.style.state(row.state),
+            )];
+            let stacked = width < 60;
+            let route = route_label(
+                row,
+                if stacked {
+                    width.saturating_sub(4)
+                } else {
+                    room.saturating_sub(15)
+                },
+            );
+            let job_room = if stacked {
+                room
+            } else {
+                room.saturating_sub(3 + route.width() as u16)
+            };
+            let task = if label.is_empty() {
+                "Untitled task"
+            } else {
+                label
+            };
+            let activity_room = if !stacked && !row.activity.is_empty() && job_room >= 34 {
+                16
+            } else {
+                0
+            };
+            let task = cut_to_width(task, (job_room - activity_room).min(56));
+            let mut used = prefix.width() + task.width();
+            spans.push(Span::styled(task, self.style.task));
+            if !stacked {
+                used += 3 + route.width();
+                spans.push(Span::styled(" · ", self.style.hint));
+                spans.push(Span::styled(route.clone(), self.style.model));
+            }
+            let remaining = usize::from(width).saturating_sub(used + 3);
+            if remaining >= 4 && !row.activity.is_empty() {
+                spans.push(Span::styled(" · ", self.style.hint));
+                spans.push(Span::styled(
+                    cut_to_width(&activity(row), remaining as u16),
+                    self.style.hint,
+                ));
+            }
+            lines.push(Line::from(spans));
+            if stacked {
+                lines.push(Line::styled(
+                    cut_to_width(&format!("    {route}"), width),
+                    self.style.model,
+                ));
+            }
         }
-        if live.len() > usize::from(self.max_rows) {
+        if self.counts.live > u32::from(self.max_rows) {
             lines.push(Line::styled(
                 cut_to_width(
-                    &format!("  … +{} more", live.len() - usize::from(self.max_rows)),
+                    &format!("  … +{} more", self.counts.live - u32::from(self.max_rows)),
                     width,
                 ),
                 self.style.hint,
@@ -279,7 +370,19 @@ impl<'a> SubagentDock<'a> {
 }
 impl LiveSection for SubagentDock<'_> {
     fn height(&self, width: u16) -> u16 {
-        u16::try_from(self.lines(width).len()).unwrap_or(u16::MAX)
+        if width == 0 || self.max_rows == 0 || self.counts.live == 0 {
+            return 0;
+        }
+        if self.terminal_rows < 16 {
+            return 1;
+        }
+        let (rows, labels) = self.rows();
+        (rows.len() as u16)
+            .saturating_mul(if width < 60 { 2 } else { 1 })
+            .saturating_add(
+                1 + u16::from(labels.shared.is_some())
+                    + u16::from(self.counts.live > u32::from(self.max_rows)),
+            )
     }
     fn render(&self, area: Rect, buf: &mut Buffer) {
         for (y, line) in (0..area.height).zip(self.lines(area.width)) {

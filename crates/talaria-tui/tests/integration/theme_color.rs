@@ -219,22 +219,20 @@ fn inline_user_and_notice_use_theme_colours() {
     let notice_style = resolution.elements["transcript.notice"];
     let error_style = resolution.elements["alert.error"];
     let reasoning_label_style = resolution.elements["transcript.reasoning.label"];
-    let reserved_fgs = [
-        resolution.elements["transcript.user.label"].fg.unwrap(),
-        resolution.elements["transcript.assistant.label"]
-            .fg
-            .unwrap(),
-        resolution.elements["transcript.system"].fg.unwrap(),
-    ];
+    let user_label_style = resolution.elements["transcript.user.label"];
+    let assistant_label_fg = resolution.elements["transcript.assistant.label"]
+        .fg
+        .unwrap();
+    let reserved_fg = resolution.elements["transcript.system"].fg.unwrap();
 
     let all_fgs = [
         user_text_style.fg.unwrap(),
         notice_style.fg.unwrap(),
         error_style.fg.unwrap(),
         reasoning_label_style.fg.unwrap(),
-        reserved_fgs[0],
-        reserved_fgs[1],
-        reserved_fgs[2],
+        assistant_label_fg,
+        reserved_fg,
+        user_label_style.fg.unwrap(),
     ];
     let distinct: BTreeSet<_> = all_fgs.iter().map(|c| format!("{c:?}")).collect();
     assert_eq!(distinct.len(), 7, "all seven foregrounds must be distinct");
@@ -259,7 +257,7 @@ fn inline_user_and_notice_use_theme_colours() {
                         let painted = line.style.patch(s.style);
                         assert_eq!(painted.bg, None, "inline cells must paint no background");
                         assert!(
-                            !painted.fg.is_some_and(|fg| reserved_fgs.contains(&fg)),
+                            painted.fg != Some(reserved_fg),
                             "reserved element foreground must not be painted: {painted:?}"
                         );
                         painted
@@ -273,11 +271,15 @@ fn inline_user_and_notice_use_theme_colours() {
     let user = Cell::User(UserCell {
         id: CellId::new(1),
         text: "hello".to_owned(),
+        expanded_paste: None,
     });
     let user_lines = painted_styles(&user);
     assert_eq!(user_lines.len(), 1);
-    assert_eq!(user_lines[0].0, "> hello");
-    for style in &user_lines[0].1 {
+    assert_eq!(user_lines[0].0, " You     hello");
+    let (marker, body) = user_lines[0].1.split_first().unwrap();
+    assert_eq!(marker.fg, user_label_style.fg);
+    assert!(!body.is_empty());
+    for style in body {
         assert_eq!(style.fg, user_text_style.fg);
         assert_eq!(style.add_modifier, user_text_style.add_modifier);
     }
@@ -332,7 +334,7 @@ fn inline_user_and_notice_use_theme_colours() {
     });
     let reasoning_lines = painted_styles(&reasoning);
     assert!(reasoning_lines.len() >= 2);
-    assert_eq!(reasoning_lines[0].0, "∴ thinking");
+    assert_eq!(reasoning_lines[0].0, "∴ reasoning");
     for style in &reasoning_lines[0].1 {
         assert_eq!(style.fg, reasoning_label_style.fg);
         assert_eq!(style.add_modifier, reasoning_label_style.add_modifier);
@@ -350,6 +352,7 @@ fn inline_user_and_notice_use_theme_colours() {
     let long_user = Cell::User(UserCell {
         id: CellId::new(9),
         text: "please check the second draft before lunch".to_owned(),
+        expanded_paste: None,
     });
     let long_notice = Cell::Notice(NoticeCell {
         id: CellId::new(10),
@@ -368,7 +371,19 @@ fn inline_user_and_notice_use_theme_colours() {
                 .collect()
         };
         assert!(themed.len() > 1, "{:?}", text(&themed));
-        assert_eq!(text(&themed), text(&plain));
+        if matches!(cell, Cell::User(_)) {
+            let rows = text(&themed);
+            assert!(rows[0].starts_with(" › "));
+            assert_eq!(
+                rows.iter()
+                    .map(|s| s.trim_start_matches([' ', '›']))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                "please check the second draft before lunch"
+            );
+        } else {
+            assert_eq!(text(&themed), text(&plain));
+        }
         for line in &themed {
             assert_eq!(line.style.fg, style.fg);
         }

@@ -71,6 +71,7 @@ async fn demonstrate() -> Result<(), Box<dyn std::error::Error>> {
         phase: None,
         prompt: "Reply with one short word.".into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("scripted-model".into()),
         provider: Some("scripted".into()),

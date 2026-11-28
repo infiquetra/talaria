@@ -34,6 +34,7 @@ fn request() -> AgentRequest {
         phase: None,
         prompt: "Reply".into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("probe".into()),
         provider: Some("custom".into()),
@@ -583,8 +584,76 @@ fn stopped_outcomes_take_precedence_over_the_failed_flag() {
         assert_eq!(
             SchemaTurnPolicy.after_turn(&request(), &[turn]),
             NextStep::Finish(AgentOutcome::Failed {
-                reason: format!("stopped in Hermes (outcome '{outcome}')"),
+                reason: format!(
+                    "agent stopped: Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn; Hermes ended the turn as '{outcome}' (interrupted). This was a stop, not a timeout: a time in Hermes's text is how long the turn had run"
+                ),
             })
         );
     }
+}
+
+#[tokio::test]
+async fn next_reply_follows_a_turn_another_client_started_on_the_session() {
+    let mut settled = receipt(
+        "session",
+        "terminal",
+        Some(json!({"final_response":"picked up","completed":true,"failed":false})),
+    );
+    settled["admission_id"] = json!("other");
+    let mut polled = receipt("session", "terminal", None);
+    polled["admission_id"] = json!("other");
+    let (p, _feed, wire) = port(vec![
+        step("runtime.describe", describe()),
+        step("session.create", snapshot("session")),
+        step("prompt.receipt", polled),
+        step("prompt.receipt", settled),
+    ])
+    .await;
+    create(&p).await;
+    let frame = |admission: &str| {
+        hermes_contract::events::EventFrame::from_params(&json!({"session_id":"session",
+            "type":"message.start","seq":1,"replay_epoch":"epoch","admission_id":admission,
+            "payload":{}}))
+        .unwrap()
+    };
+    let emit = |admission: &str| {
+        wire.emit(
+            "fixture",
+            WireEvent::Event {
+                session_id: "session".into(),
+                frame: frame(admission),
+            },
+        )
+    };
+    // A frame of the run's own turn is not a new reply.
+    emit("admission");
+    let waiting = tokio::spawn({
+        let p = p.clone();
+        async move {
+            p.next_reply("fixture".into(), "session".into(), vec!["admission".into()])
+                .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !waiting.is_finished(),
+        "nothing else ran on the session yet"
+    );
+    // Someone continues the session from another window.
+    emit("other");
+    let reply = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(reply.admission_id, "other");
+    assert_eq!(reply.status, AdmissionState::Terminal);
+    assert_eq!(reply.result.unwrap()["final_response"], "picked up");
+    // What the port saw on the session is what a parked call records as already answered.
+    assert_eq!(
+        p.seen_admissions("fixture".into(), "session".into())
+            .await
+            .unwrap(),
+        ["admission", "other"]
+    );
 }

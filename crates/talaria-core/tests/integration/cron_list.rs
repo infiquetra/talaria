@@ -437,7 +437,7 @@ fn filter_and_empty_states() {
     let shown = view(&state, support::WALL);
     assert!(matches!(
         shown.body,
-        CronBody::Message(ref text) if text == "No scheduled jobs in profile fixture. ctrl+n creates one."
+        CronBody::Message(ref text) if text == "No scheduled jobs in profile fixture. Ctrl+N creates one."
     ));
     let mut down = CronState::new("fixture".into(), Ok(()));
     update(
@@ -474,7 +474,7 @@ fn filter_and_empty_states() {
         other => panic!("failed list {other:?}"),
     };
     assert!(text.contains("Could not load scheduled jobs:"));
-    assert!(text.contains("ctrl+r tries again."));
+    assert!(text.contains("Ctrl+R tries again."));
 }
 
 #[test]

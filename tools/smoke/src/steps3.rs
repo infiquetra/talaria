@@ -1232,7 +1232,7 @@ impl Run3<'_> {
         Ok(Step::Pass)
     }
 
-    /// The fleet view opens on this session, filters to nothing and closes with Ctrl+C.
+    /// The fleet view opens on this session and Esc clears the filter before closing.
     fn fleet_view(&mut self) -> Result<Step, Abort> {
         self.submit("/fleet")?;
         if !self.wait(VIEW, ReadSource::Visible, has_here_row)? {
@@ -1253,13 +1253,21 @@ impl Run3<'_> {
             ));
         }
         let before = self.read(ReadSource::Visible)?;
-        self.key("ctrl+c")?;
+        self.key("esc")?;
+        if !self.wait_changed(VIEW, &before, has_here_row)? {
+            return fail(format!(
+                "Esc did not clear the fleet filter within {} s",
+                self.base.limit_secs(VIEW)
+            ));
+        }
+        let before = self.read(ReadSource::Visible)?;
+        self.key("esc")?;
         let model = self.base.cfg.model.clone();
         if !self.wait_changed(VIEW, &before, |screen| {
             !overlay_open(screen) && screen.contains(&model)
         })? {
             return fail(format!(
-                "Ctrl+C did not close the overlay within {} s",
+                "Esc did not close the fleet overlay within {} s",
                 self.base.limit_secs(VIEW)
             ));
         }
@@ -1302,10 +1310,10 @@ impl Run3<'_> {
             }
             self.base.clock.sleep(POLL_INTERVAL);
         }
-        // The overlay stays open after `o`. Ctrl+C closes it; on the main screen it would arm
-        // the exit instead, so it is sent only while the overlay shows.
+        // The pane action leaves the filtered list open. Esc clears it, then closes.
         if overlay_open(&self.read(ReadSource::Visible)?) {
-            self.key("ctrl+c")?;
+            self.key("esc")?;
+            self.key("esc")?;
         }
         Ok(Step::Pass)
     }
@@ -1568,7 +1576,7 @@ impl Run3<'_> {
         self.typed("a")?;
         let mut digit = None;
         self.wait_changed(CARD, &before, |screen| {
-            digit = deny_digit(screen).filter(|_| !screen.contains("ctrl+c close"));
+            digit = deny_digit(screen).filter(|_| screen.contains("Esc back to list"));
             digit.is_some()
         })?;
         let Some(digit) = digit else {

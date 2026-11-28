@@ -28,6 +28,7 @@ async fn open_10k_records_under_budget() {
                 workflow_path: vec![],
                 launch: launch(),
                 request_id: format!("request-{i}"),
+                report_baseline: None,
             },
             Record::SessionBound {
                 key: key.clone(),

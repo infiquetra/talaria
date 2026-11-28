@@ -7,6 +7,7 @@ use ratatui::text::{Line, Span};
 use talaria_core::queue::{QueueView, QueuedRow, RowStatus, WaitingAge};
 
 use crate::history::sanitize;
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use crate::tool_cell::{cut_to, spaces, text_width};
 
 /// The preview shows at most this many lines.
@@ -41,18 +42,32 @@ pub fn render_indicator(count: usize, paused: bool, width: u16) -> Span<'static>
 /// Issue 232. Queue and steer. `show_select_hint` adds ` · ↑ select` at 60 columns or more.
 #[must_use]
 pub fn render_preview(view: &QueueView, width: u16, show_select_hint: bool) -> Vec<Line<'static>> {
+    render_preview_with_theme(view, width, show_select_hint, &ViewStyles::default())
+}
+
+/// Draw the queue on the inline conversation surface using the current theme.
+#[must_use]
+pub fn render_preview_with_theme(
+    view: &QueueView,
+    width: u16,
+    show_select_hint: bool,
+    theme: &ViewStyles,
+) -> Vec<Line<'static>> {
+    let styles = PreviewStyles::new(theme);
     let columns = usize::from(width);
-    let mut label = indicator_text(view.rows.len(), view.paused, width);
+    let label = indicator_text(view.rows.len(), view.paused, width);
     let selecting = view.selected.is_some() && view.editing.is_none();
-    if show_select_hint && !selecting && width >= WIDE && !label.is_empty() {
-        label.push_str(SELECT_HINT);
-    }
+    let hint = if show_select_hint && !selecting && width >= WIDE && !label.is_empty() {
+        SELECT_HINT
+    } else {
+        ""
+    };
 
     // The label takes the end of the first line, so that line's text gives way for it.
     let reserve = if label.is_empty() {
         0
     } else {
-        text_width(&label) + GAP
+        text_width(&label) + text_width(hint) + GAP
     };
     let mut lines: Vec<Line<'static>> = Vec::new();
     if let Some(newest) = view.steering.last() {
@@ -66,19 +81,19 @@ pub fn render_preview(view: &QueueView, width: u16, show_select_hint: bool) -> V
             STEERING_PREFIX,
             &first_line(newest),
             &suffix,
-            dim(),
+            styles.action,
             columns.saturating_sub(reserve),
         ));
     }
 
     if selecting {
-        push_selection(&mut lines, view, columns, reserve);
+        push_selection(&mut lines, view, columns, reserve, &styles);
     } else {
-        push_preview(&mut lines, view, columns, reserve);
+        push_preview(&mut lines, view, columns, reserve, &styles);
     }
 
     if let Some(first) = lines.first_mut() {
-        add_label(first, &label, columns);
+        add_label(first, &label, hint, columns, &styles);
     }
     lines
 }
@@ -100,6 +115,36 @@ fn dim() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
 
+struct PreviewStyles {
+    label: Style,
+    text: Style,
+    selected: Style,
+    warning: Style,
+    action: Style,
+    overflow: Style,
+}
+
+impl PreviewStyles {
+    fn new(theme: &ViewStyles) -> Self {
+        Self {
+            label: theme.inline(t::QUEUE_LABEL, dim()),
+            text: theme.inline(t::QUEUE_TEXT, dim()),
+            selected: theme.inline_selection(t::QUEUE_SELECTED, Style::default().bold()),
+            warning: theme.inline(t::ALERT_WARNING, dim()),
+            action: theme.inline(t::QUEUE_ACTION, dim()),
+            overflow: theme.inline(t::QUEUE_OVERFLOW, dim()),
+        }
+    }
+
+    fn row(&self, row: &QueuedRow) -> Style {
+        if row.status == RowStatus::Unknown {
+            self.warning
+        } else {
+            self.text
+        }
+    }
+}
+
 fn indicator_text(count: usize, paused: bool, width: u16) -> String {
     if count == 0 {
         return String::new();
@@ -113,7 +158,13 @@ fn indicator_text(count: usize, paused: bool, width: u16) -> String {
 }
 
 /// Rows from the head, then `+m more`, in at most five lines with the steering line.
-fn push_preview(lines: &mut Vec<Line<'static>>, view: &QueueView, columns: usize, reserve: usize) {
+fn push_preview(
+    lines: &mut Vec<Line<'static>>,
+    view: &QueueView,
+    columns: usize,
+    reserve: usize,
+    styles: &PreviewStyles,
+) {
     let room = PREVIEW_LINES.saturating_sub(lines.len());
     let rows = &view.rows;
     let shown = if rows.len() <= room {
@@ -127,14 +178,20 @@ fn push_preview(lines: &mut Vec<Line<'static>>, view: &QueueView, columns: usize
             "",
             row,
             view.waiting_ages.get(&row.admission_id),
-            dim(),
+            styles.row(row),
             room,
         ));
     }
     if shown < rows.len() {
         let rest = rows.len() - shown;
         let room = room_for(lines, columns, reserve);
-        lines.push(body_line("", &format!("+{rest} more"), "", dim(), room));
+        lines.push(body_line(
+            "",
+            &format!("+{rest} more"),
+            "",
+            styles.overflow,
+            room,
+        ));
     }
 }
 
@@ -144,6 +201,7 @@ fn push_selection(
     view: &QueueView,
     columns: usize,
     reserve: usize,
+    styles: &PreviewStyles,
 ) {
     let total = view.rows.len();
     let selected = view.selected.unwrap_or(0).min(total.saturating_sub(1));
@@ -151,26 +209,19 @@ fn push_selection(
     let start = selected.saturating_sub(WINDOW_ROWS - 1);
     let end = (start + WINDOW_ROWS).min(total);
     for (index, row) in view.rows.iter().enumerate().take(end).skip(start) {
-        if index == selected {
-            let style = Style::default().add_modifier(Modifier::BOLD);
-            let room = room_for(lines, columns, reserve);
-            lines.push(row_line(
-                "› ",
-                row,
-                view.waiting_ages.get(&row.admission_id),
-                style,
-                room,
-            ));
+        let (prefix, style) = if index == selected {
+            ("› ", styles.selected)
         } else {
-            let room = room_for(lines, columns, reserve);
-            lines.push(row_line(
-                "  ",
-                row,
-                view.waiting_ages.get(&row.admission_id),
-                dim(),
-                room,
-            ));
-        }
+            ("  ", styles.row(row))
+        };
+        let room = room_for(lines, columns, reserve);
+        lines.push(row_line(
+            prefix,
+            row,
+            view.waiting_ages.get(&row.admission_id),
+            style,
+            room,
+        ));
     }
     let above = start;
     let below = total - end;
@@ -187,7 +238,7 @@ fn push_selection(
         HINT_NARROW
     };
     let room = room_for(lines, columns, reserve);
-    lines.push(body_line("", hint, &suffix, dim(), room));
+    lines.push(body_line("", hint, &suffix, styles.action, room));
 }
 
 /// Columns for the next line: the first line gives up the label's columns.
@@ -257,7 +308,13 @@ fn body_line(
 }
 
 /// Right-align `label` on `line`, which was already cut to leave room for it.
-fn add_label(line: &mut Line<'static>, label: &str, columns: usize) {
+fn add_label(
+    line: &mut Line<'static>,
+    label: &str,
+    hint: &'static str,
+    columns: usize,
+    styles: &PreviewStyles,
+) {
     if label.is_empty() {
         return;
     }
@@ -266,7 +323,11 @@ fn add_label(line: &mut Line<'static>, label: &str, columns: usize) {
         .iter()
         .map(|span| text_width(&span.content))
         .sum();
-    let pad = columns.saturating_sub(used + text_width(label));
-    line.spans.push(Span::styled(spaces(pad), dim()));
-    line.spans.push(Span::styled(label.to_string(), dim()));
+    let pad = columns.saturating_sub(used + text_width(label) + text_width(hint));
+    line.spans.push(Span::styled(spaces(pad), styles.label));
+    line.spans
+        .push(Span::styled(label.to_owned(), styles.label));
+    if !hint.is_empty() {
+        line.spans.push(Span::styled(hint, styles.action));
+    }
 }

@@ -72,7 +72,7 @@ pub struct PaletteState {
     pub request_id: u64,
     /// Footer text, when it replaces the default hint.
     pub footer: Option<String>,
-    /// Draft for which Esc closed the palette. `None` when it was not closed that way.
+    /// Draft for which the palette stays closed until the text changes.
     pub closed_for: Option<String>,
     /// Selectable rows in browse mode.
     pub total: usize,
@@ -151,11 +151,21 @@ pub enum PaletteInput {
     Next,
     /// Select the previous row.
     Prev,
+    /// Move by a page of results or to either end.
+    PageDown(usize),
+    /// Move up by a page of results.
+    PageUp(usize),
+    /// Select the first result.
+    Home,
+    /// Select the last result.
+    End,
     /// Tab.
     Accept,
     /// Enter.
     Enter,
-    /// Esc.
+    /// Dismiss the palette and clear a bare slash.
+    Escape,
+    /// Close the palette without editing the draft.
     Close,
 }
 
@@ -475,9 +485,7 @@ fn merged_rows(typed: &str, items: &[ReplyItem], ctx: &PaletteContext<'_>) -> Ve
     let mut reply: Vec<PaletteRow> = Vec::new();
     for item in items {
         let name = item_name(item);
-        if local_named(ctx.local, &name).is_some()
-            || rows.iter().chain(&reply).any(|row| row.name == name)
-        {
+        if local_named(ctx.local, &name).is_some() {
             continue;
         }
         let entry = ctx.catalog.and_then(|catalog| catalog.lookup(&name));
@@ -496,7 +504,16 @@ fn merged_rows(typed: &str, items: &[ReplyItem], ctx: &PaletteContext<'_>) -> Ve
             },
             None => continue,
         };
-        reply.push(row);
+        if tier(&row.name, &query).is_none() && canonical != Some(row.name.as_str()) {
+            continue;
+        }
+        if !rows
+            .iter()
+            .chain(&reply)
+            .any(|existing| existing.name.eq_ignore_ascii_case(&row.name))
+        {
+            reply.push(row);
+        }
     }
     if let Some(exact) = reply.iter().position(|row| {
         bare(&row.name).eq_ignore_ascii_case(&query) || canonical == Some(row.name.as_str())
@@ -574,8 +591,12 @@ fn rebuild(state: &mut PaletteState, ctx: &PaletteContext<'_>) {
         }
     }
     state.footer = state.completion_failure.clone().or_else(|| {
-        ctx.catalog
-            .and_then(CommandCatalog::warning)
+        let catalog = ctx.catalog?;
+        if catalog.skill_collisions().next().is_some() {
+            return None;
+        }
+        catalog
+            .warning()
             .map(|warning| format!("Hermes: {warning}"))
     });
 }
@@ -984,8 +1005,48 @@ pub fn update(
         }
         PaletteInput::Next => step(state, true),
         PaletteInput::Prev => step(state, false),
+        PaletteInput::PageDown(_)
+        | PaletteInput::PageUp(_)
+        | PaletteInput::Home
+        | PaletteInput::End => {
+            let selectable: Vec<usize> = state
+                .rows
+                .iter()
+                .enumerate()
+                .filter_map(|(index, row)| (row.kind == RowKind::Command).then_some(index))
+                .collect();
+            if state.open && !selectable.is_empty() {
+                let current = selectable
+                    .iter()
+                    .position(|&i| i == state.selected)
+                    .unwrap_or(0);
+                let last = selectable.len() - 1;
+                let next = match input {
+                    PaletteInput::PageDown(rows) => current.saturating_add(rows.max(1)).min(last),
+                    PaletteInput::PageUp(rows) => current.saturating_sub(rows.max(1)),
+                    PaletteInput::Home => 0,
+                    PaletteInput::End => last,
+                    _ => unreachable!(),
+                };
+                state.selected = selectable[next];
+                state.explicit_selection = true;
+                vec![PaletteEffect::Redraw]
+            } else {
+                Vec::new()
+            }
+        }
         PaletteInput::Accept => accept(state),
         PaletteInput::Enter => enter(state, ctx),
+        PaletteInput::Escape => {
+            let clear = state.open && state.draft == "/";
+            let mut effects = close(state);
+            if clear {
+                effects.push(PaletteEffect::ReplaceDraft {
+                    text: String::new(),
+                });
+            }
+            effects
+        }
         PaletteInput::Close => close(state),
     }
 }

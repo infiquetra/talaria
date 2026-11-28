@@ -8,6 +8,7 @@ use crate::journal::{
     AdmissionState, CreateSession, GatewayPort, PortError, Receipt, RouteSweep, SessionBound,
     SubmitTurn,
 };
+use crate::tokens::{SESSION_CACHE_READ_KEY, matching_cache_read};
 use futures::future::BoxFuture;
 use hermes_contract::methods::canonical::session_detach;
 use hermes_contract::schemas::{
@@ -424,8 +425,74 @@ impl HermesPort {
             self.inner.cfg.timeouts.poll
         };
         let value = self.call(&wire, "prompt.receipt", params, timeout).await?;
-        let receipt = parse_receipt("prompt.receipt", value, false)?;
+        let mut receipt = parse_receipt("prompt.receipt", value, false)?;
+        if include_result {
+            self.recover_failed_turn_cache(&wire, profile, &mut receipt)
+                .await;
+        }
         self.save_receipt(profile, receipt, false).await
+    }
+    async fn recover_failed_turn_cache(
+        &self,
+        wire: &Arc<dyn Wire>,
+        profile: &str,
+        receipt: &mut Receipt,
+    ) {
+        // An abrupt failure can settle with gross usage and no result object. A resident agent
+        // can still report the split, which is cumulative, so use it only for the first turn.
+        let Some(usage) = &mut receipt.usage else {
+            return;
+        };
+        if receipt.status != AdmissionState::Terminal
+            || receipt.outcome.as_deref() != Some("failed")
+            || receipt.result.is_some()
+            || !usage[SESSION_CACHE_READ_KEY].is_null()
+            || !crate::tokens::turn_total(usage).is_some_and(|n| n > 0)
+        {
+            return;
+        }
+        let key = (profile.to_owned(), receipt.session_id.clone());
+        let is_first = || {
+            self.inner
+                .view
+                .borrow()
+                .sessions
+                .get(&key)
+                .is_some_and(|session| {
+                    session.fresh_workflow
+                        && session.info.source.as_deref() == Some("tool")
+                        && session.first_submission.as_deref()
+                            == Some(receipt.admission_id.as_str())
+                        && session
+                            .admissions
+                            .iter()
+                            .all(|id| id == &receipt.admission_id)
+                })
+        };
+        if !is_first() {
+            return;
+        }
+        let params = Map::from_iter([("session_id".into(), receipt.session_id.clone().into())]);
+        let stats = self
+            .call(
+                wire,
+                "session.stats",
+                params,
+                self.inner.cfg.timeouts.poll.min(Duration::from_secs(1)),
+            )
+            .await;
+        if let Ok(stats) = stats
+            && is_first()
+            && stats["total_tokens"].as_u64() == crate::tokens::turn_total(usage)
+            && let (Some(prompt), Some(output), Some(read)) = (
+                stats["prompt_tokens"].as_u64(),
+                stats["output_tokens"].as_u64(),
+                stats["cache_read_tokens"].as_u64(),
+            )
+            && let Some(read) = matching_cache_read(usage, prompt, output, read)
+        {
+            usage[SESSION_CACHE_READ_KEY] = read.into();
+        }
     }
     pub(super) async fn resume_snapshot(
         &self,
@@ -824,6 +891,47 @@ impl GatewayPort for HermesPort {
     ) -> BoxFuture<'static, Result<RouteSweep, PortError>> {
         let port = self.clone();
         Box::pin(async move { port.sweep(&profile, &session_id, &stored_session_id).await })
+    }
+    /// The port follows the session's events, whose envelopes name the admission that produced
+    /// them, and its snapshots, which list queued and started admissions. Hermes serves a
+    /// receipt for any admission on the session to a caller with the same owner, so a turn a
+    /// person started from another window can be read and waited on like the run's own.
+    fn next_reply(
+        &self,
+        profile: String,
+        session_id: String,
+        known: Vec<String>,
+    ) -> BoxFuture<'static, Result<Receipt, PortError>> {
+        let port = self.clone();
+        Box::pin(async move {
+            let key = (profile.clone(), session_id.clone());
+            loop {
+                let mut woken = port.inner.subscribe(key.clone());
+                let seen = port
+                    .request(|reply| Command::Lookup(key.clone(), reply))
+                    .await?
+                    .map(|session| session.admissions)
+                    .unwrap_or_default();
+                if let Some(next) = seen.into_iter().find(|id| !known.contains(id)) {
+                    return GatewayPort::wait_settled(&port, profile, session_id, next).await;
+                }
+                woken.changed().await.map_err(|_| transport())?;
+            }
+        })
+    }
+    fn seen_admissions(
+        &self,
+        profile: String,
+        session_id: String,
+    ) -> BoxFuture<'static, Result<Vec<String>, PortError>> {
+        let port = self.clone();
+        Box::pin(async move {
+            Ok(port
+                .request(|reply| Command::Lookup((profile, session_id), reply))
+                .await?
+                .map(|session| session.admissions)
+                .unwrap_or_default())
+        })
     }
 }
 /// How many times a sweep reads the route again while something there is still stopping.

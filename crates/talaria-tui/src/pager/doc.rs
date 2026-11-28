@@ -6,7 +6,7 @@
 //!
 //! Movement and drawing share the same rendered lines.
 
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use ratatui::style::Style;
 use ratatui::text::Line;
@@ -44,7 +44,7 @@ impl Document {
         details: Details,
         tool: &dyn CellLines,
         own: &dyn CellLines,
-    ) -> Vec<Line<'static>> {
+    ) -> Cow<'_, [Line<'static>]> {
         // A tool cell is drawn by the renderer the application passes in, so the unit that owns
         // the tool form can take it over. Every other known cell is drawn by the pager.
         let render: &dyn CellLines = if matches!(cell, Cell::Tool(_)) {
@@ -52,36 +52,27 @@ impl Document {
         } else {
             own
         };
-        self.lines(cell, index, width, details, render)
+        let make = || Self::prepare(cell, index, width, details, render);
+        if cell.is_final()
+            && let Some(id) = cell_id(cell)
+        {
+            // Workspace histories can reuse an id at another position.
+            let key = (id, index, width, detail_key(details));
+            Cow::Borrowed(self.drawn.entry(key).or_insert_with(make))
+        } else {
+            Cow::Owned(make())
+        }
     }
 
-    /// The lines of one cell, from one of the two caches.
-    fn lines(
-        &mut self,
+    /// Prepare display-safe lines once, including the cell's hanging space.
+    fn prepare(
         cell: &Cell,
         index: usize,
         width: u16,
         details: Details,
         render: &dyn CellLines,
     ) -> Vec<Line<'static>> {
-        let cache = &mut self.drawn;
-        let mut lines = if cell.is_final()
-            && let Some(id) = cell_id(cell)
-        {
-            // Different session sources can reuse a cell id in the workspace's
-            // ordered commit stream. Its position distinguishes those entries.
-            let key = (id, index, width, detail_key(details));
-            match cache.get(&key) {
-                Some(cached) => cached.clone(),
-                None => {
-                    let made = render.lines(cell, width);
-                    cache.insert(key, made.clone());
-                    made
-                }
-            }
-        } else {
-            render.lines(cell, width)
-        };
+        let mut lines = render.lines(cell, width);
         // No raw escape byte from a cell may reach the terminal.
         for line in &mut lines {
             *line = sanitize_line(std::mem::take(line));

@@ -52,6 +52,56 @@ fn reconciliation_resets_misses_and_replaces_steering_with_unknown() {
 }
 
 #[test]
+fn list_state_and_tool_changes_refresh_activity_without_idle_poll_resets() {
+    let mut tree = SubagentTree::new();
+    let snapshot = |status, count, tool| {
+        list(json!([{
+            "subagent_id": "child", "child_session_id": "first",
+            "status": status, "tool_count": count, "last_tool": tool
+        }]))
+    };
+    tree.reconcile(&snapshot("queued", 0, ""), clock(0));
+    assert_eq!(tree.get("child").unwrap().state, RowState::Queued);
+    tree.reconcile(&snapshot("running", 2, "read_file"), clock(10));
+    tree.reconcile(&snapshot("running", 2, "read_file"), clock(20));
+    tree.reconcile(&snapshot("running", 1, "search_files"), clock(30));
+    let row = tree.get("child").unwrap();
+    assert_eq!(row.last_event_ms, 10);
+    assert_eq!(row.last_tool.as_deref(), Some("read_file"));
+    tree.reconcile(&snapshot("running", 3, "read_file"), clock(40));
+    assert_eq!(tree.get("child").unwrap().last_event_ms, 40);
+    tree.reconcile(&snapshot("completed", 3, "read_file"), clock(50));
+    assert_eq!(tree.get("child").unwrap().state, RowState::Completed);
+}
+
+#[test]
+fn effort_reply_must_match_the_child_session_still_on_the_row() {
+    let mut tree = SubagentTree::new();
+    let start = event(
+        SubagentEventKind::Start,
+        json!({"child_session_id": "first"}),
+    );
+    tree.apply(&start, clock(0));
+    assert!(tree.set_child_route("child", "first", "resolved".into(), "max".into()));
+    tree.apply(
+        &event(SubagentEventKind::Progress, json!({"model":"preselected"})),
+        clock(1),
+    );
+    assert_eq!(
+        tree.get("child").unwrap().model.as_deref(),
+        Some("resolved")
+    );
+    tree.reconcile(
+        &list(json!([{"subagent_id":"child", "child_session_id":"second"}])),
+        clock(1),
+    );
+    assert!(!tree.set_child_route("child", "first", "old".into(), "max".into()));
+    assert_eq!(tree.get("child").unwrap().effort, None);
+    assert!(tree.set_child_route("child", "second", "current".into(), "high".into()));
+    assert_eq!(tree.get("child").unwrap().effort.as_deref(), Some("high"));
+}
+
+#[test]
 fn output_tail_precedes_timeout_summary_and_terminal_rows_stay_frozen() {
     let mut tree = SubagentTree::new();
     tree.apply(&event(SubagentEventKind::Start, json!({})), clock(0));

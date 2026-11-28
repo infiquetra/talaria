@@ -103,6 +103,8 @@ impl Counts {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RunNode {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_status: Option<String>,
     pub run_id: String,
     pub state: RunState,
     pub previous_execution: Option<RunState>,
@@ -172,6 +174,10 @@ pub struct AgentNode {
     /// Set when Hermes stopped the agent at its step cap and its reply was kept: "cut short
     /// (60 of 60 steps)".
     pub cut_short: Option<String>,
+    /// A Hermes guardrail stopped a turn in the current attempt, even if a later turn succeeded.
+    pub guardrail_halt: Option<String>,
+    /// Relative path of the worker report Talaria retained alongside a failed outcome.
+    pub recovered_report: Option<String>,
     /// The step Hermes last reported for the running agent.
     pub step: Option<u32>,
     pub attention: Option<String>,
@@ -228,6 +234,8 @@ impl AgentNode {
             last_outcome: None,
             failure: None,
             cut_short: None,
+            guardrail_halt: None,
+            recovered_report: None,
             step: None,
             attention: None,
             last_tool: None,

@@ -164,7 +164,7 @@ const FLEET_OPEN: &str =
     "/fleet did not open an overlay with this session's row marked \"(here)\" within 5 s";
 const FLEET_FILTER: &str =
     "filtering for zzz-no-match did not say \"No sessions match\" within 5 s";
-const FLEET_CLOSE: &str = "Ctrl+C did not close the overlay within 5 s";
+const FLEET_CLOSE: &str = "Esc did not close the fleet overlay within 5 s";
 const OPEN_NOTICE: &str = "no line \"Opened \"<title>\" in a new Herdr pane.\" within 10 s";
 const NOT_IN_HERDR: &str = "talaria did not detect Herdr and printed: Not inside Herdr or tmux";
 const NY_LAUNCH: &str =
@@ -638,7 +638,7 @@ fn fleet_view_close_fails() {
         Step::FleetView,
         "fleet-view",
         FLEET_CLOSE,
-        |exec| last_keys_at(exec, "ctrl+c"),
+        |exec| last_keys_at(exec, "esc"),
         5,
     );
 }

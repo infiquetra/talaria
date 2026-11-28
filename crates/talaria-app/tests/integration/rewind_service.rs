@@ -605,6 +605,7 @@ async fn rewind_rebuild_sends_the_whole_workflow_skill_again() {
         AppMessage::HivecodeDone {
             session: session.clone(),
             original_text: "fix the parser".into(),
+            restore_text: None,
             outcome: Ok(json!({"type": "skill", "name": "talaria-workflows",
                 "message": expanded, "display": "/talaria-workflows fix the parser"})),
         },

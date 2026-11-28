@@ -1,5 +1,7 @@
 use super::{replay::CallHistory, *};
-use crate::engine::{AgentBackend, AgentOutcome, AgentRequest, BudgetSnapshot};
+use crate::engine::{
+    AgentBackend, AgentOutcome, AgentRequest, BudgetSnapshot, Isolation, RecoveredReport,
+};
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
@@ -161,6 +163,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         if matches!(outcome, AgentOutcome::Abort { .. }) {
             return Ok(outcome);
         }
+        let outcome = self.save_work(key, outcome).await;
         let record = Record::CallFinished {
             key: key.into(),
             attempt,
@@ -187,13 +190,128 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         };
         if let Ok(ended) = &finished {
             // Only a failed call can leave work behind on its route.
-            if sweep && matches!(ended, AgentOutcome::Failed { .. }) {
+            if sweep
+                && matches!(
+                    ended,
+                    AgentOutcome::Failed { .. } | AgentOutcome::FailedWithReport { .. }
+                )
+            {
                 // The outcome is recorded; the caller's scheduler permit is already dropped.
                 let _ = self.route_busy(key).await;
             }
             self.detach_session(key).await;
         }
         finished
+    }
+    /// When a call that ran in its own worktree ends badly (cut short, failed or stopped) and
+    /// leaves uncommitted changes there, save them to a new branch before the outcome is
+    /// recorded, and name the branch in the outcome. The worktree itself is not changed.
+    /// Saving never fails the call: a save that cannot be made is noted in the journal and
+    /// shown live, as a save that was made is.
+    async fn save_work(&self, key: &str, outcome: AgentOutcome) -> AgentOutcome {
+        let state = match &outcome {
+            AgentOutcome::CutShort { .. } => "was cut short at its step limit",
+            AgentOutcome::Failed { .. } | AgentOutcome::FailedWithReport { .. } => "failed",
+            AgentOutcome::Stopped { .. } => "was stopped",
+            _ => return outcome,
+        };
+        let Some(branch) = self.save_folder(key, state).await else {
+            return outcome;
+        };
+        // Leave room for the branch, so the length cap on recorded reasons never cuts it off.
+        // A reason that already names this branch (a parked call's saved work, kept in the
+        // reason it parked with) is not given it twice.
+        let attach = |reason: String| {
+            if crate::worktree::saved_branch_in(&reason).as_deref() == Some(branch.as_str()) {
+                reason
+            } else {
+                crate::worktree::with_saved_branch(&super::cut(&reason, 3800), &branch)
+            }
+        };
+        match outcome {
+            AgentOutcome::CutShort {
+                value,
+                mut cut_short,
+            } => {
+                cut_short.saved_branch = Some(branch);
+                AgentOutcome::CutShort { value, cut_short }
+            }
+            AgentOutcome::Failed { reason } => AgentOutcome::Failed {
+                reason: attach(reason),
+            },
+            AgentOutcome::FailedWithReport {
+                reason,
+                value,
+                report,
+            } => AgentOutcome::FailedWithReport {
+                reason: attach(reason),
+                value,
+                report,
+            },
+            AgentOutcome::Stopped { reason } => AgentOutcome::Stopped {
+                reason: attach(reason),
+            },
+            other => other,
+        }
+    }
+    /// Save the uncommitted changes in the worktree of a call that ran in its own worktree to
+    /// a new branch, and return the branch, or `None` when the call has no worktree or nothing
+    /// to save. `state` says what happened to the agent, for the saved commit's message. The
+    /// worktree itself is not changed, and a save of exactly the same work names the branch
+    /// that already holds it. A save that cannot be made is noted in the journal and shown live.
+    async fn save_folder(&self, key: &str, state: &str) -> Option<String> {
+        let history = self.journal.history(key).ok()?;
+        let (call_id, launch, _, label) = history.intent()?;
+        if launch.isolation != Some(crate::engine::Isolation::Worktree) {
+            return None;
+        }
+        let folder = launch.cwd.clone()?;
+        let label = label.to_owned();
+        let run_id = self.journal.dir().run_id().as_str().to_owned();
+        let branch =
+            crate::worktree::saved_branch_name(&run_id, &call_id.digest, call_id.occurrence);
+        let message = format!(
+            "Save uncommitted work of workflow agent '{label}'\n\nTalaria saved this when the agent {state} in run {run_id}. The agent's worktree was left as it was."
+        );
+        let run_dir = self.journal.dir().path().to_owned();
+        let saved = tokio::task::spawn_blocking(move || {
+            crate::worktree::save_agent_worktree(
+                &run_dir,
+                std::path::Path::new(&folder),
+                &branch,
+                &message,
+            )
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("the save stopped unexpectedly: {e}")));
+        let saved = match saved {
+            Ok(saved) => saved,
+            Err(error) => {
+                self.note_route(format!(
+                    "runner: could not save the uncommitted work of agent {label} to a branch: {error}"
+                ))
+                .await;
+                return None;
+            }
+        };
+        let skipped = saved
+            .skipped_note()
+            .map(|note| format!("; {note}"))
+            .unwrap_or_default();
+        let Some(branch) = saved.branch else {
+            if !skipped.is_empty() {
+                self.note_route(format!(
+                    "runner: saved nothing of the uncommitted work of agent {label}{skipped}"
+                ))
+                .await;
+            }
+            return None;
+        };
+        self.note_route(format!(
+            "runner: saved the uncommitted work of agent {label} to branch {branch}{skipped}"
+        ))
+        .await;
+        Some(branch)
     }
     /// Look at the call's route and say why it is not quiet, or `None` when nothing the run
     /// does not follow is still running there. A check that could not be made counts as not
@@ -341,6 +459,12 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         busy
     }
     async fn run(&self, request: AgentRequest) -> Result<AgentOutcome, JournalError> {
+        if request.report_file.is_some()
+            && let Some((key, outcome, seq)) = self.journal.kept_report(&request.call_id)?
+        {
+            self.journal.encounter(&key)?;
+            return blobs::outcome(self.journal.dir().path(), &outcome, seq);
+        }
         let launch = match self.resolver.resolve(&request) {
             Ok(launch) => launch,
             Err(reason) => {
@@ -381,16 +505,21 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             let h = self.journal.history(&key)?;
             let old_attempt = h.attempt();
             let restart_requested = self.journal.restart_requested(&key, old_attempt)?;
-            let failed_resume = (h.execution != self.journal.execution() || restart_requested)
-                && matches!(
-                    h.last().map(|r| &r.record),
-                    Some(
-                        Record::CallFinished {
-                            outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
-                            ..
-                        } | Record::CallRetryFinished { .. }
-                    )
-                );
+            let retry_report = matches!(
+                h.last().map(|r| &r.record),
+                Some(Record::CallReportRestartRequested { .. })
+            );
+            let failed_resume = retry_report
+                || (h.execution != self.journal.execution() || restart_requested)
+                    && matches!(
+                        h.last().map(|r| &r.record),
+                        Some(
+                            Record::CallFinished {
+                                outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
+                                ..
+                            } | Record::CallRetryFinished { .. }
+                        )
+                    );
             let fresh = h.last().is_none() || next_attempt.is_some() || failed_resume;
             let attempt = if let Some(a) = next_attempt.take() {
                 a
@@ -408,6 +537,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 // Register in scheduler order before asynchronous journal writes can reorder calls.
                 let mut admission = self.gate.acquire(&request, &launch, GateReason::Fresh);
                 let ready = futures::poll!(&mut admission);
+                let report_baseline = self.report_baseline(&request, &launch).await;
                 // Keep intent durable while the admission gate holds the call.
                 self.queued
                     .lock()
@@ -422,6 +552,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     workflow_path: request.workflow_path.clone(),
                     launch: launch.clone(),
                     request_id: request_id(self.journal.dir().run_id(), &key, attempt),
+                    report_baseline,
                 };
                 match self.journal.append(record).await {
                     Err(JournalError::RecordTooLarge { t, .. }) => {
@@ -464,6 +595,9 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             }
             if matches!(last.record, Record::CallAttention { .. }) {
                 let parked = h.attention().ok_or_else(|| io_error("missing attention"))?;
+                if parked.cause == AttentionCause::Stopped {
+                    self.follow_session(&h, &mut runner).await;
+                }
                 self.journal.notice(JournalNotice::NeedsOperator {
                     key: key.clone(),
                     label: request.label.clone(),
@@ -472,6 +606,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     cause: parked.cause,
                     session_id: parked.session_id.clone(),
                     admission_id: parked.admission_id.clone(),
+                    detail: parked.detail.clone(),
                 });
                 drop(permit.take());
                 self.journal.await_resolution(&parked).await?;
@@ -570,7 +705,9 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                         continue;
                     }
                 }
-                if restart_requested && resolution == Resolution::Fail {
+                if restart_requested
+                    && matches!(resolution, Resolution::Fail | Resolution::UseReply)
+                {
                     self.finish_call(
                         &key,
                         attempt,
@@ -584,29 +721,58 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 }
                 match resolution {
                     Resolution::Fail => {
-                        let reason = if source == ResolutionSource::Policy {
-                            "on_unknown is fail"
-                        } else {
-                            match parked.cause {
-                                AttentionCause::Unknown => {
-                                    "operator marked an unknown turn as failed"
-                                }
-                                AttentionCause::Lost => "operator marked a lost session as failed",
-                                AttentionCause::IdentityConflict => {
-                                    "operator marked a conflicting retry as failed"
-                                }
+                        let reason = match (source, parked.cause) {
+                            (ResolutionSource::Policy, AttentionCause::Stopped) => format!(
+                                "{}; the run's on-unknown policy is fail, so it did not wait for an operator",
+                                parked.detail
+                            ),
+                            (ResolutionSource::Policy, _) => "on_unknown is fail".into(),
+                            (_, AttentionCause::Unknown) => {
+                                "operator marked an unknown turn as failed".into()
                             }
+                            (_, AttentionCause::Lost) => {
+                                "operator marked a lost session as failed".into()
+                            }
+                            (_, AttentionCause::IdentityConflict) => {
+                                "operator marked a conflicting retry as failed".into()
+                            }
+                            (_, AttentionCause::Stopped) => format!(
+                                "operator marked a stopped agent as failed: {}",
+                                parked.detail
+                            ),
                         };
                         return self
                             .finish_call(
                                 &key,
                                 attempt,
                                 h.turns(self.journal.dir().path())?.len() as u32,
-                                AgentOutcome::Failed {
-                                    reason: reason.into(),
-                                },
+                                AgentOutcome::Failed { reason },
                             )
                             .await;
+                    }
+                    Resolution::UseReply => {
+                        match self.adopt_reply(&key, &h, &parked, &mut runner).await? {
+                            Adopted::Settled => continue,
+                            Adopted::Abort(reason) => return Ok(AgentOutcome::Abort { reason }),
+                            Adopted::Failed(reason) => {
+                                return self
+                                    .finish_call(
+                                        &key,
+                                        attempt,
+                                        h.turns(self.journal.dir().path())?.len() as u32,
+                                        AgentOutcome::Failed { reason },
+                                    )
+                                    .await;
+                            }
+                            Adopted::PortError(e) => {
+                                if let Some(outcome) =
+                                    self.handle_error(&key, &h, &e, &mut permit).await?
+                                {
+                                    return Ok(outcome);
+                                }
+                                continue;
+                            }
+                        }
                     }
                     Resolution::Abort
                         if h.execution == self.journal.execution() && !restart_requested =>
@@ -616,6 +782,10 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                         });
                     }
                     Resolution::Rerun | Resolution::Abort => {
+                        // The next attempt reuses the call's worktree: keep what the parked
+                        // attempt left there first.
+                        self.save_folder(&key, "was parked and then run again")
+                            .await;
                         next_attempt = Some(
                             attempt
                                 .checked_add(1)
@@ -834,6 +1004,15 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 Record::TurnSettled { .. } => {
                     let turns = h.turns(self.journal.dir().path())?;
                     let next = self.policy.after_turn(&request, &turns);
+                    if let Some(turn) = turns.last()
+                        && let Some(outcome) =
+                            self.recover_report(&request, &h, turn, &next).await?
+                    {
+                        drop(permit.take());
+                        return self
+                            .finish_call(&key, attempt, turns.len() as u32, outcome)
+                            .await;
+                    }
                     // A finished answer is kept; anything else would spend past the budget.
                     if !matches!(
                         next,
@@ -851,6 +1030,87 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                                 AgentOutcome::Stopped { reason },
                             )
                             .await;
+                    }
+                    // A turn the budget stopped ends stopped, whichever execution reads its
+                    // settlement, so the next resume with a larger budget runs it again.
+                    if let NextStep::Finish(AgentOutcome::Failed { reason }) = &next
+                        && let Some(last) = turns.last()
+                        && stopped_outcome(&last.outcome)
+                        && StopSource::from_meta(&last.result_meta) == Some(StopSource::Budget)
+                    {
+                        drop(permit.take());
+                        return self
+                            .finish_call(
+                                &key,
+                                attempt,
+                                turns.len() as u32,
+                                AgentOutcome::Stopped {
+                                    reason: reason.clone(),
+                                },
+                            )
+                            .await;
+                    }
+                    // A turn that stopping the run ended, read by a later execution: the run
+                    // was stopped, not the agent, so resuming it runs the agent again at once
+                    // instead of failing it and waiting for one more resume.
+                    if let NextStep::Finish(AgentOutcome::Failed { reason }) = &next
+                        && let Some(last) = turns.last()
+                        && stopped_outcome(&last.outcome)
+                        && StopSource::from_meta(&last.result_meta) == Some(StopSource::RunStop)
+                        && !self.gate.run_stopping()
+                    {
+                        drop(permit.take());
+                        self.journal
+                            .append(Record::CallRetryFinished {
+                                key: key.clone(),
+                                attempt,
+                                outcome: CallOutcome::from_agent(AgentOutcome::Failed {
+                                    reason: reason.clone(),
+                                }),
+                                turns: turns.len() as u32,
+                            })
+                            .await?;
+                        let _ = self
+                            .journal
+                            .record_engine_event(&crate::engine::EngineEvent::Log {
+                                message: format!(
+                                    "agent {}: its turn ended when the run was stopped; running it again",
+                                    request.label
+                                ),
+                                workflow_path: request.workflow_path.clone(),
+                            })
+                            .await;
+                        let _ = self
+                            .save_folder(&key, "was stopped with the run and then run again")
+                            .await;
+                        let _ = self.route_busy(&key).await;
+                        self.detach_session(&key).await;
+                        next_attempt = Some(
+                            attempt
+                                .checked_add(1)
+                                .ok_or_else(|| io_error("attempt overflow"))?,
+                        );
+                        continue;
+                    }
+                    // A stop that was not part of stopping the run, of its budget or of a
+                    // restart parks the call for the operator instead of failing it; the
+                    // parked call waits until answered.
+                    if let NextStep::Finish(AgentOutcome::Failed { reason }) = &next
+                        && let Some(last) = turns.last()
+                        && stopped_outcome(&last.outcome)
+                        && !matches!(
+                            StopSource::from_meta(&last.result_meta),
+                            Some(
+                                StopSource::RunStop
+                                    | StopSource::Budget
+                                    | StopSource::WorkflowViewRestart
+                            )
+                        )
+                        && !self.gate.run_stopping()
+                    {
+                        self.park(&key, &h, AttentionCause::Stopped, None, reason, &mut permit)
+                            .await?;
+                        continue;
                     }
                     match next {
                         NextStep::Finish(outcome) => {
@@ -1000,6 +1260,100 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             }
         }
     }
+
+    async fn report_baseline(
+        &self,
+        request: &AgentRequest,
+        launch: &ResolvedLaunch,
+    ) -> Option<String> {
+        if launch.isolation != Some(Isolation::Worktree) {
+            return None;
+        }
+        let path = request.report_file.clone()?;
+        let dir = self.journal.dir().path().to_owned();
+        let cwd = std::path::PathBuf::from(launch.cwd.as_ref()?);
+        let call = request.call_id.clone();
+        tokio::task::spawn_blocking(move || {
+            match crate::worktree::read_report_bytes(&dir, &cwd, &call, &path) {
+                Ok(bytes) => Some(keys::sha(&bytes)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some("absent".into()),
+                Err(_) => None,
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn recover_report(
+        &self,
+        request: &AgentRequest,
+        history: &CallHistory,
+        turn: &SettledTurn,
+        next: &NextStep,
+    ) -> Result<Option<AgentOutcome>, JournalError> {
+        if !matches!(turn.outcome.as_str(), "completed" | "failed")
+            || StopSource::from_meta(&turn.result_meta).is_some()
+        {
+            return Ok(None);
+        }
+        let (Some(path), Some(schema), Some(baseline), Some((call, launch, ..))) = (
+            &request.report_file,
+            &request.schema,
+            history.report_baseline(),
+            history.intent(),
+        ) else {
+            return Ok(None);
+        };
+        let (reason, reply) = match next {
+            NextStep::Finish(AgentOutcome::Failed { reason }) => (Some(reason.clone()), None),
+            NextStep::Turn { .. } => (None, turn.final_text.clone()),
+            _ => return Ok(None),
+        };
+        let Some(folder) = &launch.cwd else {
+            return Ok(None);
+        };
+        let (dir, folder, call, path, schema, baseline) = (
+            self.journal.dir().path().to_owned(),
+            std::path::PathBuf::from(folder),
+            call.clone(),
+            path.clone(),
+            schema.clone(),
+            baseline.to_owned(),
+        );
+        tokio::task::spawn_blocking(move || {
+            let Ok((bytes, value)) =
+                crate::worktree::read_report_file(&dir, &folder, &call, &path, &schema)
+            else {
+                return Ok(None);
+            };
+            if keys::sha(&bytes) == baseline {
+                return Ok(None);
+            }
+            let reason = reason.unwrap_or_else(|| {
+                let errors =
+                    crate::hermes::validate_output(reply.as_deref().unwrap_or(""), &schema)
+                        .err()
+                        .unwrap_or_default();
+                format!(
+                    "agent's reply does not fit the schema: {}",
+                    errors.into_iter().take(3).collect::<Vec<_>>().join("; ")
+                )
+            });
+            let stored = put_report_blob(&dir, &bytes)?;
+            Ok(Some(AgentOutcome::FailedWithReport {
+                reason: cut(&reason, 4096),
+                value,
+                report: RecoveredReport {
+                    path: path.into(),
+                    sha256: stored.sha256,
+                    bytes: stored.bytes,
+                },
+            }))
+        })
+        .await
+        .map_err(io_error)?
+    }
     async fn turn_intent(
         &self,
         key: &str,
@@ -1026,10 +1380,98 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         turn: u32,
         r: Receipt,
     ) -> Result<(), JournalError> {
-        self.journal
-            .append(settled_record(key, attempt, turn, r))
-            .await?;
+        // A stop the workflow view or the runner sent left a note naming this turn before it
+        // was sent; the settled turn keeps who sent it. A note about another turn is ignored.
+        // While the run is being stopped, the stop is the run's.
+        let note = self
+            .journal
+            .dir()
+            .agent_stop_for(key, attempt, turn, &r.admission_id);
+        let mut record = settled_record(key, attempt, turn, r);
+        let source = if self.gate.run_stopping() {
+            Some(StopSource::RunStop)
+        } else {
+            note
+        };
+        if let (
+            Record::TurnSettled {
+                outcome,
+                result_meta,
+                ..
+            },
+            Some(source),
+        ) = (&mut record, source)
+            && stopped_outcome(outcome)
+            && let Some(meta) = result_meta.as_object_mut()
+        {
+            meta.insert(STOPPED_BY.into(), source.as_str().into());
+        }
+        self.journal.append(record).await?;
+        if note.is_some() {
+            let _ = self.journal.dir().clear_agent_stop(key);
+        }
         Ok(())
+    }
+    /// Wait for the next turn on the stopped agent's session that the run did not submit, and
+    /// settle the stopped turn with it. There is no time limit: the call waits as a parked call
+    /// does, until such a turn settles.
+    async fn adopt_reply(
+        &self,
+        key: &str,
+        h: &CallHistory,
+        parked: &ParkedCall,
+        runner: &mut PortRunner<'_, P>,
+    ) -> Result<Adopted, JournalError> {
+        if parked.cause != AttentionCause::Stopped {
+            return Ok(Adopted::Failed(
+                "use-reply answers only an agent that was stopped; this call was not".into(),
+            ));
+        }
+        let (Some(session), Some((_, launch, _, label))) = (h.session(), h.intent()) else {
+            return Ok(Adopted::Failed(
+                "use-reply could not find the stopped agent's session in the run journal".into(),
+            ));
+        };
+        let profile = launch.profile.clone();
+        let known = h.known_admissions();
+        self.note(format!(
+            "runner: agent {label}: waiting for the next reply on session {session} to use as its result"
+        ))
+        .await;
+        self.journal.notice(JournalNotice::WaitingForReply {
+            key: key.into(),
+            label: label.into(),
+            session_id: session.clone(),
+        });
+        let receipt = runner
+            .call(
+                || {
+                    self.port
+                        .next_reply(profile.clone(), session.clone(), known.clone())
+                },
+                Some((profile.clone(), session.clone())),
+            )
+            .await;
+        match receipt {
+            Ok(receipt) if receipt.status == AdmissionState::Terminal => {
+                self.note(format!(
+                    "runner: agent {label}: using the reply of admission {} as its result",
+                    receipt.admission_id
+                ))
+                .await;
+                self.settle(key, h.attempt(), parked.turn.unwrap_or_default(), receipt)
+                    .await?;
+                Ok(Adopted::Settled)
+            }
+            Ok(_) => Ok(Adopted::PortError(PortError::Transport(
+                "the next reply was returned before it settled".into(),
+            ))),
+            Err(StepError::Abort(reason)) => Ok(Adopted::Abort(reason)),
+            Err(StepError::Port(e)) if e.reason() == "unsupported" => Ok(Adopted::Failed(format!(
+                "use-reply is not available here ({e}); answer fail, rerun or abort instead"
+            ))),
+            Err(StepError::Port(e)) => Ok(Adopted::PortError(e)),
+        }
     }
     async fn handle_error(
         &self,
@@ -1098,6 +1540,17 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             } => Some((admission_id.clone(), *execution_generation)),
             _ => None,
         });
+        let seen_admissions = if cause == AttentionCause::Stopped {
+            self.seen_elsewhere(h).await
+        } else {
+            Vec::new()
+        };
+        // An answer of rerun starts the next attempt in the same worktree, so the parked
+        // attempt's uncommitted work is saved now and the parked reason names the branch.
+        let detail = match self.save_folder(key, "was parked for the operator").await {
+            Some(branch) => crate::worktree::with_saved_branch(&cut(detail, 3800), &branch),
+            None => detail.to_owned(),
+        };
         self.journal
             .append(Record::CallAttention {
                 key: key.into(),
@@ -1111,16 +1564,85 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 execution_generation: receipt
                     .and_then(|r| r.execution_generation)
                     .or_else(|| admission.and_then(|a| a.1)),
-                detail: cut(detail, 4096),
+                detail: cut(&detail, 4096),
+                seen_admissions,
             })
             .await?;
         drop(permit.take());
         Ok(())
     }
+    /// The admissions of other clients the port has already seen on a stopping call's session.
+    /// A reply to use for the call must come after them: one of them may be a reply to a
+    /// message a person typed before the stop.
+    async fn seen_elsewhere(&self, h: &CallHistory) -> Vec<String> {
+        let (Some(session), Some((_, launch, _, label))) = (h.session(), h.intent()) else {
+            return Vec::new();
+        };
+        let own = h.known_admissions();
+        let seen = tokio::time::timeout(
+            Duration::from_secs(15),
+            self.port
+                .seen_admissions(launch.profile.clone(), session.clone()),
+        )
+        .await;
+        match seen {
+            Ok(Ok(seen)) => seen.into_iter().filter(|id| !own.contains(id)).collect(),
+            Ok(Err(e)) => {
+                self.note(format!(
+                    "runner: agent {label}: could not read which turns already ran on session {session} ({e}); a use-reply answer may take a reply that came before the stop"
+                ))
+                .await;
+                Vec::new()
+            }
+            Err(_) => {
+                self.note(format!(
+                    "runner: agent {label}: no answer within 15 seconds when reading which turns already ran on session {session}; a use-reply answer may take a reply that came before the stop"
+                ))
+                .await;
+                Vec::new()
+            }
+        }
+    }
+    /// Follow a stopped parked call's session, so that a reply typed into it while the call
+    /// waits for its answer is seen and a use-reply answer can take it. In the execution that
+    /// parked the call the session is already followed; a later execution attaches again.
+    async fn follow_session(&self, h: &CallHistory, runner: &mut PortRunner<'_, P>) {
+        let (Some(session), Some((_, launch, _, label))) = (h.session(), h.intent()) else {
+            return;
+        };
+        let target = (launch.profile.clone(), session.clone());
+        if runner.attached.contains(&target) {
+            return;
+        }
+        let attached = tokio::time::timeout(
+            Duration::from_secs(60),
+            self.port.attach(target.0.clone(), target.1.clone()),
+        )
+        .await;
+        let problem = match attached {
+            Ok(Ok(())) => {
+                runner.attached.insert(target);
+                return;
+            }
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "no answer within 60 seconds".into(),
+        };
+        self.note_route(format!(
+            "runner: agent {label}: could not follow session {session} while it waits for an answer ({problem}); a reply typed there before the answer may not be seen, so after a use-reply answer type the reply again"
+        ))
+        .await;
+    }
 }
 enum StepError {
     Port(PortError),
     Abort(String),
+}
+/// What waiting for a stopped agent's next reply came to.
+enum Adopted {
+    Settled,
+    Failed(String),
+    Abort(String),
+    PortError(PortError),
 }
 struct PortRunner<'a, P> {
     port: &'a P,

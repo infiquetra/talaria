@@ -1,0 +1,4 @@
+# Spaces and empty rows are part of these fixed-size terminal mockups.
+skills/tui-design/assets/**/*.mock whitespace=-blank-at-eol,-blank-at-eof
+# Preserve the final blank line in the upstream checklist.
+skills/tui-design/references/audit-checklist.md whitespace=-blank-at-eof

@@ -3,8 +3,11 @@
 use std::io;
 use std::sync::{Arc, Mutex};
 
+use ratatui::{buffer::Buffer, layout::Rect, style::Modifier};
 use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
-use talaria_tui::status::{Connection, StatusInputs, StatusPalette, StatusSection, plan};
+use talaria_tui::status::{
+    Connection, NoticeLine, StatusInputs, StatusPalette, StatusSection, Tone, plan,
+};
 use talaria_tui::terminal::{InlineTerminal, ProbeReply, RestoreLink, TerminalCaps};
 
 /// A writer that keeps every byte written, shared with the test.
@@ -92,4 +95,56 @@ fn status_row_is_the_bottom_row_of_the_inline_terminal() {
             "row {index} above the live region is blank: {row:?}"
         );
     }
+}
+
+#[test]
+fn chat_status_pairs_real_context_with_the_model_and_right_aligns_the_folder() {
+    let inputs = StatusInputs {
+        connection: Connection::Connected,
+        model: Some("provider/model-name".to_owned()),
+        context_percent: Some(40),
+        context_estimated: true,
+        working_dir: Some("/tmp/fixture".to_owned()),
+        ..StatusInputs::default()
+    };
+    let palette = StatusPalette::default();
+    let status = StatusSection::new(&inputs, None, &palette).in_conversation();
+    let draw = |width| {
+        let area = Rect::new(0, 0, width, 1);
+        let mut buffer = Buffer::empty(area);
+        status.render(area, &mut buffer);
+        let text: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(buffer[(1, 0)].modifier.contains(Modifier::BOLD));
+        text
+    };
+    let wide = draw(80);
+    assert!(wide.starts_with(" model-name · ctx ~40%  ━━───"));
+    assert!(wide.ends_with("/tmp/fixture  "));
+    let narrow = draw(26);
+    assert!(narrow.starts_with(" model-name · ctx ~40%"));
+    assert!(!narrow.contains('━'));
+}
+
+#[test]
+fn forty_column_chat_status_keeps_the_model_under_notice_pressure() {
+    let inputs = StatusInputs {
+        connection: Connection::Connected,
+        model: Some("provider/minimax-m3.1-flash".into()),
+        warning_count: 64,
+        notice: Some(NoticeLine {
+            text: "A long notice takes up half of the status row".into(),
+            tone: Tone::Warning,
+        }),
+        needs_you: 2,
+        ..StatusInputs::default()
+    };
+    let area = Rect::new(0, 0, 40, 1);
+    let mut buffer = Buffer::empty(area);
+    let palette = StatusPalette::default();
+    StatusSection::new(&inputs, None, &palette)
+        .in_conversation()
+        .render(area, &mut buffer);
+    let text: String = (0..area.width).map(|x| buffer[(x, 0)].symbol()).collect();
+    assert!(text.contains("minim…"), "{text}");
+    assert!(text.contains("64 warnings"), "{text}");
 }

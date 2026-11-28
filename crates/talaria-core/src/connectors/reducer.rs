@@ -594,8 +594,13 @@ pub(super) fn update(
             } else if consented {
                 vec![ConnectorsEffect::ListConnectors]
             } else {
-                Vec::new()
+                state.identity_requested = true;
+                vec![ConnectorsEffect::LoadIdentity]
             }
+        }
+        ConnectorsInput::IdentityReply(identity) => {
+            state.identity = identity;
+            Vec::new()
         }
         ConnectorsInput::Key(key) => key_input(state, key, now),
         ConnectorsInput::Paste(text) => {
@@ -1452,6 +1457,9 @@ fn switch_tab(state: &mut ConnectorsState) -> Vec<ConnectorsEffect> {
                 ConnectorsEffect::LoadPairing,
             ]
         }
+    } else if !state.consented && !state.identity_requested {
+        state.identity_requested = true;
+        vec![ConnectorsEffect::LoadIdentity]
     } else if state.consented && !state.loaded {
         state.list_followups = true;
         vec![ConnectorsEffect::ListConnectors]

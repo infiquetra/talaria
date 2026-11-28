@@ -8,6 +8,68 @@ cannot run. Below 60 columns the headings collapse; below 16 rows the menu is te
 Talaria keeps finished conversation output in native terminal scrollback. Full-screen views
 temporarily cover it; closing a view restores the conversation and the draft.
 
+Press **F3** in the conversation for the controls available at the current focus,
+including an answer card, a queued message, or Vim mode. Esc returns to that focus.
+Typing `?` in a message still enters a question mark. In slash command results,
+Page Up and Page Down move by a page. Home and End select the first and last command.
+Esc closes the list and clears a lone `/`. A longer command stays in the composer,
+and editing it opens the list again. When a built-in command and a Hermes skill
+share a name, the transcript gives the command for running the skill once per session.
+
+In an overlay, Ctrl+C interrupts the foreground turn and preserves the current
+selection or text field. If setup is running its own agent while the foreground
+conversation is idle, Ctrl+C interrupts that agent and leaves setup open.
+Esc backs out of the current field or overlay. Ctrl+Z suspends to the shell
+when job control is available. Use `fg` to return to the same screen.
+
+An empty chat offers routes to recent sessions, workflow runs and models. Once you
+send a message, speaker labels line up beside the conversation. Split windows
+put the speaker above the text. Very narrow windows use a compact marker. The composer names the current
+conversation in the top edge of the input box, or shows **Hivecode workflow** when a prompt will start workflow authoring.
+The bottom edge shows the configured send, newline
+and transcript keys that fit. Editing a queued message, scrolling within a long draft
+and confirming exit take priority over those hints.
+
+Long pastes use a compact label in the composer and inline conversation. Open the
+transcript with Ctrl+O to read the full paste or search for words inside it.
+
+When Hermes asks a multiple-choice question, the answer pane takes the place of an empty
+input box. Use ↑ and ↓ to highlight an answer and Enter to send it. For **Select all that
+apply**, use Space to tick or untick each answer, then Enter to send the set. To type
+your own answer, highlight **Other** and press Enter for a single choice or Space
+for multiple selections. Esc leaves the custom answer field or skips the question
+from the list. A chat draft keeps its focus when a question arrives. Send or clear the
+draft to answer. With mouse navigation enabled, click or scroll over the choices to move
+the highlight. Enter confirms the answer.
+
+Use `/layout mouse` to toggle pointer navigation for this session. To enable it at
+startup, set `mouse = true` under `[ui]` in Talaria's configuration. The wheel
+scrolls the transcript and moves the selection in the workflow, model and session
+views. Click a model or session to inspect it. Enter performs the selected action.
+On Kanban, click a card or column heading to select it. The wheel moves through
+the active column and scrolls an open card. Its arrow keys move one line and
+Page Up, Page Down, Home and End navigate longer descriptions and comments.
+In `/config`, click a category or setting to select it. The wheel moves through
+the list under the pointer. Click a visible filter to change it. Editing, typing
+a filter, review and conflict screens give the mouse back to the terminal.
+Click a workflow node to inspect it and press Enter to open its agent. Closing the
+view returns the mouse to the terminal.
+
+Open a workflow with Alt+W or choose a run from `/workflows`. Wide terminals show a
+connected branch map beside the selected node's inspector. A narrower window shows
+the same run as a tree. The graph groups agents
+under the phase, parent agent or child workflow recorded in the run. Left folds a
+branch or moves to its parent. Right unfolds it or selects its first child. Press
+`a` to jump to an agent needing attention, `d` to inspect the selected row, and
+Enter on an agent to open its transcript.
+
+When a run finishes, the header shows elapsed time and counts each worker outcome.
+Press `v` or click the workflow verdict to read the script’s result. A failed worker
+can still have a validated report. Click its report notice or select the worker
+and press `d`. Use the arrows or Page Up and Page Down to read the evidence, then
+Escape to return to the same selection. A warning beside a completed worker means
+a turn stopped making progress before the worker returned its result.
+
 While a turn runs, a working row sits directly above the composer, for example
 `✻ Working · 12s · Esc twice to interrupt`. It shows Hermes's own activity text in place of `Working`
 when Hermes sends one, counts the turn's time, and names the bound interrupt key. A prompt card
@@ -54,7 +116,7 @@ line counts its lines in place, for example `∴ thinking… (+12 lines, Ctrl+O 
 ends, the line says how long it took, `∴ thought for 12s (+34 lines, Ctrl+O to view)`, or only
 its length when Talaria did not see it stream (Hermes's end-of-turn reasoning and resumed
 history). Hermes's end-of-turn reasoning in a turn that ran tools reads
-`∴ thinking, latest step (+34 lines, Ctrl+O to view)`. The transcript view shows every block in
+`∴ reasoning, last step (+34 lines, Ctrl+O to view)`. The transcript view shows every block in
 full. A turn whose only output is its reasoning shows it in full on the main screen too.
 `/thinking full` draws blocks in full from then on, and `/thinking collapsed` returns to one
 line; scrollback already written keeps its form. The optional workspace draws reasoning the same
@@ -74,10 +136,22 @@ terminal it is kept longer than the context and folder segments.
 The optional work panel shows the status row's attention count, the focused session's goal,
 turn and explicit verdict, its task checklist, and its agents. The waiting requests come from
 the fleet queue used by Alt+A; running and queued agents come from the focused session's tree.
-The panel counts omitted items as `+N more` and does not scroll. A child's model is shown only
-when Hermes reports it; otherwise it is `unknown`. Child effort is `unknown` because the pinned
-contract does not report it. A finished checklist is not a verdict. Ctrl+T still expands or
-collapses tasks, and Alt+S and Alt+A retain their existing actions.
+The panel counts omitted items as `+N more`. Ctrl+T expands or collapses the checklist.
+
+## Subagent activity
+
+When Hermes delegates work, each child has a row above the composer or in the work panel.
+A moving circle marks a working child. After 30 seconds without a child update, the circle
+holds still and the row reads `quiet 30s`. The child can still be waiting for a model reply
+or a tool. Its next activity restores the working indicator. Queued children have a hollow
+circle. Reduced motion keeps all the symbols still.
+
+The row shows the task, the child's model and its configured reasoning effort. Wider terminals
+also show the latest activity. At narrow widths the model and effort move below the task.
+Talaria reads effort from the child session in the owning Hermes profile. A question mark
+means the setting is unavailable, `default` means the provider chooses, and `none` means
+reasoning was disabled. Alt+S opens the subagents panel. Select a child and press `d` for
+the full instruction, its last update, and its activity history.
 
 ## Optional workspace and work panel
 
@@ -103,21 +177,30 @@ workspace is on, native terminal scrollback and search do not cover the conversa
 and multiplexer pane reads see only the screen. Turning the panel off restores the
 inline view and writes output finished during the workspace to native scrollback once.
 Finished output waits in memory until then; a process crash can lose that pending text.
-Mouse capture remains off. If a terminal or multiplexer consumes Alt+D, use the command.
+If a terminal or multiplexer consumes Alt+D, use the command.
 
 ## Model picker
 
 `/model` or Alt+P opens a temporary full-screen model picker. Escape restores the previous view
-and composer draft, with the optional workspace and menu either off or on. Mouse capture stays off.
+and composer draft, with the optional workspace and menu either off or on.
 Typing always searches: every whitespace-separated term must match the provider name, slug or
 model identifier, without regard to case. Ctrl+U clears the filter. Tab (`model_chips_next`) and
 Shift+Tab (`model_chips_prev`) cycle All, Starred, Configured and Needs setup without clearing it.
 Configured means Hermes lists the provider as authenticated; it does not verify the saved credential.
 
-All shows stars once in starring order, configured providers in Hermes order, then Needs setup
-stubs. Stubs never expand cached models. Enter on a stub closes the picker and opens `/providers`
+All and Configured group models by provider. The active provider starts open. Other providers
+start folded and show their model count. On a provider heading, press Enter to expand or
+fold it. Clicking the heading does the same when mouse navigation is enabled.
+Down moves into an open group. Shift+Left folds the provider from any
+of its model rows. Typing or pasting a model name searches inside folded providers too. Clearing the search restores
+the folds. All also lists providers that need setup.
+Ctrl+F adds or removes a star in place so the next Down continues from the same model.
+The Starred tab lists saved routes in the order you starred them, including routes a provider
+has since removed. Removing a star there selects the next row, or the previous row at the end.
+Setup stubs never expand cached models. Enter on a stub closes the picker and opens `/providers`
 on that provider. A route is a provider plus a model, so identical model names can appear on different
-providers. Group headers cannot be selected. Arrow and page keys move; Home and End reach the ends.
+providers. Arrow and page keys move between rows. Shift+Up and Shift+Down jump between provider
+headings, or between groups of matches during search. Home and End reach the ends of the list.
 Search and reload preserve the selected route when it remains visible. The `>` selection pointer,
 `★` star and `●` current-route marker have separate meanings, including in monochrome.
 
@@ -135,36 +218,36 @@ appears as a Warning line in the details of that provider's own rows; an unconfi
 setup hint appears as a Setup line on its Needs setup row.
 Deferred changes say pending turn end; lost write replies say outcome unknown and are not resent.
 
-At 80×24, details sit below the list; at least 112×28 places them beside it. Below 60×16 the list is
+At 80×24, details sit below the list; at least 112×24 places them beside it. Below 60×16 the list is
 compact with details on demand; below 40×10 a size message retains Escape. The scroll indicator
-names the visible range and whether more rows exist above or below. Two footer rows retain keys.
+names the visible range and shows the selected model's provider when its heading scrolls offscreen.
 F2 or Ctrl+E (`model_details`) opens full, wrapped details. Up/Down, PageUp/PageDown and Home/End
 scroll them. Escape returns to the same row. Other keys never switch, star or save from that layer.
 macOS may reserve F2, and both bindings are configurable.
 
 Ctrl+F stars, Ctrl+G toggles the save scope (this session versus this session and new sessions),
-Ctrl+R reloads, and Left/Right adjust requested effort. These retain their existing behavior,
+Ctrl+R reloads, and Left/Right adjust requested effort on a model. These retain their existing behavior,
 including confirmation, deferred changes and uncertain outcomes. Escape closes full details,
 then clears a non-empty filter, then closes the picker. Rebinding conflicts produce a notice.
 
-Bare `/effort` opens an effort selector under the composer, in the slash list's place. It shows
-all eight Hermes levels on one scale from `Faster` to `Smarter` (`none` is left out when the
-catalogue says the model cannot turn reasoning off), a marker over the selected level, one line
-describing it, and where the session's own level is. Left and Right (`effort_down`, `effort_up`)
-move the marker and Home and End jump to the ends; nothing is sent while it moves. Tab stages
-Hivecode on or off, and Ctrl+G (`model_scope`) stages saving the level for new sessions too; the
-selector shows both switches as on or off. Enter applies what was staged by running the typed
-commands, `/effort <level>` (with `--default` when saving) and then `/hivecode on` or `off`, so
-their notices and checks are the same. Esc, a paste, a typed `/` or a session switch closes it and
-sends nothing, and Enter with nothing changed closes it quietly. `/effort <level>` typed in full
-still sets the level directly. At 80 columns and wider the Hivecode switch sits beside the scale;
-narrower, it gets its own row, and below about 53 columns the scale becomes one `◀ level ▶` row.
-Like the slash list, it takes at most a third of the terminal's rows, so the composer and the
-working row keep theirs. A short terminal drops the save line, the note, the description and the
-`Faster … Smarter` row in that order, then keeps one key hint row naming Enter and Esc, then
-uses the one-row scale. The title, the scale and that hint row always stay. A question or
-approval card that needs the keys closes the selector, as Esc does, so the card is shown in full.
-Nothing in it animates, and the marker and the bold label show the selection without colour.
+Bare `/effort` opens the reasoning effort selector under the composer. Each stop on the scale
+is one Hermes level, from `none` to `ultra`. Routes that cannot turn reasoning off omit
+`none` unless it is already selected or in use. A diamond marks the selected level above its
+bold, underlined name. The description beneath the scale explains what that level does.
+
+Left and Right (`effort_down`, `effort_up`) preview a level. Home and End jump to the ends.
+The heading shows both the preview and the session's current level when they differ.
+Tab stages a Hivecode change. Ctrl+G (`model_scope`) also saves the level for new sessions on
+the named profile. Each setting shows its shortcut and its staged value. Enter applies the
+changes through `/effort <level>` (with `--default` when saving) and then `/hivecode on` or
+`off`. Enter with nothing changed closes the selector quietly. Esc, a paste, a typed `/`, a
+session switch or a question that needs the keys discards the preview. You can also type
+`/effort <level>` directly.
+
+In a narrow pane the scale becomes `◀ level ▶` with its position among the available levels.
+On short screens, route notes and switch values take priority over the scale captions and
+description. With just two rows, the selector shows the level and the apply and cancel keys.
+The diamond, line weights and text labels also work in monochrome.
 
 | State | Message and recovery |
 | --- | --- |
@@ -290,8 +373,11 @@ inside the MCP screen.
 same screen through **Connectors and messaging**. `/platforms` keeps Hermes's own meaning.
 
 Connectors use Nous Research's hosted tool gateway. Before the first connector call, Talaria
-asks for consent: continuing may create a free Nous guest identity for a profile without a Nous
-sign-in. Consent lasts for this process and profile, including reconnects. Opening Messaging
+checks the profile's local sign-in status and asks for consent. The card identifies a known
+Nous sign-in or guest identity. If the profile is signed out or Hermes cannot identify
+the account, the card explains which applies and that continuing may create a free
+guest identity. Consent lasts for this process and
+profile, including reconnects. Opening Messaging
 does not grant it. If connectors are unavailable, the screen offers
 `hermes -p <profile> auth upgrade`; Talaria does not sign in for you.
 
@@ -329,7 +415,7 @@ needing setup next, and user endpoints last with `+ Add an endpoint` first in th
 Provider counts exclude endpoints and actions; partial inventories are labelled unknown.
 Two providers sharing a display name remain distinct. Keys retains its saved-first label order.
 
-The shared picker frame places details below the list, or beside it at least 112×28. Below 60×16
+The shared picker frame places details below the list, or beside it at least 112×24. Below 60×16
 the list is compact; below 40×10 a size message retains Escape. Enter opens the provider's one
 setup method, or a chooser when several are available. Headers cannot be selected. The scroll
 indicator reports the visible range and more above/below; statuses remain text in monochrome.
@@ -342,15 +428,21 @@ The `providers_*` entries in `[keys]` above configure the tab, reload, removal, 
 clear-key, browser, copy and details actions in this overlay. Printable keys such as `o` and `c` still
 filter a list; they open or copy only when the displayed card offers that action.
 
-**Keys.** Enter opens a masked field. Paste a key and press Enter to check and save it.
+**Keys.** Enter opens an empty **New key** field. If the profile already has a key,
+the card shows its saved suffix separately when available. Type or paste the replacement
+and press Enter to check and save it.
+A successful OpenRouter save writes `OPENROUTER_API_KEY` to the selected Hermes profile.
+Reopen `/providers keys` to check its saved status.
 A rejected key stays in the card for correction. If the provider cannot be reached, the card
 asks for a second Enter to save unchecked; editing the key clears that confirmation.
-Ctrl+U clears the field. Only this key card shows a saved key's last four characters, on the
-`Saved key ends in` line. Rows, the summary and full details show no credential preview.
+Ctrl+U clears the entry and dismisses the saved suffix. Escape cancels the edit.
+The existing key stays saved until a replacement succeeds. Only this key card shows
+a saved key's last four characters.
 
 `listed ready` means Hermes lists the provider as authenticated in its catalogue. It does not prove
 that the saved key currently works. Ctrl+D confirms removal of every credential Hermes saves
-for that provider, including its account sign-in. The confirmation names known shared key
+for that provider, including its account sign-in. For OpenRouter this also removes
+`OPENROUTER_API_KEY` from the selected profile. The confirmation names known shared key
 variables and the other providers that would lose them.
 
 Other row statuses are `key saved`, `needs setup`, `checking` and `unknown`. A signed-in account

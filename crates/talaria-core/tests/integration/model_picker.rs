@@ -71,10 +71,7 @@ fn with_favourites() -> SavedModels {
 #[test]
 fn filter_terms_and_selection() {
     let mut state = open_loaded(picker_catalog(), Some("high"), with_favourites());
-    assert_eq!(
-        selected_key(&state),
-        Some(favourite_key("minimax-m3.1-flash"))
-    );
+    assert_eq!(selected_key(&state), Some(model_key("minimax-m3.1-flash")));
     type_filter(&mut state, "oll glm");
     assert_eq!(selected_key(&state), Some(model_key("glm-5")));
     let (title, _effort, filter, banner) = view_parts(&state);
@@ -92,12 +89,7 @@ fn filter_terms_and_selection() {
 fn keys_navigate_and_skip() {
     let mut state = open_loaded(picker_catalog(), Some("high"), with_favourites());
     state.set_list_height(3);
-    assert_eq!(
-        selected_key(&state),
-        Some(favourite_key("minimax-m3.1-flash"))
-    );
-    press(&mut state, PickerKey::Down);
-    assert_eq!(selected_key(&state), Some(favourite_key("missing-model")));
+    assert_eq!(selected_key(&state), Some(model_key("minimax-m3.1-flash")));
     press(&mut state, PickerKey::Down);
     assert_eq!(selected_key(&state), Some(model_key("glm-5")));
     press(&mut state, PickerKey::Down);
@@ -117,12 +109,14 @@ fn keys_navigate_and_skip() {
         })
     );
     press(&mut state, PickerKey::Home);
-    assert_eq!(
+    assert!(matches!(
         selected_key(&state),
-        Some(favourite_key("minimax-m3.1-flash"))
-    );
+        Some(RowKey::Provider { expanded: true, .. })
+    ));
     press(&mut state, PickerKey::Down);
-    assert_eq!(selected_key(&state), Some(favourite_key("missing-model")));
+    assert_eq!(selected_key(&state), Some(model_key("minimax-m3.1-flash")));
+    press(&mut state, PickerKey::Down);
+    assert_eq!(selected_key(&state), Some(model_key("glm-5")));
     press(&mut state, PickerKey::End);
     assert_eq!(
         selected_key(&state),
@@ -132,12 +126,16 @@ fn keys_navigate_and_skip() {
     );
     press(&mut state, PickerKey::Home);
     press(&mut state, PickerKey::PageDown);
-    assert_eq!(selected_key(&state), Some(model_key("glm-5")));
-    press(&mut state, PickerKey::PageUp);
+    assert_eq!(selected_key(&state), Some(model_key("gone")));
+    press(&mut state, PickerKey::End);
     assert_eq!(
         selected_key(&state),
-        Some(favourite_key("minimax-m3.1-flash"))
+        Some(RowKey::NotSetUp {
+            provider: "anthropic".to_owned()
+        })
     );
+    press(&mut state, PickerKey::PageUp);
+    assert_eq!(selected_key(&state), Some(model_key("glm-5")));
 }
 
 #[test]
@@ -306,6 +304,7 @@ fn not_set_up_and_unavailable_rows() {
     );
     assert!(state.view().is_some());
 
+    press(&mut state, PickerKey::ChipsNext);
     press(&mut state, PickerKey::Home);
     press(&mut state, PickerKey::Down);
     let effects = press(&mut state, PickerKey::Enter);
@@ -315,6 +314,7 @@ fn not_set_up_and_unavailable_rows() {
     );
     assert!(drive::mutates(&effects).is_empty());
 
+    press(&mut state, PickerKey::ChipsPrev);
     move_down_to(
         &mut state,
         &RowKey::NotSetUp {
@@ -673,6 +673,7 @@ fn favourite_toggle() {
     assert!(saved_files(&effects).is_empty());
 
     let mut stale = open_loaded(picker_catalog(), Some("high"), with_favourites());
+    press(&mut stale, PickerKey::ChipsNext);
     press(&mut stale, PickerKey::Home);
     press(&mut stale, PickerKey::Down);
     assert_eq!(selected_key(&stale), Some(favourite_key("missing-model")));

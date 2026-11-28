@@ -1,0 +1,18 @@
+schema = 1
+name = "Catppuccin Mocha"
+extends = "dark"
+follow_hermes_skin = false
+
+[palette]
+background = "#1e1e2e"
+surface = "#313244"
+foreground = "#cdd6f4"
+muted = "#a6adc8"
+disabled = "#9ca0b3"
+border = "#7c8096"
+primary = "#cba6f7"
+accent = "#89b4fa"
+success = "#a6e3a1"
+warning = "#f9e2af"
+error = "#f38ba8"
+attention = "#fab387"

@@ -168,20 +168,20 @@ fn session_picker_query_draws_separators_as_stand_ins() {
     update(&mut state, PickerInput::Action(PickerAction::Search), 20);
     update(&mut state, PickerInput::Paste(HOSTILE.to_owned()), 20);
     let typing = picker_buffer(&state, 100, 24);
-    let notice = row_text(&typing, 22);
-    let caret_after = format!("Search: {STAND_IN}\u{258f}");
+    let search = row_text(&typing, 1);
+    let caret_after = format!("Search  {STAND_IN}\u{258f}");
     assert!(
-        notice.contains(&caret_after),
-        "search caret should follow the stand-in, got {notice:?}"
+        search.contains(&caret_after),
+        "search caret should follow the stand-in, got {search:?}"
     );
     assert_plain(&typing);
 
     update(&mut state, PickerInput::Enter, 20);
     let confirmed = picker_buffer(&state, 120, 24);
-    let header = row_text(&confirmed, 0);
+    let search = row_text(&confirmed, 1);
     assert!(
-        header.contains(&format!("Search: \"{STAND_IN}\"")),
-        "confirmed query should show stand-ins, got {header:?}"
+        search.contains(&format!("Search  {STAND_IN}")),
+        "confirmed query should show stand-ins, got {search:?}"
     );
     assert_plain(&confirmed);
 

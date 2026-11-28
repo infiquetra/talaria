@@ -9,7 +9,7 @@ use talaria_core::models::PickerRow;
 use talaria_core::models::PickerView;
 use talaria_core::mutation::Confirmation;
 
-use crate::history::{sanitize, split_lines, wrap_lines};
+use crate::history::{sanitize, word_wrapped};
 use crate::live::LiveSection;
 
 /// Paint the model overlay into the alternate-screen buffer.
@@ -21,7 +21,14 @@ pub fn draw_model_picker(view: &PickerView, area: Rect, buf: &mut Buffer) {
 pub struct ModelConfirmSection<'a> {
     pub confirmation: &'a Confirmation,
     pub keep: &'a str,
-    draft_waiting: bool,
+    readiness: Readiness,
+}
+
+enum Readiness {
+    Draft,
+    Unfocused,
+    Guarded,
+    Ready,
 }
 
 impl<'a> ModelConfirmSection<'a> {
@@ -29,13 +36,23 @@ impl<'a> ModelConfirmSection<'a> {
         Self {
             confirmation,
             keep,
-            draft_waiting: false,
+            readiness: Readiness::Ready,
         }
     }
 
     /// The composer still has a draft, so the card does not take Enter.
     pub fn waiting_on_draft(mut self) -> Self {
-        self.draft_waiting = true;
+        self.readiness = Readiness::Draft;
+        self
+    }
+
+    pub fn waiting_on_focus(mut self) -> Self {
+        self.readiness = Readiness::Unfocused;
+        self
+    }
+
+    pub fn guarded(mut self) -> Self {
+        self.readiness = Readiness::Guarded;
         self
     }
 
@@ -46,15 +63,19 @@ impl<'a> ModelConfirmSection<'a> {
         } else {
             &self.confirmation.message
         };
-        let keys = if self.draft_waiting {
-            "clear the draft to answer".to_string()
-        } else {
-            format!("enter switch anyway · esc keep {}", sanitize(self.keep))
+        let keys = match self.readiness {
+            Readiness::Draft => "Clear the draft to answer".into(),
+            Readiness::Unfocused => "Return to the conversation to answer".into(),
+            Readiness::Guarded => "Confirmation keys will be available in a moment".into(),
+            Readiness::Ready => format!("y to confirm · Esc keep {}", sanitize(self.keep)),
         };
-        let mut lines = vec![Line::from(title).style(Style::default().bold())];
-        lines.extend(split_lines(message).map(|line| Line::from(sanitize(line).into_owned())));
-        lines.push(Line::from(keys));
-        wrap_lines(lines, width)
+        let mut lines: Vec<_> = word_wrapped(&title, width)
+            .into_iter()
+            .map(|line| Line::styled(line, Style::default().bold()))
+            .collect();
+        lines.extend(word_wrapped(message, width).into_iter().map(Line::raw));
+        lines.extend(word_wrapped(&keys, width).into_iter().map(Line::raw));
+        lines
     }
 }
 

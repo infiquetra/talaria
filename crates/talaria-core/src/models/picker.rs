@@ -17,9 +17,28 @@ pub enum Scope {
 /// A row the picker can select.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RowKey {
+    Provider { provider: String, expanded: bool },
     Favourite { provider: String, model: String },
     Model { provider: String, model: String },
     NotSetUp { provider: String },
+}
+
+impl RowKey {
+    /// A search can replace a provider heading with its matching model rows, or vice versa.
+    pub(super) fn heading_and_child(&self, other: &Self) -> bool {
+        use RowKey::{Favourite, Model, Provider};
+        match (self, other) {
+            (
+                Provider { provider: a, .. },
+                Model { provider: b, .. } | Favourite { provider: b, .. },
+            )
+            | (
+                Model { provider: a, .. } | Favourite { provider: a, .. },
+                Provider { provider: b, .. },
+            ) => a == b,
+            _ => false,
+        }
+    }
 }
 
 /// The effort control drawn in the footer.
@@ -43,6 +62,9 @@ pub enum PickerKey {
     Char(char),
     Up,
     Down,
+    PreviousGroup,
+    NextGroup,
+    FoldProvider,
     PageUp,
     PageDown,
     Home,
@@ -165,6 +187,8 @@ pub enum ModelsInput {
         profile: String,
     },
     Picker(PickerKey),
+    PasteFilter(String),
+    SelectRow(RowKey),
     Confirm(ConfirmKey),
     Command {
         session_id: Option<String>,

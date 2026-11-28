@@ -695,6 +695,7 @@ fn workflow(fixtures: &mut Vec<Fixture>, resolved: &ThemeFileResolution) {
                     phase: Some("Inspect".into()),
                     prompt: "Inspect the fixture".into(),
                     schema: None,
+                    report_file: None,
                     tier: None,
                     model: Some("example-model".into()),
                     provider: Some("example".into()),
@@ -729,6 +730,7 @@ fn workflow(fixtures: &mut Vec<Fixture>, resolved: &ThemeFileResolution) {
                 cwd: None,
             },
             request_id: format!("wf:01JB2X9Q4M8Z7K3T5V6W8Y0A1C:{key}"),
+            report_baseline: None,
         },
     ]
     .into_iter()
@@ -807,6 +809,8 @@ fn workspace(
         waiting: &[],
         agents: tree,
         parent_model: None,
+        agent_clock: Default::default(),
+        agent_wake_ms: Default::default(),
         recent_limit: 3,
         voice_phase: None,
         read_aloud: None,
@@ -998,7 +1002,7 @@ fn providers(fixtures: &mut Vec<Fixture>, resolved: &ThemeFileResolution) {
         kind: CardKind::Key,
         step: Some("Step 1 of 3: Paste key".into()),
         lines: vec!["Example provider".into()],
-        footer: "Enter save · Esc cancel".into(),
+        footer: "Ctrl+U clear entry · Esc cancel".into(),
     });
     fixtures.push(draw("providers-card", "providers", true, |area, buffer| {
         resolved.draw_providers(&view, 0, area, buffer);

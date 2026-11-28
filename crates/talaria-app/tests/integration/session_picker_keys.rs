@@ -20,6 +20,43 @@ fn key(code: KeyCode) -> Key {
 }
 
 #[tokio::test]
+async fn session_limit_stays_in_the_picker_after_close() {
+    let rig = drive::Rig::start();
+    let rows = (0..100)
+        .map(|i| {
+            mock_gateway::list_row(
+                &format!("session-{i}"),
+                "Work",
+                Some(1_792_700_000.0),
+                None,
+                4,
+                false,
+            )
+        })
+        .collect();
+    rig.gateway.set_list_rows_for("fixture", "live", rows);
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            driver.submit("/resume");
+            settle_short().await;
+            driver.picker(PickerInput::Escape);
+            settle_short().await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+    assert!(!rig.gateway.requests("session.list").is_empty());
+    let lines = committed_text(&log);
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("only the newest 100")),
+        "{lines:?}"
+    );
+}
+
+#[tokio::test]
 async fn overlay_owns_its_keys() {
     // The map: j is down in the list and JSON in the dialog.
     let map = KeyMap::defaults();

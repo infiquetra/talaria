@@ -8,7 +8,9 @@ use std::{
 };
 
 mod manage;
+mod save;
 pub use manage::{CleanupAction, CleanupEntry, IgnoredEntry, IgnoredKind, WorktreeReport};
+pub use save::{SAVED_SUFFIX, SavedWork, save_uncommitted};
 
 /// One provider owns a run's provenance and serialises its local Git operations.
 pub struct GitWorktrees {
@@ -37,7 +39,28 @@ pub struct WorktreeInfo {
 /// name programs (`core.fsmonitor`), so the options that could run one are switched off and no
 /// optional locks are taken, as the leftover-edits check in the runner does.
 fn run(repo: &Path, args: &[&OsStr]) -> Result<Output, String> {
-    Command::new("git")
+    run_with(repo, args, &[])
+}
+
+/// Git options that prevent repository configuration from starting another program.
+fn hardened<'a>(args: &[&'a OsStr]) -> Vec<&'a OsStr> {
+    let mut all: Vec<&OsStr> = vec![
+        "-c".as_ref(),
+        if cfg!(windows) {
+            "core.hooksPath=NUL".as_ref()
+        } else {
+            "core.hooksPath=/dev/null".as_ref()
+        },
+        "-c".as_ref(),
+        "commit.gpgSign=false".as_ref(),
+    ];
+    all.extend_from_slice(args);
+    all
+}
+
+fn base_command(repo: &Path, args: &[&OsStr], env: &[(&str, &OsStr)]) -> Command {
+    let mut command = Command::new("git");
+    command
         .args([
             "-c",
             "core.fsmonitor=false",
@@ -48,6 +71,103 @@ fn run(repo: &Path, args: &[&OsStr]) -> Result<Output, String> {
         .arg(repo)
         .args(args)
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .envs(env.iter().copied());
+    command
+}
+
+/// Configuration that switches off every filter driver the repository's own configuration
+/// (local, worktree or an included file) sets. User and system filters such as Git LFS remain.
+fn filter_overrides(
+    repo: &Path,
+    env: &[(&str, &OsStr)],
+) -> Result<Vec<(String, OsString)>, String> {
+    let mut config_env = env.to_vec();
+    config_env.push(("LC_ALL", OsStr::new("C")));
+    let output = base_command(
+        repo,
+        &hardened(&[
+            "config".as_ref(),
+            "--show-scope".as_ref(),
+            "-z".as_ref(),
+            "--get-regexp".as_ref(),
+            r"^filter\.".as_ref(),
+        ]),
+        &config_env,
+    )
+    .output()
+    .map_err(|error| format!("cannot read the repository's filter settings: {error}"))?;
+    // Exit status 1 means no matching setting.
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Err(format!(
+            "cannot read the repository's filter settings: {}",
+            reason(&output)
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let fields: Vec<&str> = text.split('\0').collect();
+    let mut drivers = Vec::new();
+    for pair in fields.chunks(2) {
+        let [scope, entry] = pair else { continue };
+        if matches!(*scope, "global" | "system" | "command") {
+            continue;
+        }
+        let key = entry.split('\n').next().unwrap_or_default();
+        let Some(driver) = key
+            .strip_prefix("filter.")
+            .and_then(|rest| rest.rsplit_once('.'))
+            .map(|(driver, _)| driver.to_owned())
+        else {
+            continue;
+        };
+        if !drivers.contains(&driver) {
+            drivers.push(driver);
+        }
+    }
+    let from = env
+        .iter()
+        .find(|(name, _)| *name == "GIT_CONFIG_COUNT")
+        .map(|(_, value)| value.to_os_string())
+        .or_else(|| std::env::var_os("GIT_CONFIG_COUNT"))
+        .and_then(|value| value.to_str().and_then(|value| value.trim().parse().ok()))
+        .unwrap_or(0);
+    let mut overrides = Vec::new();
+    let mut number = from;
+    for driver in drivers {
+        for (variable, value) in [
+            ("clean", ""),
+            ("smudge", ""),
+            ("process", ""),
+            ("required", "false"),
+        ] {
+            overrides.push((
+                format!("GIT_CONFIG_KEY_{number}"),
+                OsString::from(format!("filter.{driver}.{variable}")),
+            ));
+            overrides.push((format!("GIT_CONFIG_VALUE_{number}"), OsString::from(value)));
+            number += 1;
+        }
+    }
+    if number > from {
+        overrides.push((
+            "GIT_CONFIG_COUNT".into(),
+            OsString::from(number.to_string()),
+        ));
+    }
+    Ok(overrides)
+}
+
+pub(crate) fn safe_command(repo: &Path, args: &[&OsStr]) -> Result<Command, String> {
+    let overrides = filter_overrides(repo, &[])?;
+    let mut command = base_command(repo, &hardened(args), &[]);
+    command.envs(overrides);
+    Ok(command)
+}
+
+/// `run` with extra environment variables for this one command.
+fn run_with(repo: &Path, args: &[&OsStr], env: &[(&str, &OsStr)]) -> Result<Output, String> {
+    let overrides = filter_overrides(repo, env)?;
+    base_command(repo, &hardened(args), env)
+        .envs(overrides)
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -556,6 +676,115 @@ impl GitWorktrees {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_git_commands_run_no_repository_filter_or_hook() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        checked(
+            &repo,
+            &[
+                "init".as_ref(),
+                "-q".as_ref(),
+                "-b".as_ref(),
+                "main".as_ref(),
+            ],
+        )
+        .unwrap();
+        fs::write(repo.join(".gitattributes"), "tracked.txt filter=agent\n").unwrap();
+        fs::write(repo.join("tracked.txt"), "tracked\n").unwrap();
+        checked(&repo, &["add".as_ref(), ".".as_ref()]).unwrap();
+        checked(
+            &repo,
+            &[
+                "-c".as_ref(),
+                "user.name=Test".as_ref(),
+                "-c".as_ref(),
+                "user.email=test@example.invalid".as_ref(),
+                "commit".as_ref(),
+                "-m".as_ref(),
+                "base".as_ref(),
+            ],
+        )
+        .unwrap();
+
+        let filter_marker = temp.path().join("filter-ran");
+        let filter = temp.path().join("filter.sh");
+        fs::write(
+            &filter,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", filter_marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&filter, fs::Permissions::from_mode(0o755)).unwrap();
+        checked(
+            &repo,
+            &[
+                "config".as_ref(),
+                "filter.agent.clean".as_ref(),
+                filter.as_os_str(),
+            ],
+        )
+        .unwrap();
+        checked(
+            &repo,
+            &[
+                "config".as_ref(),
+                "filter.agent.smudge".as_ref(),
+                filter.as_os_str(),
+            ],
+        )
+        .unwrap();
+
+        let hook_marker = temp.path().join("hook-ran");
+        let hooks = temp.path().join("hooks");
+        fs::create_dir(&hooks).unwrap();
+        let hook = hooks.join("reference-transaction");
+        fs::write(
+            &hook,
+            format!("#!/bin/sh\ntouch '{}'\n", hook_marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        checked(
+            &repo,
+            &[
+                "config".as_ref(),
+                "core.hooksPath".as_ref(),
+                hooks.as_os_str(),
+            ],
+        )
+        .unwrap();
+
+        checked(
+            &repo,
+            &[
+                "status".as_ref(),
+                "--porcelain".as_ref(),
+                "--untracked-files=normal".as_ref(),
+            ],
+        )
+        .unwrap();
+        let tree = temp.path().join("tree");
+        checked(
+            &repo,
+            &[
+                "worktree".as_ref(),
+                "add".as_ref(),
+                "-b".as_ref(),
+                "fixture".as_ref(),
+                tree.as_os_str(),
+                "HEAD".as_ref(),
+            ],
+        )
+        .unwrap();
+
+        assert!(!filter_marker.exists(), "a repository filter ran");
+        assert!(!hook_marker.exists(), "a repository hook ran");
+    }
 
     #[cfg(unix)]
     #[test]

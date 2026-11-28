@@ -18,6 +18,7 @@ pub mod remote;
 pub mod run;
 pub mod workflow;
 pub mod workflow_check;
+pub mod workflow_lessons;
 pub mod workflow_roster;
 pub mod workflow_skill;
 pub mod workflow_worktrees;

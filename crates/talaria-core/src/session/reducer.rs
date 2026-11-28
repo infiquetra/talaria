@@ -150,14 +150,17 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
                 return Vec::new();
             }
             let placed = state.turn != TurnState::Running && state.submissions.is_empty();
+            let expanded_paste = crate::hivecode::typed_text(text)
+                .and_then(|request| expanded_paste(display, request));
             if placed {
-                state.user(display.clone());
+                state.user_with_paste(display.clone(), expanded_paste.clone());
             }
             crate::queue::flow::note_submit(state, text, submission_id, placed);
             // A waiting submit draws its cell later from this text: what the person typed.
             state.submissions.push_back(super::state::Submission {
                 id: submission_id.clone(),
                 text: display.clone(),
+                expanded_paste,
                 attachments: Vec::new(),
                 placed,
             });
@@ -269,8 +272,9 @@ pub(crate) fn submit(
         return Vec::new();
     }
     let placed = state.turn != TurnState::Running && state.submissions.is_empty();
+    let expanded_paste = expanded_paste(display, text);
     if placed {
-        state.user(display.to_owned());
+        state.user_with_paste(display.to_owned(), expanded_paste.clone());
     }
     crate::queue::flow::note_submit(state, text, submission_id, placed);
     if let Some(entry) = state
@@ -290,6 +294,7 @@ pub(crate) fn submit(
     state.submissions.push_back(super::state::Submission {
         id: submission_id.to_owned(),
         text: display.to_owned(),
+        expanded_paste,
         attachments: attachments.to_vec(),
         placed,
     });
@@ -299,6 +304,10 @@ pub(crate) fn submit(
         submission_id: submission_id.to_owned(),
         attachments: attachments.to_vec(),
     }]
+}
+
+fn expanded_paste(display: &str, user_text: &str) -> Option<std::sync::Arc<str>> {
+    (display.contains("[Pasted text #") && display != user_text).then(|| user_text.into())
 }
 
 /// Apply background follow-ups. Notices and result cells stay in the session. An interrupt uses

@@ -1,7 +1,7 @@
-┌Switch model · this session───────────────────────────────────────────────────┐
+┌ Switch model · this session ─────────────────────────────────────────────────┐
 │> type to filter                                                              │
-│[All] Starred Configured Needs setup                                          │
-│2 models · 1 providers · Current: Example provider / reasoner-large · high    │
+│View   [All]   Starred   Configured   Needs setup                             │
+│2 models · 1 provider · Current: Example provider / reasoner-large · high     │
 │Example provider                                                              │
 │> ★ ● reasoner-large                                                   current│
 │  reasoner-small                                                              │
@@ -11,8 +11,8 @@
 │                                                                              │
 │                                                                              │
 │                                                                              │
-│Rows 1–3 of 3                                                                 │
-│Details───────────────────────────────────────────────────────────────────────│
+│                                                                              │
+│Details · ★ ● reasoner-large ─────────────────────────────────────────────────│
 │Effort: high requested, sent as high                                          │
 │Context: 200K tokens                                                          │
 │Account: configured in Hermes (not checked)                                   │

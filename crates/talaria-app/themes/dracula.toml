@@ -1,0 +1,18 @@
+schema = 1
+name = "Dracula"
+extends = "dark"
+follow_hermes_skin = false
+
+[palette]
+background = "#282a36"
+surface = "#343746"
+foreground = "#f8f8f2"
+muted = "#a9b4d3"
+disabled = "#98a5ca"
+border = "#7886b1"
+primary = "#c493f9"
+accent = "#ff79c6"
+success = "#50fa7b"
+warning = "#f1fa8c"
+error = "#ff8080"
+attention = "#ffb86c"

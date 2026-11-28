@@ -181,7 +181,7 @@ fn identity(request: &AgentRequest) -> String {
     let mut value = json!({"v":1,"workflow_path":request.workflow_path,"prompt":request.prompt});
     let opts = json!({"schema":request.schema,"tier":request.tier,"model":request.model,"provider":request.provider,
         "effort":request.effort,"profile":request.profile,"toolsets":request.toolsets,"skills":request.skills,
-        "isolation":request.isolation,"max_turns":request.max_turns});
+        "isolation":request.isolation,"max_turns":request.max_turns,"report_file":request.report_file});
     if let (Some(dst), Some(src)) = (value.as_object_mut(), opts.as_object()) {
         for (key, value) in src {
             if !value.is_null() {
@@ -277,6 +277,10 @@ impl<'a> State<'a> {
                 return;
             }
         };
+        if let Err(error) = crate::worktree::validate_report_option(&request) {
+            self.reject(id, "WorkflowOptionError", format!("agent(): {error}"));
+            return;
+        }
         if stalled && !self.stall_warned {
             self.stall_warned = true;
             self.emit(EngineEvent::Log {
@@ -406,16 +410,34 @@ impl<'a> State<'a> {
             });
             return Some(Err(RunOutcome::Aborted { reason }));
         }
+        let original_reply = |value| {
+            if pending.request.report_file.is_some() {
+                json!({"value": value, "recoveredReport": null})
+            } else {
+                value
+            }
+        };
         let (kind, value) = match outcome {
-            AgentOutcome::Completed(value) => (OutcomeKind::Completed, value),
+            AgentOutcome::Completed(value) => (OutcomeKind::Completed, original_reply(value)),
             AgentOutcome::CutShort { value, cut_short } => (
                 OutcomeKind::CutShort {
                     steps: cut_short.steps,
                     limit: cut_short.limit,
+                    saved_branch: cut_short.saved_branch,
                 },
-                value,
+                original_reply(value),
             ),
             AgentOutcome::Failed { reason } => (OutcomeKind::Failed { reason }, Value::Null),
+            AgentOutcome::FailedWithReport {
+                reason,
+                value,
+                report,
+            } => (
+                OutcomeKind::Failed {
+                    reason: reason.clone(),
+                },
+                json!({"value": value, "recoveredReport": {"path": report.path, "reason": reason}}),
+            ),
             AgentOutcome::Skipped => (OutcomeKind::Skipped, Value::Null),
             AgentOutcome::Stopped { reason } => (OutcomeKind::Stopped { reason }, Value::Null),
             AgentOutcome::Abort { .. } => unreachable!(),
@@ -424,8 +446,12 @@ impl<'a> State<'a> {
             OutcomeKind::Stopped { reason } => {
                 json!({"id":pending.id,"error":{"name":"BudgetExhaustedError","message":reason}})
             }
-            OutcomeKind::CutShort { steps, limit } => {
-                json!({"id":pending.id,"value":value,"cut_short":{"steps":steps,"limit":limit}})
+            OutcomeKind::CutShort {
+                steps,
+                limit,
+                saved_branch,
+            } => {
+                json!({"id":pending.id,"value":value,"cut_short":{"steps":steps,"limit":limit,"saved_branch":saved_branch}})
             }
             _ => json!({"id":pending.id,"value":value}),
         };

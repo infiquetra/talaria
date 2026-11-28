@@ -182,6 +182,32 @@ fn a_running_bound_agent_warns_that_a_message_changes_its_work() {
 }
 
 #[test]
+fn a_stopped_parked_agent_says_how_to_make_a_reply_count() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut records = started();
+    records.push(json!({"t":"turn_settled","key":key(),"attempt":0,"turn":0,
+        "admission_id":"adm-1","outcome":"interrupted","result_meta":{"interrupted":true},
+        "usage":null}));
+    records.push(
+        json!({"t":"call_attention","key":key(),"attempt":0,"episode":0,
+        "cause":"stopped","turn":0,"admission_id":"adm-1","execution_generation":1,
+        "detail":"agent stopped"}),
+    );
+    let dir = run_folder(temp.path(), &records);
+    let note = open_watch(dir, None, "stored-bound", "").note();
+    assert_eq!(note.phase, Some(AgentPhase::Stopped));
+    assert!(!note.finished());
+    assert!(
+        note.banner().contains("stopped, waiting for you"),
+        "{}",
+        note.banner()
+    );
+    let warning = note.first_send_warning();
+    assert!(warning.contains("use-reply"), "{warning}");
+    assert!(!warning.contains("will not reach"), "{warning}");
+}
+
+#[test]
 fn a_kept_reply_from_the_step_cap_reads_cut_short() {
     let temp = tempfile::tempdir().unwrap();
     let done = json!({"t":"call_finished","key":key(),"attempt":0,

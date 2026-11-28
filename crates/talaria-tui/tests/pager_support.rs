@@ -32,6 +32,7 @@ pub fn user(id: u64, text: &str) -> Cell {
     Cell::User(UserCell {
         id: CellId::new(id),
         text: text.to_string(),
+        expanded_paste: None,
     })
 }
 

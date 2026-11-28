@@ -114,6 +114,8 @@ fn workspace_snapshots_at_80x24_and_120x40() {
         waiting: &waiting,
         agents: &agents,
         parent_model: Some("parent-model"),
+        agent_clock: Default::default(),
+        agent_wake_ms: Default::default(),
         recent_limit: 2,
         voice_phase: Some("listening"),
         read_aloud: Some("read-aloud"),
@@ -152,11 +154,12 @@ fn workspace_snapshots_at_80x24_and_120x40() {
             "│",
             "divider at {width}x{height}"
         );
-        let left: String = (0..divider).map(|x| buffer[(x, 0)].symbol()).collect();
-        assert!(
-            left.trim_end().starts_with("No messages yet"),
-            "{width}x{height}: no menu row: {left}"
-        );
+        assert!((0..height - 5).any(|y| {
+            (0..divider)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .contains("Talaria")
+        }));
         assert_eq!(support::row_text(&buffer, height - 5), "composer top");
         assert_eq!(support::row_text(&buffer, height - 4), "composer draft");
         assert_eq!(support::row_text(&buffer, height - 3), "composer bottom");
@@ -260,6 +263,24 @@ fn command_output_is_visible_in_the_workspace() {
         );
         previous = Some(at);
     }
+}
+
+#[test]
+fn narrowed_workspace_keeps_whole_words_in_command_output() {
+    let lines = [Line::from(format!(
+        "{} charizard",
+        "pokedex ".repeat(4).trim_end()
+    ))];
+    let entries = [TranscriptEntry::Lines(&lines)];
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 38, 4));
+    workspace::draw_body(
+        &entries,
+        Details::Expanded,
+        buffer.area,
+        &mut buffer,
+        &PlainCellLines,
+    );
+    assert!(text(&buffer).lines().any(|line| line.trim() == "charizard"));
 }
 
 #[test]

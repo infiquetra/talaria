@@ -41,7 +41,7 @@ const FOOTER_REPLY: &str = "enter send \u{b7} esc keep draft";
 /// The footer of the filter line.
 const FOOTER_FILTER: &str = "type to filter \u{b7} enter keep \u{b7} esc clear";
 /// The footer of the answer focus when no card hint can be read.
-const BACK_TO_LIST: &str = "ctrl+c back to list";
+const BACK_TO_LIST: &str = "Esc back to list";
 
 /// The peeked session, when the panel has one to draw.
 pub struct PeekPanel<'a> {
@@ -146,7 +146,7 @@ impl Default for FleetTheme {
             dim: Style::default().add_modifier(Modifier::DIM),
             header: Style::default().add_modifier(Modifier::BOLD),
             footer: Style::default().add_modifier(Modifier::DIM),
-            cursor: Style::default().add_modifier(Modifier::BOLD),
+            cursor: Style::default().reversed(),
             group: Style::default().add_modifier(Modifier::BOLD),
             notice: Style::default(),
             success: Style::default(),
@@ -293,6 +293,9 @@ impl FleetView {
         resolved.header = views.style(t::FLEET_HEADER, theme.header);
         resolved.footer = views.style(t::FLEET_SECONDARY, theme.footer);
         resolved.cursor = views.style(t::FLEET_CURSOR, theme.cursor);
+        if !views.color() {
+            resolved.cursor = resolved.cursor.reversed();
+        }
         resolved.group = views.style(t::FLEET_GROUP, theme.group);
         resolved.notice = views.style(t::FLEET_INPUT, theme.notice);
         resolved.success = views.style(t::FLEET_LABEL_SUCCESS, theme.success);
@@ -361,7 +364,7 @@ impl FleetView {
             draw_text(buf, area.x, area.y, LOOKING, width, theme.notice);
         }
         draw_notice(state, area, buf, theme, notice_row);
-        let footer = footer_text(state, theme, has_card, panel.as_ref(), area.width);
+        let footer = footer_text(state, theme, has_card, panel.as_ref());
         draw_text(
             buf,
             area.x,
@@ -469,19 +472,25 @@ fn draw_body(
     }
     let unlisted = not_listed_lines(state.profiles());
     let reserved = u16::try_from(unlisted.len()).unwrap_or(0);
-    let top = y;
-    let avail = usize::from(notice_row.saturating_sub(top).saturating_sub(reserved));
+    let mut top = y;
+    let mut avail = usize::from(notice_row.saturating_sub(top).saturating_sub(reserved));
 
     let visible = state.visible();
     let columns = Columns::new(&visible, labels, area.width);
     let (lines, cursor_index) = body_lines(state, &visible);
-    let list_rows = match panel {
+    let mut list_rows = match panel {
         None => avail,
         Some(_) if area.height >= SPLIT_HEIGHT => {
             avail - (avail / 2).max(MIN_PANEL_ROWS).min(avail)
         }
         Some(_) => 0,
     };
+    if !visible.is_empty() && list_rows >= 3 {
+        draw_text(buf, area.x, top, &columns.headings(), width, theme.dim);
+        top += 1;
+        avail -= 1;
+        list_rows -= 1;
+    }
     let shown = lines.len().min(list_rows);
     // The window starts at the smallest offset that keeps the cursor row in sight.
     let offset = match cursor_index {
@@ -551,28 +560,41 @@ fn footer_text(
     theme: &FleetTheme,
     has_card: bool,
     panel: Option<&Panel<'_>>,
-    width: u16,
 ) -> String {
     match state.focus() {
         Focus::Reply => FOOTER_REPLY.to_owned(),
         Focus::Filter => FOOTER_FILTER.to_owned(),
-        Focus::Answer => match panel {
-            Some(Panel::External(_)) => {
-                "arrows choose · enter select · ctrl+c back to list".to_owned()
+        Focus::Answer => {
+            let hint = match panel {
+                Some(Panel::External(_)) => Some("Enter select · ↑↓ choose".to_owned()),
+                Some(Panel::Session(panel)) => panel.stack.and_then(PromptStack::fleet_answer_hint),
+                _ => None,
+            };
+            hint.map_or_else(
+                || BACK_TO_LIST.to_owned(),
+                |hint| format!("{BACK_TO_LIST} · {hint}"),
+            )
+        }
+        Focus::ConfirmStop => theme.keys.stop.as_ref().map_or_else(
+            || "Esc cancel".to_owned(),
+            |key| format!("Esc cancel · {key} confirm stop"),
+        ),
+        Focus::List => {
+            let escape = if !state.filter_text().is_empty() {
+                "clear filter"
+            } else if state.peek().is_some() {
+                "close peek"
+            } else {
+                "close"
+            };
+            if state.seen_snapshot() && state.cursor().is_none() && panel.is_none() {
+                let escape = format!("esc {escape}");
+                return theme
+                    .keys
+                    .filter
+                    .as_ref()
+                    .map_or_else(|| escape.clone(), |key| format!("{key} filter · {escape}"));
             }
-            Some(Panel::Session(panel)) => panel
-                .stack
-                .and_then(|stack| peek::card_hint(stack, width))
-                .map_or_else(
-                    || BACK_TO_LIST.to_owned(),
-                    |hint| match hint.find("Ctrl+C") {
-                        Some(at) => format!("{}{BACK_TO_LIST}", &hint[..at]),
-                        None => format!("{hint} \u{b7} {BACK_TO_LIST}"),
-                    },
-                ),
-            _ => BACK_TO_LIST.to_owned(),
-        },
-        Focus::List | Focus::ConfirmStop => {
             let can_reply = state
                 .cursor()
                 .and_then(|key| state.find_row(key))
@@ -580,12 +602,12 @@ fn footer_text(
                     row.backend() != talaria_core::fleet::FleetBackend::Acp
                         || !matches!(row.state, RowState::Working | RowState::NeedsYou)
                 });
-            list_footer(&theme.keys, has_card, can_reply)
+            list_footer(&theme.keys, has_card, can_reply, escape)
         }
     }
 }
 
-fn list_footer(keys: &FleetKeyLabels, has_card: bool, can_reply: bool) -> String {
+fn list_footer(keys: &FleetKeyLabels, has_card: bool, can_reply: bool, escape: &str) -> String {
     let mut parts = Vec::new();
     let mut hint = |key: &Option<String>, word: &str| {
         if let Some(key) = key {
@@ -603,7 +625,7 @@ fn list_footer(keys: &FleetKeyLabels, has_card: bool, can_reply: bool) -> String
     }
     hint(&keys.review, "review");
     hint(&keys.filter, "filter");
-    hint(&Some("esc".to_owned()), "close");
+    hint(&Some("esc".to_owned()), escape);
     hint(&keys.open_in_pane, "new pane");
     parts.join(" \u{b7} ")
 }

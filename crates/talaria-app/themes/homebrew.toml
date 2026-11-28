@@ -1,0 +1,90 @@
+schema = 1
+name = "Homebrew"
+extends = "dark"
+follow_hermes_skin = false
+
+[palette]
+background = "#000000"
+surface = "#1e1e1e"
+foreground = "#00ff00"
+muted = "#0ca50c"
+disabled = "#8a8f88"
+border = "#009900"
+primary = "#39ff14"
+accent = "#7dd3fc"
+success = "#4ade80"
+warning = "#c4a767"
+error = "#ff5f5f"
+attention = "#d65cff"
+
+[roles.selection]
+fg = "#4ade80"
+bg = "#282828"
+bold = true
+
+[roles.focus]
+fg = "$palette.background"
+bg = "$palette.success"
+
+[elements."composer.marker"]
+fg = "$palette.primary"
+
+[elements."composer.border.focused"]
+fg = "$palette.border"
+
+[elements."status.model"]
+fg = "#b200b2"
+
+[elements."effort.track"]
+fg = "#b781ce"
+
+[elements."effort.model"]
+fg = "#d6a6dc"
+
+[elements."effort.selected"]
+fg = "$palette.attention"
+
+[elements."transcript.strong"]
+fg = "$palette.attention"
+
+[elements."transcript.emphasis"]
+fg = "$palette.attention"
+
+[elements."picker.group.header"]
+fg = "$palette.accent"
+
+[elements."picker.detail.label"]
+fg = "#63a8f8"
+
+[elements."picker.scrollbar"]
+fg = "$palette.muted"
+
+[elements."tool.title"]
+fg = "$palette.accent"
+
+[elements."tool.shell.operator"]
+fg = "$palette.attention"
+
+[elements."work.goal"]
+fg = "$palette.attention"
+
+[elements."code.inline"]
+fg = "#63a8f8"
+
+[elements."dialog.clarification.option"]
+fg = "$palette.muted"
+
+[elements."code.syntax.keyword"]
+fg = "$palette.attention"
+
+[elements."code.syntax.string"]
+fg = "$palette.accent"
+
+[elements."code.syntax.function"]
+fg = "$palette.accent"
+
+[elements."code.syntax.type"]
+fg = "#63a8f8"
+
+[elements."code.syntax.operator"]
+fg = "$palette.attention"

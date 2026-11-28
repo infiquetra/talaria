@@ -1,6 +1,7 @@
 //! Provider and model rows in Hermes's order.
 
 use hermes_contract::schemas::{ModelOptionProvider, ModelOptionsResult, ProviderLimitScope};
+use std::collections::HashSet;
 
 /// The badge for a model whose catalogue entry advertises no reasoning effort. The details
 /// line ("Reasoning effort: not offered") and the effort footer ("effort: not offered") say
@@ -27,6 +28,8 @@ pub struct CatalogRow {
     pub badges: Vec<String>,
     pub price: Option<String>,
     pub segments: Vec<String>,
+    /// Number of loaded models on a provider heading.
+    pub model_count: usize,
 }
 
 /// Which group a row belongs to.
@@ -50,12 +53,18 @@ pub struct FilterRow {
 #[derive(Clone, Debug)]
 pub struct Catalog {
     pub(crate) result: ModelOptionsResult,
+    model_counts: Vec<usize>,
 }
 
 impl Catalog {
     pub fn from_result(result: &ModelOptionsResult) -> Self {
         Self {
             result: result.clone(),
+            model_counts: result
+                .providers
+                .iter()
+                .map(|p| p.models.iter().collect::<HashSet<_>>().len())
+                .collect(),
         }
     }
 
@@ -67,8 +76,29 @@ impl Catalog {
             .map(provider_name)
     }
 
+    pub(super) fn current_provider(&self) -> &str {
+        if self.result.provider.is_empty() {
+            self.result
+                .providers
+                .iter()
+                .find(|p| p.is_current == Some(true))
+                .map_or("", |p| p.slug.as_str())
+        } else {
+            &self.result.provider
+        }
+    }
+
     /// Rows in picker order. `favourites` are `provider::model` keys in starring order.
     pub fn rows(&self, favourites: &[String], zone: DisplayZone) -> Vec<CatalogRow> {
+        self.rows_for_providers(favourites, zone, |_| true)
+    }
+
+    pub(super) fn rows_for_providers(
+        &self,
+        favourites: &[String],
+        zone: DisplayZone,
+        show_models: impl Fn(&str) -> bool,
+    ) -> Vec<CatalogRow> {
         let mut rows = Vec::new();
         if !favourites.is_empty() {
             rows.push(header("Favourites", None, Vec::new()));
@@ -94,7 +124,7 @@ impl Catalog {
                 rows.push(row);
             }
         }
-        for p in &self.result.providers {
+        for (p, &count) in self.result.providers.iter().zip(&self.model_counts) {
             if p.authenticated != Some(true) {
                 continue;
             }
@@ -150,12 +180,16 @@ impl Catalog {
             {
                 segments.push(format!("showing {} of {total}", p.models.len()));
             }
-            rows.push(header(provider_name(p), Some(p), segments));
-            rows.extend(
-                p.models
-                    .iter()
-                    .map(|model| self.model_row(p, model, favourites, zone)),
-            );
+            let mut heading = header(provider_name(p), Some(p), segments);
+            heading.model_count = count;
+            rows.push(heading);
+            if show_models(&p.slug) {
+                rows.extend(
+                    p.models
+                        .iter()
+                        .map(|model| self.model_row(p, model, favourites, zone)),
+                );
+            }
         }
         let missing: Vec<_> = self
             .result
@@ -265,6 +299,7 @@ fn bare_row(kind: CatalogKind, slug: &str, name: &str, model: &str) -> CatalogRo
         badges: Vec::new(),
         price: None,
         segments: Vec::new(),
+        model_count: 0,
     }
 }
 

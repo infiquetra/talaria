@@ -32,14 +32,15 @@ syntax errors.
 
 ## Agents
 
-`agent(prompt, opts?)` returns a promise for the backend's final string or JSON object. A failed
+`agent(prompt, opts?)` returns a promise for the backend's final string or JSON object. By default a failed
 or skipped agent returns `null`; a run whose script returns while an agent has failed ends
 `completed_with_failures`, naming the failed agents first. An agent Hermes stops at its step
 cap (exit reason `max_iterations_reached(N/M)` with `completed: false`) is cut short: it is
 not failed and is not sent another turn, and its reply is returned as for a finished agent,
 so a script that ignores the mark behaves as before. An object or array reply carries a hidden
 `cutShort` property, `{steps, limit}`, that keys, spread and `JSON.stringify` do not show, and
-`cutShort()` returns `{label, steps, limit}` for every cut short agent so far, in the order
+`cutShort()` returns `{label, steps, limit}` (with `savedBranch` when an isolated agent's
+uncommitted work was saved) for every cut short agent so far, in the order
 their results arrived. A cut short reply for `opts.schema` that does not fit fails the call
 without a correction turn. The prompt must be a non-blank string. Options may be absent,
 `undefined`, `null`, or a plain object. Unknown keys and null option values are errors;
@@ -57,7 +58,8 @@ undefined option values are absent. Non-blank strings retain their original whit
 | `profile` | Non-blank profile. |
 | `toolsets`, `skills` | Non-empty arrays of distinct, non-blank strings. Duplicates compare exactly. |
 | `isolation` | Exactly `'worktree'`. |
-| `maxTurns` | Integer from 1 to 10,000. Omitted means the profile's turn-limit policy, which may be finite. |
+| `reportFile` | Optional relative path in the worker’s isolated worktree. Requires `schema`. The worker writes a JSON report here before its final reply. |
+| `maxTurns` | Integer from 1 to 10,000. Omitted means no step cap: the profile's own `agent.max_turns` does not apply to workflow agents (since 0.9.2-fix.2). Leave it out. An agent stopped at a step cap cannot make another tool call, so it cannot commit or report; the token budget is the only limit. `talaria workflow check` warns about it: it names the labels of the calls its trial run made with `maxTurns` set, or else the line where the script writes a `maxTurns` key. That source scan can also match a key that is not an agent option (a schema property, a destructured name), and misses a cap set by assignment (`opts.maxTurns = 5`) or inside a template string in code the trial run did not reach. |
 | `stallMs` | Positive integer; accepted and ignored. Its first use logs an explanation. |
 
 An `agentType` option is refused: Hermes has no agent types; use `tier`, `toolsets` or `skills`.
@@ -68,6 +70,8 @@ symbols, BigInts, undefined values, array holes, accessors, `toJSON`, special ob
 non-finite numbers. Accepted schemas are forwarded unchanged. The engine performs no deeper
 contradiction analysis. The live backend owns output validation and one correction turn; the
 mock returns its configured value directly.
+
+With `reportFile`, a usable reply yields `{ value, recoveredReport: null }`. If the reply fails and a new or changed report fits the schema, `value` holds the validated report and `recoveredReport` names its path and the failure reason. The agent still counts as failed. Files are limited to 1 MiB. If neither source yields a usable value, the call returns `null`.
 
 Await every agent whose result matters. When the root body returns or throws, pending work is
 abandoned: its future is dropped, its finish event says `abandoned`, and the root outcome stands.

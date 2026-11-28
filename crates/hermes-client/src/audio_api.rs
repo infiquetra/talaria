@@ -38,14 +38,17 @@ impl AudioRelay {
                         .await
                         .map_err(|_| "audio relay request failed".to_owned())
                 }
-                Self::Remote { config, store } => crate::remote::audio_request(
+                Self::Remote { config, store } => crate::remote::request_authenticated(
                     config,
                     store,
-                    profile,
+                    "POST",
                     path,
-                    body,
-                    RESPONSE_LIMIT,
-                    DEADLINE,
+                    Some(body),
+                    crate::remote::http::Limits {
+                        max_body: RESPONSE_LIMIT,
+                        deadline: DEADLINE,
+                        profile: Some(profile),
+                    },
                 )
                 .await
                 .map_err(|error| error.to_string()),

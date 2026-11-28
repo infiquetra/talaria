@@ -7,7 +7,7 @@ use talaria_core::{
         HivecodeCommand, HivecodeState, SKILL_COMMAND, SavedChanges, SavedModes, SkillAvailability,
         SkillEpoch, SubmitRoute,
         authoring::{AuthoringEnd, AuthoringStage, AuthoringView, RunFacts, resume},
-        follow_up_with_model, notice, route_submit_with_model, session_model_names,
+        follow_up_with_model, notice, route_submit_with_request, session_model_names,
         skill_availability,
     },
     session::{Cell, SessionId, TurnOutcome, TurnState},
@@ -28,6 +28,7 @@ pub enum Action {
     RunCommand {
         session: SessionId,
         original_text: String,
+        restore_text: Option<String>,
         command_line: String,
     },
     Notice(String),
@@ -624,16 +625,17 @@ impl HivecodeService {
         vec![Action::Notice(text)]
     }
     pub fn intercept_submit(&self, session: &SessionId, text: &str) -> Option<Vec<Action>> {
-        self.intercept_submit_with_model(session, text, None)
+        self.intercept_submit_with_model(session, text, text, None)
     }
     /// As [`Self::intercept_submit`], with the model and provider the session runs on.
     pub fn intercept_submit_with_model(
         &self,
         session: &SessionId,
-        text: &str,
+        draft: &str,
+        request: &str,
         session_model: Option<(&str, &str)>,
     ) -> Option<Vec<Action>> {
-        match route_submit_with_model(text, self.state.is_on(session), session_model) {
+        match route_submit_with_request(draft, request, self.state.is_on(session), session_model) {
             SubmitRoute::Plain => None,
             SubmitRoute::Workflow {
                 command_line,
@@ -647,15 +649,16 @@ impl HivecodeService {
                     let names = session_model_names(session_model)
                         .filter(|names| self.state.named_model(session) != Some(names.as_str()));
                     actions.push(Action::SubmitCommand {
-                        text: follow_up_with_model(text, names.as_deref()),
-                        display: text.into(),
+                        text: follow_up_with_model(request, names.as_deref()),
+                        display: draft.into(),
                         submission_id: crate::commands::fresh_submission_id(),
                     });
                     return Some(actions);
                 }
                 actions.push(Action::RunCommand {
                     session: session.clone(),
-                    original_text: text.into(),
+                    original_text: draft.into(),
+                    restore_text: (request != draft).then(|| request.to_owned()),
                     command_line,
                 });
                 Some(actions)

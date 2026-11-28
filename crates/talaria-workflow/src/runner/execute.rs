@@ -42,6 +42,11 @@ use super::{
     services,
 };
 
+/// What the manifest's `approval_policy.mode` of `finite-only` means, in plain words.
+const APPROVAL_POLICY_SOURCE: &str = "workflow agents' turns are sent as finite turns: a command \
+     that needs approval is refused at once unless the Hermes profile allows it, and no approval \
+     waits for a person";
+
 pub struct RunRequest {
     pub script: PathBuf,
     pub args: Value,
@@ -57,6 +62,8 @@ pub struct RunRequest {
     pub runs_dir: PathBuf,
     pub workflows_dir: PathBuf,
     pub talaria_version: String,
+    /// The commit the running build came from and whether its tree was modified.
+    pub build: crate::journal::BuildStamp,
     pub json: bool,
     pub record: Option<PathBuf>,
     pub settle_bound: Duration,
@@ -140,6 +147,23 @@ pub enum RunnerEvent {
         key: String,
         attempt: u32,
         episode: u32,
+        /// Why the call is parked: `unknown`, `lost`, `identity_conflict` or `stopped`.
+        cause: String,
+        /// The reason in plain words.
+        reason: String,
+        /// The answers `talaria workflow resolve --resolution` accepts for it.
+        choices: Vec<String>,
+        /// The branch the parked attempt's uncommitted work was saved to, when it ran in its own
+        /// worktree and left changes there.
+        saved_branch: Option<String>,
+    },
+    /// A stopped agent the operator answered with use-reply waits for the next reply on its
+    /// Hermes session; nothing ends the wait but that reply.
+    WaitingForReply {
+        run_id: String,
+        label: String,
+        key: String,
+        session_id: String,
     },
     Finished {
         run_id: String,
@@ -278,7 +302,7 @@ fn stored_budget(snapshot: &Value) -> (Option<u64>, Option<f64>) {
     )
 }
 fn read_script(path: &Path, output: &mut Output<'_>) -> Result<(String, ParsedScript), i32> {
-    let source = fs::read_to_string(path).map_err(|e| {
+    let source = super::resolver::read_script(path).map_err(|e| {
         output.diagnostic(format!("cannot read workflow script: {e}"));
         2
     })?;
@@ -365,9 +389,10 @@ async fn prepare(
         profile: req.profile.clone(),
         on_unknown: req.on_unknown,
         talaria_version: req.talaria_version.clone(),
+        build: req.build.clone(),
         hermes: json!({"describe":describe}),
         roster: preflight.snapshot.clone(),
-        approval_policy: json!({"mode":"finite-only","source":"operator decision on #218 (`PH5`)"}),
+        approval_policy: json!({"mode":"finite-only","source":APPROVAL_POLICY_SOURCE}),
     };
     files::private_dir(&req.runs_dir).map_err(|e| {
         output.diagnostic(e.to_string());
@@ -540,7 +565,7 @@ async fn resume(
             }
             LockProbe::Free(file) => file,
         };
-        let records = control::read_records(&path).map_err(|e| {
+        let mut records = control::read_records(&path).map_err(|e| {
             output.diagnostic(e.to_string());
             2
         })?;
@@ -565,6 +590,15 @@ async fn resume(
             _ => None,
         };
         if let Some((outcome, code)) = replay.filter(|_| !restarting) {
+            let fold = if fold.cache_unknown_turns == 0 {
+                fold
+            } else {
+                crate::tokens::recover_stored_cache(&mut records);
+                Fold::records(&records).map_err(|e| {
+                    output.diagnostic(e.to_string());
+                    2
+                })?
+            };
             if let Some(path) = &req.record {
                 super::recording::open(path, false)
                     .and_then(|recording| recording.finish().map(|_| ()).map_err(|e| e.to_string()))
@@ -581,42 +615,7 @@ async fn resume(
                 output.diagnostic(e.to_string());
                 1
             })?;
-            output.started(&dir);
-            let result = match files::read_json::<OutcomeFile>(&path.join("outcome.json")) {
-                Ok(saved) if saved.v == 1 && saved.outcome == outcome => saved.result,
-                _ => {
-                    (output.out)(&RunnerEvent::Log {
-                        message: format!(
-                            "stored result unavailable; {outcome} summary {}",
-                            fold.summary.unwrap_or(Value::Null)
-                        ),
-                    });
-                    None
-                }
-            };
-            if outcome == "budget_exhausted" {
-                output.diagnostic(
-                    "this run's budget ran out; to continue it, resume with a larger --budget-tokens or --budget-usd",
-                );
-            }
-            replayed_code = code;
-            (output.out)(&RunnerEvent::Finished {
-                run_id: dir.run_id().as_str().into(),
-                outcome: outcome.into(),
-                result,
-                spend: SpendView {
-                    tokens: fold.tokens.unwrap_or_default(),
-                    cache_read_tokens: fold.cache_read_tokens,
-                    cache_unknown_turns: fold.cache_unknown_turns,
-                    money_usd: fold.money,
-                    money_source: if fold.money.is_some() {
-                        "hermes"
-                    } else {
-                        "none"
-                    }
-                    .into(),
-                },
-            });
+            replayed_code = replay_finished(&dir, fold, outcome, code, &mut output);
             drop(lease);
             return Ok(None);
         }
@@ -687,6 +686,11 @@ async fn resume(
             output.diagnostic(e.to_string());
             1
         })?;
+        // A new execution starts: stop notes whose turn has settled since are stale.
+        dir.prune_agent_stops().map_err(|e| {
+            output.diagnostic(e.to_string());
+            1
+        })?;
         control::remove_stale_runner(dir.path()).map_err(|e| {
             output.diagnostic(e.to_string());
             1
@@ -719,6 +723,100 @@ async fn resume(
     }
 }
 
+/// Print a finished run's stored result as its runner printed it at the end, and return the
+/// exit code it ended with. `workflow resume` of a finished run and `workflow result` both use
+/// it, so the two print the same lines.
+fn replay_finished(dir: &RunDir, fold: Fold, outcome: &str, code: i32, output: &mut Output) -> i32 {
+    output.started(dir);
+    let result = match files::read_json::<OutcomeFile>(&dir.path().join("outcome.json")) {
+        Ok(saved) if saved.v == 1 && saved.outcome == outcome => saved.result,
+        _ => {
+            (output.out)(&RunnerEvent::Log {
+                message: format!(
+                    "stored result unavailable; {outcome} summary {}",
+                    fold.summary.unwrap_or(Value::Null)
+                ),
+            });
+            None
+        }
+    };
+    if outcome == "budget_exhausted" {
+        output.diagnostic(
+            "this run's budget ran out; to continue it, resume with a larger --budget-tokens or --budget-usd",
+        );
+    }
+    (output.out)(&RunnerEvent::Finished {
+        run_id: dir.run_id().as_str().into(),
+        outcome: outcome.into(),
+        result,
+        spend: SpendView {
+            tokens: fold.tokens.unwrap_or_default(),
+            cache_read_tokens: fold.cache_read_tokens,
+            cache_unknown_turns: fold.cache_unknown_turns,
+            money_usd: fold.money,
+            // The journal keeps only the costs Hermes reported, so a replay cannot show
+            // money the live run priced from the price list.
+            money_source: if fold.money.is_some() {
+                "hermes"
+            } else {
+                "unrecorded"
+            }
+            .into(),
+        },
+    });
+    code
+}
+/// Print a finished run's stored result: the same lines and exit
+/// code as `workflow resume` prints when it replays a finished run, and for a run that failed
+/// or was aborted, what its runner printed when it ended. Nothing is started, no execution is
+/// opened, and a pending restart request is left for the next resume. A run that has not
+/// finished is reported, with exit code 1.
+pub fn replay_result(runs_dir: &Path, target: &str, out: &mut dyn FnMut(&RunnerEvent)) -> RunExit {
+    let mut output = Output {
+        out,
+        problems: Vec::new(),
+        run_id: None,
+    };
+    let code = (|| {
+        let path = runs::find_run(runs_dir, target).map_err(|e| {
+            output.diagnostic(e.to_string());
+            2
+        })?;
+        let dir = RunDir::open(&path).map_err(|e| {
+            output.diagnostic(e.to_string());
+            2
+        })?;
+        output.run_id = Some(dir.run_id().as_str().into());
+        let mut records = control::read_records(&path).map_err(|e| {
+            output.diagnostic(e.to_string());
+            2
+        })?;
+        crate::tokens::recover_stored_cache(&mut records);
+        let fold = Fold::records(&records).map_err(|e| {
+            output.diagnostic(e.to_string());
+            2
+        })?;
+        let ended = match fold.terminal.as_deref() {
+            Some("completed") => Some(("completed", 0)),
+            Some("budget_exhausted") => Some(("budget_exhausted", 4)),
+            Some("completed_with_failures") => Some(("completed_with_failures", 5)),
+            Some("failed") => Some(("failed", 1)),
+            Some("aborted") => Some(("aborted", 3)),
+            _ => None,
+        };
+        let Some((outcome, code)) = ended else {
+            let status = runs::summarize_run(&path).status;
+            output.diagnostic(format!(
+                "run {} has not finished (it is {}), so it has no result yet; talaria workflow list shows its progress",
+                dir.run_id().as_str(),
+                status.as_str().replace('_', " ")
+            ));
+            return Err(1);
+        };
+        Ok(replay_finished(&dir, fold, outcome, code, &mut output))
+    })();
+    output.exit(code.unwrap_or_else(|code| code))
+}
 pub async fn run_child(run_dir: PathBuf, out: &mut dyn FnMut(&RunnerEvent)) -> RunExit {
     run_child_with_options(run_dir, ChildOptions::default(), out).await
 }
@@ -1078,6 +1176,8 @@ async fn execute_inner(
         .push(tokio::spawn(count_live_usage(feed, scheduler.clone())));
     drop(tx);
     let mut labels = BTreeMap::<CallId, String>::new();
+    // Calls that run in their own worktree: only theirs can name a branch their work was saved to.
+    let mut isolated = BTreeSet::<CallId>::new();
     let mut engine_outcome = None;
     let mut stopping: Option<futures::future::BoxFuture<'static, Vec<String>>> = None;
     let mut stopped = None;
@@ -1103,6 +1203,7 @@ async fn execute_inner(
                         EngineEvent::Phase{title,..}=>(output.out)(&RunnerEvent::Phase{title}),
                         EngineEvent::Log{message,..}=>(output.out)(&RunnerEvent::Log{message}),
                         EngineEvent::AgentStarted{request,..}=>{
+                            if request.isolation==Some(crate::engine::Isolation::Worktree){isolated.insert(request.call_id.clone());}
                             labels.insert(request.call_id,request.label.clone());
                             (output.out)(&RunnerEvent::AgentStarted{label:request.label,model:request.model.unwrap_or_else(||request.tier.map_or_else(||"profile default".into(),|tier|format!("tier:{tier}"))),provider:request.provider.unwrap_or_else(||"profile default".into())});
                         }
@@ -1114,7 +1215,7 @@ async fn execute_inner(
                         }
                         EngineEvent::AgentFinished{call_id,outcome,..}=>{
                             let label=labels.remove(&call_id).unwrap_or_default();
-                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::CutShort{steps,limit}=>{let reason=CutShort{steps,limit}.describe();output.diagnostic(format!("agent {label}: {reason}; its reply was kept"));cut_short_agents.push(AgentNote{label:label.clone(),reason:reason.clone()});"cut short"},OutcomeKind::Failed{reason}=>{output.diagnostic(reason.clone());failed_agents.push(AgentNote{label:label.clone(),reason});"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
+                            let state=match outcome {OutcomeKind::Completed=>"completed",OutcomeKind::CutShort{steps,limit,saved_branch}=>{let reason=CutShort{steps,limit,saved_branch:None}.describe();let kept=saved_branch.as_ref().map(|b|format!("; its uncommitted work was saved to branch {b}")).unwrap_or_default();output.diagnostic(format!("agent {label}: {reason}; its reply was kept{kept}"));cut_short_agents.push(AgentNote{label:label.clone(),reason:reason.clone(),saved_branch});"cut short"},OutcomeKind::Failed{reason}=>{output.diagnostic(reason.clone());let saved_branch=crate::worktree::own_saved_branch_in(&reason,dir.run_id().as_str(),&call_id,isolated.contains(&call_id));failed_agents.push(AgentNote{label:label.clone(),reason,saved_branch});"failed"},OutcomeKind::Skipped=>"skipped",OutcomeKind::Stopped{reason}=>{budget_stopped+=1;output.diagnostic(format!("agent {label} stopped: {reason}"));budget_reason=Some(reason);"stopped"},OutcomeKind::Aborted=>"aborted",OutcomeKind::Abandoned=>"abandoned"};
                             (output.out)(&RunnerEvent::AgentFinished{label,state:state.into()});
                         }
                         _=>{},
@@ -1130,7 +1231,8 @@ async fn execute_inner(
                     }
                     (output.out)(&RunnerEvent::Scheduler(event));
                 }
-                Some(Input::Notice(JournalNotice::NeedsOperator{key,label,attempt,episode,..}))=>(output.out)(&RunnerEvent::Parked{run_id:dir.run_id().as_str().into(),label,key,attempt,episode}),
+                Some(Input::Notice(JournalNotice::NeedsOperator{key,label,attempt,episode,cause,detail,..}))=>(output.out)(&RunnerEvent::Parked{run_id:dir.run_id().as_str().into(),label,key,attempt,episode,cause:cause.as_str().into(),saved_branch:crate::worktree::saved_branch_in(&detail),reason:detail,choices:cause.choices().iter().map(|c|(*c).to_owned()).collect()}),
+                Some(Input::Notice(JournalNotice::WaitingForReply{key,label,session_id}))=>(output.out)(&RunnerEvent::WaitingForReply{run_id:dir.run_id().as_str().into(),label,key,session_id}),
                 Some(Input::Notice(JournalNotice::Warning(warning)))=>output.diagnostic(format!("journal warning: {warning:?}")),
                 Some(Input::Notice(JournalNotice::RouteNote{message}))=>(output.out)(&RunnerEvent::Log{message}),
                 Some(Input::Notice(_))=>{},
@@ -1302,14 +1404,18 @@ async fn execute_inner(
     // result file. Nothing is deleted.
     let records = control::read_records(dir.path()).map_err(|e| e.to_string())?;
     file.untracked_work = super::leftover::untracked_work(&records);
-    let worktrees = dir.path().join("worktrees");
-    file.leftover_edits = tokio::task::spawn_blocking(move || {
-        super::leftover::leftover_folders(&records, &worktrees)
+    let (run_path, run_id) = (dir.path().to_owned(), dir.run_id().as_str().to_owned());
+    let (leftover_edits, save_problems) = tokio::task::spawn_blocking(move || {
+        super::leftover::leftover_folders(&records, &run_path, &run_id)
     })
     .await
     .map_err(|e| e.to_string())?;
-    for folder in &file.leftover_edits {
-        let message = super::leftover::describe(folder);
+    file.leftover_edits = leftover_edits;
+    let messages = save_problems
+        .into_iter()
+        .chain(file.leftover_edits.iter().map(super::leftover::describe))
+        .collect::<Vec<_>>();
+    for message in messages {
         journal
             .record_engine_event(&EngineEvent::Log {
                 message: message.clone(),
@@ -1402,13 +1508,22 @@ fn stop_for_budget(
             .lock()
             .is_ok_and(|mut set| set.insert(target.admission_id.clone()));
         if fresh {
-            let (port, sent) = (port.clone(), sent.clone());
+            // The note goes first, so a settlement a later execution reads is still the budget's.
+            let noted = note_runner_stop(dir, &target, crate::journal::StopSource::Budget);
+            let (port, sent, dir) = (port.clone(), sent.clone(), dir.to_owned());
             handles.push(tokio::spawn(async move {
                 // `NotRunning` can also mean the port has no receipt yet for a reattached turn.
-                if port.stop(&target.profile, &target.session_id).await != StopResult::Sent
-                    && let Ok(mut set) = sent.lock()
-                {
-                    set.remove(&target.admission_id);
+                let stopped = port.stop(&target.profile, &target.session_id).await;
+                if stopped != StopResult::Sent {
+                    // A stop known not to have gone out must not claim the next settlement;
+                    // the next tick writes the note again before it tries again. An unknown
+                    // answer may still have reached Hermes, so its note stays.
+                    if noted && stopped == StopResult::NotRunning {
+                        clear_runner_stop(&dir, &target.key);
+                    }
+                    if let Ok(mut set) = sent.lock() {
+                        set.remove(&target.admission_id);
+                    }
                 }
             }));
         }
@@ -1466,11 +1581,21 @@ async fn settle_stop(
         )
         .await;
         if !matches!(attached, Ok(Ok(()))) {
+            // No stop goes out for this turn, so it gets no note: a later stop of that turn
+            // by a person must park the call, not fail it as the run's.
             pending.push(target);
             continue;
         }
-        let _ =
+        // Each note goes before its stop, so a settlement that only a later execution reads
+        // is still the run's stop and does not park.
+        let noted = note_runner_stop(&path, &target, crate::journal::StopSource::RunStop);
+        let stopped =
             tokio::time::timeout_at(deadline, port.stop(&target.profile, &target.session_id)).await;
+        // A stop known not to have gone out leaves no note. An unknown answer, or one cut off
+        // by the deadline, may still have reached Hermes, so its note stays.
+        if noted && matches!(stopped, Ok(StopResult::NotRunning)) {
+            clear_runner_stop(&path, &target.key);
+        }
         pending.push(target);
     }
     while !pending.is_empty() && tokio::time::Instant::now() < deadline {
@@ -1488,14 +1613,19 @@ async fn settle_stop(
             .await;
             match result {
                 Ok(Ok(receipt)) if receipt.status == AdmissionState::Terminal => {
-                    let _ = journal
-                        .append(crate::journal::settled_record(
+                    if journal
+                        .append(run_stop_settlement(
                             &target.key,
                             target.attempt,
                             target.turn,
                             receipt,
                         ))
-                        .await;
+                        .await
+                        .is_ok()
+                    {
+                        // The settlement names the run's stop itself; its note is used up.
+                        let _ = journal.dir().clear_agent_stop(&target.key);
+                    }
                 }
                 _ => remaining.push(target),
             }
@@ -1507,6 +1637,57 @@ async fn settle_stop(
     }
     uncertain.extend(pending.into_iter().map(|t| t.session_id));
     uncertain
+}
+/// Leave the durable note that the runner is about to stop `target`'s turn. A note that cannot
+/// be written leaves the stop unattributed: a later execution then parks the agent for the
+/// operator, which loses nothing.
+/// Returns whether this call wrote the note; `false` when an earlier note for the same turn was kept.
+fn note_runner_stop(
+    run_dir: &Path,
+    target: &control::StopTarget,
+    source: crate::journal::StopSource,
+) -> bool {
+    let Ok(dir) = RunDir::open(run_dir) else {
+        return false;
+    };
+    let turn = crate::journal::StopTurn {
+        attempt: target.attempt,
+        turn: target.turn,
+        admission_id: Some(target.admission_id.clone()),
+    };
+    dir.note_stop_if_new(&target.key, source, &turn, files::now_ms())
+        .unwrap_or(false)
+}
+/// Remove the note for a stop the runner meant to send but did not. Only a note this stop
+/// wrote itself is removed; see `note_runner_stop`.
+fn clear_runner_stop(run_dir: &Path, key: &str) {
+    if let Ok(dir) = RunDir::open(run_dir) {
+        let _ = dir.clear_agent_stop(key);
+    }
+}
+/// A turn the run's stop settled, marked as stopped by the runner when it ended stopped, so a
+/// later resume fails it as part of the stop instead of parking it for the operator.
+fn run_stop_settlement(
+    key: &str,
+    attempt: u32,
+    turn: u32,
+    receipt: crate::journal::Receipt,
+) -> crate::journal::Record {
+    let mut record = crate::journal::settled_record(key, attempt, turn, receipt);
+    if let crate::journal::Record::TurnSettled {
+        outcome,
+        result_meta,
+        ..
+    } = &mut record
+        && crate::journal::stopped_outcome(outcome)
+        && let Some(meta) = result_meta.as_object_mut()
+    {
+        meta.insert(
+            crate::journal::STOPPED_BY.into(),
+            crate::journal::StopSource::RunStop.as_str().into(),
+        );
+    }
+    record
 }
 fn signal_task(sender: mpsc::UnboundedSender<Input>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {

@@ -193,9 +193,9 @@ fn cards_snapshots() {
         kind: CardKind::Key,
         lines: vec![
             "API key for OpenRouter".into(),
-            "Saved to profile fixture's key file as OPENROUTER_API_KEY.".into(),
+            "Destination: profile fixture · OPENROUTER_API_KEY".into(),
         ],
-        footer: "enter save · ctrl+u clear · esc cancel".into(),
+        footer: "Enter save  Ctrl+U clear  Esc cancel".into(),
     });
     key.secret_focus = true;
     let masked = paint(&key, 41, 160, 48);
@@ -210,7 +210,7 @@ fn cards_snapshots() {
         "the mask grew past 40 bullets: {masked}"
     );
     assert!(
-        masked.contains("enter save · ctrl+u clear · esc cancel"),
+        masked.contains("Enter save  Ctrl+U clear  Esc cancel"),
         "{masked}"
     );
 

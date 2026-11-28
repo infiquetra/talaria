@@ -235,9 +235,9 @@ fn dock_rows_overflow_and_short_terminal() {
         texts(&dock.lines(80)),
         vec![
             "⎇ Subagents · 3 running · alt+s to open".to_owned(),
-            "  ◐ goal 1 · starting".to_owned(),
-            "  ◐ goal 2 · starting".to_owned(),
-            "  ◐ goal 3 · starting".to_owned(),
+            "  ◐ working  goal 1 · minimax-m3.1-flash · effort ?".to_owned(),
+            "  ◐ working  goal 2 · minimax-m3.1-flash · effort ?".to_owned(),
+            "  ◐ working  goal 3 · minimax-m3.1-flash · effort ?".to_owned(),
         ]
     );
 
@@ -357,7 +357,10 @@ fn dock_rows_overflow_and_short_terminal() {
         lines[0],
         "⎇ Subagents · 0 running · 1 queued · alt+s to open"
     );
-    assert_eq!(lines[1], "  ○ list the files · queued");
+    assert_eq!(
+        lines[1],
+        "  ○ queued  list the files · minimax-m3.1-flash · effort ?"
+    );
 
     // Narrow: the hint goes first, then the paused part, then the rest is cut.
     // (Hints render lowercase per the rules' own header wording.)
@@ -483,15 +486,16 @@ fn panel_list_snapshot_160x48() {
             fill = width - left.width() - right.width()
         )
     };
-    let status = "Spawning on · up to 10 at once · max nesting 1 · model minimax-m3.1-flash";
+    let status =
+        "Spawning on · up to 10 at once · max nesting 1 · model minimax-m3.1-flash · effort ?";
     let goal1 = format!("{:<39}", "list the files in the current directory");
     let goal2 = format!("{:<39}", "read notes.txt");
     let goal3 = format!("{:<39}", "summarise the findings");
     let selected = format!(
         "{:<160}",
         format!(
-            "▸ ◐ {goal1}  {:>4}  {:>5}  Terminal(\"ls -la\")",
-            "12s", "3"
+            "▸ ◐ {goal1}  {:>11}  {:>5}  Terminal(\"ls -la\")",
+            "working 12s", "3"
         )
     );
     assert_eq!(
@@ -499,31 +503,31 @@ fn panel_list_snapshot_160x48() {
         vec![
             head(160),
             status.to_owned(),
-            format!("    {:<39}  {:>4}  {:>5}  Activity", "Task", "Time", "Tools"),
+            format!("    {:<39}  {:>11}  {:>5}  Activity", "Task", "State", "Tools"),
             selected,
-            format!("  ◐ {goal2}  {:>4}  {:>5}  ReadFile(\"notes.txt\")", "8s", "1"),
-            format!("  ✓ {goal3}  {:>4}  {:>5}  Closed 4 issues", "20s", "4"),
+            format!("  ◐ {goal2}  {:>11}  {:>5}  ReadFile(\"notes.txt\")", "working 8s", "1"),
+            format!("  ✓ {goal3}  {:>11}  {:>5}  Closed 4 issues", "done 20s", "4"),
             "Steer queued for \"list the files in the current directory\". It reaches the subagent at its next step.".to_owned(),
             // Hints are grouped: view, control, then navigation.
-            "enter tail · d detail · o new pane   e steer · x stop · X stop all · p pause spawns   tab session · esc close".to_owned(),
+            "Enter tail · d detail · o new pane   e steer · x stop · X stop all · p pause spawns   Tab session · Esc close".to_owned(),
         ]
     );
 
     // Narrow: no model, tool or activity column; time stays right aligned.
     let lines = texts(&panel.render(&tree, &header(on_with_caps()), None, 99, 48, now));
-    let selected = format!("{:<99}", format!("▸ ◐ {goal1}  {:>4}", "12s"));
+    let selected = format!("{:<99}", format!("▸ ◐ {goal1}  {:>11}", "working 12s"));
     assert_eq!(
         lines,
         vec![
             head(99),
             status.to_owned(),
-            format!("    {:<39}  {:>4}", "Task", "Time"),
+            format!("    {:<39}  {:>11}", "Task", "State"),
             selected,
-            format!("  ◐ {goal2}  {:>4}", "8s"),
-            format!("  ✓ {goal3}  {:>4}", "20s"),
+            format!("  ◐ {goal2}  {:>11}", "working 8s"),
+            format!("  ✓ {goal3}  {:>11}", "done 20s"),
             "Steer queued for \"list the files in the current directory\". It reaches the subagent at its next st…".to_owned(),
-            // Too wide for one line, so the groups run together before the cut.
-            "enter tail · d detail · o new pane · e steer · x stop · X stop all · p pause spawns · tab session …".to_owned(),
+            // Keep the close action when the navigation group cannot fit.
+            "Enter tail · d detail · o new pane · e steer · x stop · X stop all · p pause spawns · Esc close".to_owned(),
         ]
     );
 }
@@ -548,13 +552,14 @@ fn panel_detail_tail_and_steer_snapshots() {
     );
     assert_eq!(
         lines[1],
-        "Spawning on · up to 10 at once · max nesting 1 · model minimax-m3.1-flash"
+        "Spawning on · up to 10 at once · max nesting 1 · model minimax-m3.1-flash · effort ?"
     );
     // Detail labels use the house `Label: value` style.
     for expected in [
         "Goal: list the files in the current directory",
         "Status: running",
         "Id: child-1",
+        "Session ID: local-test",
         "Model: minimax-m3.1-flash",
         "Toolsets: shell",
         "Started: 12s ago",
@@ -597,6 +602,10 @@ fn panel_detail_tail_and_steer_snapshots() {
         .find("Terminal(\"ls -la\")")
         .expect("the tool activity");
     assert!(first < joined.len());
+
+    let narrow = texts(&panel.render(&tree, &head, None, 19, 30, now));
+    assert!(narrow.iter().any(|line| line == "Goal: list the"));
+    assert!(narrow.iter().any(|line| line == "files in the"));
 
     let mut panel = AgentsPanel::new(key());
     assert_eq!(panel.handle(Action::AgentsTail, &tree), None);
@@ -941,7 +950,7 @@ fn batch_block_exact_lines() {
     assert_eq!(
         texts(&batch_block_lines(&batch, 100, &style)),
         vec![
-            "⎇ Subagents · 3 finished · 1 failed · 8s".to_owned(),
+            "⎇ Subagents · 3 finished · 1 failed · 8s · minimax-m3.1-flash · effort ?".to_owned(),
             "  ✓ list the files in the current directory · 6s · 3 tools · Found 4 files".to_owned(),
             "  ✓ read notes.txt · 5s · 2 tools · Read it twice".to_owned(),
             "  ✗ summarise the findings · 8s · 1 tool · failed: notes.txt not found".to_owned(),
@@ -953,7 +962,7 @@ fn batch_block_exact_lines() {
     mixed.rows[1].0.state = talaria_core::subagents::RowState::Gone;
     assert_eq!(
         texts(&batch_block_lines(&mixed, 100, &style))[0],
-        "⎇ Subagents · 3 finished · 2 failed · 1 stopped · 8s",
+        "⎇ Subagents · 3 finished · 2 failed · 1 stopped · 8s · minimax-m3.1-flash · effort ?",
         "finished counts every terminal child; failed and stopped are subsets"
     );
 
@@ -1357,7 +1366,7 @@ fn panel_hides_model_column_when_shared() {
         "the shared model is named once, in the header: {lines:?}"
     );
     assert!(
-        lines[1].ends_with("model minimax-m3.1-flash"),
+        lines[1].ends_with("model minimax-m3.1-flash · effort ?"),
         "{}",
         lines[1]
     );
@@ -1407,7 +1416,7 @@ fn panel_header_counts_only_what_is_nonzero() {
     assert!(lines[0].ends_with("2 running · 1 finished"), "{}", lines[0]);
     assert_eq!(
         lines[1],
-        "Spawning state unknown · model minimax-m3.1-flash"
+        "Spawning state unknown · model minimax-m3.1-flash · effort ?"
     );
     let lines = texts(&panel.render(
         &tree,
@@ -1508,7 +1517,10 @@ fn batch_block_drops_shared_goal_words() {
     ]);
     let lines = texts(&batch_block_lines(&batch, 100, &style));
     assert_eq!(lines.len(), 5, "{lines:?}");
-    assert_eq!(lines[0], "⎇ Subagents · 3 finished · 1 failed · 6s");
+    assert_eq!(
+        lines[0],
+        "⎇ Subagents · 3 finished · 1 failed · 6s · minimax-m3.1-flash · effort ?"
+    );
     assert_eq!(lines[1], format!("  {SHARED_CAPTION}"));
     assert_eq!(lines[2], "  ✓ `alpha` · 6s · 3 tools · Passed");
     assert_eq!(lines[3], "  ✓ `beta` · 6s · 3 tools · Passed");
@@ -1532,10 +1544,135 @@ fn dock_shows_short_labels_and_one_caption() {
     let lines = texts(&dock.lines(100));
     assert_eq!(lines[0], "⎇ Subagents · 10 running");
     assert_eq!(lines[1], format!("  {SHARED_CAPTION}"));
-    assert_eq!(lines[2], "  ◐ `riemann` · starting");
-    assert_eq!(lines[3], "  ◐ `p-vs-np` · starting");
-    assert_eq!(lines[4], "  ◐ `navier-stokes` · starting");
+    assert_eq!(
+        lines[2],
+        "  ◐ working  `riemann` · minimax-m3.1-flash · effort ?"
+    );
+    assert_eq!(
+        lines[3],
+        "  ◐ working  `p-vs-np` · minimax-m3.1-flash · effort ?"
+    );
+    assert_eq!(
+        lines[4],
+        "  ◐ working  `navier-stokes` · minimax-m3.1-flash · effort ?"
+    );
     assert_eq!(lines[5], "  … +7 more");
+}
+
+#[test]
+fn a_quiet_child_keeps_its_route_and_resumes_animation_on_activity() {
+    use talaria_tui::{subagents::AgentClock, theme::Motion};
+    let mut tree = SubagentTree::new();
+    let goal = "Execute the guide at /tmp/example/assignments/layout-review/prompt.txt and return the result.";
+    apply(
+        &mut tree,
+        "subagent.start",
+        with(payload("a", goal), "child_session_id", json!("child-a")),
+        0,
+    );
+    assert!(tree.set_child_route(
+        "a",
+        "child-a",
+        "muse-spark-1.3-contributor".into(),
+        "max".into()
+    ));
+    apply(
+        &mut tree,
+        "subagent.spawn_requested",
+        with(
+            payload("b", "Count bookmarks."),
+            "delegation_id",
+            json!("next-batch"),
+        ),
+        0,
+    );
+    let style = SubagentStyle::default();
+    let draw = |tree: &SubagentTree, ms, motion, width| {
+        let dock = SubagentDock::new(
+            tree,
+            tree.counts(),
+            None,
+            Spawning::Unknown,
+            None,
+            &style,
+            3,
+            24,
+        )
+        .with_clock(AgentClock { now_ms: ms, motion });
+        assert_eq!(
+            dock.wake_after_ms(width, 1),
+            None,
+            "the header alone stays still"
+        );
+        (texts(&dock.lines(width)), dock.wake_after_ms(width, 6))
+    };
+    let (first, _) = draw(&tree, 0, Motion::Full, 100);
+    let (next, _) = draw(&tree, 240, Motion::Full, 100);
+    let row = |lines: &[String], label: &str| {
+        lines
+            .iter()
+            .position(|s| s.contains(label))
+            .unwrap_or_else(|| panic!("missing {label}: {lines:?}"))
+    };
+    let job = row(&first, "layout-review");
+    let queued = row(&first, "Count bookmarks");
+    assert!(
+        first[job].contains("◐ working  layout-review") && next[job].contains("◓ working"),
+        "{first:?} / {next:?}"
+    );
+    assert_eq!(first[queued], next[queued], "queued children stay still");
+    assert!(first[job].contains("muse-spark-1.3-contributor · effort max"));
+    assert!(!first[job].contains("/tmp"));
+    let (quiet, wake) = draw(&tree, 33_000, Motion::Full, 100);
+    assert!(quiet[job].contains("◌ quiet 33s  layout-review"));
+    assert_eq!(wake, Some(1000));
+    let (compact, _) = draw(&tree, 33_000, Motion::Reduced, 40);
+    let narrow_job = row(&compact, "layout-review");
+    assert!(compact[narrow_job].contains("quiet 33s"));
+    assert!(
+        compact[narrow_job + 1].contains("muse-spark")
+            && compact[narrow_job + 1].ends_with("effort max")
+    );
+    apply(
+        &mut tree,
+        "subagent.tool",
+        with(payload("a", goal), "tool_name", json!("read_file")),
+        34_000,
+    );
+    let (resumed, wake) = draw(&tree, 34_000, Motion::Reduced, 100);
+    assert!(resumed[job].contains("◐ working") && resumed[job].contains("read_file"));
+    assert_eq!(
+        wake,
+        Some(30_000),
+        "reduced motion waits for the next state change"
+    );
+    let mut panel = AgentsPanel::new(key());
+    if panel.selected_id(&tree).as_deref() != Some("a") {
+        panel.handle(Action::AgentsDown, &tree);
+    }
+    panel.handle(Action::AgentsDetail, &tree);
+    let detail = texts(&panel.render(
+        &tree,
+        &header(on_with_caps()),
+        None,
+        125,
+        30,
+        clock_ms(34_000),
+    ));
+    assert!(detail.iter().any(|l| l.contains(goal)));
+    assert!(detail.iter().any(|l| l == "Reasoning effort: max"));
+    apply(
+        &mut tree,
+        "subagent.complete",
+        with(payload("a", goal), "status", json!("completed")),
+        35_000,
+    );
+    assert_eq!(draw(&tree, 36_000, Motion::Full, 100).1, None);
+    let batch = tree.take_finished_batches().pop().expect("finished agent");
+    assert!(
+        texts(&batch_block_lines(&batch, 100, &style))[0]
+            .contains("muse-spark-1.3-contributor · effort max")
+    );
 }
 
 /// Goals with wide characters and a batched progress line.

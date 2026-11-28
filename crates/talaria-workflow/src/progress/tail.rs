@@ -8,9 +8,22 @@ pub struct Tail {
 }
 impl Tail {
     pub fn open(dir: &RunDir) -> Result<(RunProgress, Self), JournalError> {
-        let (lines, offset) = JournalReader::read_from(&dir.path().join("journal.jsonl"), 0)?;
+        Self::open_with_local_cache(dir, true)
+    }
+    pub fn open_with_local_cache(
+        dir: &RunDir,
+        read_local_cache: bool,
+    ) -> Result<(RunProgress, Self), JournalError> {
+        let (mut lines, offset) = JournalReader::read_from(&dir.path().join("journal.jsonl"), 0)?;
+        if read_local_cache {
+            crate::tokens::recover_stored_cache(&mut lines);
+        }
+        let mut progress = RunProgress::from_records(dir.manifest(), &lines);
+        if progress.run.state != super::RunState::Running {
+            crate::runner::evidence::verdict(dir.path()).apply(&mut progress);
+        }
         Ok((
-            RunProgress::from_records(dir.manifest(), &lines),
+            progress,
             Self {
                 dir: dir.clone(),
                 offset,
@@ -24,6 +37,9 @@ impl Tail {
         check_sequence(&lines, progress.last_seq)?;
         let count = lines.len();
         progress.apply_all(&lines);
+        if count > 0 && progress.run.state != super::RunState::Running {
+            crate::runner::evidence::verdict(self.dir.path()).apply(progress);
+        }
         self.offset = offset;
         Ok(count)
     }

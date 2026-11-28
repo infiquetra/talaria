@@ -13,7 +13,7 @@ use talaria_core::session::PromptKey;
 pub use approval::display_choices;
 pub use clarify::multi_select_answer;
 pub use masked::{MaskedValue, MaskedView};
-pub use stack::{PromptSection, PromptStack};
+pub use stack::{PromptSection, PromptStack, QuestionRows};
 
 /// A live masked card, bound to the service and request that opened it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +84,8 @@ pub enum KeyOutcome {
     Consumed {
         intent: Option<PromptIntent>,
         interrupt_requested: bool,
+        /// The session that owns the card which requested the interrupt.
+        interrupt_session: Option<String>,
         notice: Option<String>,
     },
     NotHandled,

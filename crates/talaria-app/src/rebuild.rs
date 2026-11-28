@@ -90,7 +90,12 @@ pub(crate) fn rebuild_after_rewind(
     let mut position = 0;
     let mut unseen: Vec<usize> = Vec::new();
     for (index, cell) in cells[..total].iter().enumerate() {
-        match shown[position..].iter().position(|seen| seen == cell) {
+        match shown[position..].iter().position(|seen| {
+            seen == cell
+                || matches!((seen, cell), (Cell::User(a), Cell::User(b))
+                    if a.expanded_paste.is_some() || b.expanded_paste.is_some())
+                    && same_cell_content(seen, cell)
+        }) {
             Some(offset) => position += offset + 1,
             None => unseen.push(index),
         }
@@ -173,7 +178,10 @@ fn same_cell_content(left: &Cell, right: &Cell) -> bool {
         // A routed Hivecode prompt shows as typed, while Hermes stores its request with every
         // run of whitespace folded to one space, so only the words count.
         (Cell::User(a), Cell::User(b)) => {
-            return a.text.split_whitespace().eq(b.text.split_whitespace());
+            return a
+                .transcript_text()
+                .split_whitespace()
+                .eq(b.transcript_text().split_whitespace());
         }
         // A stored row never says it was `message.interim` commentary, so that flag is not a
         // difference.

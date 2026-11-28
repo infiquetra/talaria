@@ -221,6 +221,33 @@ fn completion_refuses_credential_files() {
         );
     }
 
+    for draft in [
+        "please read @file:.env.prod:12",
+        "please read @file:.env.prod:12-20,",
+        "please read (@file:.env.prod).",
+    ] {
+        assert_eq!(
+            state.on_submit(draft).expect_err("credential reference"),
+            "Talaria does not attach credential files."
+        );
+    }
+
+    let pasted = state
+        .chips
+        .collapse_paste("please read @file:.env.prod\nline 2\nline 3\nline 4\nline 5");
+    assert_eq!(
+        state
+            .expand_pastes(&pasted)
+            .expect_err("credential reference hidden in a paste"),
+        "Talaria does not attach credential files."
+    );
+    assert_eq!(
+        state
+            .on_submit(&pasted)
+            .expect_err("credential reference hidden in a paste"),
+        "Talaria does not attach credential files."
+    );
+
     let draft = "read @notes";
     state.on_edit(draft, draft.len(), true, now);
     let request = state

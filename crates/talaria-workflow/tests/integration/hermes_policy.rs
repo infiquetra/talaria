@@ -156,13 +156,17 @@ fn outcomes_map_as_specified() {
     );
     assert_eq!(
         reason(interrupted),
-        "stopped in Hermes (outcome 'interrupted')"
+        "agent stopped: Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn; Hermes ended the turn as 'interrupted': partial. This was a stop, not a timeout: a time in Hermes's text is how long the turn had run"
     );
     let cancelled = policy.after_turn(
         &request,
         &[common::settled(0, "cancelled", None, json!({}))],
     );
-    assert_eq!(reason(cancelled), "stopped in Hermes (outcome 'cancelled')");
+    let cancelled = reason(cancelled);
+    assert!(
+        cancelled.starts_with("agent stopped: Talaria's runner did not send this stop"),
+        "{cancelled}"
+    );
     let other = policy.after_turn(
         &request,
         &[common::settled(0, "steered", Some("nope"), json!({}))],

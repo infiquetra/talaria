@@ -1278,32 +1278,32 @@ impl ReviewState {
         match &self.focus {
             ReviewFocus::List => match self.scope {
                 Scope::Uncommitted => Cow::Borrowed(
-                    "space stage \u{b7} a stage all \u{b7} c commit \u{b7} p push \u{b7} P pull request \u{b7} X discard \u{b7} tab scope \u{b7} r refresh \u{b7} esc close",
+                    "Space stage \u{b7} a stage all \u{b7} c commit \u{b7} p push \u{b7} P pull request \u{b7} X discard \u{b7} Tab scope \u{b7} r refresh \u{b7} Esc close",
                 ),
                 Scope::Branch => Cow::Borrowed(
-                    "tab uncommitted \u{b7} o open pull request \u{b7} r refresh \u{b7} esc close",
+                    "Tab uncommitted \u{b7} o open pull request \u{b7} r refresh \u{b7} Esc close",
                 ),
             },
             ReviewFocus::DiffOnly => {
-                Cow::Borrowed("\u{2191}\u{2193} scroll \u{b7} esc back to the list")
+                Cow::Borrowed("\u{2191}\u{2193} scroll \u{b7} Esc back to the list")
             }
             ReviewFocus::ConfirmDiscard(_) => {
                 Cow::Borrowed("X discard \u{b7} any other key cancels")
             }
-            ReviewFocus::ConfirmPr => Cow::Borrowed("enter open \u{b7} any other key cancels"),
+            ReviewFocus::ConfirmPr => Cow::Borrowed("Enter open \u{b7} any other key cancels"),
             ReviewFocus::ConfirmReplaceDraft => {
-                Cow::Borrowed("ctrl+d draft \u{b7} any other key cancels")
+                Cow::Borrowed("Ctrl+D draft \u{b7} any other key cancels")
             }
             ReviewFocus::Commit => {
                 let drafting_possible =
                     self.target.session.is_some() && self.can_draft && !self.draft_hidden;
                 if drafting_possible {
                     Cow::Owned(format!(
-                        "ctrl+s commit \u{b7} ctrl+d draft with {} \u{b7} esc back",
+                        "Ctrl+S commit \u{b7} Ctrl+D draft with {} \u{b7} Esc back",
                         self.model_name()
                     ))
                 } else {
-                    Cow::Borrowed("ctrl+s commit \u{b7} esc back")
+                    Cow::Borrowed("Ctrl+S commit \u{b7} Esc back")
                 }
             }
         }
@@ -1990,7 +1990,7 @@ mod tests {
             editor.warnings,
             vec!["Hooks: 2 active (they run as in your shell).".to_owned()]
         );
-        assert_eq!(view.footer, "ctrl+s commit \u{b7} esc back");
+        assert_eq!(view.footer, "Ctrl+S commit \u{b7} Esc back");
     }
 
     fn draftable() -> ReviewState {
@@ -2078,7 +2078,7 @@ mod tests {
             notice(&state),
             "This Hermes does not offer message drafting."
         );
-        assert_eq!(state.view().footer, "ctrl+s commit \u{b7} esc back");
+        assert_eq!(state.view().footer, "Ctrl+S commit \u{b7} Esc back");
         assert!(press(&mut state, ReviewKey::Draft).is_empty());
     }
 
@@ -2131,7 +2131,7 @@ mod tests {
         });
         assert_eq!(
             state.view().footer,
-            "ctrl+s commit \u{b7} ctrl+d draft with the session's model \u{b7} esc back"
+            "Ctrl+S commit \u{b7} Ctrl+D draft with the session's model \u{b7} Esc back"
         );
     }
 

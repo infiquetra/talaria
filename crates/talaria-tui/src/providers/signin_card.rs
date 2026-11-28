@@ -8,7 +8,12 @@ pub(super) fn lines(card: &CardView, secret_len: usize) -> Vec<String> {
         .map(|line| super::safe(line))
         .collect();
     if card.kind == CardKind::Key {
-        lines.insert(lines.len().min(1), super::mask(secret_len));
+        let entry = if secret_len == 0 {
+            "New key › Type or paste here".into()
+        } else {
+            format!("New key › {}", super::mask(secret_len))
+        };
+        lines.insert(lines.len().min(1), entry);
     }
     lines
 }

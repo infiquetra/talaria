@@ -1,10 +1,11 @@
-┌Switch model · this session───────────────────────────────────────────────────────────────────────────────────────────┐
+┌ Switch model · this session ─────────────────────────────────────────────────────────────────────────────────────────┐
 │> type to filter                                                                                                      │
-│[All] Starred Configured Needs setup                                                                                  │
-│2 models · 1 providers · Current: Example provider / reasoner-large · high                                            │
+│View   [All]   Starred   Configured   Needs setup                                                                     │
+│2 models · 1 provider · Current: Example provider / reasoner-large · high                                             │
 │Example provider                                                      │Details                                        │
-│> ★ ● reasoner-large                                           current│Effort: high requested, sent as high           │
-│  reasoner-small                                                      │Context: 200K tokens                           │
+│> ★ ● reasoner-large                                           current│★ ● reasoner-large                             │
+│  reasoner-small                                                      │Effort: high requested, sent as high           │
+│                                                                      │Context: 200K tokens                           │
 │                                                                      │Account: configured in Hermes (not checked)    │
 │                                                                      │                                               │
 │                                                                      │                                               │
@@ -34,7 +35,6 @@
 │                                                                      │                                               │
 │                                                                      │                                               │
 │                                                                      │                                               │
-│Rows 1–3 of 3                                                         │                                               │
 │Enter switch · Esc clear,close                                                                                        │
 │effort: high · F2/Ctrl+E details                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

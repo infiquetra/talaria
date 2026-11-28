@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::{
     journal::{JournalError, JournalReader, Manifest, RecordLine},
-    tokens::CacheTracker,
+    tokens::{CacheTracker, recover_stored_cache},
 };
 
 pub fn configuration_dir() -> PathBuf {
@@ -112,6 +112,157 @@ pub struct RunSummary {
     pub money_spent_usd: Option<f64>,
     pub run_dir: String,
     pub warning: Option<String>,
+    /// What a finished run left for its reader to look at.
+    #[serde(flatten)]
+    pub attention: RunAttention,
+}
+
+/// The problems a finished run's reader should not miss, as counts. All zero (and no status)
+/// for a run that has not finished.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct RunAttention {
+    pub failed_agents: u32,
+    pub cut_short_agents: u32,
+    /// Agent worktrees that still held uncommitted changes when the run ended.
+    pub uncommitted_edits: u32,
+    /// Distinct branches Talaria saved uncommitted agent work to.
+    pub saved_branches: u32,
+    /// Phases the script's `meta.phases` declares that never started.
+    pub phases_not_started: u32,
+    /// The titles of those phases, in the order the script declares them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub phases_not_started_names: Vec<String>,
+    /// The `status` string at the top of the script's own result object, when it has one. It
+    /// is the script's word, not Talaria's outcome.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_status: Option<String>,
+    /// Agents with a turn stopped by a Hermes guardrail in their current attempt.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub guardrail_halts: Vec<GuardrailHalt>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recovered_reports: Vec<ReportLink>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GuardrailHalt {
+    pub label: String,
+    pub reason: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ReportLink {
+    pub label: String,
+    pub key: String,
+    pub path: String,
+}
+impl RunAttention {
+    /// Count what the run folder's `outcome.json` and journal say. A missing or unreadable
+    /// outcome file gives no counts.
+    pub(crate) fn read(path: &Path, records: &[RecordLine], latest_script: Option<&str>) -> Self {
+        let Ok(outcome) = fs::read(path.join("outcome.json"))
+            .map_err(|e| e.to_string())
+            .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| e.to_string()))
+        else {
+            return Self::default();
+        };
+        let list = |name: &str| outcome[name].as_array().cloned().unwrap_or_default();
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        let leftovers = list("leftover_edits");
+        let mut saved = BTreeSet::new();
+        for entry in list("failed_agents")
+            .iter()
+            .chain(&list("cut_short_agents"))
+            .chain(&leftovers)
+        {
+            if let Some(branch) = entry["saved_branch"].as_str() {
+                saved.insert(branch.to_owned());
+            }
+        }
+        let declared = latest_script
+            .and_then(|sha| fs::read_to_string(path.join("scripts").join(format!("{sha}.js"))).ok())
+            .and_then(|source| crate::engine::parse_script(&source).ok())
+            .map(|parsed| parsed.meta.phases)
+            .unwrap_or_default();
+        let started: BTreeSet<&str> = records
+            .iter()
+            .filter_map(|line| match &line.record {
+                // A nested workflow's phases are its own, even under the parent's titles.
+                crate::journal::Record::Engine {
+                    event:
+                        Some(crate::engine::EngineEvent::Phase {
+                            title,
+                            workflow_path,
+                        }),
+                    ..
+                } if workflow_path.is_empty() => Some(title.as_str()),
+                _ => None,
+            })
+            .collect();
+        let not_started: Vec<String> = declared
+            .iter()
+            .filter(|phase| !started.contains(phase.title.as_str()))
+            .map(|phase| phase.title.clone())
+            .collect();
+        let agents = super::agents::agents(records);
+        let recovered_reports = agents
+            .iter()
+            .filter_map(|agent| {
+                let file = match &agent.outcome {
+                    Some(crate::journal::CallOutcome::FailedWithReport { path, .. }) => {
+                        path.clone()
+                    }
+                    Some(crate::journal::CallOutcome::Failed { .. }) => {
+                        super::evidence::associated(path, agent.seq)
+                            .ok()??
+                            .report
+                            .path
+                    }
+                    _ => return None,
+                };
+                Some(ReportLink {
+                    label: agent.label.clone(),
+                    key: agent.key.clone(),
+                    path: file,
+                })
+            })
+            .collect();
+        Self {
+            failed_agents: count(list("failed_agents").len()),
+            cut_short_agents: count(list("cut_short_agents").len()),
+            uncommitted_edits: count(
+                leftovers
+                    .iter()
+                    .filter(|entry| entry["in_place"] != true)
+                    .count(),
+            ),
+            saved_branches: count(saved.len()),
+            phases_not_started: count(not_started.len()),
+            phases_not_started_names: not_started,
+            script_status: outcome["result"]["status"].as_str().map(str::to_owned),
+            recovered_reports,
+            guardrail_halts: agents
+                .into_iter()
+                .filter_map(|agent| {
+                    agent.guardrail_halt.map(|warning| GuardrailHalt {
+                        label: agent.label,
+                        reason: warning
+                            .split_once(": ")
+                            .map_or(warning.as_str(), |(summary, _)| summary)
+                            .into(),
+                    })
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The attention counts of one finished run folder, read from its outcome file and journal.
+pub fn run_attention(path: &Path) -> RunAttention {
+    let Ok((records, _)) = JournalReader::read_from(&path.join("journal.jsonl"), 0) else {
+        return RunAttention::default();
+    };
+    let latest = Fold::records(&records)
+        .ok()
+        .and_then(|fold| fold.latest_script);
+    RunAttention::read(path, &records, latest.as_deref())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -210,7 +361,7 @@ impl Fold {
     pub fn records(records: &[RecordLine]) -> Result<Self, serde_json::Error> {
         let mut folded = Self::default();
         let mut keys = BTreeSet::new();
-        let mut finished = BTreeMap::new();
+        let mut finished = BTreeSet::new();
         let mut parked = BTreeSet::new();
         let mut money = BTreeMap::new();
         let mut unknown_money = false;
@@ -247,20 +398,23 @@ impl Fold {
                 "call_attention" => {
                     parked.insert(key.to_owned());
                 }
-                "call_resolved" => {
+                // A use-reply answer leaves the call waiting for a reply someone has to give,
+                // so it still waits for the operator until that reply settles its turn.
+                "call_resolved" if record["resolution"] != "use_reply" => {
                     parked.remove(key);
+                }
+                "call_intent" => {
+                    parked.remove(key);
+                    finished.remove(key);
                 }
                 "call_finished" => {
                     parked.remove(key);
-                    finished.insert(
-                        key.to_owned(),
-                        matches!(
-                            record["outcome"]["kind"].as_str(),
-                            Some("completed" | "skipped")
-                        ),
-                    );
+                    if record["retry"] != true {
+                        finished.insert(key.to_owned());
+                    }
                 }
                 "turn_settled" => {
+                    parked.remove(key);
                     settled = true;
                     let usage = &record["usage"];
                     let attempt = record["attempt"].as_u64().unwrap_or_default();
@@ -303,12 +457,7 @@ impl Fold {
                 _ => {}
             }
         }
-        folded.finished = finished
-            .values()
-            .filter(|v| **v)
-            .count()
-            .try_into()
-            .unwrap_or(u32::MAX);
+        folded.finished = u32::try_from(finished.len()).unwrap_or(u32::MAX);
         folded.total = keys.len().try_into().unwrap_or(u32::MAX);
         folded.parked = parked.len().try_into().unwrap_or(u32::MAX);
         if settled && !unknown_money {
@@ -337,9 +486,10 @@ fn unreadable(path: &Path, id: &str, warning: String) -> RunSummary {
         money_spent_usd: None,
         run_dir: path.to_string_lossy().into_owned(),
         warning: Some(warning),
+        attention: RunAttention::default(),
     }
 }
-fn summarize(path: &Path, id: &str) -> RunSummary {
+fn summarize(path: &Path, id: &str, read_local_cache: bool) -> RunSummary {
     let bytes = match fs::read(path.join("manifest.json")) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -358,7 +508,7 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
             "corrupt manifest.json: unsupported manifest version".into(),
         );
     }
-    let records = match JournalReader::read_from(&path.join("journal.jsonl"), 0) {
+    let mut records = match JournalReader::read_from(&path.join("journal.jsonl"), 0) {
         Ok((records, _)) => records,
         Err(JournalError::Corrupt { line, reason }) => {
             return unreadable(
@@ -372,6 +522,9 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
         }
         Err(e) => return unreadable(path, id, format!("corrupt journal.jsonl at line 1: {e}")),
     };
+    if read_local_cache {
+        recover_stored_cache(&mut records);
+    }
     let fold = match Fold::records(&records) {
         Ok(fold) => fold,
         Err(e) => return unreadable(path, id, format!("corrupt journal.jsonl at line 1: {e}")),
@@ -409,6 +562,11 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
         money_spent_usd: fold.money,
         run_dir: path.to_string_lossy().into_owned(),
         warning: None,
+        attention: if status.is_finished() {
+            RunAttention::read(path, &records, fold.latest_script.as_deref())
+        } else {
+            RunAttention::default()
+        },
     }
 }
 /// One run folder's summary, derived exactly as `workflow list` derives it.
@@ -417,9 +575,15 @@ pub fn summarize_run(path: &Path) -> RunSummary {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    summarize(path, &id)
+    summarize(path, &id, true)
 }
 pub fn discover_runs(runs_dir: &Path) -> Vec<RunSummary> {
+    discover_runs_with_local_cache(runs_dir, true)
+}
+pub(crate) fn discover_runs_with_local_cache(
+    runs_dir: &Path,
+    read_local_cache: bool,
+) -> Vec<RunSummary> {
     let entries = match fs::read_dir(runs_dir) {
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
@@ -430,7 +594,7 @@ pub fn discover_runs(runs_dir: &Path) -> Vec<RunSummary> {
         let Some(id) = name.to_str() else { continue };
         let path = entry.path();
         if is_run_folder(&path) {
-            runs.push(summarize(&path, id));
+            runs.push(summarize(&path, id, read_local_cache));
         }
     }
     runs.sort_by(|a, b| {
@@ -463,7 +627,8 @@ pub fn discover_runs_since(runs_dir: &Path, since_ms: i64) -> Vec<RunSummary> {
         if changed_ms.is_some_and(|ms| ms < cutoff) || !is_run_folder(&path) {
             continue;
         }
-        let summary = summarize(&path, id);
+        // This path runs on a timer to detect starts and finishes.
+        let summary = summarize(&path, id, false);
         if summary.started_at_ms >= since_ms {
             runs.push(summary);
         }
@@ -474,4 +639,193 @@ pub fn discover_runs_since(runs_dir: &Path, since_ms: i64) -> Vec<RunSummary> {
             .then_with(|| a.run_id.cmp(&b.run_id))
     });
     runs
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::*;
+    use crate::engine::EngineEvent;
+    use crate::journal::Record;
+
+    fn phase(title: &str) -> RecordLine {
+        RecordLine {
+            v: 1,
+            seq: 1,
+            at_ms: 0,
+            record: Record::Engine {
+                event: Some(EngineEvent::Phase {
+                    title: title.into(),
+                    workflow_path: vec![],
+                }),
+                event_ref: None,
+            },
+        }
+    }
+
+    #[test]
+    fn a_nested_workflows_phase_does_not_start_the_parents_phase_of_the_same_title() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        fs::create_dir(dir.join("scripts")).unwrap();
+        let source = "export const meta = {name: 'x', description: 'd', phases: [{title: 'Review'}, {title: 'Report'}]};\nreturn 1;";
+        fs::write(dir.join("scripts").join("abc.js"), source).unwrap();
+        fs::write(dir.join("outcome.json"), r#"{"outcome":"completed"}"#).unwrap();
+        // The parent awaited a nested workflow whose own phase is called Review, then returned
+        // before its own Review phase.
+        let nested = RecordLine {
+            v: 1,
+            seq: 1,
+            at_ms: 0,
+            record: Record::Engine {
+                event: Some(EngineEvent::Phase {
+                    title: "Review".into(),
+                    workflow_path: vec!["review-branch".into()],
+                }),
+                event_ref: None,
+            },
+        };
+        let counts = RunAttention::read(dir, &[nested], Some("abc"));
+        assert_eq!(
+            counts.phases_not_started_names,
+            ["Review".to_owned(), "Report".to_owned()]
+        );
+        assert_eq!(counts.phases_not_started, 2);
+    }
+
+    #[test]
+    fn counts_come_from_the_outcome_file_and_the_declared_phases() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        fs::create_dir(dir.join("scripts")).unwrap();
+        let source = "export const meta = {name: 'x', description: 'd', phases: [{title: 'Plan'}, {title: 'Build'}, {title: 'Check'}]};\nreturn 1;";
+        fs::write(dir.join("scripts").join("abc.js"), source).unwrap();
+        fs::write(
+            dir.join("outcome.json"),
+            serde_json::json!({
+                "outcome": "completed",
+                "failed_agents": [{"label": "a", "reason": "r", "saved_branch": "b1"}],
+                "cut_short_agents": [{"label": "c", "reason": "r", "saved_branch": "b2"}],
+                "leftover_edits": [
+                    {"path": "/w/a", "changed_files": 1, "saved_branch": "b1"},
+                    {"path": "/w/c", "changed_files": 2, "saved_branch": "b2"},
+                    {"path": "/w/d", "changed_files": 1},
+                    {"path": "/project", "changed_files": 0, "in_place": true, "agents": ["e"]}
+                ],
+                "result": {"status": "partial", "items": []}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let counts = RunAttention::read(dir, &[phase("Plan")], Some("abc"));
+        assert_eq!(
+            counts,
+            RunAttention {
+                failed_agents: 1,
+                cut_short_agents: 1,
+                uncommitted_edits: 3,
+                saved_branches: 2,
+                phases_not_started: 2,
+                phases_not_started_names: vec!["Build".into(), "Check".into()],
+                script_status: Some("partial".into()),
+                guardrail_halts: vec![],
+                recovered_reports: vec![],
+            }
+        );
+        // A list row carries the names beside the count.
+        let row = serde_json::to_value(&counts).unwrap();
+        assert_eq!(
+            row["phases_not_started_names"],
+            serde_json::json!(["Build", "Check"])
+        );
+        assert!(
+            serde_json::to_value(RunAttention::default())
+                .unwrap()
+                .get("phases_not_started_names")
+                .is_none()
+        );
+        // A result without a top-level status string, and no outcome file at all.
+        fs::write(
+            dir.join("outcome.json"),
+            r#"{"outcome":"completed","result":"done"}"#,
+        )
+        .unwrap();
+        assert_eq!(RunAttention::read(dir, &[], None).script_status, None);
+        fs::remove_file(dir.join("outcome.json")).unwrap();
+        assert_eq!(
+            RunAttention::read(dir, &[], Some("abc")),
+            RunAttention::default()
+        );
+    }
+
+    fn line(seq: u64, record: Record) -> RecordLine {
+        RecordLine {
+            v: 1,
+            seq,
+            at_ms: 0,
+            record,
+        }
+    }
+
+    #[test]
+    fn a_call_waiting_for_its_reply_after_use_reply_still_waits_for_the_operator() {
+        use crate::journal::{AttentionCause, Resolution, ResolutionSource};
+        let key = "a".repeat(32);
+        let mut records = vec![
+            line(
+                1,
+                Record::CallAttention {
+                    key: key.clone(),
+                    attempt: 0,
+                    episode: 0,
+                    cause: AttentionCause::Stopped,
+                    turn: Some(0),
+                    admission_id: Some("admission-1".into()),
+                    execution_generation: None,
+                    detail: "stopped".into(),
+                    seen_admissions: Vec::new(),
+                },
+            ),
+            line(
+                2,
+                Record::CallResolved {
+                    key: key.clone(),
+                    attempt: 0,
+                    episode: 0,
+                    resolution: Resolution::UseReply,
+                    source: ResolutionSource::Operator,
+                },
+            ),
+        ];
+        // Answered with use-reply, the call waits for a reply someone has to give.
+        assert_eq!(Fold::records(&records).unwrap().parked, 1);
+        records.push(line(
+            3,
+            Record::TurnSettled {
+                key: key.clone(),
+                attempt: 0,
+                turn: 0,
+                admission_id: "admission-2".into(),
+                outcome: "completed".into(),
+                final_text: Some("done".into()),
+                final_text_ref: None,
+                result_meta: serde_json::json!({}),
+                usage: None,
+            },
+        ));
+        // The reply settled the turn: nothing waits any more.
+        assert_eq!(Fold::records(&records).unwrap().parked, 0);
+        // Any other answer ends the wait at once.
+        let mut rerun = records[..1].to_vec();
+        rerun.push(line(
+            2,
+            Record::CallResolved {
+                key,
+                attempt: 0,
+                episode: 0,
+                resolution: Resolution::Rerun,
+                source: ResolutionSource::Operator,
+            },
+        ));
+        assert_eq!(Fold::records(&rerun).unwrap().parked, 0);
+    }
 }

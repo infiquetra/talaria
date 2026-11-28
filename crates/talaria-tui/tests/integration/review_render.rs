@@ -320,7 +320,7 @@ fn commit_editor_and_small_window() {
         "the working warning shows: {text}"
     );
     assert!(
-        text.contains("ctrl+s commit · ctrl+d draft with the session's model · esc back"),
+        text.contains("Ctrl+S commit · Ctrl+D draft with the session's model · Esc back"),
         "the editor footer: {text}"
     );
 
@@ -377,11 +377,20 @@ fn commit_editor_and_small_window() {
     );
 
     // Below 60 columns the window is too small.
-    let text = contents(&render(&state.view(), 50, 10));
+    let text = contents(&render(&state.view(), 40, 16));
     assert!(
-        text.contains("Window too small for the review. Esc goes back."),
+        text.contains("Window too small for the review.")
+            && text.contains("60 columns and 12 rows")
+            && text.contains("Esc goes back"),
         "the too-small text: {text}"
     );
+}
+
+#[test]
+fn changes_footer_keeps_escape_at_100_columns() {
+    let (state, _) = ReviewState::open(target(), 1.0);
+    let text = contents(&render(&state.view(), 100, 24));
+    assert!(text.lines().last().unwrap().contains("Esc close"), "{text}");
 }
 
 /// Escape bytes never reach the screen; the short window lists, then shows a

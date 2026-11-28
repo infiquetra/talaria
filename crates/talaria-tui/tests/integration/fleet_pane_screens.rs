@@ -229,8 +229,16 @@ fn expect_screen(
         .len()
         > 1
         && width >= 80;
-    let show_model = width >= 60;
+    let show_model = width >= 72 && (!show_profile || width >= 90);
     let show_cost = width >= 100;
+    if !visible.is_empty() {
+        body.push(super::fleet_view_screens::table_headings(
+            width,
+            show_profile,
+            show_model,
+            show_cost,
+        ));
+    }
     let cursor = visible.first().map(|row| row.key.clone());
     for state in [
         RowState::NeedsYou,

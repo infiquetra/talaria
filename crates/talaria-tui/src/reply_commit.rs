@@ -95,7 +95,12 @@ impl ReplyCommits {
             return lines;
         }
         let piece = &rest[..more];
-        let rendered = render.lines(&with_text(reply, piece), width);
+        let piece_cell = with_text(reply, piece);
+        let rendered = if self.partial.is_some() {
+            render.continuation_lines(&piece_cell, width)
+        } else {
+            render.lines(&piece_cell, width)
+        };
         if rendered.is_empty() {
             // Nothing to show yet, such as a lone link definition: it waits for later blocks.
             return lines;
@@ -169,7 +174,7 @@ impl ReplyCommits {
             return whole(cells);
         };
         let mut lines = if let Some(rest) = reply.text.strip_prefix(partial.committed.as_str()) {
-            after_committed(render.lines(&with_text(reply, rest), width))
+            after_committed(render.continuation_lines(&with_text(reply, rest), width))
         } else if reply.transformed || reply.interim {
             let mut lines = notice_lines(REVISED_NOTICE, render, width);
             lines.extend(render.lines(&cells[at], width));

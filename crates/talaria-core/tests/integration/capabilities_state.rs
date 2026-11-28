@@ -672,13 +672,10 @@ fn skill_install_scan_confirm_install_reload() {
     ] {
         let mut s = ready(CapTab::Hub, hub());
         key(&mut s, KeyAction::Install);
-        s.update(CapInput::ScanDone(Ok(scan(policy))), 2);
-        assert!(
-            s.view()
-                .message
-                .join("\n")
-                .contains("Hermes will not install guide from Talaria: policy says no")
-        );
+        let effects = s.update(CapInput::ScanDone(Ok(scan(policy))), 2);
+        let message = s.view().message.join("\n");
+        assert!(message.contains("Hermes will not install guide from Talaria: policy says no"));
+        assert_eq!(notices(&effects), [message.as_str()]);
         assert!(
             !s.update(CapInput::Key(KeyAction::Confirm), 3)
                 .iter()
@@ -848,18 +845,18 @@ fn hub_browse_search_and_marks() {
             identifier: "bare".into()
         }]
     );
-    s.update(
+    let refusal = s.update(
         CapInput::ScanDone(Err(CapError::NotFound {
             route: "GET /api/skills/hub/scan".into(),
         })),
         2,
     );
-    assert!(
-        s.view()
-            .message
-            .join("\n")
-            .contains("The skill hub has no skill bare.")
-    );
+    let notice = "The skill hub has no skill bare.";
+    assert_eq!(refusal, [CapEffect::Notice(notice.into())]);
+    assert_eq!(s.view().message, [notice]);
+    s.update(CapInput::Char('z'), 2);
+    assert!(key(&mut s, KeyAction::NextPage).is_empty());
+    assert_eq!(s.view().message, [notice]);
     let effects = key(&mut s, KeyAction::PrevPage);
     assert!(
         effects

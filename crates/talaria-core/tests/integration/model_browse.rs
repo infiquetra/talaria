@@ -25,12 +25,64 @@ fn starred() -> SavedModels {
 fn state() -> ModelsState {
     open_loaded(catalog(), Some("high"), starred())
 }
+fn provider(slug: &str, expanded: bool) -> RowKey {
+    RowKey::Provider {
+        provider: slug.into(),
+        expanded,
+    }
+}
+
+#[test]
+fn folding_is_local_and_search_and_reload_preserve_the_browsing_state() {
+    let mut s = state();
+    let mut result = catalog();
+    result.providers[1].models.push("shared".into());
+    s.update(ModelsInput::OptionsLoaded {
+        session_id: SID.into(),
+        result: result.clone(),
+    });
+    let count = |s: &ModelsState| s.view().unwrap().browse.unwrap().counts.models;
+    assert_eq!(count(&s), 5);
+    assert!(!routes(&s).iter().any(|(p, _)| p == "b"));
+    press(&mut s, PickerKey::NextGroup);
+    assert_eq!(selected_key(&s), Some(provider("b", false)));
+    assert!(press(&mut s, PickerKey::Enter).is_empty());
+    assert_eq!(selected_key(&s), Some(provider("b", true)));
+    assert_eq!(count(&s), 5);
+    press(&mut s, PickerKey::Down);
+    assert_eq!(route(&selected_key(&s).unwrap()), ("b", "shared"));
+    assert!(press(&mut s, PickerKey::FoldProvider).is_empty());
+    assert_eq!(selected_key(&s), Some(provider("b", false)));
+    type_filter(&mut s, "beta ");
+    assert!(
+        s.update(ModelsInput::PasteFilter("other\r\nignored".into()))
+            .is_empty()
+    );
+    assert_eq!(s.view().unwrap().filter, "beta other");
+    assert_eq!(route(&selected_key(&s).unwrap()), ("b", "other"));
+    press(&mut s, PickerKey::ClearFilter);
+    assert_eq!(selected_key(&s), Some(provider("b", false)));
+    // A pointer click follows the same local fold path and remains usable while offline.
+    s.update(ModelsInput::Connection { connected: false });
+    assert!(
+        s.update(ModelsInput::SelectRow(provider("b", false)))
+            .is_empty()
+    );
+    assert_eq!(selected_key(&s), Some(provider("b", true)));
+    s.update(ModelsInput::OptionsLoaded {
+        session_id: SID.into(),
+        result,
+    });
+    assert_eq!(selected_key(&s), Some(provider("b", true)));
+    assert!(press(&mut s, PickerKey::Left).is_empty());
+    assert_eq!(selected_key(&s), Some(provider("b", false)));
+}
 fn route(key: &RowKey) -> (&str, &str) {
     match key {
         RowKey::Model { provider, model } | RowKey::Favourite { provider, model } => {
             (provider, model)
         }
-        RowKey::NotSetUp { provider } => (provider, ""),
+        RowKey::Provider { provider, .. } | RowKey::NotSetUp { provider } => (provider, ""),
     }
 }
 fn routes(state: &ModelsState) -> Vec<(String, String)> {
@@ -39,6 +91,7 @@ fn routes(state: &ModelsState) -> Vec<(String, String)> {
         .unwrap()
         .rows
         .iter()
+        .filter(|row| !row.header)
         .filter_map(|r| r.key.as_ref())
         .map(|key| {
             let (p, m) = route(key);
@@ -57,17 +110,19 @@ fn details(state: &ModelsState) -> String {
 }
 
 #[test]
-fn all_groups_starred_once_and_current_independent() {
+fn all_keeps_stars_in_provider_order_and_current_independent() {
     let mut s = state();
+    let current = selected_key(&s).unwrap();
+    s.update(ModelsInput::SelectRow(provider("b", false)));
+    s.update(ModelsInput::SelectRow(current));
     assert_eq!(
         routes(&s),
         [
-            ("b", "other"),
             ("a", "shared"),
-            ("a", "missing"),
             ("a", "quiet"),
             ("a", "blocked"),
             ("b", "shared"),
+            ("b", "other"),
             ("c", "")
         ]
         .map(|(p, m)| (p.into(), m.into()))
@@ -82,12 +137,7 @@ fn all_groups_starred_once_and_current_independent() {
         .collect();
     assert_eq!(
         headers,
-        [
-            "Starred",
-            "Alpha Provider",
-            "Beta Provider",
-            "Needs setup (1)"
-        ]
+        ["Alpha Provider", "Beta Provider", "Needs setup (1)"]
     );
     assert_eq!(view.rows.iter().filter(|r| r.text.contains('●')).count(), 1);
     press(&mut s, PickerKey::Home);
@@ -118,14 +168,21 @@ fn scopes_counts_search_and_reload_keep_identity() {
     );
     for (key, scope, count) in [
         (PickerKey::ChipsNext, ListScope::Starred, 3),
-        (PickerKey::ChipsNext, ListScope::Configured, 5),
+        (PickerKey::ChipsNext, ListScope::Configured, 3),
         (PickerKey::ChipsNext, ListScope::SetUp, 1),
-        (PickerKey::ChipsNext, ListScope::All, 7),
+        (PickerKey::ChipsNext, ListScope::All, 4),
         (PickerKey::ChipsPrev, ListScope::SetUp, 1),
     ] {
         press(&mut s, key);
         assert_eq!(s.view().unwrap().browse.unwrap().scope, scope);
         assert_eq!(routes(&s).len(), count);
+        if scope == ListScope::Starred {
+            assert_eq!(
+                routes(&s),
+                [("b", "other"), ("a", "shared"), ("a", "missing")]
+                    .map(|(p, m)| (p.into(), m.into()))
+            );
+        }
     }
     press(&mut s, PickerKey::ChipsNext);
     type_filter(&mut s, "AlPhA SHARED");
@@ -139,7 +196,10 @@ fn scopes_counts_search_and_reload_keep_identity() {
         result: catalog(),
     });
     assert_eq!(s.view().unwrap().browse.unwrap().scope, ListScope::Starred);
-    assert_eq!(selected_key(&s), identity);
+    assert_eq!(
+        selected_key(&s).as_ref().map(route),
+        identity.as_ref().map(route)
+    );
     press(&mut s, PickerKey::ClearFilter);
     type_filter(&mut s, "missing");
     assert_eq!(route(&selected_key(&s).unwrap()), ("a", "missing"));
@@ -150,7 +210,7 @@ fn provider_matches_keep_children_and_headers() {
     type_filter(&mut s, "Beta");
     assert_eq!(
         routes(&s),
-        [("b".into(), "other".into()), ("b".into(), "shared".into())]
+        [("b".into(), "shared".into()), ("b".into(), "other".into())]
     );
     press(&mut s, PickerKey::ClearFilter);
     type_filter(&mut s, "quiet");
@@ -174,22 +234,88 @@ fn provider_matches_keep_children_and_headers() {
     assert_eq!(routes(&s).len(), 2);
 }
 #[test]
-fn starring_preserves_route_even_when_its_row_variant_changes() {
-    let mut s = open_loaded(catalog(), Some("high"), SavedModels::empty());
-    let before = selected_key(&s).unwrap();
+fn starring_keeps_exact_selection_and_neighbors_in_both_provider_views() {
+    for scope_keys in [0, 2] {
+        let mut s = open_loaded(catalog(), Some("high"), SavedModels::empty());
+        for _ in 0..scope_keys {
+            press(&mut s, PickerKey::ChipsNext);
+        }
+        press(&mut s, PickerKey::NextGroup);
+        press(&mut s, PickerKey::Right);
+        press(&mut s, PickerKey::Down);
+        let index = s.view().unwrap().selected.unwrap();
+        let before = routes(&s);
+        let selected = selected_key(&s);
+        for starred in [true, false] {
+            press(&mut s, PickerKey::ToggleFavourite);
+            let view = s.view().unwrap();
+            assert_eq!(view.selected, Some(index));
+            assert_eq!(view.rows[index].text.contains('★'), starred);
+            assert_eq!(routes(&s), before);
+            assert_eq!(selected_key(&s), selected);
+        }
+        press(&mut s, PickerKey::Down);
+        assert_eq!(s.view().unwrap().selected, Some(index + 1));
+        assert_eq!(route(&selected_key(&s).unwrap()), ("b", "other"));
+    }
+}
+
+#[test]
+fn unstarring_selects_the_next_shortlist_row_or_the_previous_at_the_end() {
+    let mut saved = starred();
+    saved.favourites.push("a::shared".into());
+    let mut s = open_loaded(catalog(), Some("high"), saved);
+    press(&mut s, PickerKey::ChipsNext);
+    assert_eq!(s.view().unwrap().selected, Some(2));
     press(&mut s, PickerKey::ToggleFavourite);
-    assert_eq!(route(&before), route(&selected_key(&s).unwrap()));
+    assert_eq!(s.view().unwrap().selected, Some(2));
+    assert_eq!(route(&selected_key(&s).unwrap()), ("a", "missing"));
     press(&mut s, PickerKey::ToggleFavourite);
-    assert_eq!(route(&before), route(&selected_key(&s).unwrap()));
+    assert_eq!(s.view().unwrap().selected, Some(1));
+    assert_eq!(route(&selected_key(&s).unwrap()), ("b", "other"));
+    press(&mut s, PickerKey::ToggleFavourite);
+    assert_eq!(s.view().unwrap().selected, None);
+}
+
+#[test]
+fn group_jumps_use_visible_sections_and_skip_empty_providers() {
+    let mut result = catalog();
+    result.providers.insert(
+        1,
+        serde_json::from_value(json!({
+            "slug":"empty","name":"Empty Provider","authenticated":true,"models":[]
+        }))
+        .unwrap(),
+    );
+    let mut s = open_loaded(result, Some("high"), SavedModels::empty());
+    press(&mut s, PickerKey::Down);
+    assert_eq!(route(&selected_key(&s).unwrap()), ("a", "quiet"));
+    for (key, expected) in [
+        (PickerKey::PreviousGroup, ("a", "quiet")),
+        (PickerKey::NextGroup, ("b", "")),
+        (PickerKey::NextGroup, ("c", "")),
+        (PickerKey::NextGroup, ("c", "")),
+        (PickerKey::PreviousGroup, ("b", "")),
+        (PickerKey::PreviousGroup, ("a", "")),
+    ] {
+        press(&mut s, key);
+        assert_eq!(route(&selected_key(&s).unwrap()), expected);
+    }
+    type_filter(&mut s, "provider shared");
+    press(&mut s, PickerKey::NextGroup);
+    assert_eq!(route(&selected_key(&s).unwrap()), ("b", "shared"));
+    press(&mut s, PickerKey::NextGroup);
+    assert_eq!(route(&selected_key(&s).unwrap()), ("b", "shared"));
+    assert_eq!(s.view().unwrap().filter, "provider shared");
 }
 #[test]
 fn badge_priority() {
     let mut result = catalog();
     result.providers[0].unavailable_models = Some(vec!["quiet".into()]);
     let mut s = open_loaded(result, Some("high"), starred());
+    s.update(ModelsInput::SelectRow(provider("b", false)));
     let view = s.view().unwrap();
     for (provider, model, badges) in [
-        ("a", "missing", &["not listed"][..]),
         ("a", "quiet", &["unavailable"][..]),
         ("a", "shared", &["current"][..]),
         ("b", "shared", &[][..]),
@@ -424,7 +550,8 @@ fn footer_names_left_right_effort_and_save_scope() {
     for text in [
         "Enter switch",
         "←→ effort",
-        "Ctrl+G save for new sessions",
+        "Ctrl+G save",
+        "Shift+↑↓ group",
         "F2 details",
         "effort: high",
     ] {
@@ -617,17 +744,17 @@ fn large_catalogue_windows_and_counts() {
     for height in [9, 32] {
         s.set_list_height(height);
         press(&mut s, PickerKey::Home);
-        assert_eq!(route(&selected_key(&s).unwrap()), ("p0", "model-00"));
+        assert_eq!(selected_key(&s), Some(provider("p0", false)));
         for _ in 0..100 {
             press(&mut s, PickerKey::PageDown);
         }
-        assert_eq!(route(&selected_key(&s).unwrap()), ("p19", "model-29"));
+        assert_eq!(selected_key(&s), Some(provider("p19", false)));
         for _ in 0..100 {
             press(&mut s, PickerKey::PageUp);
         }
-        assert_eq!(route(&selected_key(&s).unwrap()), ("p0", "model-00"));
+        assert_eq!(selected_key(&s), Some(provider("p0", false)));
         press(&mut s, PickerKey::End);
-        assert_eq!(route(&selected_key(&s).unwrap()), ("p19", "model-29"));
+        assert_eq!(selected_key(&s), Some(provider("p19", false)));
     }
     type_filter(&mut s, "p19 model-29");
     assert_eq!(routes(&s).len(), 1);
@@ -668,7 +795,9 @@ mod independent {
             RowKey::Favourite { provider, model } | RowKey::Model { provider, model } => {
                 (provider.clone(), model.clone())
             }
-            RowKey::NotSetUp { provider } => (provider.clone(), String::new()),
+            RowKey::Provider { provider, .. } | RowKey::NotSetUp { provider } => {
+                (provider.clone(), String::new())
+            }
         }
     }
     fn routes(state: &ModelsState) -> Vec<(String, String)> {
@@ -677,20 +806,24 @@ mod independent {
             .unwrap()
             .rows
             .iter()
+            .filter(|row| !row.header)
             .filter_map(|row| row.key.as_ref().map(route))
             .collect()
     }
 
     #[test]
-    fn all_groups_starred_routes_once_in_starring_order_and_setup_last() {
-        let state = open();
+    fn all_lists_starred_routes_in_provider_order_and_setup_last() {
+        let mut state = open();
+        let current = drive::selected_key(&state).unwrap();
+        state.update(ModelsInput::SelectRow(super::provider("example-01", false)));
+        state.update(ModelsInput::SelectRow(current));
         let routes = routes(&state);
         assert_eq!(
             routes,
             vec![
-                ("example-01".into(), "reasoner-large".into()),
                 ("example-00".into(), "reasoner-large".into()),
                 ("example-00".into(), "chat-wide".into()),
+                ("example-01".into(), "reasoner-large".into()),
                 ("example-02".into(), String::new())
             ]
         );
@@ -818,7 +951,7 @@ mod independent {
         ] {
             drive::press(&mut state, key);
             let view = state.view().unwrap();
-            assert!(!view.rows[view.selected.unwrap()].header);
+            assert!(view.rows[view.selected.unwrap()].key.is_some());
         }
     }
 
@@ -839,15 +972,15 @@ mod independent {
                 ),
                 (600, 20)
             );
-            assert_eq!(routes(&state).len(), 600);
+            assert_eq!(routes(&state).len(), 30);
             drive::press(&mut state, PickerKey::Home);
             let first = drive::selected_key(&state);
             drive::press(&mut state, PickerKey::PageDown);
             assert_ne!(drive::selected_key(&state), first);
             drive::press(&mut state, PickerKey::End);
             assert_eq!(
-                route(&drive::selected_key(&state).unwrap()),
-                ("example-19".into(), "model-29".into())
+                drive::selected_key(&state),
+                Some(super::provider("example-19", false))
             );
             drive::press(&mut state, PickerKey::Home);
             assert_eq!(drive::selected_key(&state), first);
@@ -881,7 +1014,10 @@ mod independent {
             );
             let mut saved = SavedModels::empty();
             saved.favourites = vec!["example-00::reasoner-large".into()];
-            let state = drive::open_loaded(options, Some("high"), saved);
+            let mut state = drive::open_loaded(options, Some("high"), saved);
+            if !listed {
+                drive::press(&mut state, PickerKey::ChipsNext);
+            }
             let view = state.view().unwrap();
             let row = view
                 .rows
@@ -930,6 +1066,7 @@ mod independent {
         );
         drive::press(&mut state, PickerKey::ClearFilter);
         drive::press(&mut state, PickerKey::Home);
+        drive::press(&mut state, PickerKey::Down);
         state.update(ModelsInput::EffortReadFailed {
             session_id: drive::SID.into(),
             reason: "unavailable".into(),

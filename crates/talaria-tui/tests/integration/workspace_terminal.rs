@@ -5,7 +5,9 @@ use support::{Alac, ByteSink, Vt, assert_tags_once_in_order, live_view_sections,
 use talaria_tui::{
     history::PlainCellLines,
     live::LiveView,
+    pager::{Details, TranscriptEntry},
     terminal::{InlineTerminal, RestoreLink},
+    workspace::{Workspace, WorkspaceView, menu::MenuState},
 };
 
 fn terminal() -> (InlineTerminal<ByteSink>, ByteSink, Alac) {
@@ -81,6 +83,7 @@ fn text_finished_in_the_workspace_reaches_scrollback_once() {
     let last = talaria_core::session::Cell::User(talaria_core::session::UserCell {
         id: talaria_core::session::CellId::new(2),
         text: "last cell".into(),
+        expanded_paste: None,
     });
     term.commit(&[last], &PlainCellLines).unwrap();
     let during = emulator.absorb(&sink);
@@ -138,6 +141,61 @@ fn overlay_inside_the_workspace_returns_to_it() {
     term.leave_workspace().unwrap();
     emulator.absorb(&sink);
     assert_tags_once_in_order(&emulator.history_and_screen(), 3);
+}
+
+#[test]
+fn transient_menu_is_opaque_on_first_frame_and_restores_the_transcript() {
+    let (mut terminal, sink, mut emulator) = terminal();
+    emulator.resize(100, 36);
+    terminal.resize(100, 36).unwrap();
+    emulator.absorb(&sink);
+    let transcript = vec![Line::from("t".repeat(90)); 36];
+    terminal.commit_lines(transcript.clone()).unwrap();
+    emulator.absorb(&sink);
+
+    let footer = LiveView { sections: vec![] };
+    let mut menu = MenuState::shown();
+    menu.transient = true;
+    let mut view = WorkspaceView {
+        entries: &[TranscriptEntry::Lines(&transcript)],
+        details: Details::Expanded,
+        panel: talaria_core::layout::PanelVisibility::Hidden,
+        footer: &footer,
+        menu,
+        checklist: None,
+        checklist_expanded: false,
+        work: None,
+    };
+    let mut workspace = Workspace::default();
+    terminal.enter_workspace().unwrap();
+    let mut paint =
+        |terminal: &mut InlineTerminal<ByteSink>, emulator: &mut Alac, view: &WorkspaceView<'_>| {
+            terminal
+                .draw_workspace(|area, buffer| workspace.draw(view, area, buffer, &PlainCellLines))
+                .unwrap();
+            emulator.absorb(&sink);
+            emulator.screen()
+        };
+    let first = paint(&mut terminal, &mut emulator, &view);
+    assert_eq!(
+        first[0].trim_end(),
+        "Talaria   Session   Model   View   Voice   Settings   Help"
+    );
+    assert!(first[1].starts_with(&"t".repeat(90)));
+
+    view.menu.dropdown_open = true;
+    let open = paint(&mut terminal, &mut emulator, &view);
+    assert!(open[1].starts_with("tttttttttt    Sessions"));
+    assert!(open[1][22..40].chars().all(|ch| ch == ' '), "{open:?}");
+    assert!(open[1][40..].starts_with(&"t".repeat(50)));
+    assert!(open[2].contains("Fleet"));
+
+    view.menu.dropdown_open = false;
+    let closed = paint(&mut terminal, &mut emulator, &view);
+    assert_eq!(closed, first);
+    view.menu = MenuState::hidden();
+    let no_menu = paint(&mut terminal, &mut emulator, &view);
+    assert!(no_menu[0].starts_with(&"t".repeat(90)));
 }
 
 #[test]

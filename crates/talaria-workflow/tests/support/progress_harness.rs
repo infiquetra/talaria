@@ -182,6 +182,7 @@ impl<G: Gateway> Consumer<G> {
                 profile: profile_name(),
                 on_unknown: OnUnknown::Wait,
                 talaria_version: env!("CARGO_PKG_VERSION").into(),
+                build: Default::default(),
                 hermes: json!({}),
                 roster: json!({}),
                 approval_policy: json!({"mode":"finite-only"}),
@@ -323,6 +324,7 @@ impl<G: Gateway> Consumer<G> {
                 workflow_path: vec![],
                 launch: launch(),
                 request_id: request_id(self.dir.run_id(), &s.key, s.attempt),
+                report_baseline: None,
             })
             .await?;
         Ok(())

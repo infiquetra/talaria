@@ -152,6 +152,60 @@ async fn remote_authenticates_refreshes_and_redacts_errors() {
 }
 
 #[tokio::test]
+async fn remote_reads_a_child_session_with_the_selected_profile_after_refresh() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let name = RemoteName::parse("work").unwrap();
+    let store = TokenStore::new(temp.path(), name.clone());
+    store
+        .save(&TokenSet::for_test("stale", "refresh", i64::MAX, 1))
+        .unwrap();
+    let cfg = RemoteConfig {
+        name,
+        base_url: format!("http://{}/prefix", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+        provider: None,
+    };
+    let peer = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_request(&mut stream).await;
+        let route = "GET /prefix/api/sessions/child_1?profile=work%2F%26+team ";
+        assert!(request.starts_with(route));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer stale")
+        );
+        reply(&mut stream, 401, "{}").await;
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_request(&mut stream).await;
+        assert!(request.starts_with("POST /prefix/auth/native/refresh "));
+        reply(&mut stream, 200, r#"{"token_type":"Bearer","access_token":"fresh","refresh_token":"next","expires_at":4102444800,"provider":"basic","user_id":"fixture"}"#).await;
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_request(&mut stream).await;
+        assert!(request.starts_with(route));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer fresh")
+        );
+        reply(&mut stream, 200, r#"{"id":"child_1","profile":"work/& team","model_config":{"_subagent_id":"sa-1","reasoning_config":{"effort":"max"}}}"#).await;
+    });
+    let session = hermes_client::remote::stored_child_session(
+        &cfg,
+        &store,
+        "work/& team",
+        "child_1",
+        Duration::from_secs(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(session["model_config"]["reasoning_config"]["effort"], "max");
+    peer.await.unwrap();
+}
+
+#[tokio::test]
 async fn caps_inputs_and_response_without_widening_ordinary_requests() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let relay = local(listener.local_addr().unwrap());

@@ -148,6 +148,7 @@ async fn run() -> Result<i32, Box<dyn std::error::Error>> {
                 profile: profile.clone(),
                 on_unknown: OnUnknown::Wait,
                 talaria_version: env!("CARGO_PKG_VERSION").into(),
+                build: Default::default(),
                 hermes: json!({}),
                 roster: snapshot,
                 approval_policy: json!({"finite":true}),

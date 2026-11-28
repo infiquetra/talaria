@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::{fs, path::Path};
 pub(crate) const INLINE_LIMIT: usize = 256 * 1024;
 pub(crate) const RECORD_LIMIT: usize = 1024 * 1024;
-fn put(dir: &Path, bytes: &[u8]) -> Result<BlobRef, JournalError> {
+pub(crate) fn put(dir: &Path, bytes: &[u8]) -> Result<BlobRef, JournalError> {
     let sha256 = sha(bytes);
     immutable(&dir.join("blobs"), &sha256, bytes)?;
     Ok(BlobRef {
@@ -121,7 +121,7 @@ pub(crate) fn outcome(
             Ok(match cut_short {
                 Some(cut_short) => AgentOutcome::CutShort {
                     value,
-                    cut_short: *cut_short,
+                    cut_short: cut_short.clone(),
                 },
                 None => AgentOutcome::Completed(value),
             })
@@ -129,6 +129,23 @@ pub(crate) fn outcome(
         CallOutcome::Failed { reason } => Ok(AgentOutcome::Failed {
             reason: reason.clone(),
         }),
+        CallOutcome::FailedWithReport {
+            reason,
+            path,
+            report_ref,
+        } => {
+            let value = serde_json::from_slice(&super::load_report_blob(dir, report_ref, line)?)
+                .map_err(|e| corrupt(line, e))?;
+            Ok(AgentOutcome::FailedWithReport {
+                reason: reason.clone(),
+                value,
+                report: crate::engine::RecoveredReport {
+                    path: path.clone(),
+                    sha256: report_ref.sha256.clone(),
+                    bytes: report_ref.bytes,
+                },
+            })
+        }
         CallOutcome::Skipped => Ok(AgentOutcome::Skipped),
         CallOutcome::Stopped { reason } => Ok(AgentOutcome::Stopped {
             reason: reason.clone(),
@@ -161,14 +178,17 @@ mod tests {
         let cut_short = CutShort {
             steps: Some(60),
             limit: Some(60),
+            saved_branch: Some("talaria/wf/run/call-0-saved".into()),
         };
         let stored = CallOutcome::from_agent(AgentOutcome::CutShort {
             value: json!("partial"),
-            cut_short,
+            cut_short: cut_short.clone(),
         });
+        // The call_finished record names the branch that holds the agent's saved work.
         assert_eq!(
             serde_json::to_value(&stored).unwrap(),
-            json!({"kind": "completed", "value": "partial", "cut_short": {"steps": 60, "limit": 60}})
+            json!({"kind": "completed", "value": "partial", "cut_short": {"steps": 60, "limit": 60,
+                "saved_branch": "talaria/wf/run/call-0-saved"}})
         );
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(

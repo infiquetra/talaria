@@ -1,0 +1,18 @@
+schema = 1
+name = "Nord"
+extends = "dark"
+follow_hermes_skin = false
+
+[palette]
+background = "#2e3440"
+surface = "#3b4252"
+foreground = "#eceff4"
+muted = "#c5cede"
+disabled = "#a8b4c9"
+border = "#8994a2"
+primary = "#88c4d0"
+accent = "#8fc4bb"
+success = "#a3c48c"
+warning = "#ebcb8b"
+error = "#dba7ac"
+attention = "#dda797"

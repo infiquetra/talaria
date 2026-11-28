@@ -382,6 +382,7 @@ colors = "auto"
 reduced_motion = false
 work_panel = false
 menu_bar = false
+mouse = false
 reasoning = "collapsed"
 [fleet]
 enabled = true
@@ -434,10 +435,12 @@ blocked approvals use validated keys explicitly submitted by the operator. Unkno
 remain idle with an unknown indicator.
 
 `status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees the default-deny environment described below plus `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark`
-(`/theme` overrides it for one session); `theme.follow_hermes_skin = false` keeps Talaria's colours; `theme.colors` is `auto`, `truecolor`, `256`, `16` or `none`.
+and supplies the default background. `theme.follow_hermes_skin = false` keeps Talaria's colours. `theme.colors` accepts `auto`, `truecolor`, `256`, `16` or `none`.
 `theme.file` selects `themes/<id>.toml` beside `config.toml`; `[theme.profiles."<profile-id>"] file`
-overrides it for that profile. `/theme use <id>` overrides both for this session, `/theme use`
-returns to configuration, and `/theme reload` rereads the active file. None writes configuration.
+overrides it for that profile. Choosing a file with Enter or `/theme use <id>` saves an override
+for the active profile in `~/.talaria/theme-selection.json`. `/theme use` restores the configured
+file. `/theme light` and `/theme dark` also persist for the profile. `/theme auto` clears the
+saved background. `/theme reload` rereads the saved selection and theme file.
 `ui.reduced_motion` stops timed changes except counters, which change at most once a second. A paste of `paste_collapse_lines` lines or `paste_collapse_chars` characters
 becomes a label (0 turns that rule off). `TALARIA_THEME` beats `theme.mode`, `TALARIA_REDUCED_MOTION` beats `ui.reduced_motion`, and a non-empty `NO_COLOR` turns colour
 off. See [themes](themes.md).
@@ -624,6 +627,9 @@ start after a Hivecode-routed prompt in the foreground session, or the run list 
 `model_favourite` Ctrl+F, `model_refresh` Ctrl+R, `model_chips_next` Tab,
 `model_chips_prev` Shift+Tab, and `model_details` F2 or Ctrl+E. The chips change the list view
 (All, Starred, Configured, Needs setup); Ctrl+G still changes whether a choice is saved for new sessions.
+Shift+Up and Shift+Down jump between visible groups. Enter on a provider heading expands or
+folds it. Shift+Left folds the selected model's provider. Searching includes folded models.
+Ctrl+F marks a model in place in the provider list.
 These actions resolve before composer keys while the picker is open. The `/effort` selector
 uses the same `effort_down`, `effort_up` and `model_scope` keys, so a rebinding applies to both.
 Typing always filters,
@@ -636,16 +642,17 @@ Enter or Y, Esc or N.
 
 The transcript (`transcript_open`, Ctrl+O, which also closes it) has its own key context: plain
 letters there never reach the draft. `transcript_open` is checked before the transcript keys, and
-the key names that screen prints are the built-in defaults, not your bindings. Esc and Ctrl+C are
-fixed there: Esc cancels, then clears a search, then closes; Ctrl+C closes; neither interrupts the
-agent. The session picker context is separate from the composer too (`j` moves down there and picks
+the key names that screen prints are the built-in defaults. Esc leaves the search field, clears
+the search, then closes the transcript. Across overlays Ctrl+C interrupts the foreground turn
+and keeps the current field or selection. Ctrl+Z suspends to a shell with job control and
+`fg` returns to the overlay. The session picker has its own keys (`j` moves down there and picks
 JSON in its export dialog); `session_picker_open` has no default; Esc and Ctrl+C are fixed.
 
 The fleet overlay (`/fleet`, or `fleet_view_open`, which has no default) has its own context:
 `fleet_peek` attaches and shows a session (moving the cursor never does), `fleet_reply` queues a
 prompt behind its running turn, `fleet_stop` asks first and stops on a second press,
 `fleet_answer` hands keys to the peeked card, and `fleet_open` makes the row the foreground
-session. Esc and Ctrl+C are fixed there and never stop anything; in the card, Esc is the card's.
+session. Esc returns from answer focus to the list. Ctrl+C acts on the foreground session.
 `fleet_new` opens a dialog that starts a background session (`talaria --bg` from a shell does the
 same), and `fleet_new_worktree` starts it in a new git worktree at `.worktrees/talaria-<name>` on
 the branch `talaria/<name>`, cut from freshly fetched `origin`. Files listed in `.worktreeinclude`
@@ -658,7 +665,7 @@ commits (read-only), `review_stage`, `review_stage_all` and `review_unstage_all`
 (`commit_submit` commits, `commit_draft` asks the session's own model for a message),
 `review_push` pushes the branch to `origin` (never forced, never the default branch) and
 `review_pull_request` opens a draft pull request with `gh`; `review_open_pr` opens it in the
-browser and `review_refresh` reloads. Esc and Ctrl+C are fixed there and never act.
+browser and `review_refresh` reloads. Esc backs out of the current editor or review.
 
 A key is modifiers (`ctrl`, `alt`, `shift`, `super`, each once) and one key joined by `+`, in any
 case: a character, `enter`, `esc`, `tab`, `backspace`, `delete`, `insert`, arrows, `home`, `end`,
@@ -1021,7 +1028,7 @@ answer the probe gets no in-band record.
 | `mode` | string | auto | auto, light, dark | auto |
 | `follow_hermes_skin` | boolean | true | true or false | true |
 | `colors` | string | auto | auto, truecolor, 256, 16, none | auto |
-| `file` | string | unset | built-in `terminal`, `ember` or `paper`, or a theme identifier of at most 64 lower-case letters, digits, underscores or dashes; starts with a letter or digit | quiet-amber |
+| `file` | string | unset | A [built-in or custom theme](themes.md). Identifiers start with a lower-case letter or digit and allow up to 64 lower-case letters, digits, underscores or dashes. | homebrew |
 | `profiles."<profile-id>".file` | string | unset | same identifier rules; overrides `file` for this profile | quiet-amber |
 
 ### `ui`
@@ -1031,7 +1038,12 @@ answer the probe gets no in-band record.
 | `reduced_motion` | boolean | false | true or false | false |
 | `work_panel` | boolean | false | true or false | false |
 | `menu_bar` | boolean | false | true or false | false |
+| `mouse` | boolean | false | true or false | true |
 | `reasoning` | string | collapsed | collapsed, full | full |
+
+`mouse` enables wheel navigation in the transcript and workflow views. Use
+`/layout mouse` to toggle it in a running client. In a run,
+click a branch or an agent to select it. Ordinary chat keeps native text selection and scrollback.
 
 `work_panel` enables the optional full-screen workspace at startup. Alt+D
 (`layout_panel`) and `/layout panel` change the current view without saving this

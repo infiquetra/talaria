@@ -2,7 +2,12 @@
 
 use std::time::Instant;
 
+use serde_json::json;
 use talaria_app::app::{AppEffect, AppMessage, AppState, UserAction, update};
+use talaria_app::commands::CommandReply;
+use talaria_app::sessions::OpenedSession;
+use talaria_core::commands::{CommandsInput, PaletteInput};
+use talaria_core::session::Cell;
 
 #[test]
 fn routing_order_card_queue_palette_composer() {
@@ -10,7 +15,10 @@ fn routing_order_card_queue_palette_composer() {
     state.draft = "/he".into();
     state.palette.open = true;
 
-    let effects = update(&mut state, AppMessage::ForegroundKey(UserAction::Interrupt));
+    let effects = update(
+        &mut state,
+        AppMessage::ForegroundKey(UserAction::InterruptKey),
+    );
     assert!(!state.palette.open, "Esc closes the palette");
     assert_eq!(state.draft, "/he");
     assert!(
@@ -35,6 +43,139 @@ fn edited(text: &str, recalled: bool) -> AppMessage {
         recalled,
         now: Instant::now(),
     })
+}
+
+#[test]
+fn escape_clears_only_the_bare_slash() {
+    let mut state = AppState::new("palette-dismiss");
+    for text in ["/", "/plan task"] {
+        let _ = update(&mut state, edited(text, false));
+        assert!(state.palette.open);
+        let effects = update(
+            &mut state,
+            AppMessage::ForegroundKey(UserAction::Palette(PaletteInput::Escape)),
+        );
+        assert!(!state.palette.open);
+        if text == "/" {
+            assert!(state.draft.is_empty());
+            assert!(
+                effects
+                    .iter()
+                    .any(|effect| matches!(effect, AppEffect::LoadDraft(text) if text.is_empty()))
+            );
+        } else {
+            assert_eq!(state.draft, text);
+            let _ = update(&mut state, edited(text, false));
+            assert!(!state.palette.open);
+            let _ = update(&mut state, edited("/plan tasks", false));
+            assert!(state.palette.open);
+        }
+    }
+}
+
+#[test]
+fn programmatic_close_preserves_the_bare_slash() {
+    let mut state = AppState::new("palette-close");
+    let _ = update(&mut state, edited("/", false));
+    let effects = update(
+        &mut state,
+        AppMessage::User(UserAction::Palette(PaletteInput::Close)),
+    );
+    assert_eq!(state.draft, "/");
+    assert!(!state.palette.open);
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::LoadDraft(_)))
+    );
+}
+
+fn open_session(state: &mut AppState, id: &str, stored_id: &str) {
+    let mut value: serde_json::Value =
+        serde_json::from_str(include_str!("../data/running_turn.json")).expect("snapshot");
+    value["session_id"] = json!(id);
+    value["stored_session_id"] = json!(stored_id);
+    value["running"] = json!(false);
+    let snapshot = serde_json::from_value(value).expect("contract snapshot");
+    let _ = update(
+        state,
+        AppMessage::Opened {
+            opened: OpenedSession::from_snapshot(snapshot),
+            notice: None,
+        },
+    );
+}
+
+fn collision_reply(
+    state: &mut AppState,
+    session: Option<&str>,
+    request_id: u64,
+    reply_id: u64,
+) -> Vec<AppEffect> {
+    state.commands.bound_session = session.map(str::to_owned);
+    state.commands.in_flight = Some(request_id);
+    update(
+        state,
+        AppMessage::Commands(CommandReply::Commands(CommandsInput::CatalogArrived {
+            request_id: reply_id,
+            result: serde_json::from_value(json!({
+                "pairs": [["/plan", "Plan"]],
+                "warning": "slash command /plan unavailable — name taken by built-in; use /skill plan"
+            }))
+            .expect("command catalogue"),
+        })),
+    )
+}
+
+fn collision_cells(state: &AppState) -> Vec<usize> {
+    state
+        .opened
+        .as_ref()
+        .expect("open session")
+        .state
+        .cells()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, cell)| match cell {
+            Cell::Notice(notice)
+                if notice.text.contains("built-in /plan")
+                    && notice.text.contains("/skill plan") =>
+            {
+                Some(index)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn plan_collision_commits_one_notice_for_each_affected_session() {
+    let mut state = AppState::new("plan-collision");
+    let _ = collision_reply(&mut state, None, 1, 1);
+    open_session(&mut state, "session-one", "stored-one");
+    let _ = collision_reply(&mut state, Some("session-one"), 2, 1);
+    assert!(collision_cells(&state).is_empty(), "stale reply");
+    let _ = collision_reply(&mut state, Some("another-session"), 2, 2);
+    assert!(
+        collision_cells(&state).is_empty(),
+        "reply for another session"
+    );
+
+    let effects = collision_reply(&mut state, Some("session-one"), 3, 3);
+    let cells = collision_cells(&state);
+    assert_eq!(cells.len(), 1);
+    assert!(effects.iter().any(
+        |effect| matches!(effect, AppEffect::CommitCells(range) if range.contains(&cells[0]))
+    ));
+
+    let _ = collision_reply(&mut state, Some("session-one"), 4, 4);
+    let _ = update(&mut state, edited("/plan", false));
+    assert!(state.palette.footer.is_none());
+    assert_eq!(collision_cells(&state), cells);
+
+    open_session(&mut state, "session-two", "stored-two");
+    let _ = collision_reply(&mut state, Some("session-two"), 5, 5);
+    assert_eq!(collision_cells(&state).len(), 1);
 }
 
 fn submitted(state: &mut AppState, text: &str) -> Vec<AppEffect> {

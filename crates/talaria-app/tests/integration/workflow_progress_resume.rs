@@ -48,6 +48,7 @@ async fn open_stored(runtime: &str, stored: &str, snapshot: Value) -> ProgressSt
             profile: "fixture".into(),
             on_unknown: OnUnknown::Wait,
             talaria_version: "dev".into(),
+            build: Default::default(),
             hermes: json!({}),
             roster: json!({}),
             approval_policy: json!({}),

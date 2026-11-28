@@ -122,6 +122,9 @@ impl AdmissionGate for PausingGate {
     fn count_untracked_usage(&self, id: &str, reading: crate::tokens::Reading) {
         self.inner.count_untracked_usage(id, reading);
     }
+    fn run_stopping(&self) -> bool {
+        self.state.stopping.load(Ordering::SeqCst)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -249,6 +252,14 @@ pub enum AnswerError {
     },
     #[error("{0}")]
     Journal(#[from] JournalError),
+    #[error(
+        "use-reply answers only an agent that was stopped; {key} attempt {attempt} episode {episode} is not parked for that reason, so answer fail, rerun or abort"
+    )]
+    NotStopped {
+        key: String,
+        attempt: u32,
+        episode: u32,
+    },
 }
 pub fn answer_parked(
     runs_dir: &Path,
@@ -259,6 +270,20 @@ pub fn answer_parked(
     resolution: Resolution,
 ) -> Result<(), AnswerError> {
     let dir = RunDir::open(&runs::find_run(runs_dir, target)?)?;
+    if resolution == Resolution::UseReply {
+        let stopped = read_records(dir.path())?.iter().any(|line| {
+            matches!(&line.record, crate::journal::Record::CallAttention {
+                key: k, attempt: a, episode: e, cause: crate::journal::AttentionCause::Stopped, ..
+            } if k == key && *a == attempt && *e == episode)
+        });
+        if !stopped {
+            return Err(AnswerError::NotStopped {
+                key: key.into(),
+                attempt,
+                episode,
+            });
+        }
+    }
     match dir.request_resolution(key, attempt, episode, resolution) {
         Ok(()) => Ok(()),
         Err(JournalError::ResolutionPending { .. }) => Err(AnswerError::AlreadyAnswered {
@@ -506,6 +531,7 @@ mod tests {
             phase: None,
             prompt: "p".into(),
             schema: None,
+            report_file: None,
             tier: None,
             model: None,
             provider: None,

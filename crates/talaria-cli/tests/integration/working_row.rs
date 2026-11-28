@@ -86,8 +86,8 @@ fn working_row_sits_above_the_composer_until_the_turn_completes() {
         "the row names the interrupt key: {row:?}"
     );
     assert!(
-        next.trim_start().starts_with('╭') || next.trim_start().starts_with('┌'),
-        "the composer's top border sits directly under the working row, not {next:?}:\n{screen}"
+        next.starts_with('╭') && next.ends_with('╮'),
+        "the composer title sits directly under the working row, saw {next:?}:\n{screen}"
     );
 
     // Esc asks for a second press: the first only arms the confirmation.
@@ -148,6 +148,45 @@ fn wait_row(terminal: &support::Terminal, offers: bool, what: &str) {
         "{what}:\n{}",
         terminal.screen_text()
     );
+}
+
+/// Ctrl+C targets the foreground turn even from an editable field in an overlay.
+#[test]
+fn session_search_keeps_its_query_while_interrupting_the_turn() {
+    let home = temp_home();
+    let gateway = StandaloneGateway::start(home.path());
+    let id = format!("local-5ee5a124{}", "0".repeat(56));
+    let mut snapshot = mock_gateway::recorded_resume_snapshot();
+    snapshot["session_id"] = json!(id);
+    snapshot["stored_session_id"] = json!(id);
+    snapshot["prompts"] = json!([]);
+    snapshot["running"] = json!(true);
+    gateway.set_resume_snapshot(snapshot);
+
+    let mut terminal = Launch::new(home.path())
+        .args(&["attach", &id, "--profile", "fixture"])
+        .answer_queries()
+        .spawn();
+    let limit = Duration::from_secs(8);
+    assert!(terminal.wait_for_text("── Resumed: ", limit));
+    terminal.type_keys("/resume");
+    assert!(terminal.wait_for_text("/resume", limit));
+    // Let the composer's fast-paste window close before sending a separate Enter press.
+    std::thread::sleep(Duration::from_millis(300));
+    terminal.type_keys("\r");
+    assert!(
+        terminal.wait_for_text("/ search", limit),
+        "{}",
+        terminal.screen_text()
+    );
+    terminal.type_keys("/needl");
+    assert!(terminal.wait_for_text("needl", limit));
+    terminal.type_keys("\x03");
+    let interrupt = gateway.wait_request("session.interrupt", 0, limit);
+    assert!(interrupt.is_some(), "{}", terminal.screen_text());
+    terminal.type_keys("e");
+    assert!(terminal.wait_for_text("needle", limit));
+    assert!(terminal.screen_text().contains("Esc clear"));
 }
 
 /// While Esc would close a list or a selector instead of interrupting, the working row does not
@@ -363,22 +402,25 @@ fn theme_sample_never_pushes_the_composer_off_a_short_screen() {
         let screen = terminal.screen_text();
         let lines: Vec<&str> = screen.lines().collect();
         let working = lines.iter().position(|line| line.contains("✻ Working"));
-        let bottom = lines
-            .iter()
-            .position(|line| line.trim_start().starts_with('╰'));
+        let composer = lines.windows(3).position(|group| {
+            group[0].starts_with('╭')
+                && group[0].contains("Message")
+                && group[0].ends_with('╮')
+                && group[1].starts_with('│')
+                && group[1].contains("Type a message")
+                && group[1].ends_with('│')
+                && group[2].starts_with('╰')
+                && group[2].ends_with('╯')
+        });
         assert!(
-            working.is_some() && bottom.is_some() && working < bottom,
+            working.is_some() && composer.is_some() && working < composer,
             "{rows}x{cols}: the working row and the whole composer must stay on screen:\n{screen}"
         );
         assert_eq!(
-            screen.contains("Sample of the selected look"),
+            screen.contains("Transcript sample"),
             sample,
             "{rows}x{cols}: sample shown should be {sample}:\n{screen}"
         );
-        terminal.type_keys("\x1b");
-        std::thread::sleep(Duration::from_millis(200));
-        terminal.type_keys("\x03");
-        let _ = terminal.finish(Duration::from_secs(10));
     }
 }
 

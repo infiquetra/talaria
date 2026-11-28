@@ -8,7 +8,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Widget};
+use ratatui::widgets::{Clear, Paragraph, Widget, Wrap};
 use talaria_core::review::{
     BranchHead, ChangedFile, DiffContent, EditorView, FileStatus, PrLabel, ReviewDecision,
     ReviewFocus, ReviewView, Scope,
@@ -26,8 +26,6 @@ const MIN_HEIGHT: u16 = 12;
 const SPLIT_HEIGHT: u16 = 24;
 /// The fewest rows the message area of the commit editor gets.
 const MIN_EDITOR_ROWS: usize = 5;
-/// Shown when the window is too small to draw the review.
-const TOO_SMALL: &str = "Window too small for the review. Esc goes back.";
 /// Shown before the first listing arrives.
 const LOADING: &str = "Loading changes\u{2026}";
 
@@ -55,8 +53,30 @@ fn draw_review_inner(
     styles: Option<&crate::theme::surfaces::ViewStyles>,
 ) {
     Clear.render(area, buf);
+    if area.is_empty() {
+        return;
+    }
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        put(buf, area.x, area.y, TOO_SMALL, area.width, theme.meta);
+        Paragraph::new(format!(
+            "Window too small for the review. Use at least {MIN_WIDTH} columns and {MIN_HEIGHT} rows."
+        ))
+            .style(theme.meta)
+            .wrap(Wrap { trim: true })
+            .render(
+                Rect {
+                    height: area.height - 1,
+                    ..area
+                },
+                buf,
+            );
+        put(
+            buf,
+            area.x,
+            area.bottom() - 1,
+            "Esc goes back",
+            area.width,
+            theme.meta,
+        );
         return;
     }
     let width = area.width;
@@ -81,7 +101,8 @@ fn draw_review_inner(
             theme.output,
         );
     }
-    put(buf, area.x, footer_y, &view.footer, width, theme.meta);
+    let footer = crate::footer::with_recovery(&view.footer, width);
+    put(buf, area.x, footer_y, &footer, width, theme.meta);
 
     let body = Rect::new(area.x, area.y + 2, width, notice_y - area.y - 2);
     if let Some(editor) = &view.editor {
@@ -638,9 +659,11 @@ mod tests {
     fn a_small_window_says_so_even_at_zero_files() {
         let state = state_with(vec![]);
         let lines = screen(&state, 59, 20);
-        assert!(lines[0].starts_with("Window too small for the review. Esc goes back."));
+        assert!(lines[0].starts_with("Window too small for the review."));
+        assert!(lines[19].starts_with("Esc goes back"));
         let lines = screen(&state, 80, 11);
         assert!(lines[0].starts_with("Window too small"));
+        assert!(lines[10].starts_with("Esc goes back"));
     }
 
     #[test]

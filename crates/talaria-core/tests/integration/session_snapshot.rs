@@ -431,6 +431,36 @@ fn resumed(messages: Value, running: bool) -> SessionState {
 }
 
 #[test]
+fn live_and_resumed_user_rows_have_the_same_paste_without_workflow_instructions() {
+    use talaria_core::session::{Event, SessionId, update};
+
+    let label = "[Pasted text #1 +5 lines]";
+    let paste = "line one\n\tline two\nline three\nline four\nline five";
+    let resume = resumed(json!([{"role": "user", "text": paste}]), false);
+    assert!(matches!(&resume.cells()[0], Cell::User(user) if user.transcript_text() == paste));
+
+    for event in [
+        Event::Submit {
+            text: paste.into(),
+            display: label.into(),
+            submission_id: "paste".into(),
+            attachments: Vec::new(),
+        },
+        Event::SubmitCommand {
+            text: talaria_core::hivecode::follow_up_with_model(paste, Some("fixture on fixture")),
+            display: label.into(),
+            submission_id: "hivecode".into(),
+        },
+    ] {
+        let mut state = SessionState::empty(SessionId::new(SESSION));
+        let _ = update(&mut state, event);
+        assert!(matches!(&state.cells()[0],
+            Cell::User(user) if user.text == label && user.transcript_text() == paste
+        ));
+    }
+}
+
+#[test]
 fn snapshot_marks_only_the_reply_less_final_reasoning() {
     let messages = json!([
         {"role": "user", "text": "first question"},

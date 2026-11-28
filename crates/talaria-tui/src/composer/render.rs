@@ -13,6 +13,7 @@ use crate::history::sanitize;
 use crate::keys::Action;
 use crate::live::LiveSection;
 use crate::theme::BorderPreset;
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// One drawn cell: its text and style.
 type Cell = (String, Style);
@@ -22,6 +23,8 @@ type Cell = (String, Style);
 pub struct ComposerSection<'a> {
     composer: &'a super::Composer,
     border_preset: BorderPreset,
+    conversation: Option<&'a str>,
+    focused: bool,
 }
 
 impl<'a> ComposerSection<'a> {
@@ -29,6 +32,8 @@ impl<'a> ComposerSection<'a> {
         Self {
             composer,
             border_preset: BorderPreset::Rounded,
+            conversation: None,
+            focused: false,
         }
     }
 
@@ -38,22 +43,32 @@ impl<'a> ComposerSection<'a> {
         self
     }
 
+    /// Draw a conversation draft with its destination and effective shortcuts.
+    pub fn in_conversation(mut self, title: &'a str, focused: bool) -> Self {
+        self.conversation = Some(title);
+        self.focused = focused;
+        self
+    }
+
     /// Draw with the selected frame preset while retaining the prepared draft.
-    pub fn render_with_theme(
-        &self,
-        area: Rect,
-        buf: &mut Buffer,
-        views: &crate::theme::surfaces::ViewStyles,
-    ) {
+    pub fn render_with_theme(&self, area: Rect, buf: &mut Buffer, views: &ViewStyles) {
         let section = Self {
             composer: self.composer,
+            conversation: self.conversation,
+            focused: self.focused,
             border_preset: if views.active() {
                 views.border_preset()
             } else {
                 self.border_preset
             },
         };
-        section.render(area, buf);
+        if let (Some(title), Some(prepared)) = (section.conversation, self.composer.prepared)
+            && prepared.boxed
+        {
+            section.render_conversation(title, &prepared, area, buf, views);
+        } else {
+            section.render(area, buf);
+        }
         views.finish(
             area,
             buf,
@@ -86,22 +101,29 @@ impl<'a> ComposerSection<'a> {
         let text = composer.draft.text();
         let dim = Style::default().add_modifier(Modifier::DIM);
         let reversed = Modifier::REVERSED;
+        let show_caret = self.conversation.is_none() || self.focused;
         let mut out: Vec<Cell> = Vec::new();
         if text.is_empty() {
             if composer
                 .vim_mode()
                 .is_some_and(|mode| mode != VimMode::Insert)
             {
-                out.push((" ".to_string(), Style::default().add_modifier(reversed)));
+                if show_caret {
+                    out.push((" ".to_string(), Style::default().add_modifier(reversed)));
+                }
                 return out;
             }
-            let placeholder = composer.placeholder();
+            let placeholder = if self.conversation.is_some() {
+                "Type a message".to_owned()
+            } else {
+                composer.placeholder()
+            };
             for (position, cluster) in placeholder.graphemes(true).enumerate() {
                 if out.len() + UnicodeWidthStr::width(cluster) > cells {
                     break;
                 }
                 let mut style = dim;
-                if position == 0 {
+                if position == 0 && show_caret {
                     style = style.add_modifier(reversed);
                 }
                 push_cluster(&mut out, cluster, style);
@@ -123,7 +145,7 @@ impl<'a> ComposerSection<'a> {
         let selection = composer
             .vim_state()
             .and_then(|state| state.selection(text, caret));
-        let caret_here = row_of(rows, caret) == index;
+        let caret_here = row_of(rows, caret) == index && show_caret;
         let mut caret_drawn = false;
         for (offset, cluster) in text[row.start..row.end].grapheme_indices(true) {
             let mut style = Style::default();
@@ -252,7 +274,7 @@ impl<'a> ComposerSection<'a> {
             border,
             horizontal,
         );
-        if let Some(title) = &self.composer.title {
+        if let Some(title) = self.composer.title.as_deref() {
             let hint_cells = Self::top_hint(prepared).map_or(0, |hint| hint.chars().count() + 1);
             let room = interior.saturating_sub(1 + hint_cells);
             let mut placed: Vec<Cell> = vec![(" ".to_string(), Style::default())];
@@ -285,13 +307,8 @@ impl<'a> ComposerSection<'a> {
             lines.push(line);
         }
 
-        let mut bottom = border_cells(
-            interior,
-            self.bottom_hint(prepared).as_deref(),
-            dim,
-            border,
-            horizontal,
-        );
+        let hint = self.bottom_hint(prepared);
+        let mut bottom = border_cells(interior, hint.as_deref(), dim, border, horizontal);
         if let Some(mode) = self.mode_cells(interior.saturating_sub(1)) {
             bottom = vec![(horizontal.to_string(), border); interior];
             if !bottom.is_empty() {
@@ -303,6 +320,121 @@ impl<'a> ComposerSection<'a> {
         }
         lines.push(framed(bottom_left, bottom, bottom_right, border));
         draw_lines(&lines, area, buf);
+    }
+
+    fn render_conversation(
+        &self,
+        conversation: &str,
+        prepared: &Prepared,
+        area: Rect,
+        buf: &mut Buffer,
+        views: &ViewStyles,
+    ) {
+        let [
+            top_left,
+            top_right,
+            bottom_left,
+            bottom_right,
+            horizontal,
+            vertical,
+        ] = self.border_glyphs();
+        let width = usize::from(prepared.width.min(area.width));
+        let interior = width.saturating_sub(2);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let border = if self.border_preset == BorderPreset::None {
+            Style::default()
+        } else if self.focused {
+            views.inline(t::COMPOSER_BORDER_FOCUSED, self.composer.style.border)
+        } else {
+            views.inline(t::COMPOSER_BORDER, self.composer.style.border)
+        };
+        let marker_style = if self.focused {
+            views.inline(t::COMPOSER_MARKER, self.composer.style.marker)
+        } else {
+            views.inline(t::COMPOSER_BORDER, self.composer.style.border)
+        };
+        let label = views.inline(t::COMPOSER_TEXT, Style::default()).bold();
+        let muted = views.inline(t::COMPOSER_PLACEHOLDER, dim);
+        let room = interior.saturating_sub(2);
+        let above = Self::top_hint(prepared)
+            .filter(|hint| hint.width() + 6 <= room)
+            .map(|hint| format!(" {hint} "));
+        let title_room = room.saturating_sub(above.as_deref().map_or(0, UnicodeWidthStr::width));
+        let title = self.composer.title.as_deref().unwrap_or(conversation);
+        let mut top = border_cells(interior, above.as_deref(), muted, border, horizontal);
+        let mut title_cells = fit_title(title, title_room);
+        if !title_cells.is_empty() {
+            title_cells.insert(0, (" ".to_owned(), Style::default()));
+            title_cells.push((" ".to_owned(), Style::default()));
+            for (slot, (text, _)) in top.iter_mut().zip(title_cells) {
+                *slot = (text, label);
+            }
+        }
+
+        let mut lines = vec![framed(top_left, top, top_right, border)];
+        let text_width = prepared.text_cells.min(interior.saturating_sub(5));
+        for offset in 0..prepared.shown {
+            let mut line = vec![(" ".to_owned(), Style::default())];
+            let marker = match (offset, self.border_preset) {
+                (0, BorderPreset::Ascii) => "> ",
+                (0, _) => "› ",
+                _ => "  ",
+            };
+            extend_cells(&mut line, marker, marker_style);
+            let mut text = self.text_cells(prepared.first + offset, text_width);
+            if self.composer.draft.text().is_empty() {
+                for (_, style) in &mut text {
+                    *style = muted.patch(*style);
+                }
+            }
+            line.extend(text);
+            pad(&mut line, interior);
+            lines.push(framed(vertical, line, vertical, border));
+        }
+        let mut hint_cells = Vec::new();
+        if let Some(hint) = self.bottom_hint(prepared) {
+            extend_cells(&mut hint_cells, &hint, muted);
+        } else if let Some(mode) = self.mode_cells(room) {
+            hint_cells = mode;
+        } else if self.focused {
+            self.shortcut_cells(&mut hint_cells, room, label, muted);
+        }
+        let mut bottom = border_cells(interior, None, muted, border, horizontal);
+        if !hint_cells.is_empty() {
+            hint_cells.insert(0, (" ".to_owned(), Style::default()));
+            hint_cells.truncate(room + 1);
+            hint_cells.push((" ".to_owned(), Style::default()));
+            for (slot, cell) in bottom.iter_mut().zip(hint_cells) {
+                *slot = cell;
+            }
+        }
+        lines.push(framed(bottom_left, bottom, bottom_right, border));
+        draw_lines(&lines, area, buf);
+    }
+
+    fn shortcut_cells(&self, cells: &mut Vec<Cell>, room: usize, key_style: Style, label: Style) {
+        let keys = &self.composer.keymap;
+        let newline = keys
+            .chords(Action::Newline)
+            .iter()
+            .find(|key| self.composer.keyboard_enhancement || !key.needs_enhancement())
+            .map(|key| key.label());
+        let start = cells.len();
+        for (key, action) in [
+            (keys.label(Action::Submit), "send"),
+            (newline, "newline"),
+            (Some("/".to_owned()), "commands"),
+            (keys.label(Action::TranscriptOpen), "transcript"),
+        ] {
+            let Some(key) = key else { continue };
+            let separator = if cells.len() == start { "" } else { "   " };
+            if cells.len() - start + separator.len() + key.width() + 1 + action.len() <= room {
+                extend_cells(cells, separator, label);
+                extend_cells(cells, &key, key_style);
+                extend_cells(cells, " ", label);
+                extend_cells(cells, action, label);
+            }
+        }
     }
 
     fn render_borderless(&self, prepared: &Prepared, area: Rect, buf: &mut Buffer) {
@@ -355,10 +487,20 @@ impl LiveSection for ComposerSection<'_> {
             return;
         };
         if prepared.boxed {
-            self.render_boxed(&prepared, area, buf);
+            if let Some(title) = self.conversation {
+                self.render_conversation(title, &prepared, area, buf, &ViewStyles::default());
+            } else {
+                self.render_boxed(&prepared, area, buf);
+            }
         } else {
             self.render_borderless(&prepared, area, buf);
         }
+    }
+}
+
+fn extend_cells(out: &mut Vec<Cell>, text: &str, style: Style) {
+    for cluster in text.graphemes(true) {
+        push_cluster(out, cluster, style);
     }
 }
 
@@ -390,10 +532,16 @@ fn border_cells(
 ) -> Vec<Cell> {
     let mut cells: Vec<Cell> = vec![(horizontal.to_string(), border); interior];
     if let Some(hint) = hint {
-        let hint: Vec<char> = hint.chars().collect();
-        let start = interior.saturating_sub(hint.len());
-        for (slot, c) in cells[start..].iter_mut().zip(hint) {
-            *slot = (c.to_string(), hint_style);
+        let start = interior.saturating_sub(hint.width());
+        let mut placed = Vec::new();
+        for cluster in hint.graphemes(true) {
+            if placed.len() + cluster.width() > interior {
+                break;
+            }
+            push_cluster(&mut placed, cluster, hint_style);
+        }
+        for (slot, cell) in cells[start..].iter_mut().zip(placed) {
+            *slot = cell;
         }
     }
     cells

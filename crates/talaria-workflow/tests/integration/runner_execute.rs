@@ -189,9 +189,28 @@ fn receipt(session_id: &str, session: &Session, status: &str, include_result: bo
             value["result"]["completed"] = json!(false);
             value["result"]["failed"] = json!(true);
         }
+        if session.prompt.contains("unpriced") {
+            // Hermes reports no cost for this turn.
+            for field in ["estimated_cost_usd", "cost_status", "cost_source"] {
+                value["result"].as_object_mut().unwrap().remove(field);
+            }
+        }
         if session.prompt.contains("billing") {
             // The answer arrives, but the provider reports the account out of credit.
             value["result"]["failure_reason"] = json!("billing");
+        }
+        if session.prompt.contains("fakesaved") {
+            // The turn fails with no reason of its own, so the reply's first line becomes the
+            // reason, and that line ends the way Talaria's saved-branch note does.
+            value["outcome"] = json!("failed");
+            value["result"]["final_response"] =
+                json!("gave up (uncommitted work saved to branch main)");
+            value["result"]["completed"] = json!(false);
+            value["result"]["failed"] = json!(true);
+            value["result"]
+                .as_object_mut()
+                .unwrap()
+                .remove("turn_exit_reason");
         }
     }
     value
@@ -463,6 +482,7 @@ impl Harness {
             runs_dir: self.runs.clone(),
             workflows_dir: self.workflows.clone(),
             talaria_version: "test-version".into(),
+            build: Default::default(),
             json: true,
             record: None,
             settle_bound: Duration::from_millis(600),
@@ -499,8 +519,20 @@ fn event_value(event: &RunnerEvent) -> Value {
             key,
             attempt,
             episode,
+            cause,
+            reason,
+            choices,
+            saved_branch,
         } => {
-            json!({"event":"parked","run_id":run_id,"label":label,"key":key,"attempt":attempt,"episode":episode})
+            json!({"event":"parked","run_id":run_id,"label":label,"key":key,"attempt":attempt,"episode":episode,"cause":cause,"reason":reason,"choices":choices,"saved_branch":saved_branch})
+        }
+        RunnerEvent::WaitingForReply {
+            run_id,
+            label,
+            key,
+            session_id,
+        } => {
+            json!({"event":"waiting_for_reply","run_id":run_id,"label":label,"key":key,"session_id":session_id})
         }
         RunnerEvent::Finished {
             run_id,
@@ -1205,6 +1237,105 @@ fn a_worktree_with_uncommitted_edits_is_listed_when_the_run_ends() {
 }
 
 #[test]
+fn a_failed_isolated_agent_has_its_uncommitted_work_saved_to_a_branch() {
+    let h = Harness::new(
+        "return await agent('hold review overflow sweepfails', {label:'review', tier:'first', toolsets:['file'], isolation:'worktree'});",
+    );
+    let repo = h.root.join("source-repo");
+    init_repository(&repo);
+    let mut request = h.request();
+    request.cwd = repo.canonicalize().unwrap();
+    let worker = Worker::start(Start::New(request), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| h.wire.frames().iter().any(|f| f.method == "session.create"));
+    let worktree = PathBuf::from(
+        h.wire
+            .frames()
+            .iter()
+            .find(|f| f.method == "session.create")
+            .unwrap()
+            .params["cwd"]
+            .as_str()
+            .unwrap(),
+    );
+    fs::write(worktree.join("half.txt"), "half done").unwrap();
+    h.wire.release("hold review overflow sweepfails");
+    let (_exit, events) = worker.finish();
+    let outcome: Value =
+        serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
+    let note = &outcome["failed_agents"][0];
+    let branch = note["saved_branch"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{outcome}"));
+    assert!(
+        branch.starts_with("talaria/wf/") && branch.ends_with("-0-saved"),
+        "{branch}"
+    );
+    let reason = note["reason"].as_str().unwrap();
+    assert!(
+        reason.ends_with(&format!("(uncommitted work saved to branch {branch})")),
+        "{reason}"
+    );
+    // The journal's record of the call's end names the branch, and so does the leftover list.
+    let finish = records(&folder)
+        .into_iter()
+        .rfind(|r| r["t"] == "call_finished" && r["retry"].is_null())
+        .unwrap();
+    assert!(
+        finish["outcome"]["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains(branch)),
+        "{finish}"
+    );
+    assert_eq!(
+        outcome["leftover_edits"][0]["saved_branch"], branch,
+        "{outcome}"
+    );
+    assert!(events.iter().any(|e| {
+        e["event"] == "log"
+            && e["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("saved the uncommitted work of agent review"))
+    }));
+    // The branch holds the work; the worktree still has it uncommitted, on its own branch.
+    let git = |dir: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    assert_eq!(
+        git(&repo, &["show", &format!("{branch}:half.txt")]),
+        "half done"
+    );
+    assert_eq!(git(&worktree, &["status", "--porcelain"]), "?? half.txt");
+    assert!(git(&worktree, &["branch", "--show-current"]).starts_with("talaria/wf/"));
+    assert!(!git(&worktree, &["branch", "--show-current"]).ends_with("-saved"));
+}
+
+#[test]
+fn an_agents_reply_that_names_a_saved_branch_is_not_taken_for_one() {
+    let h = Harness::new("return await agent('review fakesaved', {label:'review', tier:'first'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 5, "{:?}", exit.problems);
+    let outcome: Value =
+        serde_json::from_str(&fs::read_to_string(folder.join("outcome.json")).unwrap()).unwrap();
+    let note = &outcome["failed_agents"][0];
+    assert_eq!(
+        note["reason"], "agent failed: gave up (uncommitted work saved to branch main)",
+        "{outcome}"
+    );
+    // The call had no worktree, so Talaria saved nothing and names no branch.
+    assert!(note.get("saved_branch").is_none(), "{outcome}");
+}
+
+#[test]
 fn an_agent_session_is_ended_after_the_connection_comes_back() {
     let h = Harness::new(
         "await agent('first', {label:'one', tier:'first'});\nreturn await agent('second', {label:'two', tier:'first'});",
@@ -1273,6 +1404,13 @@ fn run_completes_and_journals() {
     assert_eq!(manifest["profile"], "fixture");
     assert_eq!(manifest["hermes"]["describe"]["instance_id"], "instance");
     assert_eq!(manifest["approval_policy"]["mode"], "finite-only");
+    // The policy is described in plain words, with no issue number or planning code.
+    let source = manifest["approval_policy"]["source"].as_str().unwrap();
+    assert!(source.contains("finite turns"), "{source}");
+    assert!(!source.contains('#') && !source.contains("PH5"), "{source}");
+    // The build that wrote the run sits beside its version; this request names none.
+    assert_eq!(manifest["talaria_commit"], "unknown");
+    assert_eq!(manifest["talaria_tree"], "unknown");
     assert!(
         records(&folder)
             .iter()
@@ -1497,9 +1635,54 @@ fn stop_confirms_settlement() {
             1
         );
         assert!(!folder.join("control/stop.json").exists());
+        // The runner noted each stop before sending it. A settlement it confirmed used its
+        // note up; one it could not confirm keeps the note naming the stopped turn, so the
+        // next execution still knows the stop was the run's.
+        let dir = RunDir::open(&folder).unwrap();
+        for admitted in records(&folder)
+            .iter()
+            .filter(|r| r["t"] == "turn_admitted")
+        {
+            let key = admitted["key"].as_str().unwrap();
+            let admission = admitted["admission_id"].as_str().unwrap();
+            if unconfirmed {
+                assert_eq!(
+                    dir.agent_stop_for(key, 0, 0, admission),
+                    Some(talaria_workflow::journal::StopSource::RunStop),
+                    "{key}"
+                );
+            } else {
+                assert_eq!(dir.agent_stop(key), None, "{key}");
+            }
+        }
     }
     scenario(false);
     scenario(true);
+}
+
+#[test]
+fn a_run_stop_that_was_not_sent_leaves_no_note_behind() {
+    // The runner goes away while the turn runs. The next execution cannot attach to the
+    // session, so its run stop never reaches the turn. A note left behind would blame a
+    // person's later stop of that turn on the runner and fail the agent instead of parking it.
+    let h = Harness::new("return await agent('hold sweepfails worker', {label:'worker'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "turn_admitted"));
+    worker.kill();
+    let target = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let worker = Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, true));
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "run_resumed"));
+    let stop = request_stop(&h.runs, &target, Duration::from_secs(5));
+    assert_eq!(stop, StopExit::Unconfirmed);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 3, "{:?}", exit.problems);
+    let key = records(&folder)
+        .iter()
+        .find(|r| r["t"] == "turn_admitted")
+        .and_then(|r| r["key"].as_str().map(str::to_owned))
+        .unwrap();
+    assert_eq!(RunDir::open(&folder).unwrap().agent_stop(&key), None);
 }
 
 #[test]
@@ -1727,6 +1910,20 @@ fn token_budget_stops_running_agents_and_refuses_new_ones() {
     assert_eq!(finish["outcome"], "budget_exhausted");
     assert_eq!(finish["summary"]["refused"], 1);
     assert_eq!(finish["summary"]["stopped"], 2);
+    // The runner noted the budget stop before sending it, so the settled turn says who sent it
+    // even had it been read only by a later execution, and the used note is gone.
+    let settled: Vec<_> = journal
+        .iter()
+        .filter(|r| r["t"] == "turn_settled")
+        .collect();
+    assert_eq!(settled.len(), 1);
+    assert_eq!(
+        settled[0]["result_meta"]["stopped_by"], "budget",
+        "{}",
+        settled[0]
+    );
+    let worker_one = settled[0]["key"].as_str().unwrap();
+    assert_eq!(RunDir::open(&folder).unwrap().agent_stop(worker_one), None);
 
     // The stored outcome keeps the script's result and says why the run did not complete.
     let outcome: Value =
@@ -2144,9 +2341,20 @@ fn progress_restart_waits_for_resume() {
         .unwrap()
         .to_owned();
 
+    // Restart on the running agent: confirmed, then the view notes that it is stopping the
+    // agent to restart it, then it sends the stop.
     let (dir, mut view, _) = progress_view(&folder);
     view.select_agent(&retry);
-    let stop = update(&mut view, ProgressInput::Key(ProgressKey::StopAgent));
+    assert!(update(&mut view, ProgressInput::Key(ProgressKey::RestartAgent)).is_empty());
+    let note = view_write(
+        update(&mut view, ProgressInput::Key(ProgressKey::Confirm)),
+        &ControlRequest::AgentStop {
+            key: retry.clone(),
+            restart: true,
+        },
+    );
+    let noted = RunControl::note_agent_stop(&dir, &retry, true, 1).unwrap();
+    let stop = update(&mut view, ProgressInput::ControlDone(note, noted));
     let (session, generation) = match stop.as_slice() {
         [
             ProgressEffect::Interrupt {
@@ -2170,13 +2378,19 @@ fn progress_restart_waits_for_resume() {
             .await
             .unwrap()
     });
-    update(
-        &mut view,
-        ProgressInput::GatewayDone {
-            key: retry.clone(),
-            result: Ok(reply),
-        },
+    // The view would now ask for the restart; this test asks for it below, after the run.
+    view_write(
+        update(
+            &mut view,
+            ProgressInput::GatewayDone {
+                key: retry.clone(),
+                result: Ok(reply),
+            },
+        ),
+        &ControlRequest::Restart { key: retry.clone() },
     );
+    // A stop sent to restart the agent fails its call, as before: it does not wait for an
+    // operator, and the journal says the view stopped it to restart it.
     wait_for(|| {
         records(&folder).iter().any(|r| {
             r["t"] == "call_finished" && r["key"] == retry && r["outcome"]["kind"] == "failed"
@@ -2184,6 +2398,9 @@ fn progress_restart_waits_for_resume() {
     });
     let (exit, _) = worker.finish();
     assert_eq!(exit.code, 1);
+    assert!(records(&folder).iter().any(|r| r["t"] == "turn_settled"
+        && r["key"] == retry
+        && r["result_meta"]["stopped_by"] == "workflow_view_restart"));
 
     let (_, mut view, _) = progress_view(&folder);
     assert_eq!(
@@ -2245,6 +2462,87 @@ fn progress_restart_waits_for_resume() {
         .map(|r| r["attempt"].as_u64().unwrap())
         .collect();
     assert_eq!(attempts, [0, 1]);
+}
+
+#[test]
+fn a_stop_from_the_view_parks_the_agent_until_the_operator_answers() {
+    let h = Harness::new("return await agent('hold stopped',{label:'stopped'});");
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "turn_admitted"));
+    let key = key_for(&folder, "stopped");
+    let (dir, mut view, _) = progress_view(&folder);
+    view.select_agent(&key);
+    // The stop-agent key asks first, naming the agent.
+    assert!(update(&mut view, ProgressInput::Key(ProgressKey::StopAgent)).is_empty());
+    assert_eq!(
+        view.confirmation_text(),
+        Some("stop agent stopped? x or y confirms · esc cancels")
+    );
+    let note = view_write(
+        update(&mut view, ProgressInput::Key(ProgressKey::StopAgent)),
+        &ControlRequest::AgentStop {
+            key: key.clone(),
+            restart: false,
+        },
+    );
+    let noted = RunControl::note_agent_stop(&dir, &key, false, 1).unwrap();
+    let (session, generation) =
+        match update(&mut view, ProgressInput::ControlDone(note, noted)).as_slice() {
+            [
+                ProgressEffect::Interrupt {
+                    session_id,
+                    generation,
+                },
+            ] => (session_id.clone(), *generation),
+            other => panic!("expected the viewer's interrupt, got {other:?}"),
+        };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let wire = h.wire.open("fixture").await.unwrap();
+        let params = json!({"session_id":session,"execution_generation":generation})
+            .as_object()
+            .unwrap()
+            .clone();
+        wire.call("session.interrupt", params, Duration::from_secs(1))
+            .await
+            .unwrap()
+    });
+    wait_for(|| worker.events().iter().any(|e| e["event"] == "parked"));
+    let parked = worker
+        .events()
+        .into_iter()
+        .find(|e| e["event"] == "parked")
+        .unwrap();
+    assert_eq!(parked["cause"], "stopped");
+    assert_eq!(
+        parked["choices"],
+        json!(["fail", "rerun", "abort", "use-reply"])
+    );
+    assert!(
+        parked["reason"].as_str().unwrap().starts_with(
+            "agent stopped: it was stopped with the stop-agent key in the Talaria workflow view"
+        ),
+        "{parked}"
+    );
+    // Parked means waiting: nothing ends the run until it is answered.
+    thread::sleep(Duration::from_millis(400));
+    assert!(!worker.events().iter().any(|e| e["event"] == "run_finished"));
+    let run_id = folder.file_name().unwrap().to_string_lossy().into_owned();
+    answer_parked(
+        &h.runs,
+        &run_id,
+        &key,
+        parked["attempt"].as_u64().unwrap() as u32,
+        parked["episode"].as_u64().unwrap() as u32,
+        Resolution::Fail,
+    )
+    .unwrap();
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 5, "the script returned and the agent failed");
 }
 
 #[test]
@@ -2422,6 +2720,30 @@ fn progress_control_files_match_view() {
                 .all(|s| !s.contains(&key))
         );
     }
+}
+
+#[test]
+fn a_replay_says_its_money_was_not_recorded_when_a_turn_had_no_hermes_cost() {
+    // The live run can price a turn from the price list, but only Hermes's own costs are journaled,
+    // so the replay cannot know that money and must not claim there was no price.
+    let h = Harness::new("return await agent('unpriced review', {label:'review'});");
+    let (first, events) = Worker::start(Start::New(h.request()), services(&h.wire, true)).finish();
+    assert_eq!(first.code, 0);
+    let live: Vec<_> = events
+        .iter()
+        .filter(|e| e["event"] == "run_finished")
+        .collect();
+    assert_eq!(live[0]["spend"]["money_source"], "none");
+    let target = first.run_id.unwrap();
+    let (exit, events) =
+        Worker::start(Start::Resume(h.resume(&target)), services(&h.wire, false)).finish();
+    assert_eq!(exit.code, 0);
+    let replay: Vec<_> = events
+        .iter()
+        .filter(|e| e["event"] == "run_finished")
+        .collect();
+    assert_eq!(replay[0]["spend"]["money_usd"], Value::Null);
+    assert_eq!(replay[0]["spend"]["money_source"], "unrecorded");
 }
 
 #[test]
@@ -2688,4 +3010,115 @@ fn runner_installs_worktree_provider() {
     assert!(resumed_cwd.starts_with(folder.join("worktrees").canonicalize().unwrap()));
     assert_eq!(common_dir(&resumed_cwd), common_dir(&repo));
     assert_ne!(common_dir(&resumed_cwd), common_dir(&other));
+}
+
+#[test]
+fn a_parked_isolated_agent_has_its_uncommitted_work_saved_and_named_when_it_parks() {
+    let h = Harness::new(
+        "return await agent('hold stopped', {label:'stopped', tier:'first', toolsets:['file'], isolation:'worktree'});",
+    );
+    let repo = h.root.join("source-repo");
+    init_repository(&repo);
+    let mut request = h.request();
+    request.cwd = repo.canonicalize().unwrap();
+    let worker = Worker::start(Start::New(request), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "turn_admitted"));
+    let worktree = PathBuf::from(
+        h.wire
+            .frames()
+            .iter()
+            .find(|f| f.method == "session.create")
+            .unwrap()
+            .params["cwd"]
+            .as_str()
+            .unwrap(),
+    );
+    fs::write(worktree.join("half.txt"), "half done").unwrap();
+    // The agent is stopped from the workflow view, so it parks for the operator.
+    let key = key_for(&folder, "stopped");
+    let (dir, mut view, _) = progress_view(&folder);
+    view.select_agent(&key);
+    assert!(update(&mut view, ProgressInput::Key(ProgressKey::StopAgent)).is_empty());
+    let note = view_write(
+        update(&mut view, ProgressInput::Key(ProgressKey::StopAgent)),
+        &ControlRequest::AgentStop {
+            key: key.clone(),
+            restart: false,
+        },
+    );
+    let noted = RunControl::note_agent_stop(&dir, &key, false, 1).unwrap();
+    let (session, generation) =
+        match update(&mut view, ProgressInput::ControlDone(note, noted)).as_slice() {
+            [
+                ProgressEffect::Interrupt {
+                    session_id,
+                    generation,
+                },
+            ] => (session_id.clone(), *generation),
+            other => panic!("expected the viewer's interrupt, got {other:?}"),
+        };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let wire = h.wire.open("fixture").await.unwrap();
+        let params = json!({"session_id":session,"execution_generation":generation})
+            .as_object()
+            .unwrap()
+            .clone();
+        wire.call("session.interrupt", params, Duration::from_secs(1))
+            .await
+            .unwrap()
+    });
+    wait_for(|| worker.events().iter().any(|e| e["event"] == "parked"));
+    let parked = worker
+        .events()
+        .into_iter()
+        .find(|e| e["event"] == "parked")
+        .unwrap();
+    // A rerun would start the next attempt in this worktree, so the work is saved first and
+    // the parked line names the branch.
+    let branch = parked["saved_branch"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{parked}"))
+        .to_owned();
+    assert!(
+        branch.starts_with("talaria/wf/") && branch.ends_with("-0-saved"),
+        "{branch}"
+    );
+    assert!(
+        parked["reason"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("(uncommitted work saved to branch {branch})")),
+        "{parked}"
+    );
+    let shown = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["show", &format!("{branch}:half.txt")])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&shown.stdout), "half done");
+    let run_id = folder.file_name().unwrap().to_string_lossy().into_owned();
+    answer_parked(
+        &h.runs,
+        &run_id,
+        &key,
+        parked["attempt"].as_u64().unwrap() as u32,
+        parked["episode"].as_u64().unwrap() as u32,
+        Resolution::Fail,
+    )
+    .unwrap();
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 5);
+    // The failed call names the same branch once: the second save found the same work.
+    let finish = records(&folder)
+        .into_iter()
+        .rfind(|r| r["t"] == "call_finished")
+        .unwrap();
+    let reason = finish["outcome"]["reason"].as_str().unwrap();
+    assert_eq!(reason.matches(&branch).count(), 1, "{reason}");
 }

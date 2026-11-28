@@ -76,7 +76,7 @@ fn mark_pending(state: &mut McpState, now: Instant) {
             .any(|effect| matches!(effect, McpEffect::Reload { .. }))
     );
     assert!(text(state, now).contains(
-        "Saved for new sessions; this session still uses the old servers · ctrl+y apply"
+        "Saved for new sessions; this session still uses the old servers · Ctrl+Y apply"
     ));
 }
 

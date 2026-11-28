@@ -21,6 +21,7 @@ fn cell_lines_markdown_and_delegate() {
     let user = Cell::User(UserCell {
         id: CellId::new(1),
         text: text.to_string(),
+        expanded_paste: None,
     });
     let assistant = Cell::Assistant(AssistantCell {
         id: CellId::new(2),

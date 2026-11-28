@@ -34,6 +34,11 @@ pub enum CallOutcome {
     Failed {
         reason: String,
     },
+    FailedWithReport {
+        reason: String,
+        path: String,
+        report_ref: BlobRef,
+    },
     Skipped,
     /// The run's budget ended the call; a resume runs it again.
     Stopped {
@@ -59,6 +64,14 @@ impl CallOutcome {
             AgentOutcome::Failed { reason } | AgentOutcome::Abort { reason } => Self::Failed {
                 reason: super::cut(&reason, 4096),
             },
+            AgentOutcome::FailedWithReport { reason, report, .. } => Self::FailedWithReport {
+                reason: super::cut(&reason, 4096),
+                path: report.path,
+                report_ref: BlobRef {
+                    sha256: report.sha256,
+                    bytes: report.bytes,
+                },
+            },
             AgentOutcome::Skipped => Self::Skipped,
             AgentOutcome::Stopped { reason } => Self::Stopped {
                 reason: super::cut(&reason, 4096),
@@ -68,7 +81,7 @@ impl CallOutcome {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Completed { .. } => "completed",
-            Self::Failed { .. } => "failed",
+            Self::Failed { .. } | Self::FailedWithReport { .. } => "failed",
             Self::Skipped => "skipped",
             Self::Stopped { .. } => "stopped",
         }
@@ -135,6 +148,9 @@ records! {
         workflow_path: Vec<String>,
         launch: ResolvedLaunch,
         request_id: String,
+        // The starting file hash, or "absent", for a call that declared a report.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report_baseline: Option<String>,
     },
     SessionBound {
         key: String,
@@ -184,6 +200,10 @@ records! {
         admission_id: Option<String>,
         execution_generation: Option<i64>,
         detail: String,
+        /// The admissions of other clients the port had already seen on the session when a
+        /// stopped call parked. Its next reply must be a later turn than any of them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        seen_admissions: Vec<String>,
     },
     CallResolved {
         key: String,
@@ -198,6 +218,8 @@ records! {
         outcome: CallOutcome,
         turns: u32,
     },
+    // An operator explicitly authorized another attempt despite the kept report.
+    CallReportRestartRequested { key: String, attempt: u32 },
     RunFinished {
         outcome: RunOutcomeKind,
         summary: FinishSummary,
@@ -279,6 +301,7 @@ impl Record {
             Self::CallAttention { .. } => "call_attention",
             Self::CallResolved { .. } => "call_resolved",
             Self::CallFinished { .. } | Self::CallRetryFinished { .. } => "call_finished",
+            Self::CallReportRestartRequested { .. } => "call_report_restart_requested",
             Self::RunFinished { .. } => "run_finished",
         }
     }
@@ -292,6 +315,7 @@ impl Record {
             | Self::CallAttention { key, attempt, .. }
             | Self::CallResolved { key, attempt, .. }
             | Self::CallFinished { key, attempt, .. }
+            | Self::CallReportRestartRequested { key, attempt, .. }
             | Self::CallRetryFinished { key, attempt, .. } => Some((key, *attempt)),
             _ => None,
         }
@@ -305,11 +329,18 @@ impl Record {
                 outcome: CallOutcome::Completed { value_ref, .. },
                 ..
             } => value_ref.iter().collect(),
+            Self::CallFinished {
+                outcome: CallOutcome::FailedWithReport { report_ref, .. },
+                ..
+            } => vec![report_ref],
             _ => Vec::new(),
         }
     }
     pub(crate) fn validate(&self, line: u64) -> Result<(), JournalError> {
         let valid = match self {
+            Self::RunStarted { script_sha256, .. } | Self::RunResumed { script_sha256, .. } => {
+                super::valid_sha256(script_sha256)
+            }
             Self::Engine { event, event_ref } => event.is_some() != event_ref.is_some(),
             Self::TurnIntent {
                 text,
@@ -334,6 +365,11 @@ impl Record {
                 turns,
                 ..
             } => *turns <= 2 && value.is_some() != value_ref.is_some(),
+            Self::CallFinished {
+                outcome: CallOutcome::FailedWithReport { .. },
+                turns,
+                ..
+            } => (1..=2).contains(turns),
             Self::CallFinished { turns, .. } => *turns <= 2,
             Self::CallRetryFinished { outcome, turns, .. } => {
                 *turns <= 2 && matches!(outcome, CallOutcome::Failed { .. })

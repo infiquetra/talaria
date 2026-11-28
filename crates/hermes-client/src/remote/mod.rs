@@ -299,29 +299,54 @@ pub(crate) fn endpoint(base: &Url, path: &str) -> Url {
     url
 }
 
-pub(crate) async fn audio_request(
+/// Fetch a stored child session from the selected remote profile.
+pub async fn stored_child_session(
     cfg: &RemoteConfig,
     store: &TokenStore,
     profile: &str,
-    path: &str,
-    body: Value,
-    max_body: usize,
+    child_session_id: &str,
     deadline: std::time::Duration,
+) -> Result<Value, RemoteError> {
+    if child_session_id.is_empty()
+        || !child_session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(RemoteError::Other("invalid child session id".into()));
+    }
+    request_authenticated(
+        cfg,
+        store,
+        "GET",
+        &format!("/api/sessions/{child_session_id}"),
+        None,
+        http::Limits {
+            max_body: 1024 * 1024,
+            deadline,
+            profile: Some(profile),
+        },
+    )
+    .await
+}
+
+pub(crate) async fn request_authenticated(
+    cfg: &RemoteConfig,
+    store: &TokenStore,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+    limits: http::Limits<'_>,
 ) -> Result<Value, RemoteError> {
     let mut tokens = native_auth::fresh(cfg, store, None).await?;
     for attempt in 0..2 {
         let (status, result) = http::request_limited(
             &cfg.base_url,
             path,
-            "POST",
+            method,
             Some(&tokens.access),
-            Some(body.clone()),
+            body.clone(),
             None,
-            http::Limits {
-                max_body,
-                deadline,
-                profile: Some(profile),
-            },
+            limits,
         )
         .await?;
         if status == 200 {

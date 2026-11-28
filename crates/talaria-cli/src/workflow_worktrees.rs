@@ -277,10 +277,18 @@ fn remove_text(
                 } else {
                     "would remove"
                 };
-                text.push_str(&format!(
-                    "{verb} {who} and branch {}\n",
-                    safe(&entry.worktree.branch)
-                ));
+                let branches = match entry.deleted_branches.as_slice() {
+                    [] => String::new(),
+                    [one] => format!(" and branch {}", safe(one)),
+                    many => format!(
+                        " and branches {}",
+                        many.iter().map(|b| safe(b)).collect::<Vec<_>>().join(", ")
+                    ),
+                };
+                text.push_str(&format!("{verb} {who}{branches}\n"));
+                for kept in &entry.kept_branches {
+                    text.push_str(&format!("  {}\n", safe(kept)));
+                }
                 let lost = if entry.action == CleanupAction::Removed {
                     "discarded"
                 } else {
@@ -317,13 +325,65 @@ fn remove_text(
             kept,
             failed
         ));
-        if kept > 0 && !force {
-            text.push_str(
-                "Kept worktrees have uncommitted changes or commits the source checkout lacks; --force removes them and discards that work.\n",
-            );
+        if let Some(summary) = kept_summary(entries, force) {
+            text.push_str(&summary);
         }
     }
     text
+}
+
+/// One closing sentence naming the reasons the kept worktrees actually have, and whether
+/// `--force` would take them.
+fn kept_summary(entries: &[CleanupEntry], force: bool) -> Option<String> {
+    let kept: Vec<&CleanupEntry> = entries
+        .iter()
+        .filter(|e| e.action == CleanupAction::Kept)
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    let mut why: Vec<&str> = Vec::new();
+    let mut add = |reason: &'static str| {
+        if !why.contains(&reason) {
+            why.push(reason);
+        }
+    };
+    let mut forceable = false;
+    for entry in &kept {
+        let said = entry.reasons.join(" ");
+        if said.contains("left untouched") || said.contains("is not under talaria/wf/") {
+            add("folders or branches Talaria does not own, which it never removes");
+            continue;
+        }
+        forceable = true;
+        let row = &entry.worktree;
+        if row.changed_files > 0 {
+            add("uncommitted changes");
+        }
+        if said.contains("not contained in the source checkout's HEAD") {
+            add("commits the source checkout lacks");
+        }
+        if row.ignored_entries > row.ignored_build_output {
+            add("ignored files that are not verified build output");
+        }
+        if row.problem.is_some() || said.contains("cannot compare") {
+            add("folders that could not be examined completely");
+        }
+    }
+    if why.is_empty() {
+        why.push("the reasons listed above");
+    }
+    let list = match why.as_slice() {
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+        [] => unreachable!(),
+    };
+    let tail = if forceable && !force {
+        "; --force removes them and discards that work"
+    } else {
+        ""
+    };
+    Some(format!("Kept worktrees have {list}{tail}.\n"))
 }
 
 #[cfg(test)]
@@ -590,5 +650,53 @@ mod tests {
             ),
             "{line}"
         );
+    }
+
+    #[test]
+    fn the_closing_text_names_only_the_reasons_actually_listed() {
+        let (_temp, runs, _clean, dirty) = runs_fixture();
+        let run = runs.join(RUN);
+        let entries = runner::worktrees::clean_up(&run, false, true)
+            .unwrap()
+            .entries;
+        let text = remove_text(RUN, RunStatus::Completed, &entries, false, true);
+        assert!(
+            text.contains("Kept worktrees have uncommitted changes; --force removes them"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("commits the source checkout lacks"),
+            "{text}"
+        );
+        assert!(text.contains("would remove") && text.contains(" and branch talaria/wf/"));
+        // Committed but unmerged work is named as such, and not as uncommitted changes.
+        git(&dirty, &["add", "note.txt"]);
+        git(&dirty, &["commit", "-m", "note"]);
+        let entries = runner::worktrees::clean_up(&run, false, true)
+            .unwrap()
+            .entries;
+        let text = remove_text(RUN, RunStatus::Completed, &entries, false, true);
+        assert!(
+            text.contains("Kept worktrees have commits the source checkout lacks; --force"),
+            "{text}"
+        );
+        assert!(!text.contains("uncommitted changes"), "{text}");
+        // With --force nothing is kept, so there is no closing sentence about kept worktrees.
+        let entries = runner::worktrees::clean_up(&run, true, true)
+            .unwrap()
+            .entries;
+        assert!(kept_summary(&entries, true).is_none());
+    }
+
+    #[test]
+    fn a_switched_folder_lists_each_branch_it_deletes_or_keeps() {
+        let (_temp, runs, clean, _dirty) = runs_fixture();
+        git(&clean, &["switch", "-c", "agent-own"]);
+        let entries = runner::worktrees::clean_up(&runs.join(RUN), false, true)
+            .unwrap()
+            .entries;
+        let text = remove_text(RUN, RunStatus::Completed, &entries, false, true);
+        assert!(text.contains(", agent-own\n"), "{text}");
+        assert!(text.contains("would remove") && text.contains("and branches talaria/wf/"));
     }
 }

@@ -114,6 +114,7 @@ fn request(label: &str, phase: &str, digest: &str, workflow_path: Vec<String>) -
         phase: Some(phase.to_string()),
         prompt: format!("Review for {label}"),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("minimax-m3.1-flash".to_string()),
         provider: Some("ollama-cloud".to_string()),
@@ -165,6 +166,7 @@ fn intent(at_ms: i64, key: &str, label: &str, phase: &str, path: Vec<String>) ->
             workflow_path: path,
             launch: launch(),
             request_id: format!("wf:{RUN_ID}:{key}"),
+            report_baseline: None,
         },
     )
 }
@@ -181,6 +183,7 @@ fn attempt_intent(at_ms: i64, key: &str, attempt: u32) -> (i64, Record) {
             workflow_path: Vec::new(),
             launch: launch(),
             request_id: format!("wf:{RUN_ID}:{key}:a{attempt}"),
+            report_baseline: None,
         },
     )
 }
@@ -478,6 +481,7 @@ pub fn state_lines() -> Vec<RecordLine> {
             admission_id: Some("adm-parked".to_string()),
             execution_generation: Some(2),
             detail: "admission fate unproven".to_string(),
+            seen_admissions: Vec::new(),
         },
     ));
     rows.push(intent(3_700, KEY_ENDED, "ended-row", "plan", Vec::new()));
@@ -677,9 +681,69 @@ pub fn live_filter() -> Vec<RecordLine> {
                 admission_id: Some("adm-parked".to_string()),
                 execution_generation: Some(2),
                 detail: "admission fate unproven".to_string(),
+                seen_admissions: Vec::new(),
             },
         ),
         intent(1_400, KEY_RUNNING, "running-row", "build", Vec::new()),
         admitted(1_500, KEY_RUNNING, "adm-running", 4),
     ])
+}
+
+/// A running row whose turn a stop ended, then parked for the operator.
+pub fn live_stopped_parked(key: &str, session: &str) -> Vec<RecordLine> {
+    stamp(vec![
+        run_started(RUN_STARTED_MS),
+        intent(1_100, key, "stopped-row", "plan", Vec::new()),
+        bound(1_200, key, session),
+        admitted(1_300, key, "adm-1", 7),
+        (
+            1_400,
+            Record::TurnSettled {
+                key: key.to_string(),
+                attempt: 0,
+                turn: 0,
+                admission_id: "adm-1".to_string(),
+                outcome: "interrupted".to_string(),
+                final_text: None,
+                final_text_ref: None,
+                result_meta: json!({"interrupted": true, "stopped_by": "workflow_view"}),
+                usage: None,
+            },
+        ),
+        (
+            1_500,
+            Record::CallAttention {
+                key: key.to_string(),
+                attempt: 0,
+                episode: 0,
+                cause: AttentionCause::Stopped,
+                turn: Some(0),
+                admission_id: Some("adm-1".to_string()),
+                execution_generation: Some(7),
+                detail: "agent stopped".to_string(),
+                seen_admissions: Vec::new(),
+            },
+        ),
+    ])
+}
+
+/// Press the stop-agent key, confirm it, and let the view's note about the stop be written:
+/// what the view then sends to stop the agent. A refused or unconfirmed stop sends nothing.
+pub fn confirm_stop(
+    state: &mut talaria_workflow::progress::live::ProgressState,
+) -> Vec<talaria_workflow::progress::ProgressEffect> {
+    use talaria_workflow::progress::live::{ProgressInput, ProgressKey, update};
+    use talaria_workflow::progress::{ControlOutcome, ControlRequest, ProgressEffect};
+    let armed = update(state, ProgressInput::Key(ProgressKey::StopAgent));
+    if !armed.is_empty() || state.confirmation_text().is_none() {
+        return armed;
+    }
+    let noted = update(state, ProgressInput::Key(ProgressKey::Confirm));
+    match noted.as_slice() {
+        [ProgressEffect::WriteControl(id, ControlRequest::AgentStop { .. })] => update(
+            state,
+            ProgressInput::ControlDone(*id, ControlOutcome::Published),
+        ),
+        _ => noted,
+    }
 }

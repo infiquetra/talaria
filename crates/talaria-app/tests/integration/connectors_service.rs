@@ -38,6 +38,61 @@ fn closed_origin() -> String {
     format!("http://{address}")
 }
 
+#[tokio::test]
+async fn identity_status_is_read_before_consent_without_connector_calls() {
+    use talaria_core::connectors::NousIdentity;
+    for (status, expected) in [
+        (
+            json!({"logged_in": true, "free_tier": false, "account_tier": "pro"}),
+            NousIdentity::SignedIn,
+        ),
+        (
+            json!({"logged_in": true, "free_tier": true, "account_tier": "anonymous"}),
+            NousIdentity::Guest,
+        ),
+        (
+            json!({"logged_in": true, "free_tier": true}),
+            NousIdentity::Guest,
+        ),
+        (
+            json!({"logged_in": true, "free_tier": false}),
+            NousIdentity::SignedIn,
+        ),
+        (json!({"logged_in": true}), NousIdentity::Unknown),
+        (json!({"logged_in": false}), NousIdentity::SignedOut),
+        (
+            json!({"logged_in": false, "account_tier": "anonymous"}),
+            NousIdentity::Guest,
+        ),
+        (
+            json!({"logged_in": false, "error": "unavailable"}),
+            NousIdentity::Unknown,
+        ),
+    ] {
+        let server = MockRest::start().await;
+        server.set_route("GET", "/api/providers/oauth", move |_| {
+            (
+                200,
+                json!({"providers": [{"id": "nous", "status": status}]}),
+            )
+        });
+        let (gateway, client, _inbound) = MockGateway::start().await;
+        let service = ConnectorsService::new(
+            client,
+            rest_at(&server.origin()),
+            "fixture".into(),
+            ConnectorsConsent::default(),
+        );
+        assert!(
+            matches!(service.execute(ConnectorsEffect::LoadIdentity, None).await.as_slice(), [ConnectorsInput::IdentityReply(identity)] if *identity == expected)
+        );
+        assert!(gateway.requests("connectors.list").is_empty());
+        let requests = server.requests().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/api/providers/oauth");
+    }
+}
+
 /// Pinned connect result: `seq` plus a target that carries `kind`, `action`, and `state`.
 fn open_connect_result(deadline_at: f64, connect_url: &str) -> serde_json::Value {
     json!({

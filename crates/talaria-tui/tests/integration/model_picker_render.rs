@@ -356,7 +356,7 @@ fn confirmation_card() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("enter switch anyway · esc keep minimax-m3.1-flash")),
+            .any(|line| line.contains("y to confirm · Esc keep minimax-m3.1-flash")),
         "keys: {lines:?}"
     );
 
@@ -367,14 +367,27 @@ fn confirmation_card() {
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("clear the draft to answer")),
+            .any(|line| line.contains("Clear the draft to answer")),
         "draft keys: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.contains("y to confirm")),
+        "a draft does not offer the switch keys: {lines:?}"
+    );
+
+    let guarded = ModelConfirmSection::new(&card, "minimax-m3.1-flash").guarded();
+    let mut waiting = Buffer::empty(area);
+    guarded.render(area, &mut waiting);
+    let lines = card_lines(&waiting);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("available in a moment"))
     );
     assert!(
         !lines
             .iter()
-            .any(|line| line.contains("enter switch anyway")),
-        "a draft does not offer the switch keys: {lines:?}"
+            .any(|line| line.contains("y to confirm") || line.contains("Esc keep"))
     );
 }
 

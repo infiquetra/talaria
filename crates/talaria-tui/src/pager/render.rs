@@ -11,7 +11,7 @@ use talaria_core::session::{
     ToolStatus, UserCell,
 };
 
-use crate::history::{CellLines, wrap_lines};
+use crate::history::{CellLines, Speaker, word_wrapped, wrap_lines};
 use crate::markdown::{MarkdownOptions, render_markdown_with_theme};
 use crate::theme::surfaces::{ViewStyles, tokens as t};
 
@@ -69,7 +69,7 @@ impl<'a> PagerCellLines<'a> {
     /// A message the person sent.
     fn user_lines(&self, cell: &UserCell, width: u16) -> Vec<Line<'static>> {
         let raw: Vec<Line<'static>> = cell
-            .text
+            .transcript_text()
             .split('\n')
             .map(|piece| Line::from(piece.strip_suffix('\r').unwrap_or(piece).to_string()))
             .collect();
@@ -208,7 +208,7 @@ impl<'a> PagerCellLines<'a> {
             && !args.as_object().is_some_and(serde_json::Map::is_empty)
         {
             out.push(Line::styled("    args:".to_string(), self.theme.dim));
-            let pretty = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
+            let pretty = crate::tool_cell::argument_text(args);
             for piece in pretty.split('\n') {
                 out.push(Line::styled(format!("      {piece}"), Style::default()));
             }
@@ -251,15 +251,7 @@ impl<'a> PagerCellLines<'a> {
         } else {
             self.theme.dim
         };
-        let mut out = Vec::new();
-        for (index, piece) in cell.text.split('\n').enumerate() {
-            let text = if index == 0 {
-                format!("! {piece}")
-            } else {
-                piece.to_string()
-            };
-            out.push(Line::styled(text, style));
-        }
+        let mut out = crate::history::prefixed_wrapped("! ", &cell.text, style, width);
         let Some(body) = crate::history::notice_body(cell) else {
             return out;
         };
@@ -351,6 +343,33 @@ impl<'a> ThemedPagerCellLines<'a> {
 impl CellLines for ThemedPagerCellLines<'_> {
     fn lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
         let mut lines = match cell {
+            Cell::User(cell) if self.views.active() => {
+                let body = self
+                    .views
+                    .inline(t::TRANSCRIPT_USER_TEXT, self.base.theme.user);
+                let label = self
+                    .views
+                    .inline(t::TRANSCRIPT_USER_LABEL, self.base.theme.user);
+                let rows = word_wrapped(cell.transcript_text(), Speaker::body_width(width))
+                    .into_iter()
+                    .map(|row| Line::styled(row, body))
+                    .collect();
+                Speaker::User.lines(rows, width, label, false)
+            }
+            Cell::Assistant(cell) if self.views.active() => {
+                let mut options = self.base.markdown.clone();
+                options.width = Speaker::body_width(width);
+                let dim = self.base.theme.dim;
+                if cell.interim {
+                    options.base_style = options.base_style.patch(dim);
+                }
+                let mut rows = render_markdown_with_theme(&cell.text, &options, &self.views);
+                if cell.interim {
+                    rows.push(Line::styled("(interim)", dim));
+                }
+                let label = self.views.inline(t::TRANSCRIPT_ASSISTANT_LABEL, dim);
+                Speaker::Assistant.lines(rows, width, label, false)
+            }
             Cell::Assistant(cell) => self
                 .base
                 .assistant_lines_with_theme(cell, width, &self.views),
@@ -455,6 +474,7 @@ pub fn format_duration_fallback(seconds: f64) -> Option<String> {
     }
 }
 /// A cell or local output at its position in the conversation.
+#[derive(Clone, Copy)]
 pub enum TranscriptEntry<'a> {
     Cell(&'a talaria_core::session::Cell),
     Lines(&'a [ratatui::text::Line<'static>]),
@@ -492,6 +512,7 @@ impl TranscriptBody {
         );
     }
 
+    /// Return the number of rows occupied so the caller can lay out what follows.
     pub fn draw_with_theme(
         &mut self,
         entries: &[TranscriptEntry<'_>],
@@ -500,13 +521,13 @@ impl TranscriptBody {
         buffer: &mut Buffer,
         other: &dyn CellLines,
         views: &ViewStyles,
-    ) {
+    ) -> u16 {
         if self.views != *views {
             self.document.clear();
             self.views = views.clone();
         }
         if area.is_empty() {
-            return;
+            return 0;
         }
         let mut remaining = usize::from(area.height);
         let mut anchor = (0, 0);
@@ -529,14 +550,14 @@ impl TranscriptBody {
         }
         draw_rows(
             &mut self.document,
-            entries,
+            entries.iter().copied(),
             area,
             buffer,
             other,
             BodyPosition { details, anchor },
             views,
             |_, line, lines| (lines[line].clone(), None),
-        );
+        )
     }
 }
 
@@ -559,20 +580,20 @@ pub(super) struct BodyPosition {
 /// Both views traverse, sanitize and place their transcript rows here. The pager's
 /// optional painter adds search highlighting without changing the underlying rows.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn draw_rows(
+pub(super) fn draw_rows<'a>(
     document: &mut super::doc::Document,
-    entries: &[TranscriptEntry<'_>],
+    entries: impl ExactSizeIterator<Item = TranscriptEntry<'a>>,
     area: Rect,
     buffer: &mut Buffer,
     other: &dyn CellLines,
     position: BodyPosition,
     views: &ViewStyles,
     mut paint: impl FnMut(usize, usize, &[Line<'static>]) -> (Line<'static>, Option<Style>),
-) {
+) -> u16 {
     if area.is_empty() {
-        return;
+        return 0;
     }
-    if entries.is_empty() {
+    if entries.len() == 0 {
         buffer.set_line(
             area.x,
             area.y,
@@ -582,13 +603,16 @@ pub(super) fn draw_rows(
             ),
             area.width,
         );
-        return;
+        return 1;
     }
     let mut row = area.y;
-    for (index, entry) in entries.iter().enumerate().skip(position.anchor.0) {
+    for (index, entry) in entries.enumerate().skip(position.anchor.0) {
+        if row >= area.bottom() {
+            break;
+        }
         let lines = entry_lines(
             document,
-            entry,
+            &entry,
             index,
             area.width,
             position.details,
@@ -602,7 +626,7 @@ pub(super) fn draw_rows(
         };
         for line in skip..lines.len() {
             if row >= area.bottom() {
-                return;
+                return area.height;
             }
             let (painted, gutter) = paint(index, line, &lines);
             if let Some(style) = gutter {
@@ -614,29 +638,39 @@ pub(super) fn draw_rows(
             row += 1;
         }
     }
+    row - area.y
 }
 
-fn entry_lines(
-    document: &mut super::doc::Document,
+fn entry_lines<'a>(
+    document: &'a mut super::doc::Document,
     entry: &TranscriptEntry<'_>,
     index: usize,
     width: u16,
     details: Details,
     other: &dyn CellLines,
     views: &ViewStyles,
-) -> Vec<Line<'static>> {
+) -> std::borrow::Cow<'a, [Line<'static>]> {
     match entry {
         TranscriptEntry::Cell(cell) => {
             let own = ThemedPagerCellLines::new(details, width, other, views);
             document.cell_lines(cell, index, width, details, other, &own)
         }
-        TranscriptEntry::Lines(lines) => wrap_lines(
+        TranscriptEntry::Lines(lines) => std::borrow::Cow::Owned(
             lines
                 .iter()
-                .cloned()
-                .map(crate::history::sanitize_line)
+                .flat_map(|line| {
+                    let line = crate::history::sanitize_line(line.clone());
+                    if line.style == Style::default()
+                        && line.alignment.is_none()
+                        && let [span] = line.spans.as_slice()
+                        && span.style == Style::default()
+                    {
+                        crate::history::committed_text_rows(vec![span.content.to_string()], width)
+                    } else {
+                        wrap_lines(vec![line], width)
+                    }
+                })
                 .collect(),
-            width,
         ),
     }
 }

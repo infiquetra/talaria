@@ -349,12 +349,17 @@ fn answer_focus_rules() {
     );
     let focus = effects_of(&mut state, FleetViewInput::Action(FleetAction::Answer));
     assert_eq!(focus, vec![FleetViewEffect::FocusAnswer]);
-    let stayed = effects_of(&mut state, FleetViewInput::Escape);
-    assert!(stayed.is_empty(), "escape in an answer belongs to the card");
     assert!(matches!(
         state.focus(),
         talaria_core::fleet_view::Focus::Answer
     ));
+    let back = effects_of(&mut state, FleetViewInput::Escape);
+    assert!(back.is_empty(), "returning to the list produces no answer");
+    assert!(matches!(
+        state.focus(),
+        talaria_core::fleet_view::Focus::List
+    ));
+    effects_of(&mut state, FleetViewInput::Action(FleetAction::Answer));
     effects_of(&mut state, FleetViewInput::CtrlC);
     assert!(matches!(
         state.focus(),

@@ -41,7 +41,7 @@ fn background_attach_does_not_repeat_an_inflight_steer_or_interrupt() {
         Some("steer queued for its next step")
     );
     assert!(matches!(
-        update(&mut state, ProgressInput::Key(ProgressKey::StopAgent)).as_slice(),
+        lines::confirm_stop(&mut state).as_slice(),
         [ProgressEffect::Interrupt { generation: 7, .. }]
     ));
     assert!(update(&mut state, attached()).is_empty());
@@ -57,7 +57,7 @@ fn background_attach_does_not_repeat_an_inflight_steer_or_interrupt() {
         },
     );
     assert!(update(&mut state, attached()).is_empty());
-    assert!(update(&mut state, ProgressInput::Key(ProgressKey::StopAgent)).is_empty());
+    assert!(lines::confirm_stop(&mut state).is_empty());
 }
 
 fn child_event(kind: SubagentEventKind, status: &str) -> ProgressInput {
@@ -94,7 +94,7 @@ fn subagent_stop_acknowledgement_waits_for_terminal_evidence() {
         id: "child-1".into(),
     };
     assert!(matches!(
-        update(&mut state, ProgressInput::Key(ProgressKey::StopAgent)).as_slice(),
+        lines::confirm_stop(&mut state).as_slice(),
         [ProgressEffect::SubInterrupt { subagent_id, .. }] if subagent_id == "child-1"
     ));
     update(
@@ -104,14 +104,14 @@ fn subagent_stop_acknowledgement_waits_for_terminal_evidence() {
             result: Ok(json!({"found": true})),
         },
     );
-    assert!(update(&mut state, ProgressInput::Key(ProgressKey::StopAgent)).is_empty());
+    assert!(lines::confirm_stop(&mut state).is_empty());
     update(
         &mut state,
         child_event(SubagentEventKind::Complete, "completed"),
     );
     state.select_agent(key);
     assert!(matches!(
-        update(&mut state, ProgressInput::Key(ProgressKey::StopAgent)).as_slice(),
+        lines::confirm_stop(&mut state).as_slice(),
         [ProgressEffect::Interrupt { generation: 7, .. }]
     ));
 }
@@ -160,7 +160,7 @@ fn interrupted_settlement_stops_without_waiting_for_call_finished() {
     let mut state = ProgressState::new(RunProgress::from_records(&lines::manifest(), &records));
     update(&mut state, ProgressInput::Connected(true));
     state.select_agent(key);
-    update(&mut state, ProgressInput::Key(ProgressKey::StopAgent));
+    lines::confirm_stop(&mut state);
     update(
         &mut state,
         ProgressInput::GatewayDone {
@@ -209,7 +209,7 @@ fn stop_receipt_settles_standalone_view_and_rejects_stale_attempts() {
     ));
     update(&mut state, ProgressInput::Connected(true));
     state.select_agent(key);
-    update(&mut state, ProgressInput::Key(ProgressKey::StopAgent));
+    lines::confirm_stop(&mut state);
     update(
         &mut state,
         ProgressInput::GatewayDone {
@@ -267,9 +267,10 @@ fn stop_receipt_settles_standalone_view_and_rejects_stale_attempts() {
         },
     );
     assert_eq!(state.progress.agent(key).unwrap().state, AgentState::Failed);
+    // The runner parks a call the view stopped, so the view says it waits for an answer.
     assert_eq!(
         state.footer.as_deref(),
-        Some("stopped — restart (r) runs it again")
+        Some(talaria_workflow::progress::live::STOPPED_PARKED)
     );
     assert_eq!(
         state.progress.last_seq, seq,
@@ -288,7 +289,7 @@ fn dump_rows_include_launch_duration_and_keep_unknown_cost_explicit() {
     assert!(row.contains("done · 1.2s"), "{row}");
     // These journal lines predate cache reads being kept apart, so the row says they are unknown.
     assert!(
-        row.contains("1.1k tokens (cache reads unknown for 1 turn, counted in full) · $0.10"),
+        row.contains("up to 1.1k tokens (cache reads unknown for 1 turn, counted in full) · $0.10"),
         "{row}"
     );
     let unknown = RunProgress::from_records(&lines::manifest(), &lines::cost_lines("unknown"));

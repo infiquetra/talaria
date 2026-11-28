@@ -2,6 +2,170 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-24 — Use the same workflow selection across terminal widths
+
+Wide windows show the run, phases and agents as connected cards. Narrow windows
+show an outline backed by the same node identities. A wheel event, a click and a
+keystroke each select from the same visible projection. Shrinking a desktop diagram
+would hide labels. Revisit the layout when real runs expose relationships the journal
+does not currently record.
+
+## 2026-11-24 — Show recorded workflow relationships and capture the mouse only on request
+
+The workflow view draws containment from the run journal. An operator can follow a
+phase to an agent and open its transcript. Drawing execution dependencies between
+siblings would require an authoritative record of those dependencies.
+
+The transcript and workflow overlays accept wheel events when the operator enables
+`/layout mouse` or the startup setting. Enabling mouse reporting across the whole
+client would interfere with ordinary text selection and native scrollback in chat.
+Revisit the graph when the runner records scheduling dependencies, and extend mouse
+reporting to another view when it has an interaction to handle.
+
+## 2026-11-23 — A stopped workflow agent is parked for the operator
+
+**Decision.** When an agent's turn ends interrupted or cancelled and the stop was not part of
+stopping the run (a run stop, a budget stop, or the view's restart of a running agent), the call
+is parked through the existing parked-call mechanism. The answers are `fail`, `rerun`, `abort`
+and the new `use-reply`, which takes the next settled turn on the same Hermes session as the
+call's result and checks it like any reply. A run started with `--on-unknown fail` fails the call
+at once with the stop reason. The stop-agent key in the workflow view asks for confirmation first.
+The stop's source is kept in the settled turn's `result_meta.stopped_by`, and the view writes a
+note file before it sends a stop.
+
+**Rationale.** One accidental keypress ended a run and threw away the plan the agent wrote after
+a person typed "continue". The project's rule is to report and recover, with no time limits.
+
+**Rejected.** Failing as before. Rerunning automatically (it pays again and ignores why the agent
+was stopped). Any timer on the parked call. A new journal record field for the stop source (about
+twenty constructors and older readers).
+
+**Revisit when.** Hermes reports who sent a stop; or the workflow view should answer a parked
+call itself instead of pointing at `talaria workflow resolve`.
+
+## 2026-11-23 — A finished run's result is read with `workflow result`, never with resume
+
+**Decision.** `talaria workflow result <run>` without `--agent` prints a finished run's stored
+result exactly as a replaying resume does, never opens an execution and ignores pending restart
+requests. The skill, the closing line's hint and the guides point at it.
+
+**Rationale.** `workflow resume --json` on a finished run opens a new, paid execution when a
+restart request is pending, and the skill told agents to use it only to read a result.
+
+**Rejected.** Making resume skip pending restarts (restart then resume is the rerun path).
+
+**Revisit when.** Resume gets a read-only mode of its own.
+
+## 2026-11-23 — Stop notes name their turn and are written before the stop is sent
+
+**Decision.** The run-stop and budget-stop paths write a note per target before sending a stop,
+as the workflow view does. A note records the attempt, turn and admission it describes; a note
+naming another turn is ignored, and resume removes notes whose turn is no longer running.
+`use-reply` accepts only a turn first seen after the call parked: the call record keeps the
+admissions seen up to then.
+
+**Rationale.** A settlement first read by a later execution has no live "run is stopping" flag,
+so the runner's own stop was blamed on a person and parked. A note keyed only by agent outlived
+its stop and mislabelled the next one. A reply that settled before the stop could be adopted.
+
+**Rejected.** Clearing every note when an execution starts (it would lose live run-stop notes).
+
+A stop that finds a note already naming the same turn leaves it alone, so an earlier stop that
+did go out keeps its source.
+
+**Revisit when.** The view can read admission ids directly. Known limit: when the runner dies right after a
+budget stop, the next resume ends `budget_exhausted` without running that agent, and one more
+resume runs it.
+
+## 2026-11-23 — Failed agents are rerun by a command that reuses the view's restart request
+
+**Decision.** `talaria workflow restart <run> <agent>` writes the same request file the workflow
+view's restart key writes, and `talaria workflow resume` then opens a new execution. `talaria
+workflow result <run> --agent <agent>` prints one kept value.
+
+**Rationale.** A calling agent had no supported way to rerun one failed agent or read a finished
+agent's value, so it parsed the journal by hand and started a second run.
+
+**Rejected.** A separate rerun path inside a live runner.
+
+`restart` takes only an agent whose latest attempt failed or was stopped, one whose turn a recorded
+stop ended, and one waiting after an answer. A parked agent is answered with `resolve`, and any
+other unfinished agent is continued by `resume`: restarting a turn that completed would pay for
+it twice.
+
+**Rejected (continued).** Accepting every agent that is not finished (it corrupted a journal
+waiting on a retry and discarded completed replies). Accepting a running turn the run's stop
+targeted (its reply may have completed).
+
+**Revisit when.** Resume should rerun only the failed agents that were asked for; today a new
+execution reruns every failed agent the script reaches, and `restart` lists them.
+
+## 2026-11-23 — An isolated agent's uncommitted work is saved to a branch
+
+**Decision.** When an agent with worktree isolation is cut short, fails or is stopped and its
+worktree has uncommitted changes, Talaria commits them to a new branch
+(`talaria/wf/<run>/<digest>-<n>-saved`) through a temporary index, without touching the worktree,
+its index or its branch. Hooks and signing are off for those commands. The branch name travels in
+the cut-short mark and at the end of the failure reason. Agents without isolation, including
+every run outside a git repository, run in the run's folder directly: the result lists that folder
+as one they ran in without isolation, where anything they changed is already there and nothing
+is saved. A parked call's worktree is saved when it parks and again before a rerun. A save keeps
+what git can read, names the paths it skipped, and switches off filter programs the repository
+itself configures (the user's own, such as Git LFS, still run).
+
+**Rationale.** Two cut-short agents left hundreds of changed lines that the calling agent called
+"nothing landed".
+
+**Rejected.** Switching or committing on the agent's own branch (it changes what the agent left).
+A new field on the `call_finished` record (about nineteen constructors across branches in
+flight).
+
+**Revisit when.** The journal's record format next changes; or saved branches pile up and need
+their own clean-up rule.
+
+## 2026-11-23 — Worktree clean-up accepts a merged folder on an agent's own branch
+
+**Decision.** `workflow worktrees remove` removes a clean worktree whose HEAD is an ancestor of
+the source checkout's HEAD even when the agent switched branches. It deletes the run's branch and
+the agent's branch only when each is fully merged, and the agent's branch only when the first line
+of its reflog is a creation dated inside the run; a branch whose reflog expired is kept.
+
+**Rationale.** The skill tells agents to create named branches, so every such folder was kept
+forever with a reason that did not apply.
+
+**Rejected.** Telling agents to stay on the branch Talaria created (existing scripts depend on
+named branches).
+
+**Revisit when.** A repository with reflogs disabled needs clean-up.
+
+## 2026-11-23 — Agents record lessons in a notes file, not in the skill
+
+**Decision.** `talaria workflow lessons` prints `lessons.txt` in the configuration folder and
+`lessons add --run <run> <text>` appends one dated line. The skill tells agents to read the notes
+as unreviewed, to record only what they verified from a run's own outcome or journal, and to tell
+the developer what they recorded.
+
+**Rationale.** Agents are told not to edit the skill, so an agent had nowhere to put a lesson. Two of
+the four lessons one agent drafted were wrong, so the notes are labelled unreviewed.
+
+**Rejected.** Letting agents edit the skill. Writing into the repository. A prune command (the
+developer edits the file by hand; the listing shows the newest 50 entries).
+
+**Revisit when.** A wrong note misleads a later run; then entries need review before agents read
+them.
+
+## 2026-11-23 — The build's commit reaches the manifest from the command-line crate
+
+**Decision.** A build script in `talaria-cli` reads the commit and tree state and passes them to
+the runner, which writes `talaria_commit` and `talaria_tree` into the manifest.
+
+**Rationale.** Three runs made by three different local builds all said the same version.
+
+**Rejected.** A build script in `talaria-workflow` (every dependent crate would rebuild whenever
+HEAD or the index changes).
+
+**Revisit when.** Another binary starts writing runs.
+
 ## 2026-11-23 — The second press of the interrupt key waits 110 ms
 
 **Decision.** A second press of the interrupt key inside the 2 second window does not interrupt at
@@ -39,6 +203,24 @@ chord). A setting for the window.
 
 **Revisit when.** People report the second press as friction, or want the window configurable.
 
+## 2026-11-23 — Resume runs again the agents a run stop interrupted
+
+**Decision.** A turn that ended because the run was being stopped (`stopped_by: run_stop`), read
+by an execution that is not itself stopping, starts a new attempt at once: a retry finish is
+journaled for the old attempt, uncommitted work in the agent's folder is saved to a branch, and
+the agent runs again in a new session.
+
+**Rationale.** The person stopped the run, not the agent, and `workflow resume` is the request to
+continue. Failing the agent made the script see a null result for work nobody judged.
+
+**Rejected.** Failing it and leaving the rerun to a second resume (the earlier behaviour).
+Parking it for the operator (the stop was the runner's own, so there is nothing to decide).
+Sending the prompt again in the same session to keep its context (cheaper, but it changes how
+an attempt maps to a session and needs its own design; revisit below).
+
+**Revisit when.** Long agents are often cut by gateway restarts and rerunning them from the start
+costs too much; then consider continuing in the same session.
+
 ## 2026-11-23 — Left arrow leaves a workflow agent's session the way Enter entered it
 
 **Decision.** Opening an agent from the workflow view remembers the session that was open. In the
@@ -46,7 +228,9 @@ agent's session the action `workflow_agent_back` (Left by default) is live only 
 composer with nothing else open; it switches back to the remembered session and reopens the run
 view with that agent selected. The line above the composer shows the key while it is live. The
 memory is keyed to the stored session id, confirmed when the switch lands, and dropped on any
-other switch. A session with no stored id of its own is never remembered. The action has its own
+other switch. A session whose stored id equals its runtime id is remembered, because that is
+what the Hermes session authority sends (corrected the same day; the first version refused it
+and so never worked on a real gateway). The action has its own
 key context, so it cannot collide with the composer's cursor key.
 
 **Rationale.** Enter moved the whole window into the agent's session and nothing led back except

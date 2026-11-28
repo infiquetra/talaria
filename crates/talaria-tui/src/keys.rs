@@ -648,6 +648,9 @@ pub enum Action {
     PauseRun,
     StopRun,
     CycleFilter,
+    ProgressNextAttention,
+    ProgressDetails,
+    ProgressViewResult,
     CloseView,
     ProgressConfirm,
 
@@ -739,6 +742,8 @@ pub enum Action {
     PagerClose,
     /// Open or close the task checklist drawer.
     ToggleTasks,
+    /// Show keys for the current conversation focus.
+    FocusHelp,
     /// Toggle the work panel, or reopen its dismissed overlay.
     LayoutPanel,
     ToggleMenuBar,
@@ -1022,7 +1027,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 212] = [
+    pub const ALL: [Self; 216] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1034,6 +1039,9 @@ impl Action {
         Self::PauseRun,
         Self::StopRun,
         Self::CycleFilter,
+        Self::ProgressNextAttention,
+        Self::ProgressDetails,
+        Self::ProgressViewResult,
         Self::CloseView,
         Self::ProgressConfirm,
         Self::DoctorUp,
@@ -1092,6 +1100,7 @@ impl Action {
         Self::PagerDetails,
         Self::PagerClose,
         Self::ToggleTasks,
+        Self::FocusHelp,
         Self::LayoutPanel,
         Self::ToggleMenuBar,
         Self::MenuLeft,
@@ -1252,6 +1261,9 @@ impl Action {
             Self::PauseRun => "workflow_pause",
             Self::StopRun => "workflow_stop_run",
             Self::CycleFilter => "workflow_filter",
+            Self::ProgressNextAttention => "workflow_next_attention",
+            Self::ProgressDetails => "workflow_details",
+            Self::ProgressViewResult => "workflow_view_result",
             Self::CloseView => "workflow_close",
             Self::ProgressConfirm => "workflow_confirm",
 
@@ -1311,6 +1323,7 @@ impl Action {
             Self::PagerDetails => "pager_details",
             Self::PagerClose => "pager_close",
             Self::ToggleTasks => "toggle_tasks",
+            Self::FocusHelp => "focus_help",
             Self::LayoutPanel => "layout_panel",
             Self::ToggleMenuBar => "toggle_menu_bar",
             Self::MenuLeft => "menu_left",
@@ -1489,6 +1502,9 @@ impl Action {
             | Self::PauseRun
             | Self::StopRun
             | Self::CycleFilter
+            | Self::ProgressNextAttention
+            | Self::ProgressDetails
+            | Self::ProgressViewResult
             | Self::CloseView
             | Self::ProgressConfirm => KeyContext::WorkflowProgress,
             Self::WorkflowAgentBack => KeyContext::AgentSession,
@@ -1527,6 +1543,7 @@ impl Action {
             | Self::Suspend
             | Self::AttachClipboardImage
             | Self::ToggleTasks
+            | Self::FocusHelp
             | Self::LayoutPanel
             | Self::ToggleMenuBar
             | Self::ApprovalsToggle
@@ -1702,6 +1719,9 @@ impl Action {
             Self::PauseRun => &["p"],
             Self::StopRun => &["shift+x"],
             Self::CycleFilter => &["f"],
+            Self::ProgressNextAttention => &["a"],
+            Self::ProgressDetails => &["d"],
+            Self::ProgressViewResult => &["v"],
             Self::CloseView => &["esc"],
             Self::ProgressConfirm => &["y"],
 
@@ -1763,6 +1783,7 @@ impl Action {
             Self::PagerDetails => &["t"],
             Self::PagerClose => &["q"],
             Self::ToggleTasks => &["ctrl+t"],
+            Self::FocusHelp => &["f3"],
             Self::LayoutPanel => &["alt+d"],
             Self::ToggleMenuBar => &["alt+i"],
             Self::MenuLeft => &["left"],
@@ -2118,7 +2139,7 @@ impl KeyChord {
         if context == KeyContext::Pager && Self::is_pager_reserved(&chord) {
             return Err("reserved in the transcript pager".to_string());
         }
-        // Esc and Ctrl+C close the session picker, so no picker action may take them.
+        // Reserve Escape for the picker and Ctrl+C for the foreground turn.
         if matches!(
             context,
             KeyContext::SessionPicker | KeyContext::SessionPickerExport | KeyContext::Fleet
@@ -2145,15 +2166,14 @@ impl KeyChord {
     fn is_model_picker_reserved(&self) -> bool {
         let plain = !self.ctrl && !self.alt && !self.super_key;
         (plain
-            && (matches!(self.code, KeyCode::Char(_))
+            && (matches!(self.code, KeyCode::Char(_) | KeyCode::Up | KeyCode::Down)
+                || (self.shift && self.code == KeyCode::Left)
                 || (!self.shift
                     && matches!(
                         self.code,
                         KeyCode::Enter
                             | KeyCode::Esc
                             | KeyCode::Backspace
-                            | KeyCode::Up
-                            | KeyCode::Down
                             | KeyCode::PageUp
                             | KeyCode::PageDown
                             | KeyCode::Home
@@ -2960,7 +2980,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 212);
+        assert_eq!(Action::ALL.len(), 216);
         for (index, action) in Action::ALL.iter().enumerate() {
             assert_eq!(action.index(), index, "{}", action.config_name());
         }
@@ -2986,6 +3006,9 @@ mod tests {
                 | Action::PauseRun
                 | Action::StopRun
                 | Action::CycleFilter
+                | Action::ProgressNextAttention
+                | Action::ProgressDetails
+                | Action::ProgressViewResult
                 | Action::CloseView
                 | Action::ProgressConfirm => KeyContext::WorkflowProgress,
                 Action::WorkflowAgentBack => KeyContext::AgentSession,
@@ -3165,6 +3188,9 @@ mod tests {
                 | Action::PauseRun
                 | Action::StopRun
                 | Action::CycleFilter
+                | Action::ProgressNextAttention
+                | Action::ProgressDetails
+                | Action::ProgressViewResult
                 | Action::CloseView
                 | Action::ProgressConfirm => KeyContext::WorkflowProgress,
                 Action::WorkflowAgentBack => KeyContext::AgentSession,
@@ -3578,7 +3604,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 212);
+        assert_eq!(Action::ALL.len(), 216);
     }
 
     #[test]

@@ -1,0 +1,18 @@
+schema = 1
+name = "Tokyo Night"
+extends = "dark"
+follow_hermes_skin = false
+
+[palette]
+background = "#1a1b26"
+surface = "#24283b"
+foreground = "#c0caf5"
+muted = "#9aa5ce"
+disabled = "#9397ad"
+border = "#6b75a2"
+primary = "#bb9af7"
+accent = "#7aa2f7"
+success = "#9ece6a"
+warning = "#e0af68"
+error = "#f7768e"
+attention = "#ff9e64"

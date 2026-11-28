@@ -1,7 +1,10 @@
 # Theme element catalogue
 
 Each name is independently overridable under `[elements."<name>"]`. Unspecified fields inherit
-from its semantic role and area background; attributes below are the defaults. The 30 `picker.*` names are reserved and accepted in files, pending the picker implementation. `transcript.user.label`, `transcript.assistant.label`, and `transcript.system` are reserved the same way, because the inline view draws no user label, assistant label, or system text.
+from its semantic role and area background. The table lists the default attributes.
+The model and provider browsers use the `picker.*` family. The four picker names
+marked reserved are available for future use. The session browser uses `list.*`.
+The inline conversation uses `transcript.user.label` for the prompt marker.
 See [themes](themes.md)
 for the format, layering, constraints and current drawing coverage.
 
@@ -9,16 +12,16 @@ for the format, layering, constraints and current drawing coverage.
 | --- | --- | --- | --- | --- |
 | `transcript.background` | background | none | Workspace conversation surface | defined |
 | `transcript.text` | text | none | Assistant body and ordinary text | defined |
-| `transcript.user.label` | accent | bold | User label | reserved |
+| `transcript.user.label` | accent | bold | User label | defined |
 | `transcript.user.text` | text | none | User message | defined |
-| `transcript.assistant.label` | primary | bold | Assistant label | reserved |
+| `transcript.assistant.label` | primary | bold | Assistant label | defined |
 | `transcript.system` | muted | none | System messages | reserved |
 | `transcript.timestamp` | muted | none | Message time | defined |
 | `transcript.reasoning` | muted | italic | Reasoning text | defined |
 | `transcript.reasoning.label` | muted | bold | Reasoning heading | defined |
 | `transcript.omission` | muted | none | Folded or omitted text | defined |
-| `transcript.search.match` | selection | none | Pager search match | defined |
-| `transcript.search.current` | focus | bold | Current search match | defined |
+| `transcript.search.match` | accent | bold | Pager search match | defined |
+| `transcript.search.current` | focus | bold, underline | Current search match | defined |
 | `transcript.selection` | selection | none | Selected transcript range | defined |
 | `transcript.heading.1` | primary | bold | Markdown heading level one | defined |
 | `transcript.heading.2` | primary | bold | Markdown heading level two | defined |
@@ -51,10 +54,11 @@ for the format, layering, constraints and current drawing coverage.
 | `composer.completion.selected` | selection | none | Selected completion | defined |
 | `composer.completion.description` | muted | none | Completion description | defined |
 | `status.background` | background | none | Bottom status surface | defined |
-| `status.text` | text | none | Model effort session and ordinary fields | defined |
+| `status.text` | text | none | Session and ordinary fields | defined |
 | `status.muted` | muted | none | Secondary status | defined |
 | `status.separator` | border | none | Status separators | defined |
 | `status.accent` | accent | bold | Workflow label | defined |
+| `status.model` | accent | bold | Conversation model and reasoning effort | defined |
 | `status.success` | success | none | Healthy or completed status | defined |
 | `status.warning` | warning | bold | Budget warning or degraded status | defined |
 | `status.error` | error | bold | Failure or critical budget | defined |
@@ -93,36 +97,36 @@ for the format, layering, constraints and current drawing coverage.
 | `dialog.clarification.selected` | selection | none | Selected answer | defined |
 | `dialog.secret.mask` | muted | none | Masked credential input | defined |
 | `dialog.confirm.destructive` | error | bold | Stop delete or destructive confirmation | defined |
-| `picker.background` | surface | none | Picker surface | reserved |
-| `picker.border` | border | none | Picker frame | reserved |
-| `picker.title` | primary | bold | Picker heading | reserved |
-| `picker.filter.background` | surface | none | Filter bar surface | reserved |
-| `picker.filter.text` | text | none | Filter query | reserved |
-| `picker.filter.placeholder` | muted | none | Empty filter hint | reserved |
+| `picker.background` | surface | none | Picker surface | defined |
+| `picker.border` | border | none | Picker frame | defined |
+| `picker.title` | primary | bold | Picker heading | defined |
+| `picker.filter.background` | surface | none | Filter bar surface | defined |
+| `picker.filter.text` | text | none | Filter query | defined |
+| `picker.filter.placeholder` | muted | none | Empty filter hint | defined |
 | `picker.filter.match` | accent | bold | Matching substring | reserved |
-| `picker.group.tab` | muted | none | Group tab | reserved |
-| `picker.group.tab.selected` | focus | bold | Active group tab | reserved |
-| `picker.group.header` | primary | bold | Group heading | reserved |
-| `picker.row.text` | text | none | Ordinary result | reserved |
-| `picker.row.selected` | selection | none | Selected row | reserved |
-| `picker.row.disabled` | disabled | none | Unavailable result | reserved |
-| `picker.row.description` | muted | none | Secondary row text | reserved |
+| `picker.group.tab` | muted | none | Group tab | defined |
+| `picker.group.tab.selected` | focus | bold | Active group tab | defined |
+| `picker.group.header` | primary | bold | Group heading | defined |
+| `picker.row.text` | text | none | Ordinary result | defined |
+| `picker.row.selected` | selection | none | Selected row | defined |
+| `picker.row.disabled` | disabled | none | Unavailable result | defined |
+| `picker.row.description` | muted | none | Secondary row text | defined |
 | `picker.row.match` | accent | bold | Matched text outside selection | reserved |
-| `picker.badge` | muted | none | Generic row badge | reserved |
-| `picker.badge.current` | success | bold | Current model or profile | reserved |
+| `picker.badge` | muted | none | Generic row badge | defined |
+| `picker.badge.current` | success | bold | Current model or profile | defined |
 | `picker.badge.provider` | accent | none | Provider badge | reserved |
 | `picker.badge.effort` | muted | none | Known effort value | reserved |
-| `picker.badge.unknown` | warning | none | Unknown capability or effort | reserved |
-| `picker.badge.unavailable` | disabled | none | Unavailable capability | reserved |
-| `picker.detail.background` | surface | none | Detail pane surface | reserved |
-| `picker.detail.divider` | border | none | Detail pane divider | reserved |
-| `picker.detail.label` | muted | none | Detail field name | reserved |
-| `picker.detail.value` | text | none | Detail field value | reserved |
-| `picker.detail.help` | muted | none | Explanatory detail text | reserved |
-| `picker.detail.warning` | warning | none | Detail limitation | reserved |
-| `picker.empty` | muted | none | No results or loading text | reserved |
-| `picker.scrollbar` | border | none | Visible list position | reserved |
-| `picker.footer` | muted | none | Navigation help | reserved |
+| `picker.badge.unknown` | warning | none | Unknown capability or effort | defined |
+| `picker.badge.unavailable` | disabled | none | Unavailable capability | defined |
+| `picker.detail.background` | surface | none | Detail pane surface | defined |
+| `picker.detail.divider` | border | none | Detail pane divider | defined |
+| `picker.detail.label` | muted | none | Detail field name | defined |
+| `picker.detail.value` | text | none | Detail field value | defined |
+| `picker.detail.help` | muted | none | Explanatory detail text | defined |
+| `picker.detail.warning` | warning | none | Detail limitation | defined |
+| `picker.empty` | muted | none | No results or loading text | defined |
+| `picker.scrollbar` | border | none | Visible list position | defined |
+| `picker.footer` | muted | none | Navigation help | defined |
 | `menu.background` | surface | none | One-row top menu surface | defined |
 | `menu.brand` | primary | bold | Talaria label | defined |
 | `menu.item` | text | none | Unfocused menu heading | defined |
@@ -204,6 +208,7 @@ for the format, layering, constraints and current drawing coverage.
 | `tool.muted` | muted | none | Cancelled or unknown tool glyph | defined |
 | `tool.title` | primary | bold | Tool title | defined |
 | `tool.subject` | text | none | Tool subject | defined |
+| `tool.shell.operator` | text | none | Shell command operators in tool headers | defined |
 | `tool.metadata` | muted | none | Duration path and count | defined |
 | `tool.output` | text | none | Tool result text | defined |
 | `tool.error` | error | none | Tool error text | defined |
@@ -234,6 +239,9 @@ for the format, layering, constraints and current drawing coverage.
 | `list.divider` | border | none | Table or list boundary | defined |
 | `list.scrollbar` | border | none | List position indicator | defined |
 | `list.empty` | muted | none | Loading empty or no-results state | defined |
+| `effort.track` | accent | none | Filled portion of the reasoning effort scale | defined |
+| `effort.model` | muted | none | Model name in the reasoning effort picker | defined |
+| `effort.selected` | accent | bold | Selected reasoning effort and scale marker | defined |
 | `transcript.banner` | primary | bold | Startup banner | defined |
 | `transcript.command` | text | bold | Submitted command | defined |
 | `transcript.notice` | muted | none | Plain history notice | defined |

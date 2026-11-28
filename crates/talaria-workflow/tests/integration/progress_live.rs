@@ -582,6 +582,9 @@ fn waiting_badge_follows_approval_lifecycle() {
 
 fn effect_fields(effect: &ProgressEffect) -> (String, i64, String) {
     match effect {
+        ProgressEffect::LoadEvidence { agent, .. } => {
+            (agent.clone().unwrap_or_default(), 0, "evidence".into())
+        }
         ProgressEffect::CheckStopped {
             session_id,
             admission_id,
@@ -617,6 +620,7 @@ fn effect_fields(effect: &ProgressEffect) -> (String, i64, String) {
             ControlRequest::Resume => (String::new(), 0, "resume".to_string()),
             ControlRequest::Stop => (String::new(), 0, "stop".to_string()),
             ControlRequest::Restart { key } => (key.clone(), 0, "restart".to_string()),
+            ControlRequest::AgentStop { key, .. } => (key.clone(), 0, "agent stop".to_string()),
         },
     }
 }
@@ -653,7 +657,7 @@ fn steer_and_stop_effects_carry_exact_calls() {
         Some("steer queued for its next step")
     );
 
-    let effects = update(&mut state, ProgressInput::Key(ProgressKey::StopAgent));
+    let effects = lines::confirm_stop(&mut state);
     assert!(matches!(
         effects.as_slice(),
         [ProgressEffect::Interrupt { session_id, generation }]
@@ -670,13 +674,71 @@ fn steer_and_stop_effects_carry_exact_calls() {
 }
 
 #[test]
+fn stop_agent_asks_first_naming_the_agent_and_notes_the_stop_before_sending_it() {
+    let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 7));
+    state.select_agent(lines::KEY_RUNNING);
+    assert!(update(&mut state, ProgressInput::Key(ProgressKey::StopAgent)).is_empty());
+    assert_eq!(
+        state.confirmation_text(),
+        Some("stop agent running-row? x or y confirms · esc cancels")
+    );
+    // Escape cancels and sends nothing; it does not close the view.
+    assert!(update(&mut state, ProgressInput::Key(ProgressKey::CloseView)).is_empty());
+    assert_eq!(state.confirmation_text(), None);
+    assert!(!state.closed);
+    assert_eq!(
+        state.progress().agent(lines::KEY_RUNNING).unwrap().state,
+        AgentState::Running
+    );
+    // Confirmed with y: the note goes first, and the stop once it is written, even when the
+    // note could not be written.
+    update(&mut state, ProgressInput::Key(ProgressKey::StopAgent));
+    let id = match update(&mut state, ProgressInput::Key(ProgressKey::Char('y'))).as_slice() {
+        [
+            ProgressEffect::WriteControl(
+                id,
+                ControlRequest::AgentStop {
+                    key,
+                    restart: false,
+                },
+            ),
+        ] if key == lines::KEY_RUNNING => *id,
+        other => panic!("expected the stop note, got {other:?}"),
+    };
+    let sent = update(
+        &mut state,
+        ProgressInput::ControlDone(
+            id,
+            ControlOutcome::Refused {
+                reason: "no space".into(),
+            },
+        ),
+    );
+    assert!(matches!(
+        sent.as_slice(),
+        [ProgressEffect::Interrupt { generation: 7, .. }]
+    ));
+}
+
+#[test]
+fn a_parked_stopped_agent_shows_as_needing_you_not_failed() {
+    let state = seeded(&lines::live_stopped_parked(
+        lines::KEY_RUNNING,
+        "sess-running",
+    ));
+    let agent = state.progress().agent(lines::KEY_RUNNING).unwrap();
+    assert_eq!(agent.state, AgentState::Unknown);
+    assert!(agent.state.needs_you());
+}
+
+#[test]
 fn journal_settlement_reports_whether_completion_beat_pending_interrupt() {
     for completed in [true, false] {
         let rows = lines::live_running(lines::KEY_RUNNING, "sess-running", 7);
         let mut state = seeded(&rows);
         state.select_agent(lines::KEY_RUNNING);
         assert!(matches!(
-            update(&mut state, ProgressInput::Key(ProgressKey::StopAgent)).as_slice(),
+            lines::confirm_stop(&mut state).as_slice(),
             [ProgressEffect::Interrupt { generation: 7, .. }]
         ));
         assert_eq!(
@@ -740,7 +802,7 @@ fn stale_failure() -> GatewayFailure {
 fn stale_generation_refreshes_once() {
     let mut state = seeded(&lines::live_running(lines::KEY_RUNNING, "sess-running", 7));
     state.select_agent(lines::KEY_RUNNING);
-    let sent = update(&mut state, ProgressInput::Key(ProgressKey::StopAgent));
+    let sent = lines::confirm_stop(&mut state);
     assert!(matches!(
         sent.as_slice(),
         [ProgressEffect::Interrupt { session_id, generation }]
@@ -789,7 +851,7 @@ fn stale_generation_refreshes_once() {
             .expect("row")
             .controls_disabled
     );
-    let blocked = update(&mut state, ProgressInput::Key(ProgressKey::StopAgent));
+    let blocked = lines::confirm_stop(&mut state);
     assert!(blocked.is_empty());
 }
 

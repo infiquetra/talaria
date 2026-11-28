@@ -154,6 +154,7 @@ fn sudo_view() -> MaskedView {
 struct Outcome {
     intent: Option<PromptIntent>,
     interrupt_requested: bool,
+    interrupt_session: Option<String>,
     notice: Option<String>,
 }
 
@@ -162,10 +163,12 @@ fn consumed(outcome: KeyOutcome) -> Outcome {
         KeyOutcome::Consumed {
             intent,
             interrupt_requested,
+            interrupt_session,
             notice,
         } => Outcome {
             intent,
             interrupt_requested,
+            interrupt_session,
             notice,
         },
         KeyOutcome::NotHandled => panic!("the card stack did not take the key"),
@@ -867,13 +870,13 @@ fn clarify_single_other_and_free_text() {
     }
     let rows = rig.rows();
     assert!(
-        has_row(&rows, "› 3. Other (type an answer)"),
+        has_row_containing(&rows, "│ › 3. Other (type an answer)"),
         "Down stops on the Other row: {rows:?}"
     );
     for _ in 0..5 {
         rig.press(named(KeyCode::Up)).nothing();
     }
-    assert!(has_row(&rig.rows(), "› 1. staging"));
+    assert!(has_row_containing(&rig.rows(), "│ › 1. staging"));
 
     // The Other row opens the text field, by Enter or by its digit; Enter then sends the text.
     let mut rig = Rig::with(&[&cell], &[]);
@@ -882,7 +885,10 @@ fn clarify_single_other_and_free_text() {
     rig.press(named(KeyCode::Enter)).nothing();
     rig.type_text("qa");
     let rows = rig.rows();
-    assert!(has_row(&rows, "answer: qa"), "text field drawn: {rows:?}");
+    assert!(
+        has_row_containing(&rows, "│ answer: qa"),
+        "text field drawn: {rows:?}"
+    );
     let (_, answer) = rig.press(named(KeyCode::Enter)).clarify();
     assert_eq!(answer, "qa");
 
@@ -980,6 +986,47 @@ fn clarify_single_other_and_free_text() {
 // ---------------------------------------------------------------------------------------------
 // 5. Clarification, multi select
 // ---------------------------------------------------------------------------------------------
+
+#[test]
+fn short_question_pane_keeps_the_question_and_current_choice_visible() {
+    let labels: Vec<String> = (1..=30).map(|n| format!("Destination {n}")).collect();
+    let choices: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let cell = clarify("Which destination?", &choices, false);
+    let mut rig = Rig::with(&[&cell], &[]);
+    for _ in 0..24 {
+        rig.press(named(KeyCode::Down)).nothing();
+    }
+    let screen = draw(&rig.stack, 44, 6).join("\n");
+    assert!(
+        screen.contains("Choose one") && screen.contains("Which destination?"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("› 25. Destination 25") && screen.contains("Enter"),
+        "{screen}"
+    );
+    assert_eq!(
+        rig.press(named(KeyCode::Enter)).clarify().1,
+        "Destination 25"
+    );
+
+    let cell = clarify("Which view?", &["Chat", "Map"], true);
+    let mut rig = Rig::with(&[&cell], &[]);
+    let tiny = draw(&rig.stack, 12, 2).join("\n");
+    assert!(
+        tiny.contains("Which view?") && tiny.contains("› [ ] Chat"),
+        "{tiny}"
+    );
+    rig.press(ch('3')).nothing();
+    rig.type_text("Log");
+    for height in [2, 3, 4] {
+        let short = draw(&rig.stack, 40, height).join("\n");
+        assert!(
+            short.contains("Which view?") && short.contains("answer: Log"),
+            "{short}"
+        );
+    }
+}
 
 #[test]
 fn clarify_multi_select_sends_json_array() {
@@ -1414,10 +1461,9 @@ fn stack_orders_masked_first_and_focuses_only_empty_draft() {
 
     // A single card has no counter.
     stack.sync(Some(MAIN), &[&question], &[], true, later);
-    assert_eq!(
-        draw(&stack, 80, 24).first().map(String::as_str),
-        Some("Question")
-    );
+    let header = draw(&stack, 80, 24).remove(0);
+    assert!(header.starts_with("┌ Question · Choose one ") && header.ends_with('┐'));
+    assert!(!header.contains("of 1"));
 }
 
 #[test]
@@ -1536,6 +1582,12 @@ fn stack_draws_a_foreign_session_and_a_counter_after_the_header() {
     let (key, choice, _) = consumed(stack.handle_key(ch('2'), at)).approve();
     assert_eq!(key, foreign.key);
     assert_eq!(choice, "deny");
+
+    let mut stack = PromptStack::new();
+    stack.sync(Some(MAIN), &[&foreign], &[], true, at - AFTER_GUARD);
+    let outcome = consumed(stack.handle_key(ctrl_c(), at));
+    assert!(outcome.interrupt_requested);
+    assert_eq!(outcome.interrupt_session.as_deref(), Some("f00dfeed-0001"));
 }
 
 #[test]
@@ -1589,7 +1641,7 @@ fn prompt_card_blank_session_shows_unknown_and_names_the_gateway() {
     assert!(header.contains("host gateway.example"), "{header}");
     stack.sync(Some(MAIN), &[&question], &[], true, now);
     let header = draw(&stack, 100, 24).first().cloned().unwrap_or_default();
-    assert!(header.starts_with("Question"), "{header}");
+    assert!(header.starts_with("┌ Question · Choose one"), "{header}");
     assert!(header.contains("profile work"), "{header}");
     assert!(header.contains("host gateway.example"), "{header}");
 }

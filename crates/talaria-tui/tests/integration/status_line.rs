@@ -557,7 +557,7 @@ fn priority_drops_lowest_first_at_each_width() {
         (39, FULL_39),
         (38, FULL_29),
         (29, FULL_29),
-        (28, FULL_13),
+        (28, " opus-5.5 │ ⚑ 2 need you"),
         (13, FULL_13),
     ];
     for (cols, expected) in cases {
@@ -867,8 +867,8 @@ proptest! {
         for (segment, text, _) in &at_narrow.pieces {
             let other = at_wide.pieces.iter().find(|(s, _, _)| s == segment);
             prop_assert!(other.is_some(), "{:?} vanished when widening {} to {}", segment, narrow, wide);
-            // Only a single cut segment may differ, and only in its text.
-            if at_narrow.pieces.len() > 1 {
+            // A model can abbreviate beside higher-priority segments.
+            if at_narrow.pieces.len() > 1 && *segment != Segment::Model {
                 prop_assert_eq!(&other.unwrap().1, text);
             }
         }

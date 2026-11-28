@@ -1,0 +1,18 @@
+schema = 1
+name = "Gruvbox Dark"
+extends = "dark"
+follow_hermes_skin = false
+
+[palette]
+background = "#282828"
+surface = "#3c3836"
+foreground = "#ebdbb2"
+muted = "#bdae93"
+disabled = "#b2a593"
+border = "#938474"
+primary = "#fe8827"
+accent = "#fabd2f"
+success = "#b8bb26"
+warning = "#fabd2f"
+error = "#fc8577"
+attention = "#d89ca7"

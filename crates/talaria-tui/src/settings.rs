@@ -1,20 +1,27 @@
 //! Settings projection and terminal key translation.
 use crate::{
-    history::{sanitize, wrap_lines},
+    history::{sanitize, word_wrapped, wrap_lines},
     keys::{Key, KeyCode, KeyContext, KeyKind, KeyMap},
+    theme::surfaces::{ViewStyles, tokens as t},
 };
 use ratatui::{
     Frame,
     buffer::Buffer,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph, Widget, Wrap},
 };
 pub use talaria_core::settings::SettingsAction;
 use talaria_core::settings::{
-    EditKey, ReviewRow, Screen, SettingsKey, SettingsView, contains_secret_key, is_secret_key,
+    EditKey, ReviewRow, Screen, SettingsKey, SettingsTarget, SettingsView, contains_secret_key,
+    is_secret_key,
 };
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
+const MIN_WIDTH: u16 = 40;
+const MIN_HEIGHT: u16 = 12;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, view: &SettingsView) {
     draw_settings(view, area, frame.buffer_mut());
@@ -46,12 +53,12 @@ fn column(text: &str, width: usize) -> String {
     let mut used = 0;
     let truncated = Line::from(clean.as_ref()).width() > width;
     let budget = width.saturating_sub(usize::from(truncated));
-    for ch in clean.chars() {
-        let columns = Span::raw(ch.to_string()).width();
+    for grapheme in clean.graphemes(true) {
+        let columns = UnicodeWidthStr::width(grapheme);
         if used + columns > budget {
             break;
         }
-        output.push(ch);
+        output.push_str(grapheme);
         used += columns;
     }
     if truncated && width > 0 {
@@ -64,10 +71,21 @@ fn column(text: &str, width: usize) -> String {
 
 /// Draw a settings snapshot without input or output.
 pub fn draw_settings(view: &SettingsView, area: Rect, buf: &mut Buffer) {
+    draw_settings_with_theme(view, area, buf, &ViewStyles::default());
+}
+
+/// Draw the settings overlay with the active view styles.
+pub fn draw_settings_with_theme(
+    view: &SettingsView,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
     Clear.render(area, buf);
-    if area.width < 60 || area.height < 12 {
+    views.finish(area, buf, t::LIST_BACKGROUND, true);
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         line(
-            "Make the terminal at least 60 by 12 to use settings.",
+            "Settings needs 40 columns and 12 rows. Esc closes.",
             area,
             buf,
         );
@@ -76,11 +94,17 @@ pub fn draw_settings(view: &SettingsView, area: Rect, buf: &mut Buffer) {
     if view.screen == Screen::Closed {
         return;
     }
-    line(
-        &format!("Settings · profile {}", view.profile),
-        at(area, 0, 1),
-        buf,
-    );
+    Paragraph::new(Line::from(vec![
+        Span::styled(
+            "Settings",
+            views.style(t::LIST_HEADER, Style::default()).bold(),
+        ),
+        Span::styled(
+            format!(" · profile {}", sanitize(&view.profile)),
+            views.style(t::LIST_MUTED, Style::default()),
+        ),
+    ]))
+    .render(at(area, 0, 1), buf);
     match view.screen {
         Screen::Loading => line(
             &format!("Loading settings for profile {}…", view.profile),
@@ -105,12 +129,21 @@ pub fn draw_settings(view: &SettingsView, area: Rect, buf: &mut Buffer) {
                 at(area, 0, area.height.saturating_sub(1 + banner_height)),
                 buf,
             );
+            views.finish(area, buf, t::LIST_BACKGROUND, true);
+            buf.set_style(
+                at(area, 0, 1),
+                views.style(t::LIST_HEADER, Style::default()),
+            );
             let footer = if view.screen == Screen::Reviewing {
                 "↑ ↓ scroll · Enter apply · Esc back"
             } else {
                 "Applying… (checking, saving, then reading back)"
             };
-            line(footer, at(area, area.height - 1, 1), buf);
+            line(
+                &crate::footer::with_recovery(footer, area.width),
+                at(area, area.height - 1, 1),
+                buf,
+            );
             if !view.banner.is_empty() {
                 lines(
                     view.banner.clone(),
@@ -127,7 +160,10 @@ pub fn draw_settings(view: &SettingsView, area: Rect, buf: &mut Buffer) {
                 buf,
             );
             line(
-                "↑ ↓ scroll · o keep yours · t take theirs · Esc back",
+                &crate::footer::with_recovery(
+                    "↑ ↓ scroll · o keep yours · t take theirs · Esc back",
+                    area.width,
+                ),
                 at(area, area.height - 1, 1),
                 buf,
             );
@@ -142,95 +178,317 @@ pub fn draw_settings(view: &SettingsView, area: Rect, buf: &mut Buffer) {
             text.push("Any key back".into());
             lines(text, at(area, 2, area.height - 2), buf);
         }
-        _ => draw_browser(view, area, buf),
+        _ => draw_browser(view, area, buf, views),
     }
 }
 
-fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
-    let narrow = area.width < 100;
-    let category = if view.category.is_empty() {
-        view.rows
-            .get(view.cursor)
-            .and_then(|row| row.key.split_once('.').map(|(category, _)| category))
-            .unwrap_or("general")
-    } else {
-        &view.category
-    };
-    let mut top = 2;
-    if narrow {
-        line(&format!("‹ {category} ›"), at(area, top, 1), buf);
-        top += 1;
-    }
-    if !view.filter.is_empty() || view.text_focus && view.screen == Screen::Browsing {
-        line(&format!("/ {}", view.filter), at(area, top, 1), buf);
-        top += 1;
-    }
-    let bottom = area
-        .height
-        .saturating_sub(5 + view.banner.len().min(3) as u16);
-    let capacity = usize::from(bottom.saturating_sub(top));
-    let start = view.cursor.saturating_sub(capacity.saturating_sub(1));
-    if !narrow {
-        let selected = view
+struct BrowserLayout<'a> {
+    category: &'a str,
+    rail: u16,
+    inspector_width: u16,
+    fields: Rect,
+    headings_y: u16,
+    filter: Option<Rect>,
+    top: u16,
+    bottom: u16,
+    detail_height: u16,
+    start: usize,
+    first_category: usize,
+    compact_inspector: Option<Vec<Line<'static>>>,
+}
+
+impl<'a> BrowserLayout<'a> {
+    fn new(view: &'a SettingsView, area: Rect, heading: Style, muted: Style) -> Self {
+        let category = if view.category.is_empty() {
+            view.rows
+                .get(view.cursor)
+                .and_then(|row| row.key.split_once('.').map(|(category, _)| category))
+                .unwrap_or("general")
+        } else {
+            &view.category
+        };
+        let rail = if area.width < 96 { 0 } else { 18 };
+        let inspector_width = if area.width >= 108
+            && area.height >= 17
+            && view.screen == Screen::Browsing
+            && !view.rows.is_empty()
+        {
+            (area.width / 3).min(52)
+        } else {
+            0
+        };
+        let fields = Rect::new(
+            area.x + rail,
+            area.y,
+            area.width - rail - inspector_width,
+            area.height,
+        );
+        let headings_y = if rail == 0 { 2 } else { 1 };
+        let filter = (!view.filter.is_empty()
+            || view.text_focus && view.screen == Screen::Browsing)
+            .then_some(at(fields, headings_y + 1, 1));
+        let top = headings_y + 1 + u16::from(filter.is_some());
+        let compact_inspector =
+            (inspector_width == 0 && view.screen == Screen::Browsing && !view.rows.is_empty())
+                .then(|| field_inspector_rows(view, category, area.width, true, heading, muted));
+        let banners = view.banner.len().min(3) as u16;
+        let detail_height = if inspector_width > 0 {
+            0
+        } else if let Some(rows) = &compact_inspector {
+            let available = area
+                .height
+                .saturating_sub(top + 5 + banners)
+                .min(area.height / 2);
+            (rows.len().min(usize::from(available)) as u16).saturating_sub(1)
+        } else if area.height >= 18 {
+            4
+        } else {
+            2
+        };
+        let bottom = area.height.saturating_sub(detail_height + 3 + banners);
+        let capacity = usize::from(bottom.saturating_sub(top));
+        let start = view.cursor.saturating_sub(capacity.saturating_sub(1));
+        let category_index = view
             .categories
             .iter()
             .position(|name| name == category)
             .unwrap_or(0);
-        let first = selected.saturating_sub(capacity.saturating_sub(1));
+        let first_category = category_index.saturating_sub(capacity.saturating_sub(1));
+        Self {
+            category,
+            rail,
+            inspector_width,
+            fields,
+            headings_y,
+            filter,
+            top,
+            bottom,
+            detail_height,
+            start,
+            first_category,
+            compact_inspector,
+        }
+    }
+}
+
+fn compact_category(category: &str, width: u16) -> String {
+    column(
+        &category_label(category),
+        usize::from(width.saturating_sub(18)),
+    )
+    .trim_end()
+    .to_owned()
+}
+
+/// Settings takes pointer input only while the ordinary list is active.
+pub fn pointer_enabled(view: &SettingsView, area: Rect) -> bool {
+    view.screen == Screen::Browsing
+        && !view.text_focus
+        && area.width >= MIN_WIDTH
+        && area.height >= MIN_HEIGHT
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PointerMotion {
+    Select,
+    Up,
+    Down,
+}
+
+/// Resolve a pointer event against the current browser geometry, including the compact inspector.
+pub fn pointer_key(
+    view: &SettingsView,
+    area: Rect,
+    column: u16,
+    row: u16,
+    motion: PointerMotion,
+) -> Option<SettingsKey> {
+    let pos = Position::new(column, row);
+    if !pointer_enabled(view, area) || !area.contains(pos) {
+        return None;
+    }
+    let layout = BrowserLayout::new(view, area, Style::default(), Style::default());
+    if layout.filter.is_some_and(|filter| filter.contains(pos)) {
+        return (motion == PointerMotion::Select)
+            .then_some(SettingsKey::Action(SettingsAction::Filter));
+    }
+    let offset = row - area.y;
+    if layout.rail == 0 && offset == 1 && view.filter.is_empty() {
+        let label = compact_category(layout.category, area.width);
+        let next = 3 + Line::raw(label).width();
+        let x = usize::from(column - area.x);
+        let action = match motion {
+            PointerMotion::Up => SettingsAction::PrevCategory,
+            PointerMotion::Down => SettingsAction::NextCategory,
+            PointerMotion::Select if x == 0 => SettingsAction::PrevCategory,
+            PointerMotion::Select if x == next => SettingsAction::NextCategory,
+            PointerMotion::Select => return None,
+        };
+        return Some(SettingsKey::Action(action));
+    }
+    if !(layout.top..layout.bottom).contains(&offset) {
+        return None;
+    }
+    let index = usize::from(offset - layout.top);
+    if layout.rail > 0 && column < area.x + layout.rail - 2 && view.filter.is_empty() {
+        return Some(match motion {
+            PointerMotion::Select => SettingsKey::Select(SettingsTarget::Category(
+                view.categories.get(layout.first_category + index)?.clone(),
+            )),
+            PointerMotion::Up => SettingsKey::Action(SettingsAction::PrevCategory),
+            PointerMotion::Down => SettingsKey::Action(SettingsAction::NextCategory),
+        });
+    }
+    if !layout.fields.contains(pos) {
+        return None;
+    }
+    let index = layout.start + index;
+    Some(match motion {
+        PointerMotion::Up => SettingsKey::Action(SettingsAction::Up),
+        PointerMotion::Down => SettingsKey::Action(SettingsAction::Down),
+        PointerMotion::Select if !view.links.is_empty() => {
+            SettingsKey::Select(SettingsTarget::Link(view.links.get(index)?.clone()))
+        }
+        PointerMotion::Select => {
+            SettingsKey::Select(SettingsTarget::Field(view.rows.get(index)?.key.clone()))
+        }
+    })
+}
+
+fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer, views: &ViewStyles) {
+    let muted = views.style(t::LIST_MUTED, Style::default());
+    let heading = views.style(t::LIST_HEADER, Style::default()).bold();
+    let layout = BrowserLayout::new(view, area, heading, muted);
+    let BrowserLayout {
+        category,
+        rail,
+        inspector_width,
+        fields,
+        headings_y,
+        top,
+        bottom,
+        detail_height,
+        start,
+        compact_inspector,
+        ..
+    } = layout;
+    let capacity = usize::from(bottom.saturating_sub(top));
+    let origin_width = if fields.width >= 70 { 11 } else { 0 };
+    let effect_width = if fields.width >= 120 { 23 } else { 0 };
+    let name_space = fields.width - origin_width - effect_width - 5;
+    let name_width = usize::from((name_space.saturating_mul(3)) / 5).min(44);
+    let value_width =
+        usize::from(fields.width - origin_width - effect_width).saturating_sub(name_width + 5);
+    if rail == 0 {
+        Paragraph::new(Line::from(vec![
+            Span::styled("‹ ", muted),
+            Span::styled(compact_category(category, area.width), heading),
+            Span::styled(" ›  ← → category", muted),
+        ]))
+        .render(at(area, 1, 1), buf);
+    } else {
+        Paragraph::new("Categories ←→")
+            .style(muted)
+            .render(at(area, 1, 1), buf);
+    }
+    let headings = format!(
+        "  {}  {} {}{}",
+        column(
+            if view.links.is_empty() {
+                "Setting"
+            } else {
+                "Open"
+            },
+            name_width
+        ),
+        column(
+            if view.links.is_empty() { "Value" } else { "" },
+            value_width
+        ),
+        if origin_width > 0 && view.links.is_empty() {
+            "Source     "
+        } else {
+            ""
+        },
+        if effect_width > 0 && view.links.is_empty() {
+            "Effect"
+        } else {
+            ""
+        }
+    );
+    Paragraph::new(headings)
+        .style(heading)
+        .render(at(fields, headings_y, 1), buf);
+    if let Some(filter) = layout.filter {
+        line("/ ", filter, buf);
+        let query = Rect::new(filter.x + 2, filter.y, filter.width - 2, 1);
+        if let Some(cursor) = view.filter_cursor {
+            crate::editor::draw_with_theme(&view.filter, cursor, query, buf, views);
+        } else {
+            line(&column(&view.filter, usize::from(query.width)), query, buf);
+        }
+    }
+    if rail > 0 {
         for (offset, name) in view
             .categories
             .iter()
-            .skip(first)
+            .skip(layout.first_category)
             .take(capacity)
             .enumerate()
         {
             let active = view.filter.is_empty() && name == category;
-            line(
-                &format!("{} {name}", if active { ">" } else { " " }),
-                Rect::new(area.x, area.y + top + offset as u16, 18, 1),
+            Paragraph::new(format!(
+                "{} {}",
+                if active { "›" } else { " " },
+                column(&category_label(name), usize::from(rail - 4)).trim_end()
+            ))
+            .style(if active { heading.underlined() } else { muted })
+            .render(
+                Rect::new(area.x, area.y + top + offset as u16, rail - 2, 1),
                 buf,
+            );
+        }
+        for y in area.y + 1..area.y + bottom {
+            buf.set_string(
+                area.x + rail - 2,
+                y,
+                views.divider_symbol("│"),
+                views.style(t::LIST_DIVIDER, Style::default()),
             );
         }
     }
     for (offset, row) in view.rows.iter().enumerate().skip(start).take(capacity) {
         let y = top + (offset - start) as u16;
-        let field_area = if narrow {
-            at(area, y, 1)
-        } else {
-            Rect::new(area.x + 19, area.y + y, area.width - 19, 1)
-        };
+        let field_area = at(fields, y, 1);
         let value = if is_secret_key(&row.key) {
             "•••••••• (r reveals once)"
         } else {
             &row.value
         };
-        let text = if narrow {
-            format!(
-                "{} {}  {}  {}  {}",
-                if offset == view.cursor { ">" } else { " " },
-                row.key,
-                value,
-                row.marker,
-                row.origin
-            )
-        } else {
-            format!(
-                "{} {}  {}  {}  {}  {}",
-                if offset == view.cursor { ">" } else { " " },
-                column(
-                    &row.key,
-                    usize::from(field_area.width).saturating_sub(60).min(34)
-                ),
-                column(value, 25),
-                column(&row.marker, 1),
-                column(&row.origin, 7),
-                row.effect_label
-            )
-        };
+        let text = format!(
+            "{} {} {}{} {}{}",
+            if offset == view.cursor { "›" } else { " " },
+            column(&setting_label(&row.key, category), name_width),
+            column(&row.marker, 1),
+            column(value, value_width),
+            if origin_width > 0 {
+                column(&row.origin, usize::from(origin_width))
+            } else {
+                String::new()
+            },
+            if effect_width > 0 {
+                &row.effect_label
+            } else {
+                ""
+            },
+        );
         let style = if offset == view.cursor {
-            Style::default().add_modifier(Modifier::BOLD)
+            views.style(
+                t::LIST_SELECTED,
+                Style::default().add_modifier(Modifier::BOLD),
+            )
         } else {
-            Style::default()
+            views.style(t::LIST_ROW, Style::default())
         };
         Paragraph::new(sanitize(&text).into_owned())
             .style(style)
@@ -239,27 +497,78 @@ fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
     if view.rows.is_empty() && view.links.is_empty() {
         line(
             &format!("No setting matches \"{}\".", view.filter),
-            at(area, top, 1),
+            at(fields, top, 1),
             buf,
         );
     }
-    for (i, link) in view.links.iter().enumerate().take(capacity) {
+    for (i, link) in view.links.iter().enumerate().skip(start).take(capacity) {
+        let region = at(fields, top + (i - start) as u16, 1);
         line(
             &format!("{} {link}  →", if i == view.cursor { ">" } else { " " }),
-            at(area, top + i as u16, 1),
+            region,
+            buf,
+        );
+        if i == view.cursor {
+            buf.set_style(region, views.style(t::LIST_SELECTED, Style::default()));
+        }
+    }
+    if inspector_width > 0 {
+        let x = fields.right();
+        for y in area.y + 1..area.y + bottom {
+            buf.set_string(
+                x,
+                y,
+                views.divider_symbol("│"),
+                views.style(t::LIST_DIVIDER, muted),
+            );
+        }
+        let inner = Rect::new(x + 2, area.y + 1, inspector_width - 3, bottom - 1);
+        let rows = field_inspector_rows(view, category, inner.width, false, heading, muted);
+        draw_inspector_rows(&rows, inner, buf);
+    } else if let Some(rows) = &compact_inspector {
+        draw_inspector_rows(rows, at(area, bottom, detail_height + 1), buf);
+    } else if let Some(row) = view.rows.get(view.cursor) {
+        let value = if is_secret_key(&row.key) {
+            "••••••••"
+        } else {
+            &row.value
+        };
+        let info = format!("{} · {}", row.origin, row.effect_label);
+        let inspector = vec![
+            Span::styled(sanitize(&row.key).into_owned(), heading),
+            Span::styled(format!("   {}", sanitize(&info)), muted),
+        ];
+        Paragraph::new(Line::from(inspector)).render(at(area, bottom, 1), buf);
+        let description = view
+            .field_help
+            .as_ref()
+            .map(|help| help.description.as_str())
+            .unwrap_or_else(|| {
+                view.detail
+                    .strip_prefix(&format!("{} · ", row.key))
+                    .unwrap_or(&view.detail)
+            });
+        lines(
+            vec![format!("Value  {value}"), description.to_owned()],
+            at(area, bottom + 1, detail_height),
+            buf,
+        );
+    } else {
+        lines(
+            vec![view.detail.clone()],
+            at(area, bottom, detail_height),
             buf,
         );
     }
-    let mut detail = view.detail.clone();
-    if narrow && let Some(row) = view.rows.get(view.cursor) {
-        detail = format!("{} · {detail}", row.effect_label);
-    }
-    lines(vec![detail], at(area, bottom, 2), buf);
     let messages = view.banner.clone();
     if view.screen == Screen::Choosing {
-        draw_chooser(view, at(area, top, bottom.saturating_sub(top)), buf);
+        draw_chooser(view, at(area, top, bottom.saturating_sub(top)), buf, views);
     } else {
-        let region = at(area, bottom + 2, area.height.saturating_sub(bottom + 3));
+        let region = at(
+            area,
+            bottom + detail_height + 1,
+            area.height.saturating_sub(bottom + detail_height + 2),
+        );
         if let Some(editor) = &view.editor {
             lines(
                 messages,
@@ -274,7 +583,7 @@ fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
                 } else {
                     editor.text.clone()
                 };
-                crate::editor::draw(
+                crate::editor::draw_with_theme(
                     &value,
                     editor.cursor,
                     Rect::new(
@@ -284,28 +593,156 @@ fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
                         1,
                     ),
                     buf,
+                    views,
                 );
             }
         } else {
             lines(messages, region, buf);
         }
     }
-    let footer = if view.screen == Screen::Editing
+    let footer = if view.filter_cursor.is_some() {
+        "Enter or ↓ show matches · Esc clear filter"
+    } else if view.screen == Screen::Editing
         && view.editor.as_ref().is_some_and(|editor| editor.secret)
     {
-        "Enter accept · Esc cancel · Alt+R reveal once"
+        "Enter accept · Alt+R reveal once · Esc cancel"
     } else if view.footer.is_empty() {
         "Enter edit · d default · u undo · r reveal · Ctrl+R reload · Esc close"
     } else {
         &view.footer
     };
-    line(footer, at(area, area.height - 1, 1), buf);
+    line(
+        &crate::footer::with_recovery(footer, area.width),
+        at(area, area.height - 1, 1),
+        buf,
+    );
+    buf.set_style(
+        at(area, area.height - 1, 1),
+        views.style(t::LIST_MUTED, Style::default()),
+    );
+}
+
+fn category_label(category: &str) -> String {
+    match category {
+        "tts" => "Speech output".into(),
+        "stt" => "Speech input".into(),
+        "mcp" => "Tool servers".into(),
+        other => setting_label(&sanitize(other), ""),
+    }
+}
+
+fn setting_label(key: &str, category: &str) -> String {
+    let key = key
+        .strip_prefix(category)
+        .and_then(|rest| rest.strip_prefix('.'))
+        .unwrap_or(key);
+    let mut label = key.replace('_', " ").replace('.', " › ");
+    if let Some(first) = label.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    label
+}
+
+fn field_inspector_rows(
+    view: &SettingsView,
+    category: &str,
+    width: u16,
+    compact: bool,
+    heading: Style,
+    muted: Style,
+) -> Vec<Line<'static>> {
+    let Some(row) = view.rows.get(view.cursor) else {
+        return Vec::new();
+    };
+    let mut content = Vec::new();
+    if !compact {
+        content.push(Line::styled("Selected setting", muted));
+    }
+    content.push(Line::styled(setting_label(&row.key, category), heading));
+    if view.field_help.is_none() && view.detail.ends_with(" (hidden on the next key)") {
+        content.push(Line::raw(view.detail.clone()));
+        return wrap_inspector(content, width);
+    }
+    let value = if is_secret_key(&row.key) {
+        "••••••••"
+    } else {
+        &row.value
+    };
+    let description = view.field_help.as_ref().map_or_else(
+        || {
+            view.detail
+                .strip_prefix(&format!("{} · ", row.key))
+                .unwrap_or(&view.detail)
+        },
+        |help| &help.description,
+    );
+    if !description.is_empty() {
+        content.push(Line::raw(description.to_owned()));
+    }
+    if compact {
+        content.push(Line::raw(format!("Value  {value}")));
+    } else {
+        content.push(Line::raw(""));
+        content.push(Line::styled("Value", heading));
+        content.push(Line::raw(value.to_owned()));
+    }
+    let source = if row.origin == "set" {
+        "Profile setting"
+    } else {
+        &row.origin
+    };
+    if compact {
+        content.push(Line::styled(
+            format!("Key  {} · Source  {source}", row.key),
+            muted,
+        ));
+    } else {
+        content.push(Line::raw(""));
+        content.push(Line::styled(format!("Key  {}", row.key), muted));
+        content.push(Line::styled(format!("Source  {source}"), muted));
+    }
+    if !row.effect_label.is_empty() {
+        content.push(Line::styled(row.effect_label.clone(), muted));
+    }
+    if let Some(help) = &view.field_help {
+        if row.value != help.default_value && !is_secret_key(&row.key) {
+            content.push(Line::styled(
+                format!("Default  {}", help.default_value),
+                muted,
+            ));
+        }
+        if !help.note.is_empty() {
+            if !compact {
+                content.push(Line::raw(""));
+            }
+            content.push(Line::raw(help.note.clone()));
+        }
+    }
+    wrap_inspector(content, width)
+}
+
+fn wrap_inspector(content: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    content
+        .into_iter()
+        .flat_map(|line| {
+            word_wrapped(&sanitize(&line.to_string()), width)
+                .into_iter()
+                .map(move |text| Line::styled(text, line.style))
+        })
+        .collect()
+}
+
+fn draw_inspector_rows(rows: &[Line<'_>], area: Rect, buf: &mut Buffer) {
+    for (y, row) in (area.y..area.bottom()).zip(rows) {
+        buf.set_line(area.x, y, row, area.width);
+    }
 }
 
 /// The open chooser over the field list, above the detail line: the filter, then one row per
 /// value with its marks and description, scrolled to keep the selection in view.
-fn draw_chooser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
+fn draw_chooser(view: &SettingsView, area: Rect, buf: &mut Buffer, views: &ViewStyles) {
     Clear.render(area, buf);
+    views.finish(area, buf, t::LIST_BACKGROUND, true);
     let filter = if view.choice_filter.is_empty() {
         "type to filter".to_owned()
     } else {
@@ -357,9 +794,12 @@ fn draw_chooser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
             )
         };
         let style = if selected {
-            Style::default().add_modifier(Modifier::BOLD)
+            views.style(
+                t::LIST_SELECTED,
+                Style::default().add_modifier(Modifier::BOLD),
+            )
         } else {
-            Style::default()
+            views.style(t::LIST_ROW, Style::default())
         };
         Paragraph::new(sanitize(&text).into_owned())
             .style(style)

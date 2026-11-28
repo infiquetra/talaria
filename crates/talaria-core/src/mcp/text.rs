@@ -15,13 +15,13 @@ pub fn view(state: &McpState, now: Instant) -> McpView {
                 Some("Loading…".into())
             } else if let Some(e) = &state.list_error {
                 Some(format!(
-                    "Could not load MCP servers: {e}. ctrl+r tries again."
+                    "Could not load MCP servers: {e}. Ctrl+R tries again."
                 ))
             } else if rows.is_empty() && !state.filter.is_empty() {
                 Some(format!("No server matches \"{}\".", short(&state.filter)))
             } else if rows.is_empty() {
                 Some(format!(
-                    "No MCP servers in profile {} yet. ctrl+n adds one; tab opens Hermes's catalogue.",
+                    "No MCP servers in profile {} yet. Ctrl+N adds one; Tab opens Hermes's catalogue.",
                     short(&state.profile)
                 ))
             } else {
@@ -54,7 +54,7 @@ pub fn view(state: &McpState, now: Instant) -> McpView {
                 Some("Loading…".into())
             } else if let Some(e) = &state.catalog_error {
                 Some(format!(
-                    "Could not load catalogue: {e}. ctrl+r tries again."
+                    "Could not load catalogue: {e}. Ctrl+R tries again."
                 ))
             } else if rows.is_empty() && !state.filter.is_empty() {
                 Some(format!("No server matches \"{}\".", short(&state.filter)))
@@ -82,9 +82,9 @@ pub fn view(state: &McpState, now: Instant) -> McpView {
         title:format!("MCP servers · profile {}",short(&state.profile)),tab:state.tab,
         banner:(!state.connected).then(||"Not connected to Hermes. Changes are off until Talaria reconnects.".into()),
         filter:state.filter.clone(),placeholder,rows,selected,status_line,card,
-        pending_line:state.pending.then(||"Saved for new sessions; this session still uses the old servers · ctrl+y apply".into()),
+        pending_line:state.pending.then(||"Saved for new sessions; this session still uses the old servers · Ctrl+Y apply".into()),
         notice:state.notice.clone(),
-        footer:match state.tab { McpTab::Servers => "enter details · ctrl+t test · ctrl+e on/off · ctrl+k key · ctrl+o sign in · ctrl+d remove · ctrl+n add · ctrl+y apply", McpTab::Catalogue => "enter install · tab servers · ctrl+r reload · esc close" }.into(),
+        footer:match state.tab { McpTab::Servers => "Enter details · Ctrl+T test · Ctrl+E on/off · Ctrl+K key · Ctrl+O sign in · Ctrl+D remove · Ctrl+N add · Ctrl+Y apply · Esc close", McpTab::Catalogue => "Enter install · Tab servers · Ctrl+R reload · Esc close" }.into(),
         secret_focus,
     }
 }
@@ -111,13 +111,13 @@ fn card_view(state: &McpState, c: &Card, now: Instant) -> CardView {
                 lines.push("Discard this server? y · n".into());
             }
             if form.local && form.env.iter().all(|n| !n.trim().is_empty()) {
-                lines.push("Up to 8 variables here; add more later with ctrl+k.".into());
+                lines.push("Up to 8 variables here; add more later with Ctrl+K.".into());
             }
             card(
                 "Add an MCP server".into(),
                 lines,
                 form.fields(state),
-                "tab next field · ←→ choose · ctrl+s save · esc discard",
+                "Tab next field · ←→ choose · Ctrl+S save · Esc discard",
             )
         }
         Card::Key {
@@ -155,7 +155,7 @@ fn card_view(state: &McpState, c: &Card, now: Instant) -> CardView {
                 format!("API key for {}", short(name)),
                 lines,
                 fields,
-                "enter save · esc cancel",
+                "Enter save · Esc cancel",
             )
         }
         Card::Remove(name) => card(
@@ -178,7 +178,7 @@ fn card_view(state: &McpState, c: &Card, now: Instant) -> CardView {
                     "After install it is on for new sessions of profile {}.",
                     short(&state.profile)
                 ));
-                "enter install · esc cancel"
+                "Enter install · Esc cancel"
             } else {
                 lines.push(format!(
                     "{} needs values Hermes asks for at install: {}. Run {} in a terminal.",
@@ -191,7 +191,7 @@ fn card_view(state: &McpState, c: &Card, now: Instant) -> CardView {
                         .join(", "),
                     install_command(state, &entry.name)
                 ));
-                "c copy command · esc back"
+                "c copy command · Esc back"
             };
             card(
                 format!("Install {}?", short(&entry.name)),
@@ -240,14 +240,14 @@ fn card_view(state: &McpState, c: &Card, now: Instant) -> CardView {
                 lines,
                 fields,
                 if signin.paste {
-                    "enter send · esc back"
+                    "Enter send · Esc back"
                 } else {
-                    "o open link · c copy link · p paste the browser's address · esc cancel"
+                    "o open link · c copy link · p paste the browser's address · Esc cancel"
                 },
             )
         }
         Card::Done { title, message } => {
-            card(title.clone(), vec![message.clone()], vec![], "esc back")
+            card(title.clone(), vec![message.clone()], vec![], "Esc back")
         }
         Card::Apply { stage, .. } => card(
             "Apply MCP servers".into(),
@@ -311,7 +311,7 @@ fn detail(state: &McpState, name: &str, now: Instant) -> CardView {
             short(name),
             vec![format!("{} is no longer configured.", short(name))],
             vec![],
-            "esc back",
+            "Esc back",
         );
     };
     let s = &row.summary;
@@ -383,7 +383,7 @@ fn detail(state: &McpState, name: &str, now: Instant) -> CardView {
     let oauth = s.auth.as_deref() == Some("oauth");
     if oauth {
         lines.push(format!(
-            "No browser on this machine? Run {} on the gateway's machine, then press ctrl+r.",
+            "No browser on this machine? Run {} on the gateway's machine, then press Ctrl+R.",
             login_command(state, name)
         ));
     }
@@ -392,9 +392,9 @@ fn detail(state: &McpState, name: &str, now: Instant) -> CardView {
         lines,
         vec![],
         if oauth {
-            "c copy command · esc back"
+            "c copy command · Esc back"
         } else {
-            "esc back"
+            "Esc back"
         },
     )
 }

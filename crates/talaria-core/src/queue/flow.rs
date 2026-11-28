@@ -200,15 +200,15 @@ fn draw_started_row(state: &mut SessionState, row: &QueuedRow) {
             .insert(id.clone(), row.input_id.0.clone());
         state.queue.drawn.insert(id.clone());
         if !entry.cell_drawn {
-            let display = state
+            let (display, expanded_paste) = state
                 .submissions
                 .iter()
                 .find(|entry| entry.id == row.input_id.0)
                 .map_or_else(
-                    || crate::hivecode::shown_text(&row.text).to_owned(),
-                    |entry| entry.text.clone(),
+                    || (crate::hivecode::shown_text(&row.text).to_owned(), None),
+                    |entry| (entry.text.clone(), entry.expanded_paste.clone()),
                 );
-            state.user(display);
+            state.user_with_paste(display, expanded_paste);
         }
         forget_waiting(state, id);
     } else if state.queue.known.contains(id) {
@@ -254,19 +254,19 @@ pub(crate) fn start_cell(state: &mut SessionState, admission: Option<&str>, inje
         state.queue.fifo_of.insert(id.clone(), key.0.clone());
         state.queue.drawn.insert(id.clone());
         if !entry.cell_drawn {
-            let text = state
+            let (text, expanded_paste) = state
                 .submissions
                 .iter()
                 .find(|entry| entry.id == key.0)
-                .map(|entry| entry.text.clone())
+                .map(|entry| (entry.text.clone(), entry.expanded_paste.clone()))
                 .unwrap_or_else(|| {
                     let sent = state
                         .queue
                         .row(&id)
                         .map_or(entry.text, |row| row.text.clone());
-                    crate::hivecode::shown_text(&sent).to_owned()
+                    (crate::hivecode::shown_text(&sent).to_owned(), None)
                 });
-            state.user(text);
+            state.user_with_paste(text, expanded_paste);
         }
         forget_waiting(state, &id);
         return;
@@ -289,7 +289,7 @@ fn start_from_waiting(state: &mut SessionState, admission: Option<AdmissionId>) 
         return;
     };
     if !entry.placed {
-        state.user(entry.text);
+        state.user_with_paste(entry.text, entry.expanded_paste);
     }
     let key = SubmissionId(entry.id.clone());
     if let Some(own) = state.queue.ledger.get_mut(&key) {

@@ -4,8 +4,8 @@ Start with a pure literal header: `export const meta = {name:'name', description
 
 | Host | Meaning |
 |---|---|
-| `agent(prompt, opts?)` | Promise for final string or JSON; failed or skipped calls yield null. |
-| `cutShort()` | Array of `{label, steps, limit}` for each agent so far that Hermes stopped at its step cap, in the order their results arrived; empty when none. See below. |
+| `agent(prompt, opts?)` | Promise for final string or JSON. Failed or skipped calls normally yield null. `reportFile` opts into the result shape below. |
+| `cutShort()` | Array of `{label, steps, limit}` (plus `savedBranch` when uncommitted work was saved) for each agent so far that Hermes stopped at its step cap, in the order their results arrived; empty when none. See below. |
 | `parallel(thunks)` | Invoke function thunks in order; return their results in input order, with null for failures. |
 | `pipeline(items, ...stages)` | Each item moves through function stages independently. A stage receives previous result, original item, index. |
 | `phase(title)` | Change the current instance's phase and narrate it. |
@@ -32,10 +32,11 @@ Every execution option:
 | `opts.toolsets` | Nonempty array of distinct toolset names. |
 | `opts.skills` | Nonempty array of distinct skill names. |
 | `opts.isolation` | Exactly 'worktree'. |
-| `opts.maxTurns` | Integer 1 through 10,000. Omitted means the agent has no step cap; the profile's own `agent.max_turns` does not apply to workflow agents. |
+| `opts.reportFile` | Relative path to a JSON report, with a schema and worktree isolation. See "Recovering a report". |
+| `opts.maxTurns` | Integer 1 through 10,000. Omitted means the agent has no step cap; the profile's own `agent.max_turns` does not apply to workflow agents. Leave it out (see "Step caps"). |
 | `opts.stallMs` | Positive integer, accepted as a logged no-op. |
 
-An agent can end three ways. It finishes and its reply is returned. It fails and the call yields null; the run then ends `completed_with_failures` and names the failed agents first. Or Hermes stops it at its step cap (the exit reason `max_iterations_reached(N/M)` with `completed: false`): the agent is cut short. A cut short agent is not failed and is not sent another turn. Its reply is kept and returned exactly as for a finished agent, so a script that ignores the mark behaves as it always did. The mark is visible three ways: an object or array reply has a hidden `cutShort` property, `{steps, limit}`, that `Object.keys`, spread and `JSON.stringify` do not show; a text reply cannot carry one, so use `cutShort()`, which lists every cut short agent by label; and the journal's `call_finished` record, the `agent_finished` event, the run's final `cut_short_agents` list and the workflow view all say "cut short (60 of 60 steps)". With `opts.schema`, a cut short reply is checked once; if it does not fit, the call fails without a correction turn. A run whose only problem is cut short agents still ends `completed`. Cut short replies are kept when a run is resumed.
+An agent can end three ways. It finishes and its reply is returned. It fails and the call yields null; the run then ends `completed_with_failures` and names the failed agents first. Or Hermes stops it at its step cap (the exit reason `max_iterations_reached(N/M)` with `completed: false`): the agent is cut short. A cut short agent is not failed and is not sent another turn. Its reply is kept and returned exactly as for a finished agent, so a script that ignores the mark behaves as it always did. The mark is visible three ways: an object or array reply has a hidden `cutShort` property, `{steps, limit}`, that `Object.keys`, spread and `JSON.stringify` do not show; a text reply cannot carry one, so use `cutShort()`, which lists every cut short agent by label; and the journal's `call_finished` record, the `agent_finished` event, the run's final `cut_short_agents` list and the workflow view all say "cut short (60 of 60 steps)". With `opts.schema`, a cut short reply is checked once; if it does not fit, the call fails without a correction turn. A run whose only problem is cut short agents still ends `completed`. Cut short replies are kept when a run is resumed. When an agent with `isolation: 'worktree'` is cut short and left uncommitted changes, its `cutShort` mark and `cutShort()` entry also carry `savedBranch`, the branch Talaria saved them to; the worktree is unchanged. A failed agent's reason then ends with `(uncommitted work saved to branch <name>)`.
 
 There are no coding toolsets by default. Name toolsets explicitly: ["file"], ["file","terminal"], ["web"], or ["todo"]. A file or terminal agent needs a worktree; tell readers not to edit. The file toolset can write.
 
@@ -44,3 +45,48 @@ Await every agent that matters. Returning abandons pending calls. Labels and pha
 No filesystem, sockets, modules, or timers exist in the script. console, fetch, require, and setTimeout are absent. Dynamic imports are refused. eval and Function remain in the same sandbox. Limits default to 256 MiB heap, 1 MiB stack, 1,000 agents including child calls and replays, 4,096 items per combinator, and 5 seconds of runnable JavaScript per turn. Waiting for a backend does not count as runnable time. Native heap and stack errors can be caught; uncaught exhaustion fails the run.
 
 API errors include DeterminismError, WorkflowOptionError, SchemaError, AgentLimitError, ItemLimitError, BudgetExhaustedError, NestedWorkflowError, WorkflowNotFoundError, and WorkflowScriptError. Header refusals include MetaMissing, MetaNotLiteral, MetaField, and ImportNotAllowed. Cancellation and backend aborts end the run outside JavaScript. An agentType option is refused; use tier, toolsets, or skills.
+
+## Step caps
+
+Leave `maxTurns` out of every `agent()` call. The token budget is the only limit a run needs. An agent stopped at its step cap cannot make another tool call, so it cannot commit its work or report properly: it leaves edits uncommitted and its reply can be cut off. `workflow check` warns when a script sets `maxTurns` and names the labels. The warning is not a refusal, but treat it as a mistake to fix.
+
+## Status words
+
+Talaria checks every reply against `opts.schema` with a full JSON Schema validator and sends one correction turn on a mismatch, so `enum` is enforced. A schema field the script tests or branches on must list its allowed words with `enum`, for example `status: {enum: ['done','blocked']}`, and the prompt must name the same words: "Answer status with exactly one of: done, blocked." A plain `{type:'string'}` lets an agent answer "complete" where the script tests for "done"; in real runs that made whole phases silently not run. Test for each enum word you handle, and name or retry anything else. `workflow check` answers an `enum` field with its first word, so list the word that continues the work first and the trial run reaches further.
+
+## Recovering a report
+
+Declare `reportFile` on a worker with the file toolset, `isolation: 'worktree'`, and a `schema`. Use a new relative path with no dot components, for example `reports/review.json`. Talaria asks the worker to write plain JSON matching that schema before replying. Give each finding a short evidence field, such as a source file and line, a test name, or a URL.
+
+A usable final reply takes precedence. If a settled worker fails or its reply does not fit the schema, Talaria can keep a report that was created or changed during the attempt. The report must be regular JSON of at most 1 MiB and fit the same schema. A recovered report ends the call before a correction or automatic retry and the worker still counts as failed. Operator stops and turns stopped for budget exhaustion retain their usual behavior. The kept report is read from the journal on resume, including after the worktree is removed. Use `workflow restart` to explicitly request a new attempt.
+
+```javascript
+const review = await agent("Review the change and cite a file and line for each finding.", {
+  label: "code review",
+  toolsets: ["file"],
+  isolation: "worktree",
+  reportFile: "reports/review.json",
+  schema: {
+    type: "object",
+    properties: {findings: {type: "array", items: {type: "string"}}},
+    required: ["findings"],
+  },
+});
+if (review === null) return {failed: "code review"};
+if (review.recoveredReport) log(`Code review failed: ${review.recoveredReport.reason}`);
+return {findings: review.value.findings, recovery: review.recoveredReport};
+```
+
+With `reportFile`, the call yields `{value, recoveredReport}`. The marker is null for an ordinary reply and `{path, reason}` for recovered evidence. A failure without recoverable evidence still yields null, and a budget stop still rejects. Use the marker when deciding which work to accept or retry. To read saved evidence outside the script, use `workflow result --json <run-id> --agent <label-or-key>`.
+
+## Reading a failed agent
+
+A stop that ends an agent's turn gives a reason starting "agent stopped: ", which names who asked for the stop when Talaria knows (for example "agent stopped: it was stopped with the stop-agent key in the Talaria workflow view; Hermes ended the turn as 'interrupted'"). When Talaria did not send the stop, it may have been a person or Hermes itself. It is not a provider limit or a timeout. Such a call no longer fails: it parks with cause `stopped` and waits for the developer's answer, unless the runner sent the stop itself: because the run was being stopped, because the budget ran out, or so that the workflow view could restart the agent. Only then does the agent end without parking, with that reason. Report it, ask the developer what happened, and do not reroute models because of it.
+
+## Worktree and new project rules
+
+A worktree is a separate checkout, not a sandbox. Workers commit on their own branches; report their commits for integration. Start independent phases together, such as a playtest that does not need the reviewers' output.
+
+Worktrees: a new worktree starts at the source checkout's committed HEAD when that agent starts; uncommitted files are not copied. Tell each isolated worker to work in its own folder with relative paths, create named branches there with `git switch -c` (branches are shared across worktrees, so the integrator merges them by name), and never `cd` or `git -C` into the source checkout or switch branches there. Never paste the source checkout's absolute path into a prompt; workers must not commit absolute checkout paths.
+
+New project: worktree isolation fails outside a git repository. When the target folder is not inside one, create the empty folder, run with `--cwd <that folder>`, and make the script's first agent unisolated (no `isolation`). It does only `git init` and an initial commit (`--allow-empty` without a scaffold), or the shared scaffold. Every later agent uses isolation: 'worktree'.

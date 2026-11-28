@@ -3,6 +3,7 @@
 //! The key argument is this crate's own action, not a terminal-crate key. The screen maps its
 //! keys onto these names. This crate does not depend on a terminal library.
 
+use std::borrow::Cow;
 use std::io::Read;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -685,19 +686,27 @@ impl AttachmentsState {
         }
     }
 
+    /// Expand the text for a submission route that does not carry attachment metadata.
+    pub fn expand_pastes<'a>(&self, draft: &'a str) -> Result<Cow<'a, str>, String> {
+        if file_reference_is_credential(draft, &self.workspace, &self.home) {
+            return Err(CREDENTIAL_FILE.to_owned());
+        }
+        let expanded = self.chips.expand_pastes(draft).map_err(expand_notice)?;
+        if file_reference_is_credential(&expanded, &self.workspace, &self.home) {
+            return Err(CREDENTIAL_FILE.to_owned());
+        }
+        Ok(expanded)
+    }
+
     /// Expand the draft. The error is the notice and the draft stays.
     pub fn on_submit(&mut self, draft: &str) -> Result<Expanded, String> {
         if file_reference_is_credential(draft, &self.workspace, &self.home) {
             return Err(CREDENTIAL_FILE.to_owned());
         }
-        let expanded = self.chips.expand(draft).map_err(|error| match error {
-            ExpandError::Pending { .. } => "An attachment is still uploading; press Enter again when it finishes.".into(),
-            ExpandError::MissingPaste { label } => {
-                let n = label.strip_prefix("[Pasted text #").and_then(|s| s.split_whitespace().next()).unwrap_or("?");
-                format!("Pasted text #{n} is no longer available. Delete its label or paste the text again.")
-            }
-            ExpandError::TooManyImages => "Hermes accepts at most 10 images per prompt.".into(),
-        })?;
+        let expanded = self.chips.expand(draft).map_err(expand_notice)?;
+        if file_reference_is_credential(&expanded.text, &self.workspace, &self.home) {
+            return Err(CREDENTIAL_FILE.to_owned());
+        }
         self.mention.close();
         self.pending_drops = 0;
         self.clipboard_busy = false;
@@ -1056,6 +1065,24 @@ const FILE_LIMIT: u64 = 50 * 1024 * 1024;
 const INVALID_ATTACHMENT: &str =
     "Hermes could not accept that attachment (unsupported or damaged).";
 const UNSUPPORTED_IMAGE: &str = "Hermes accepts PNG, JPEG, GIF and WebP images.";
+fn expand_notice(error: ExpandError) -> String {
+    match error {
+        ExpandError::Pending { .. } => {
+            "An attachment is still uploading; press Enter again when it finishes.".into()
+        }
+        ExpandError::MissingPaste { label } => {
+            let number = label
+                .strip_prefix("[Pasted text #")
+                .and_then(|label| label.split_whitespace().next())
+                .unwrap_or("?");
+            format!(
+                "Pasted text #{number} is no longer available. Delete its label or paste the text again."
+            )
+        }
+        ExpandError::TooManyImages => "Hermes accepts at most 10 images per prompt.".into(),
+    }
+}
+
 const CREDENTIAL_FILE: &str = "Talaria does not attach credential files.";
 
 fn encode_image(bytes: &[u8]) -> Result<(String, String, &'static str), String> {
@@ -1370,7 +1397,7 @@ fn file_reference_values(text: &str) -> Vec<String> {
             continue;
         }
         let (raw, len) = take_reference_value(value);
-        values.push(unquote_reference(raw).to_owned());
+        values.push(reference_path(raw).to_owned());
         consumed = at + "file:".len() + 1 + len;
     }
     values
@@ -1401,6 +1428,29 @@ fn unquote_reference(value: &str) -> &str {
         }
     }
     value
+}
+
+fn reference_path(value: &str) -> &str {
+    let unquoted = unquote_reference(value);
+    if unquoted.len() != value.len() {
+        return unquoted;
+    }
+    let path = unquoted.trim_end_matches(['.', ',', ';', '!', '?', ')', ']', '}']);
+    let Some((path, location)) = path.rsplit_once(':') else {
+        return path;
+    };
+    let mut range = location.split('-');
+    let start = range.next().unwrap_or_default();
+    let end = range.next();
+    if !start.is_empty()
+        && start.bytes().all(|byte| byte.is_ascii_digit())
+        && end.is_none_or(|end| !end.is_empty() && end.bytes().all(|byte| byte.is_ascii_digit()))
+        && range.next().is_none()
+    {
+        path
+    } else {
+        unquoted
+    }
 }
 
 /// The pathname Hermes `file.attach` will open after strip, quote removal, and expansion.

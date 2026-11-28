@@ -30,7 +30,12 @@ fn stopped_at_cap(meta: &Value) -> Option<CutShort> {
 }
 impl TurnPolicy for SchemaTurnPolicy {
     fn first_turn(&self, request: &AgentRequest, launch: &ResolvedLaunch) -> String {
-        let text = brief(&request.prompt, request.schema.as_ref());
+        let mut text = brief(&request.prompt, request.schema.as_ref());
+        if let Some(path) = &request.report_file {
+            text.push_str(&format!(
+                "\n\nWrite the report as plain JSON matching the schema to this relative path in your worktree before returning your final reply: {path:?}. Include short evidence references, such as file paths and line numbers, in the fields available in the schema."
+            ));
+        }
         match (&launch.isolation, &launch.cwd) {
             (Some(Isolation::Worktree), Some(cwd)) => format!(
                 "Your working folder is {cwd}. Do all your work there, using relative paths, and do not change to the source checkout.\n\n{text}"
@@ -65,7 +70,11 @@ impl TurnPolicy for SchemaTurnPolicy {
         match turn.outcome.as_str() {
             "completed" => {}
             "interrupted" | "cancelled" => {
-                return failed(format!("stopped in Hermes (outcome '{}')", turn.outcome));
+                return failed(super::failure::stop_reason(
+                    &turn.outcome,
+                    &turn.result_meta,
+                    turn.final_text.as_deref(),
+                ));
             }
             other => return failed(format!("unexpected outcome '{other}'")),
         }

@@ -93,7 +93,10 @@ fn nonempty_no_color_and_config_none_strip_entire_catalogue_but_keep_attributes(
         detect::depth(&EnvView::default(), ColorsSetting::None),
     ] {
         let result = resolve(depth, ColorValue::Rgb(12, 34, 56));
-        assert_eq!(result.elements.len(), 323);
+        assert_eq!(
+            result.elements.len(),
+            talaria_app::theme_file::catalogue().len()
+        );
         for (token, style) in &result.elements {
             assert_eq!(
                 (style.fg, style.bg, style.underline_color),

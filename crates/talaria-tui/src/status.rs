@@ -8,7 +8,7 @@ pub mod env;
 pub mod output;
 pub mod segments;
 
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 
 pub use command::{
     CommandLimits, CommandResult, CommandSpec, Decision, ExternalDisplay, MIN_RERUN_GAP,
@@ -108,6 +108,7 @@ impl Tone {
 pub struct StatusPalette {
     pub(crate) styles: [Style; 7],
     pub(crate) accent: Style,
+    pub(crate) model: Option<Style>,
     pub(crate) border: Option<crate::theme::BorderPreset>,
 }
 
@@ -147,11 +148,17 @@ impl StatusPalette {
         self
     }
 
+    pub(super) fn model_style(&self) -> Style {
+        self.model
+            .unwrap_or_else(|| self.style(Tone::Accent).add_modifier(Modifier::BOLD))
+    }
+
     /// Styles in `Tone` order.
     pub fn from_styles(styles: [Style; 7]) -> Self {
         Self {
             styles,
             accent: styles[0],
+            model: None,
             border: None,
         }
     }

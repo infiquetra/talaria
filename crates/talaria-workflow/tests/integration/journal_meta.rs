@@ -44,6 +44,7 @@ fn failure_reason_and_retry_finish() {
         phase: None,
         prompt: "fixture".into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: None,
         provider: None,

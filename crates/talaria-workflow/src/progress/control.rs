@@ -12,7 +12,15 @@ pub enum ControlRequest {
     Pause,
     Resume,
     Stop,
-    Restart { key: String },
+    Restart {
+        key: String,
+    },
+    /// A note that the view is about to stop this agent's turn; `restart` when the stop starts
+    /// a restart.
+    AgentStop {
+        key: String,
+        restart: bool,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ControlId(pub u64);
@@ -65,6 +73,21 @@ impl RunControl {
         }
         publish(dir, "restart", Some(key), at_ms)
     }
+    /// Note that the view is about to stop `key`'s running turn; `restart` when the stop is
+    /// the first step of a restart. The runner names the view as the stop's source.
+    pub fn note_agent_stop(
+        dir: &RunDir,
+        key: &str,
+        restart: bool,
+        at_ms: i64,
+    ) -> Result<ControlOutcome, ControlError> {
+        if !valid_key(key) {
+            return Err(ControlError::BadKey(key.into()));
+        }
+        dir.note_agent_stop(key, restart, at_ms)
+            .map_err(|e| ControlError::Io(io::Error::other(e.to_string())))?;
+        Ok(ControlOutcome::Published)
+    }
     pub fn request_resume(dir: &RunDir) -> Result<ControlOutcome, ControlError> {
         let folder = dir.path().join("control");
         match fs::remove_file(folder.join("pause.json")) {
@@ -109,6 +132,11 @@ impl RunControl {
                     {
                         pending.restarts.push(request)
                     }
+                    // A note about a stop the view or the runner sent; the runner reads it.
+                    (_, kind, Some(key))
+                        if crate::journal::STOP_NOTE_KINDS.contains(&kind)
+                            && valid_key(key)
+                            && name == crate::journal::agent_stop_name(key) => {}
                     _ => return Err("invalid control request".into()),
                 }
                 Ok(())

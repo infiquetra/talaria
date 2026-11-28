@@ -1,6 +1,7 @@
 //! Synthetic screens for the built-in themes, pinned before they are drawn.
 use std::process::Command;
 
+use talaria_app::theme_file::BUILTIN_THEMES;
 use talaria_core::appearance::Rgb;
 use talaria_tui::theme::color::relative_luminance;
 use talaria_tui::theme::screens::{self, ThemeScreenFrame};
@@ -23,8 +24,9 @@ const CONVERSATION: &[&str] = &[
     "quiet composer",
 ];
 
-fn captured() -> Vec<ThemeScreenFrame> {
-    screens::frames()
+fn captured() -> &'static [ThemeScreenFrame] {
+    static FRAMES: std::sync::OnceLock<Vec<ThemeScreenFrame>> = std::sync::OnceLock::new();
+    FRAMES.get_or_init(screens::frames)
 }
 
 fn workspace<'a>(
@@ -70,7 +72,7 @@ fn require_workspace(frame: &ThemeScreenFrame) {
             frame.height
         );
     }
-    let paints = matches!(frame.theme_id, "ember" | "paper");
+    let paints = frame.theme_id != "terminal";
     assert_eq!(
         frame.paints_background, paints,
         "{} should paint its own background only when the theme has one",
@@ -79,11 +81,11 @@ fn require_workspace(frame: &ThemeScreenFrame) {
 }
 
 #[test]
-fn terminal_ember_and_paper_frames_at_both_sizes() {
+fn all_builtin_themes_have_workspace_frames_at_both_sizes() {
     let frames = captured();
-    for id in ["terminal", "ember", "paper"] {
+    for id in BUILTIN_THEMES {
         for (width, height) in [(80, 24), (120, 40)] {
-            let frame = workspace(&frames, id, width, height);
+            let frame = workspace(frames, id, width, height);
             assert_eq!((frame.width, frame.height), (width, height));
             require_workspace(frame);
         }
@@ -91,9 +93,9 @@ fn terminal_ember_and_paper_frames_at_both_sizes() {
 }
 
 #[test]
-fn ember_and_paper_inline_on_light_and_dark() {
+fn explicit_palettes_have_inline_frames_on_light_and_dark() {
     let frames = captured();
-    for id in ["ember", "paper"] {
+    for id in BUILTIN_THEMES.into_iter().filter(|id| *id != "terminal") {
         let inline: Vec<_> = frames
             .iter()
             .filter(|frame| {

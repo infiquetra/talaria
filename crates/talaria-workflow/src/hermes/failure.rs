@@ -44,6 +44,44 @@ pub(super) fn failure_reason(meta: &Value, final_text: Option<&str>) -> String {
     format!("agent failed: {reason}")
 }
 
+/// Why a turn that Hermes ended because of a stop request ended, as one plain line.
+///
+/// It names who asked for the stop when Talaria knows (the kept `stopped_by` source), and keeps
+/// Hermes's own exit reason and the first line of its final text. Hermes's text gives the time
+/// the turn had been running when it stopped, which reads like a limit; the line says plainly
+/// that it is not one.
+pub(super) fn stop_reason(outcome: &str, meta: &Value, final_text: Option<&str>) -> String {
+    use crate::journal::StopSource;
+    let who = match StopSource::from_meta(meta) {
+        Some(StopSource::RunStop) => "the runner stopped it because the run was being stopped",
+        Some(StopSource::WorkflowView) => {
+            "it was stopped with the stop-agent key in the Talaria workflow view"
+        }
+        Some(StopSource::WorkflowViewRestart) => {
+            "the Talaria workflow view stopped it so that it can be restarted"
+        }
+        Some(StopSource::Budget) => "the runner stopped it because the run's budget ran out",
+        None => {
+            "Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn"
+        }
+    };
+    let mut line = format!("agent stopped: {who}; Hermes ended the turn as '{outcome}'");
+    if let Some(exit) = text(meta, "turn_exit_reason", CODE_LIMIT) {
+        line.push_str(&format!(" ({exit})"));
+    }
+    if let Some(first) = final_text
+        .and_then(|t| t.lines().find(|l| !l.trim().is_empty()))
+        .map(|l| one_line(l, MESSAGE_LIMIT))
+        .filter(|l| !l.is_empty())
+    {
+        line.push_str(&format!(": {}", first.trim_end_matches('.')));
+    }
+    line.push_str(
+        ". This was a stop, not a timeout: a time in Hermes's text is how long the turn had run",
+    );
+    line
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,6 +100,7 @@ mod tests {
             phase: None,
             prompt: "Review it.".into(),
             schema: None,
+            report_file: None,
             tier: None,
             model: None,
             provider: None,
@@ -190,6 +229,61 @@ mod tests {
         assert!(!reason.chars().any(char::is_control), "{reason:?}");
         assert!(reason.chars().count() <= "agent failed: ".len() + MESSAGE_LIMIT);
         assert!(reason.ends_with('…'));
+    }
+
+    /// What Hermes sends for a turn a stop request ended while it waited for the model.
+    fn stopped_receipt() -> Value {
+        json!({
+            "final_response": "Operation interrupted: waiting for model response (80.0s elapsed).",
+            "completed": false,
+            "failed": false,
+            "interrupted": true,
+            "turn_exit_reason": "interrupted_during_api_call",
+            "model": "model-a",
+            "provider": "provider-a",
+        })
+    }
+
+    #[test]
+    fn a_stopped_turn_says_a_stop_was_requested_and_that_it_was_not_a_timeout() {
+        let reason = reason_after_outcome("interrupted", stopped_receipt());
+        assert_eq!(
+            reason,
+            "agent stopped: Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn; Hermes ended the turn as 'interrupted' (interrupted_during_api_call): Operation interrupted: waiting for model response (80.0s elapsed). This was a stop, not a timeout: a time in Hermes's text is how long the turn had run"
+        );
+        // A cancelled queued turn has no result at all and still says what happened.
+        assert_eq!(
+            reason_after_outcome("cancelled", Value::Null),
+            "agent stopped: Talaria's runner did not send this stop; a person or Hermes did, for example with a key press in a window showing the agent's session, or Hermes itself when it interrupts a turn; Hermes ended the turn as 'cancelled'. This was a stop, not a timeout: a time in Hermes's text is how long the turn had run"
+        );
+    }
+
+    #[test]
+    fn a_stop_talaria_sent_names_its_source() {
+        for (source, phrase) in [
+            (
+                "run_stop",
+                "agent stopped: the runner stopped it because the run was being stopped;",
+            ),
+            (
+                "workflow_view",
+                "agent stopped: it was stopped with the stop-agent key in the Talaria workflow view;",
+            ),
+            (
+                "workflow_view_restart",
+                "agent stopped: the Talaria workflow view stopped it so that it can be restarted;",
+            ),
+            (
+                "budget",
+                "agent stopped: the runner stopped it because the run's budget ran out;",
+            ),
+        ] {
+            let meta =
+                json!({"stopped_by": source, "turn_exit_reason": "interrupted_during_api_call"});
+            let reason = stop_reason("interrupted", &meta, None);
+            assert!(reason.starts_with(phrase), "{reason}");
+            assert!(reason.contains("not a timeout"), "{reason}");
+        }
     }
 
     /// What Hermes sends when it stops a turn at its step cap but still has a reply.

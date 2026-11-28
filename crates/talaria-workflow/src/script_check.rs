@@ -27,11 +27,11 @@ use serde_json::{Value, json};
 
 use crate::{
     engine::{
-        self, AgentBackend, AgentOutcome, AgentRequest, BudgetSnapshot, EngineConfig, RunOutcome,
-        ScriptError,
+        self, AgentBackend, AgentOutcome, AgentRequest, BudgetSnapshot, EngineConfig, EngineEvent,
+        RunOutcome, ScriptError,
     },
     runner::FilesystemResolver,
-    staffing::{StaffingTable, script_routes},
+    staffing::{StaffingTable, max_turns_lines, script_routes},
 };
 
 /// Errors a script author caused and a run would hit regardless of what the agents answer.
@@ -91,6 +91,8 @@ pub struct CheckReport {
     pub ok: bool,
     pub name: Option<String>,
     pub description: Option<String>,
+    /// The phases the trial run reached, in the order it reached them. A phase the script declares
+    /// in `meta.phases` but the trial run never reached is not listed; a warning names it.
     pub phases: Vec<String>,
     pub errors: Vec<Finding>,
     pub warnings: Vec<Finding>,
@@ -128,8 +130,13 @@ fn stand_in(schema: Option<&Value>) -> Value {
     let Some(schema) = schema else {
         return json!("stand-in answer");
     };
+    // A field the script branches on lists its allowed words with `enum`: answer with the first
+    // one, so the script's usual path runs further than a made-up sentence would take it.
     if let Some(first) = schema["enum"].as_array().and_then(|values| values.first()) {
         return first.clone();
+    }
+    if let Some(value) = schema.get("const") {
+        return value.clone();
     }
     match schema["type"].as_str() {
         Some("object") => Value::Object(
@@ -238,7 +245,9 @@ pub async fn check_script(source: &str, options: &CheckOptions) -> CheckReport {
     };
     report.name = Some(parsed.meta.name.clone());
     report.description = Some(parsed.meta.description.clone());
-    report.phases = parsed.meta.phases.iter().map(|p| p.title.clone()).collect();
+    let declared_phases: Vec<String> = parsed.meta.phases.iter().map(|p| p.title.clone()).collect();
+    let max_turns_lines = max_turns_lines(&parsed.body);
+    let calls_phase = parsed.body.contains("phase(");
     for warning in &parsed.warnings {
         report
             .warnings
@@ -275,7 +284,19 @@ pub async fn check_script(source: &str, options: &CheckOptions) -> CheckReport {
         resolver,
     );
     let outcome = handle.outcome.await;
-    drop(handle.events);
+    let mut events = handle.events;
+    // The trial run has ended, so every event it sent is already queued.
+    while let Ok(event) = events.try_recv() {
+        if let EngineEvent::Phase {
+            title,
+            workflow_path,
+        } = event
+            && workflow_path.is_empty()
+            && !report.phases.contains(&title)
+        {
+            report.phases.push(title);
+        }
+    }
     report.probe.ran = true;
     match outcome {
         Ok(RunOutcome::Completed { .. }) => report.probe.outcome = "completed",
@@ -333,5 +354,81 @@ pub async fn check_script(source: &str, options: &CheckOptions) -> CheckReport {
             report.errors.push(finding("route", problem, (None, None)));
         }
     }
+    // A nested workflow has phases of its own; only the top-level script's calls count here.
+    for call in calls.iter().filter(|call| call.workflow_path.is_empty()) {
+        if let Some(phase) = &call.phase
+            && !report.phases.contains(phase)
+        {
+            report.phases.push(phase.clone());
+        }
+    }
+    if calls_phase || !report.phases.is_empty() {
+        warn_unexercised_phases(&mut report, &declared_phases);
+    }
+    warn_max_turns(&mut report, &calls, &max_turns_lines);
     report.finish()
+}
+
+/// A trial run that returned early leaves later phases untested. Say so, instead of letting the
+/// declared phase list read as if the probe had covered all of it.
+fn warn_unexercised_phases(report: &mut CheckReport, declared: &[String]) {
+    if !report.probe.ran || report.errors.iter().any(|e| e.kind == "option") {
+        return;
+    }
+    let missed: Vec<&str> = declared
+        .iter()
+        .filter(|title| !report.phases.contains(title))
+        .map(String::as_str)
+        .collect();
+    if missed.is_empty() {
+        return;
+    }
+    let (verb, place) = match (report.probe.outcome, report.phases.last()) {
+        ("completed", Some(last)) => ("returned", format!("at phase {last}")),
+        ("completed", None) => ("returned", "before its first phase".to_owned()),
+        (_, Some(last)) => ("stopped", format!("at phase {last}")),
+        (_, None) => ("stopped", "before its first phase".to_owned()),
+    };
+    let (noun, were) = if missed.len() == 1 {
+        ("phase", "was")
+    } else {
+        ("phases", "were")
+    };
+    report.warnings.push(finding(
+        "probe",
+        format!(
+            "the trial run {verb} {place}; {noun} {} {were} not exercised. The trial run answers every agent with made-up values, so a real run may go further",
+            missed.join(", ")
+        ),
+        (None, None),
+    ));
+}
+
+/// A step cap stops an agent between tool calls: it cannot commit its work or report. Warn, never
+/// refuse; the script is still valid.
+fn warn_max_turns(report: &mut CheckReport, calls: &[AgentRequest], lines: &[u32]) {
+    let labels: Vec<String> = calls
+        .iter()
+        .filter(|call| call.max_turns.is_some())
+        .map(|call| format!("\"{}\"", call.label))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let first_line = lines.first().copied();
+    let advice = "A step cap can stop an agent before it commits its work or reports, and the run ends with its work unfinished. Leave maxTurns out: the token budget is the only limit";
+    if !labels.is_empty() {
+        report.warnings.push(finding(
+            "option",
+            format!("maxTurns is set on agent {}. {advice}", labels.join(", ")),
+            (first_line, None),
+        ));
+    } else if let Some(line) = first_line {
+        report.warnings.push(finding(
+            "option",
+            format!(
+                "the script writes maxTurns at line {line}; no agent call the trial run made had it set. {advice}"
+            ),
+            (Some(line), None),
+        ));
+    }
 }

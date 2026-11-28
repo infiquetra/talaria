@@ -48,7 +48,10 @@ fn set_rows_follow_the_schema() {
     ]);
     assert_eq!(rows.len(), 4);
     assert_eq!(rows[0].status, RowStatus::Ready);
-    assert_eq!(rows[0].effect_label.as_deref(), Some("may need a restart"));
+    assert_eq!(
+        rows[0].effect_label.as_deref(),
+        Some("may require restarting the Hermes gateway")
+    );
     assert_eq!(rows[1].status, RowStatus::NoChange);
     assert!(matches!(&rows[2].status, RowStatus::Invalid(s) if s.contains("not a Hermes setting")));
     assert!(matches!(&rows[3].status, RowStatus::Invalid(s) if s.contains("main_model")));

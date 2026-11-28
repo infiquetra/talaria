@@ -7,6 +7,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
+    widgets::{Clear, Widget},
 };
 
 const HEADINGS: [&str; 6] = ["Session", "Model", "View", "Voice", "Settings", "Help"];
@@ -158,6 +159,7 @@ impl MenuState {
             ("Voice", "Record or stop", Key("voice_record")),
             ("Voice", "Read-aloud", VoiceRead),
             ("Settings", "Talaria settings", Command("config")),
+            ("Settings", "Appearance", Command("theme")),
             ("Settings", "Providers", Command("providers")),
             ("Settings", "MCP servers", Command("mcp")),
             ("Settings", "Profiles", Command("profiles")),
@@ -280,6 +282,7 @@ impl MenuState {
             return;
         }
         let row = Rect::new(area.x, area.y, area.width, 1);
+        Clear.render(row, buffer);
         if views.active() {
             buffer.set_style(row, views.style(t::MENU_BACKGROUND, Style::default()));
         }
@@ -393,13 +396,17 @@ impl MenuState {
             } else {
                 style
             };
-            buffer.set_stringn(
-                x,
-                y,
-                " ".repeat(usize::from(width)),
-                usize::from(width),
-                style,
-            );
+            let row = Rect::new(x, y, width, 1);
+            // Remove a wide glyph from the conversation if it crosses the left edge
+            // of the dropdown. Its trailing cell would otherwise cover the menu.
+            if x > area.x {
+                let left = &mut buffer[(x - 1, y)];
+                if crate::history::grapheme_width(left.symbol()) > 1 {
+                    left.reset();
+                }
+            }
+            Clear.render(row, buffer);
+            buffer.set_style(row, style);
             buffer.set_stringn(x, y, text, usize::from(width), style);
         }
     }

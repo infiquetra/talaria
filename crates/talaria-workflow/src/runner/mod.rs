@@ -1,6 +1,8 @@
 //! Headless workflow lifecycle, discovery, and durable run controls.
 
+pub mod agents;
 pub mod control;
+pub mod evidence;
 pub mod execute;
 mod files;
 mod leftover;
@@ -16,14 +18,15 @@ pub use control::{
     AnswerError, ControlWrite, PausingGate, StopExit, answer_parked, request_stop, write_control,
 };
 pub use execute::{
-    ResumeRequest, RunExit, RunRequest, RunnerEvent, SpendView, run_child, run_new, run_resume,
+    ResumeRequest, RunExit, RunRequest, RunnerEvent, SpendView, replay_result, run_child, run_new,
+    run_resume,
 };
 #[cfg(feature = "mock")]
 pub use execute::{run_new_with_services, run_resume_with_services};
 pub use resolver::FilesystemResolver;
 pub use runs::{
-    FindError, RunStatus, RunSummary, discover_runs, discover_runs_since, find_run, runs_dir,
-    workflows_dir,
+    FindError, RunAttention, RunStatus, RunSummary, discover_runs, discover_runs_since, find_run,
+    run_attention, runs_dir, workflows_dir,
 };
 pub use services::{ConfigSource, RestConfigSource, RunnerServices};
 
@@ -35,8 +38,11 @@ pub struct ProgressPicker {
 }
 impl ProgressPicker {
     pub fn load(runs_dir: &std::path::Path) -> Self {
+        Self::load_with_local_cache(runs_dir, true)
+    }
+    pub fn load_with_local_cache(runs_dir: &std::path::Path, read_local_cache: bool) -> Self {
         Self {
-            rows: discover_runs(runs_dir),
+            rows: runs::discover_runs_with_local_cache(runs_dir, read_local_cache),
             selected: 0,
         }
     }

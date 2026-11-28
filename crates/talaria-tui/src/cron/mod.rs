@@ -11,6 +11,31 @@ use ratatui::{
 pub use talaria_core::cron::CronAction;
 use talaria_core::cron::{CronBody, CronView};
 
+/// Whether the pointer is over the New shortcut on the row the renderer draws.
+pub fn new_action_hit(view: &CronView, area: Rect, x: u16, y: u16) -> bool {
+    if area.width < 60
+        || area.height < 12
+        || y != area.bottom() - 1
+        || x < area.x
+        || view.question.is_some()
+    {
+        return false;
+    }
+    let hints = footer_hints(view, area.width);
+    let mut start = 0;
+    for hint in hints.split(" · ") {
+        let width = Line::raw(hint).width();
+        if hint.ends_with(" new")
+            && usize::from(x - area.x) >= start
+            && usize::from(x - area.x) < start + width
+        {
+            return true;
+        }
+        start += width + Line::raw(" · ").width();
+    }
+    false
+}
+
 fn themed(
     views: Option<&ViewStyles>,
     token: crate::theme::surfaces::Token,
@@ -59,8 +84,21 @@ fn draw_cron_inner(view: &CronView, area: Rect, buf: &mut Buffer, views: Option<
     ratatui::widgets::Clear.render(area, buf);
     if area.width < 60 || area.height < 12 {
         Paragraph::new("Make the terminal at least 60 by 12 to manage scheduled jobs.")
-            .wrap(Wrap { trim: false })
-            .render(area, buf);
+            .wrap(Wrap { trim: true })
+            .render(
+                Rect {
+                    height: area.height - 1,
+                    ..area
+                },
+                buf,
+            );
+        put(
+            buf,
+            area,
+            area.height - 1,
+            "Esc closes scheduled jobs",
+            Style::default(),
+        );
         if let Some(views) = views {
             views.finish(area, buf, t::LIST_BACKGROUND, true);
         }
@@ -136,12 +174,16 @@ fn draw_cron_inner(view: &CronView, area: Rect, buf: &mut Buffer, views: Option<
         buf,
         area,
         area.height - 1,
-        &view.hints,
+        &footer_hints(view, area.width),
         themed(views, t::CRON_HINT, Style::default()),
     );
     if let Some(views) = views {
         views.finish(area, buf, t::LIST_BACKGROUND, true);
     }
+}
+
+fn footer_hints(view: &CronView, width: u16) -> String {
+    crate::footer::with_recovery(&view.hints, width)
 }
 
 fn clipped(text: &str, width: usize) -> String {

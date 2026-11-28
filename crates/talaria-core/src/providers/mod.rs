@@ -151,7 +151,11 @@ pub fn update(
                 Some(Card::Key(card)) => {
                     card.empty = true;
                     card.unchecked = false;
-                    card.message = None
+                    card.message = Some(if card.row.is_set {
+                        "Entry cleared. Paste a new key to replace the saved one.".into()
+                    } else {
+                        "Entry cleared.".into()
+                    });
                 }
                 Some(Card::Form(form)) if form.field == 2 => endpoints::secret(form, true),
                 _ => {}
@@ -1204,25 +1208,36 @@ fn card_view(state: &ProvidersState, card: &Card, now: Instant) -> ProvidersCard
         ),
         Card::Key(card) => {
             let mut lines = vec![format!(
-                "Saved to profile {}'s key file as {}.",
+                "Destination: profile {} · {}",
                 state.profile, card.row.env_var
             )];
-            if let Some(tail) = card.row.tail.as_deref().filter(|s| s.chars().count() == 4) {
-                lines.push(format!("Saved key ends in {}", text::sanitize(tail)));
+            if card.empty && card.message.is_none() && card.row.is_set {
+                let saved = match card.row.tail.as_deref().filter(|s| s.chars().count() == 4) {
+                    Some(tail) => format!("Saved key ends in {}", text::sanitize(tail)),
+                    None => "This profile has a saved key.".into(),
+                };
+                lines.push(saved);
             }
             if let Some(message) = &card.message {
                 lines.push(message.clone())
             }
-            match state.busy {
-                Some(Busy::CheckKey) => lines.push("Checking the key…".into()),
-                Some(Busy::SaveKey(_)) => lines.push("Saving the key…".into()),
-                _ => {}
-            }
+            let footer = match state.busy {
+                Some(Busy::CheckKey) => {
+                    lines.push("Checking the key…".into());
+                    "Esc cancel"
+                }
+                Some(Busy::SaveKey(_)) => {
+                    lines.push("Saving the key…".into());
+                    "Esc back"
+                }
+                _ if card.empty => "Ctrl+U clear entry · Esc cancel",
+                _ => "Enter save  Ctrl+U clear  Esc cancel",
+            };
             (
                 CardKind::Key,
                 format!("API key for {}", card.row.label),
                 lines,
-                "enter save · ctrl+u clear · esc cancel".into(),
+                footer.into(),
                 None,
             )
         }

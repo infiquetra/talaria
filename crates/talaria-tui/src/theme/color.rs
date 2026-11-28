@@ -218,14 +218,20 @@ pub fn indexed_rgb(index: u8) -> Rgb {
 
 /// Nearest conventional ANSI colour by squared RGB distance; ties choose the lower index.
 pub fn to_ansi16(color: Rgb) -> u8 {
+    nearest_ansi16(color, |_| true).unwrap_or(0)
+}
+
+/// Find the nearest conventional swatch among the ones suitable for a particular background.
+pub(super) fn nearest_ansi16(color: Rgb, accept: impl Fn(Rgb) -> bool) -> Option<u8> {
     ANSI16
         .iter()
         .enumerate()
+        .filter(|(_, candidate)| accept(**candidate))
         .min_by_key(|(_, candidate)| {
             let delta = |a: u8, b: u8| u32::from(a.abs_diff(b)).pow(2);
             delta(color.0, candidate.0) + delta(color.1, candidate.1) + delta(color.2, candidate.2)
         })
-        .map_or(0, |(index, _)| index as u8)
+        .map(|(index, _)| index as u8)
 }
 
 /// The colour `t` of the way from `a` to `b`, per channel; `t` is clamped to 0.0 to 1.0.

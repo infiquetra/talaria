@@ -1,6 +1,6 @@
-┌Providers · profile fixture───────────────────────────────────────────────────┐
+┌ Keyboard only · Providers · profile fixture ─────────────────────────────────┐
 │> type to filter                                                              │
-│[All] Keys Accounts Endpoints                                                 │
+│View   [All]   Keys   Accounts   Endpoints                                    │
 │3 providers                                                                   │
 │Configured                                                                    │
 │> Example provider 00                                             listed ready│
@@ -11,8 +11,8 @@
 │  + Add an endpoint                                                           │
 │  Example endpoint                                                   key saved│
 │                                                                              │
-│Rows 1–8 of 8                                                                 │
-│Details───────────────────────────────────────────────────────────────────────│
+│                                                                              │
+│Details · Example provider 00 ────────────────────────────────────────────────│
 │Offline · cached rows                                                         │
 │Provider: Example provider 00                                                 │
 │Status: listed ready                                                          │

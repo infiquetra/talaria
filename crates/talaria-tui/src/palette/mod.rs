@@ -10,7 +10,7 @@ use talaria_core::commands::PaletteState;
 
 pub use choice::{ChoiceSection, sample_lines};
 pub use effort::{EffortScaleSection, ScaleKeyLabels, scale_key_labels};
-pub use render::{render_palette, render_palette_with_theme};
+pub use render::{page_rows, render_palette, render_palette_with_theme};
 
 /// One frame of the slash palette.
 pub struct PaletteSection {

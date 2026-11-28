@@ -729,6 +729,17 @@ fn a_small_terminal_shows_the_widen_note() {
     }
 }
 
+#[test]
+fn empty_processes_wraps_output_as_a_word() {
+    let work = BackgroundWork::default();
+    let view = ProcessesView::new();
+    let screen = rows_of(&draw_overlay(&view, &work, 100, 36));
+    assert!(
+        screen.iter().any(|row| row.trim() == "output."),
+        "{screen:?}"
+    );
+}
+
 struct HostileHooks {
     titles: Vec<Vec<u8>>,
     clipboard: Vec<Vec<u8>>,

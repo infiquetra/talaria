@@ -1,9 +1,10 @@
-┌Switch model · this session───────────────────────────────────────────────────────────────────────────────────────────┐
+┌ Switch model · this session ─────────────────────────────────────────────────────────────────────────────────────────┐
 │> type to filter                                                                                                      │
-│[All] Starred Configured Needs setup                                                                                  │
-│1 models · 1 providers · Current: Example provider 00 / reasoner-large · high                                         │
-│Example provider 00                                                   │Details                                        │
-│>  ● reasoner-large                                            current│Effort: high requested; Hermes limits it to    │
+│View   [All]   Starred   Configured   Needs setup                                                                     │
+│1 model · 1 provider · Current: Example provider 00 / reasoner-large · high                                           │
+│  ▾ Example provider 00                                        1 model│Details                                        │
+│>  ● reasoner-large                                            current│● reasoner-large                               │
+│                                                                      │Effort: high requested; Hermes limits it to    │
 │                                                                      │what this route accepts                        │
 │                                                                      │Account: configured in Hermes (not checked)    │
 │                                                                      │                                               │
@@ -34,7 +35,6 @@
 │                                                                      │                                               │
 │                                                                      │                                               │
 │                                                                      │                                               │
-│Rows 1–2 of 2                                                         │                                               │
-│↑↓ move · Enter switch · ←→ effort · Tab view · F2 details · Esc clear/close                                          │
-│effort: high · Ctrl+F star · Ctrl+G save for new sessions · Ctrl+R reload                                             │
+│Enter switch  ←→ effort  Shift+← fold  Shift+↑↓ group  PgUp/PgDn  F2 details                                          │
+│effort: high · Tab view · Ctrl+F star · Ctrl+G save · Ctrl+R reload · Esc back                                        │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

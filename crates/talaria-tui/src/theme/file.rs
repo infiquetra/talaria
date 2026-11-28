@@ -38,19 +38,47 @@ pub struct ThemeFileResolution {
     pub border: BorderPreset,
 }
 
-/// Apply a file, or preserve the existing resolver when no file is selected.
+impl ThemeFileResolution {
+    /// The live viewport needs its own surface when a theme and the physical terminal have
+    /// opposite backgrounds. Finished lines still belong to the terminal's native history.
+    pub fn inline_canvas(&self, terminal: super::TerminalColors) -> Option<(Style, super::Rgb)> {
+        let report = self.report.as_ref()?;
+        if !self.theme.color {
+            return None;
+        }
+        let (observed, source) = super::detect::polarity(
+            None,
+            &super::detect::EnvView::default(),
+            super::ThemeMode::Auto,
+            &terminal,
+        );
+        let polarity = if source == super::PolaritySource::Default {
+            self.theme.report.polarity.0
+        } else {
+            observed
+        };
+        if !matches!(
+            (report.base.as_str(), polarity),
+            ("light", Polarity::Dark) | ("dark", Polarity::Light)
+        ) {
+            return None;
+        }
+        let background = match source {
+            super::PolaritySource::TerminalBackground(rgb) => rgb,
+            _ if polarity == Polarity::Light => super::LIGHT_REFERENCE,
+            _ => super::DARK_REFERENCE,
+        };
+        let style = *self.elements.get("transcript.background")?;
+        Some((style, background))
+    }
+}
+
+/// Resolve both the automatic appearance and named files through the same catalogue.
 pub fn resolve_with_theme_file(
     inputs: &ThemeInputs<'_>,
-    file: Option<&ThemeFile>,
+    file: &ThemeFile,
+    report_file: bool,
 ) -> ThemeFileResolution {
-    let Some(file) = file else {
-        return ThemeFileResolution {
-            theme: super::resolve(inputs),
-            elements: BTreeMap::new(),
-            report: None,
-            border: BorderPreset::Rounded,
-        };
-    };
     let skin_participates = inputs.skin.is_some()
         && inputs.follow_hermes_skin
         && file.follow_hermes_skin
@@ -60,7 +88,8 @@ pub fn resolve_with_theme_file(
         theme.report.not_applied = Some(super::NotAppliedReason::FollowOff);
     }
     let legacy = surfaces::bound_styles(&theme);
-    let palette = palette(file);
+    let palette = palette(file, inputs.polarity.0);
+    let canvases = [palette["background"], palette["surface"]];
     let mut report = ThemeFileReport {
         file: file.name.clone().unwrap_or_default(),
         base: file.extends.as_str().into(),
@@ -71,7 +100,7 @@ pub fn resolve_with_theme_file(
     };
     let mut elements = BTreeMap::new();
     for entry in catalogue() {
-        let (mut style, mut sources) = element_base(entry, file, &palette);
+        let (mut style, mut sources) = element_base(entry, file, &palette, report_file);
         if skin_participates && !file.palette.contains_key(role_slot(entry.role)) {
             let foreground = surfaces::SURFACE_BINDINGS
                 .iter()
@@ -82,7 +111,9 @@ pub fn resolve_with_theme_file(
             if let Some(foreground) = foreground {
                 // The existing bridge explicitly clears dim when it supplies a foreground.
                 style = style.fg(foreground).remove_modifier(Modifier::DIM);
-                sources.insert("fg".into(), "skin".into());
+                if report_file {
+                    sources.insert("fg".into(), "skin".into());
+                }
             }
         }
         if let Some(fields) = file.roles.get(entry.role) {
@@ -119,24 +150,44 @@ pub fn resolve_with_theme_file(
                 .is_some_and(|fields| fields.underline_color.is_some());
         if !authored_underline {
             style.underline_color = style.fg;
-            let source = sources.get("fg").cloned().unwrap_or_else(|| "base".into());
-            sources.insert("underline_color".into(), source);
+            if report_file {
+                let source = sources.get("fg").cloned().unwrap_or_else(|| "base".into());
+                sources.insert("underline_color".into(), source);
+            }
         }
-        constrain(&mut style, &mut sources, inputs.depth.0, entry.role);
+        constrain(
+            &mut style,
+            &mut sources,
+            inputs.depth.0,
+            entry.role,
+            canvases,
+        );
         elements.insert(entry.token.into(), style);
-        report.sources.insert(entry.token.into(), sources);
+        if report_file {
+            report.sources.insert(entry.token.into(), sources);
+        }
     }
-    contrast::diagnose(&elements, inputs, &mut report);
-    surfaces::apply(&mut theme, &elements, &report.sources);
+    if report_file {
+        contrast::diagnose(&elements, inputs, &mut report);
+        surfaces::apply(&mut theme, &elements, &report.sources);
+        let inline_override = |token| {
+            file.elements.contains_key(token).then(|| Style {
+                bg: None,
+                ..elements[token]
+            })
+        };
+        theme.status.model = inline_override("status.model");
+        theme.tool.shell_operator = inline_override("tool.shell.operator");
+    }
     ThemeFileResolution {
         theme,
         elements,
-        report: Some(report),
+        report: report_file.then_some(report),
         border: file.chrome.border,
     }
 }
 
-fn palette(file: &ThemeFile) -> BTreeMap<String, Color> {
+fn palette(file: &ThemeFile, polarity: Polarity) -> BTreeMap<String, Color> {
     let values = match file.extends {
         Base::Dark => [
             0x101014, 0x202024, 0xf4f4f4, 0xc4c4c4, 0xa8a8a8, 0xa0a0a0, 0xaaccff, 0x80dcff,
@@ -148,20 +199,21 @@ fn palette(file: &ThemeFile) -> BTreeMap<String, Color> {
         ],
         Base::Terminal => [0; 12],
     };
-    let terminal = [
-        Color::Reset,
-        Color::Reset,
-        Color::Reset,
-        Color::Gray,
-        Color::DarkGray,
-        Color::Gray,
-        Color::Yellow,
-        Color::Cyan,
-        Color::Green,
-        Color::Yellow,
-        Color::Red,
-        Color::Yellow,
-    ];
+    // On native surfaces the terminal owns the actual values of these names.
+    // Choose the dark or bright bank according to the detected background.
+    use Color::{
+        Black, Blue, DarkGray, Gray, Green, LightCyan, LightGreen, LightRed, Magenta, Red, Reset,
+        Yellow,
+    };
+    let terminal = match polarity {
+        Polarity::Dark => [
+            Reset, Reset, Reset, Gray, Gray, Gray, Yellow, LightCyan, LightGreen, Yellow, LightRed,
+            Yellow,
+        ],
+        Polarity::Light => [
+            Reset, Reset, Reset, Black, Black, DarkGray, Blue, Magenta, Green, Red, Red, Blue,
+        ],
+    };
     let mut palette: BTreeMap<String, Color> = PALETTE_SLOTS
         .iter()
         .enumerate()
@@ -202,6 +254,7 @@ fn element_base(
     entry: &CatalogueEntry,
     file: &ThemeFile,
     palette: &BTreeMap<String, Color>,
+    report_file: bool,
 ) -> (Style, Sources) {
     let slot = role_slot(entry.role);
     let foreground = palette.get(slot).copied().unwrap_or(Color::Reset);
@@ -224,6 +277,9 @@ fn element_base(
         {
             style = style.add_modifier(modifier);
         }
+    }
+    if !report_file {
+        return (style, Sources::new());
     }
     let mut sources: Sources = FIELDS.map(|field| (field.into(), "base".into())).into();
     sources.insert("fg".into(), palette_source(file, slot));
@@ -291,7 +347,14 @@ fn patch(
     }
 }
 
-fn constrain(style: &mut Style, sources: &mut Sources, depth: ColorDepth, role: &str) {
+fn constrain(
+    style: &mut Style,
+    sources: &mut Sources,
+    depth: ColorDepth,
+    role: &str,
+    canvases: [Color; 2],
+) {
+    let authored = *style;
     for (name, target) in [
         ("fg", &mut style.fg),
         ("bg", &mut style.bg),
@@ -301,6 +364,14 @@ fn constrain(style: &mut Style, sources: &mut Sources, depth: ColorDepth, role: 
         if *target != converted {
             sources.insert(name.into(), "constraints".into());
             *target = converted;
+        }
+    }
+    if depth == ColorDepth::Ansi16
+        && let Some(ink) = contrast::ansi16_ink(authored, *style, role, canvases)
+    {
+        style.fg = Some(ink);
+        if authored.underline_color == authored.fg {
+            style.underline_color = style.fg;
         }
     }
     if matches!(depth, ColorDepth::Ansi16 | ColorDepth::None)

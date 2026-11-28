@@ -136,6 +136,12 @@ impl ProviderService {
             }
             ProvidersEffect::SaveKey { slug } => {
                 let result = match secret.as_deref() {
+                    Some(key) if !key.is_empty() && slug == "openrouter" => {
+                        api::save_openrouter_key(&self.rest, key)
+                            .await
+                            .map(|()| None)
+                            .map_err(rest_failure)
+                    }
                     Some(key) if !key.is_empty() => self
                         .client
                         .call_with::<model_save_key::Marker>(
@@ -147,25 +153,46 @@ impl ProviderService {
                             options,
                         )
                         .await
-                        .map(|reply| reply.provider)
+                        .map(|reply| Some(reply.provider))
                         .map_err(call_failure),
                     _ => Err(missing_secret()),
                 };
                 ProvidersInput::KeySaved(result)
             }
-            ProvidersEffect::Disconnect { slug } => ProvidersInput::Disconnected(
-                self.client
+            ProvidersEffect::Disconnect { slug } => {
+                let disconnect = self
+                    .client
                     .call_with::<model_disconnect::Marker>(
                         ModelDisconnectParams {
-                            slug,
+                            slug: slug.clone(),
                             session_id: None,
                         },
                         options,
                     )
                     .await
-                    .map(|_| ())
-                    .map_err(call_failure),
-            ),
+                    .map_err(call_failure)
+                    .and_then(|reply| {
+                        if reply.disconnected && reply.slug == slug {
+                            Ok(())
+                        } else {
+                            Err(Failure::BadReply)
+                        }
+                    });
+                let result = if slug == "openrouter"
+                    && matches!(
+                        disconnect,
+                        Ok(()) | Err(Failure::Refused { code: 4005, .. })
+                    ) {
+                    match api::remove_openrouter_key(&self.rest).await {
+                        Ok(true) => Ok(()),
+                        Ok(false) => disconnect,
+                        Err(error) => Err(rest_failure(error)),
+                    }
+                } else {
+                    disconnect
+                };
+                ProvidersInput::Disconnected(result)
+            }
             ProvidersEffect::StartSignIn { id, attempt } => return self.start(&id, attempt).await,
             ProvidersEffect::Poll {
                 id,
@@ -399,17 +426,18 @@ fn redact_secret_echo(input: &mut ProvidersInput, secret: &str) {
                 redact_text(url, secret);
             }
         }
-        ProvidersInput::KeySaved(result @ Ok(_)) => {
+        ProvidersInput::KeySaved(result @ Ok(Some(_))) => {
             // The contract row is open and may acquire fields; scrub every string before core.
             let safe = result
                 .as_ref()
                 .ok()
+                .and_then(Option::as_ref)
                 .and_then(|row| serde_json::to_value(row).ok())
                 .and_then(|mut value| {
                     redact_json(&mut value, secret);
                     serde_json::from_value(value).ok()
                 });
-            *result = safe.ok_or(Failure::BadReply);
+            *result = safe.map(Some).ok_or(Failure::BadReply);
         }
         ProvidersInput::EndpointSaved(Ok(list)) | ProvidersInput::EndpointDeleted(Ok(list)) => {
             redact_text(&mut list.current_provider, secret);

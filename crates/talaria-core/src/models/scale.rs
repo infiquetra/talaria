@@ -171,6 +171,14 @@ impl EffortScale {
         self.facts.current
     }
 
+    pub fn model(&self) -> Option<&str> {
+        self.facts.model.as_deref()
+    }
+
+    pub fn profile(&self) -> &str {
+        &self.facts.profile
+    }
+
     /// The staged Hivecode switch.
     #[must_use]
     pub fn hivecode(&self) -> bool {

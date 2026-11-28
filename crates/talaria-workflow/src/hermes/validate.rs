@@ -61,6 +61,14 @@ pub fn validate_output(text: &str, schema: &Value) -> Result<Value, Vec<String>>
     }
     let value: Value = serde_json::from_str(candidate)
         .map_err(|e| vec![format!("Response is not valid JSON: {e}")])?;
+    validate_value(value, schema)
+}
+pub(crate) fn validate_json(bytes: &[u8], schema: &Value) -> Result<Value, Vec<String>> {
+    let value = serde_json::from_slice(bytes)
+        .map_err(|e| vec![format!("Report is not valid JSON: {e}")])?;
+    validate_value(value, schema)
+}
+fn validate_value(value: Value, schema: &Value) -> Result<Value, Vec<String>> {
     let validator = validator(schema).map_err(|e| vec![e])?;
     let mut errors = Vec::new();
     for error in validator.iter_errors(&value) {

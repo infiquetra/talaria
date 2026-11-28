@@ -75,12 +75,71 @@ struct Picker {
     banner: Option<String>,
     feedback: Option<String>,
     list_scope: ListScope,
+    provider_expansion: BTreeMap<String, bool>,
     counts: BrowseCounts,
     facts: Vec<RowFacts>,
     details: Vec<String>,
     details_open: bool,
     details_scroll: usize,
     hints: String,
+}
+
+impl Picker {
+    fn selected_key(&self) -> Option<&RowKey> {
+        self.rows.get(self.selected?)?.key.as_ref()
+    }
+
+    fn move_selection(&mut self, key: PickerKey, page: usize) {
+        let rows = &self.rows;
+        let selectable = |row: &PickerRow| row.key.is_some();
+        let first_in_group = |(index, row): (usize, &PickerRow)| {
+            if !row.header {
+                None
+            } else if selectable(row) {
+                Some(index)
+            } else {
+                rows.get(index + 1)
+                    .filter(|next| !next.header && selectable(next))
+                    .map(|_| index + 1)
+            }
+        };
+        let Some(current) = self.selected else {
+            self.selected = rows.iter().position(selectable);
+            return;
+        };
+        let next = match key {
+            PickerKey::Home => rows.iter().position(selectable),
+            PickerKey::End => rows.iter().rposition(selectable),
+            PickerKey::Up => rows[..current].iter().rposition(selectable),
+            PickerKey::Down => (current + 1..rows.len()).find(|&index| selectable(&rows[index])),
+            PickerKey::PageUp => rows[..=current.saturating_sub(page)]
+                .iter()
+                .rposition(selectable)
+                .or_else(|| rows.iter().position(selectable)),
+            PickerKey::PageDown => (current.saturating_add(page)..rows.len())
+                .find(|&index| selectable(&rows[index]))
+                .or_else(|| rows.iter().rposition(selectable)),
+            PickerKey::PreviousGroup => rows[..=current]
+                .iter()
+                .rposition(|row| row.header)
+                .and_then(|start| {
+                    rows[..start]
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find_map(first_in_group)
+                }),
+            PickerKey::NextGroup => rows
+                .iter()
+                .enumerate()
+                .skip(current + 1)
+                .find_map(first_in_group),
+            _ => None,
+        };
+        if next.is_some() {
+            self.selected = next;
+        }
+    }
 }
 
 /// The picker, per-session requests, and saved choices for this launch.
@@ -243,8 +302,9 @@ impl ModelsState {
             ModelsInput::Connection { connected } => {
                 if self.offline == connected {
                     self.offline = !connected;
-                    self.rebuild();
+                    self.refresh_picker_view();
                 }
+                return effects;
             }
             ModelsInput::SessionOpened {
                 session_id,
@@ -271,7 +331,41 @@ impl ModelsState {
                 self.resume_provider = None;
                 self.open(session_id, profile, &mut effects);
             }
-            ModelsInput::Picker(key) => self.key(key, &mut effects),
+            ModelsInput::Picker(key) => {
+                self.key(key, &mut effects);
+                return effects;
+            }
+            ModelsInput::PasteFilter(text) => {
+                if let Some(picker) = &mut self.picker
+                    && !picker.details_open
+                    && let Some(line) = text.lines().next()
+                {
+                    picker
+                        .filter
+                        .extend(line.chars().filter(|c| !c.is_control()));
+                    picker.feedback = None;
+                    self.rebuild();
+                }
+                return effects;
+            }
+            ModelsInput::SelectRow(key) => {
+                if let Some(picker) = &mut self.picker
+                    && !picker.details_open
+                    && let Some(index) = picker
+                        .rows
+                        .iter()
+                        .position(|row| row.key.as_ref() == Some(&key))
+                {
+                    picker.selected = Some(index);
+                    if let RowKey::Provider { provider, expanded } = key {
+                        picker.provider_expansion.insert(provider, !expanded);
+                        self.rebuild();
+                    } else {
+                        self.refresh_picker_view();
+                    }
+                }
+                return effects;
+            }
             ModelsInput::Confirm(key) => self.confirm(key, &mut effects),
             ModelsInput::Command {
                 session_id,
@@ -381,10 +475,11 @@ impl ModelsState {
                     && self.resume_provider.take().is_some()
                     && let Some((provider, model)) = ready_model
                 {
-                    if let Some(picker) = &mut self.picker
-                        && picker.list_scope == ListScope::SetUp
-                    {
-                        picker.list_scope = ListScope::All;
+                    if let Some(picker) = &mut self.picker {
+                        if picker.list_scope == ListScope::SetUp {
+                            picker.list_scope = ListScope::All;
+                        }
+                        picker.provider_expansion.insert(provider.clone(), true);
                     }
                     self.rebuild();
                     let Some(picker) = &mut self.picker else {
@@ -397,6 +492,7 @@ impl ModelsState {
                             .is_some_and(|key| browse::same_route(key, &wanted))
                     }) {
                         picker.selected = Some(index);
+                        self.refresh_picker_view();
                     }
                 }
             }
@@ -553,6 +649,7 @@ impl ModelsState {
             banner: None,
             feedback: None,
             list_scope: ListScope::All,
+            provider_expansion: BTreeMap::new(),
             counts: BrowseCounts::default(),
             facts: Vec::new(),
             details: Vec::new(),
@@ -575,32 +672,13 @@ impl ModelsState {
         let Some(picker) = &mut self.picker else {
             return;
         };
-        let previous = picker
-            .selected
-            .and_then(|i| picker.rows.get(i))
-            .and_then(|r| r.key.clone());
+        let previous = picker.selected_key().cloned();
         let session = self.sessions.get(&picker.session_id);
         let catalog = session.and_then(|s| s.catalog.as_ref());
         let favourites = self
             .saved
             .as_ref()
             .map_or(&[][..], |s| s.favourites.as_slice());
-        picker.title = match picker.scope {
-            Scope::ThisSession => "Switch model · this session".into(),
-            Scope::ThisSessionAndNew => format!(
-                "Switch model · this session and new sessions on {}",
-                picker.profile
-            ),
-        };
-        picker.banner = picker.feedback.clone().or_else(|| {
-            picker.failed.as_ref().map(|reason| {
-                if catalog.is_some() {
-                    format!("Showing stale models; {reason}")
-                } else {
-                    reason.clone()
-                }
-            })
-        });
         picker.rows.clear();
         picker.facts.clear();
         if let Some(catalog) = catalog {
@@ -610,61 +688,84 @@ impl ModelsState {
                 self.display_zone,
                 picker.list_scope,
                 &picker.filter,
+                &picker.provider_expansion,
             );
             picker.rows = result.rows;
             picker.facts = result.facts;
             picker.counts = result.counts;
-            if picker.rows.is_empty() && picker.failed.is_none() {
-                picker.banner = Some(if !picker.filter.is_empty() {
-                    notice_t18(&picker.filter)
-                } else if picker.list_scope == ListScope::Starred {
-                    "No starred models. Tab for All; Ctrl+F stars a model.".into()
-                } else {
-                    "No models found. Set up a provider with hermes model, then press ctrl+r."
-                        .into()
-                });
-            }
-            // A provider's warning is shown in the details of that provider's own rows, as
-            // "Warning: ..." or, for a provider that is not set up, "Setup: ...". It is not a
-            // banner: a banner sits above every row and read as a note about the selected model.
-        } else if picker.loading {
-            picker.banner = Some("Loading models…".into());
         }
-        let unknown = session.is_some_and(|s| s.uncertain);
-        if self.offline {
-            picker.banner = Some("Offline: changes disabled. Ctrl+R retries; Esc closes.".into());
-        } else if unknown {
-            picker.banner =
-                Some("Outcome unknown; reloading. Nothing is resent automatically.".into());
-        }
-        picker.selected = previous
-            .as_ref()
-            .and_then(|key| {
+        let selection = if let Some(key) = previous {
+            let same = picker.rows.iter().position(|row| {
+                row.key
+                    .as_ref()
+                    .is_some_and(|other| browse::same_route(&key, other))
+            });
+            same.or_else(|| {
                 picker.rows.iter().position(|row| {
                     row.key
                         .as_ref()
-                        .is_some_and(|other| browse::same_route(key, other))
+                        .is_some_and(|other| key.heading_and_child(other))
                 })
             })
-            .or_else(|| {
-                previous
-                    .is_none()
-                    .then(|| picker.facts.iter().position(|facts| facts.current))
-                    .flatten()
+        } else {
+            picker
+                .facts
+                .iter()
+                .position(|facts| facts.current)
+                .or_else(|| {
+                    let slug = catalog?.current_provider();
+                    picker.rows.iter().position(|row| {
+                        matches!(&row.key,
+                    Some(RowKey::Model { provider, .. }) if provider == slug)
+                    })
+                })
+        };
+        picker.selected = selection.or_else(|| picker.rows.iter().position(|r| r.key.is_some()));
+        self.refresh_picker_view();
+    }
+
+    fn refresh_picker_view(&mut self) {
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        let session = self.sessions.get(&picker.session_id);
+        let catalog = session.and_then(|s| s.catalog.as_ref());
+        let unknown = session.is_some_and(|s| s.uncertain);
+        picker.title = match picker.scope {
+            Scope::ThisSession => "Switch model · this session".into(),
+            Scope::ThisSessionAndNew => format!(
+                "Switch model · this session and new sessions on {}",
+                picker.profile
+            ),
+        };
+        picker.banner = if self.offline {
+            Some("Offline: changes disabled. Ctrl+R retries; Esc closes.".into())
+        } else if unknown {
+            Some("Outcome unknown; reloading. Nothing is resent automatically.".into())
+        } else if catalog.is_some() && picker.rows.is_empty() && picker.failed.is_none() {
+            Some(if !picker.filter.is_empty() {
+                notice_t18(&picker.filter)
+            } else if picker.list_scope == ListScope::Starred {
+                "No starred models. Tab for All; Ctrl+F stars a model.".into()
+            } else {
+                "No models found. Set up a provider with hermes model, then press ctrl+r.".into()
             })
-            .or_else(|| picker.rows.iter().position(|r| r.key.is_some()));
+        } else if catalog.is_none() && picker.loading {
+            Some("Loading models…".into())
+        } else {
+            picker.feedback.clone().or_else(|| {
+                picker.failed.as_ref().map(|reason| {
+                    if catalog.is_some() {
+                        format!("Showing stale models; {reason}")
+                    } else {
+                        reason.clone()
+                    }
+                })
+            })
+        };
         picker.current = catalog.and_then(|catalog| {
             let model = &catalog.result.model;
-            let slug = if catalog.result.provider.is_empty() {
-                catalog
-                    .result
-                    .providers
-                    .iter()
-                    .find(|p| p.is_current == Some(true))
-                    .map_or("", |p| p.slug.as_str())
-            } else {
-                catalog.result.provider.as_str()
-            };
+            let slug = catalog.current_provider();
             (!model.is_empty()).then(|| {
                 let route = match catalog.display_name(slug) {
                     Some(name) => format!("{name} / {model}"),
@@ -705,6 +806,14 @@ impl ModelsState {
         Self::footer(picker);
     }
     fn footer(picker: &mut Picker) {
+        if let Some(RowKey::Provider { expanded, .. }) = picker.selected_key() {
+            let action = if *expanded { "fold" } else { "expand" };
+            picker.hints = format!(
+                "Enter {action} · ↑↓ move · Shift+↑↓ group · PgUp/PgDn · F2 details\nTab view · Type to search all models · Ctrl+R reload · Esc back"
+            );
+            picker.effort_text.clear();
+            return;
+        }
         let offers = picker
             .selected
             .and_then(|i| picker.facts.get(i))
@@ -722,8 +831,15 @@ impl ModelsState {
                 format!("effort: {} → {}", current.as_wire(), chosen.as_wire())
             }
         };
+        let navigation = if picker.filter.trim().is_empty()
+            && matches!(picker.selected_key(), Some(RowKey::Model { .. }))
+        {
+            "Enter switch  ←→ effort  Shift+← fold  Shift+↑↓ group  PgUp/PgDn  F2 details"
+        } else {
+            "↑↓ move · Shift+↑↓ group · PgUp/PgDn · Enter switch · ←→ effort · F2 details"
+        };
         picker.hints = format!(
-            "↑↓ move · Enter switch · ←→ effort · Tab view · F2 details · Esc clear/close\n{} · Ctrl+F star · Ctrl+G save for new sessions · Ctrl+R reload",
+            "{navigation}\n{} · Tab view · Ctrl+F star · Ctrl+G save · Ctrl+R reload · Esc back",
             picker.effort_text
         );
     }
@@ -756,6 +872,30 @@ impl ModelsState {
             }
             return;
         }
+        // Browsing a provider never changes the session, even while disconnected.
+        if let Some(RowKey::Provider { provider, expanded }) = picker.selected_key() {
+            let open = match key {
+                PickerKey::Enter => Some(!expanded),
+                PickerKey::Left | PickerKey::FoldProvider => Some(false),
+                PickerKey::Right => Some(true),
+                _ => None,
+            };
+            if let Some(open) = open {
+                if open != *expanded {
+                    picker.provider_expansion.insert(provider.clone(), open);
+                    self.rebuild();
+                }
+                return;
+            }
+        } else if key == PickerKey::FoldProvider {
+            if picker.filter.trim().is_empty()
+                && let Some(RowKey::Model { provider, .. }) = picker.selected_key()
+            {
+                picker.provider_expansion.insert(provider.clone(), false);
+                self.rebuild();
+            }
+            return;
+        }
         if (self.offline || unknown)
             && matches!(
                 key,
@@ -782,6 +922,7 @@ impl ModelsState {
             PickerKey::Details => {
                 picker.details_open = true;
                 picker.details_scroll = 0;
+                self.refresh_picker_view();
                 return;
             }
             PickerKey::Escape if !picker.filter.is_empty() => picker.filter.clear(),
@@ -791,6 +932,7 @@ impl ModelsState {
             }
             PickerKey::ToggleScope => {
                 if self.saved.is_err() {
+                    self.refresh_picker_view();
                     return;
                 }
                 picker.scope = if picker.scope == Scope::ThisSession {
@@ -815,44 +957,14 @@ impl ModelsState {
             }
             PickerKey::Up
             | PickerKey::Down
+            | PickerKey::PreviousGroup
+            | PickerKey::NextGroup
             | PickerKey::PageUp
             | PickerKey::PageDown
             | PickerKey::Home
             | PickerKey::End => {
-                let indexes: Vec<_> = picker
-                    .rows
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, r)| r.key.is_some().then_some(i))
-                    .collect();
-                if !indexes.is_empty() {
-                    let pos = indexes
-                        .iter()
-                        .position(|i| Some(*i) == picker.selected)
-                        .unwrap_or(0);
-                    let next = match key {
-                        PickerKey::Home => 0,
-                        PickerKey::End => indexes.len() - 1,
-                        PickerKey::Up => pos.saturating_sub(1),
-                        PickerKey::PageUp => {
-                            let target = indexes[pos].saturating_sub(self.list_height);
-                            indexes
-                                .iter()
-                                .rposition(|index| *index <= target)
-                                .unwrap_or(0)
-                        }
-                        PickerKey::PageDown => {
-                            let target = indexes[pos].saturating_add(self.list_height);
-                            indexes
-                                .iter()
-                                .position(|index| *index >= target)
-                                .unwrap_or(indexes.len() - 1)
-                        }
-                        _ => (pos + 1).min(indexes.len() - 1),
-                    };
-                    picker.selected = Some(indexes[next]);
-                }
-                self.rebuild();
+                picker.move_selection(key, self.list_height);
+                self.refresh_picker_view();
                 return;
             }
             PickerKey::Refresh => {
@@ -868,26 +980,29 @@ impl ModelsState {
                 }
             }
             PickerKey::ToggleFavourite => {
-                let selected = picker
-                    .selected
-                    .and_then(|i| picker.rows.get(i))
-                    .and_then(|r| r.key.clone());
-                if let Some(
-                    RowKey::Model { provider, model } | RowKey::Favourite { provider, model },
-                ) = selected
+                if let Some(index) = picker.selected
+                    && let Some(
+                        RowKey::Model { provider, model } | RowKey::Favourite { provider, model },
+                    ) = picker.rows[index].key.as_ref()
                     && let Ok(saved) = &mut self.saved
                 {
                     let key = format!("{provider}::{model}");
-                    if let Some(index) = saved.favourites.iter().position(|f| *f == key) {
-                        saved.favourites.remove(index);
-                    } else {
+                    let count = saved.favourites.len();
+                    saved.favourites.retain(|favourite| *favourite != key);
+                    if saved.favourites.len() == count {
                         saved.favourites.push(key);
+                    } else if picker.list_scope == ListScope::Starred {
+                        picker.move_selection(PickerKey::Down, self.list_height);
+                        if picker.selected == Some(index) {
+                            picker.move_selection(PickerKey::Up, self.list_height);
+                        }
                     }
                     effects.push(ModelsEffect::SaveFile(saved.clone()));
                 }
             }
             PickerKey::Enter => {
                 self.enter(effects);
+                self.refresh_picker_view();
                 return;
             }
             _ => {}
@@ -910,6 +1025,7 @@ impl ModelsState {
                 .to_string()
         };
         let (provider, model) = match key {
+            RowKey::Provider { .. } => return,
             RowKey::NotSetUp { provider } => {
                 self.return_picker = self.picker.take();
                 effects.push(ModelsEffect::CloseOverlay);

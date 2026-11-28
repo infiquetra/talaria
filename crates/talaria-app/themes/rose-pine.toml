@@ -1,0 +1,18 @@
+schema = 1
+name = "Rosé Pine"
+extends = "dark"
+follow_hermes_skin = false
+
+[palette]
+background = "#191724"
+surface = "#1f1d2e"
+foreground = "#e0def4"
+muted = "#928fa4"
+disabled = "#928fa4"
+border = "#6f6b85"
+primary = "#ebbcba"
+accent = "#c4a7e7"
+success = "#9ccfd8"
+warning = "#f6c177"
+error = "#ec6f92"
+attention = "#f6c177"

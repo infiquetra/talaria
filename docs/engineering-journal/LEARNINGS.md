@@ -2,6 +2,412 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-26 — A running child can go quiet during a tool call
+
+**Evidence.** During a two-child terminal run, one child finished in three seconds. The
+other stayed on the Hermes roster throughout a 40-second terminal command. Its live
+events named the model, and its stored session reported the configured effort.
+[Subagent display regression test](../../crates/talaria-tui/tests/integration/subagent_view.rs)
+
+**Mechanism.** A roster poll confirms ownership. An unchanged tool count on that poll
+does not establish new activity. Talaria times the gap since the last child event or
+roster progress, and looks up the model and effort using that child's stored session ID.
+
+**Generalizable rule.** Keep task lifecycle, last observed activity, and configuration
+separate when displaying delegated work.
+
+## 2026-11-26 — The effort picker needs a readable model name on the terminal background
+
+**Evidence.** Reusing Homebrew's status-bar model colour in the picker measured
+3.54:1 against black in true colour and 2.23:1 in 16 colours. The picker now
+uses its own model-name colour. The built-in theme readability test passed in
+all four colour modes, and a terminal capture confirmed the lavender model
+name and purple selection in Homebrew.
+[Theme readability test](../../crates/talaria-tui/tests/integration/theme_readability.rs)
+
+**Mechanism.** Inline controls draw on the terminal background. Copying a
+foreground from a nearby control also copies its contrast limitations. The
+picker resolves its model, filled track and selection against that background.
+
+**Generalizable rule.** Check the actual text cells at each supported colour
+depth when reusing a colour on another surface.
+
+## 2026-11-25 — A startup warning hid the new conversation screen
+
+**Evidence.** A fresh `talaria` launch lost the wing and all three shortcuts as
+soon as the command catalogue reported the `/plan` collision. A terminal test
+reproduces that sequence, opens the work panel and sends the first message.
+In the installed build, a 130-column launch showed the wing and route labels.
+Resizing to 40 columns showed all three compact commands.
+A live Muse reply replaced the opening while the warning stayed in scrollback.
+[Startup regression test](../../crates/talaria-cli/tests/integration/cli_process.rs)
+
+**Mechanism.** Both layouts used the presence of any transcript row to decide
+whether a conversation had started. Warnings and diagnostics can arrive before
+the first message. Both layouts now recognize those notices, and the workspace
+places its opening below the rows the notices use after wrapping.
+
+**Generalizable rule.** Check the new conversation screen again after startup
+requests return, including a response that adds a warning.
+
+## 2026-11-25 — Interrupting from an overlay must preserve its input
+
+**Evidence.** A running session now receives a single interrupt while the session
+picker is in search mode. The next character extends the same query. A separate
+setup test interrupts session creation before its reply arrives and checks that
+the late session detaches without submitting the request.
+[Terminal and gateway test](../../crates/talaria-cli/tests/integration/working_row.rs) ·
+[Setup tests](../../crates/talaria-core/tests/integration/configure_state.rs)
+
+**Mechanism.** Individual overlay handlers returned before the common keyboard
+handler. The application also treated an immediate interrupt as a request to
+close the slash list. Handling the physical chord before the overlay and keeping
+Escape distinct in the application preserves both the interrupt and the draft.
+
+**Generalizable rule.** Test the key at both ends. Check what the gateway receives
+and what the user can still type in the field afterward.
+
+## 2026-11-25 — A saved key preview can look like editable input
+
+**Evidence.** With a saved OpenCode Zen key in a disposable Hermes profile, the
+empty editor drew a blank row above the key's saved suffix. Ctrl+U erased a typed
+or pasted draft. Pressing it on the newly opened form produced no visible change.
+[Provider key tests](../../crates/talaria-core/tests/integration/providers_keys.rs)
+
+**Mechanism.** The terminal owns the masked input. Hermes supplies the saved
+suffix separately. An empty mask and a clear action with no feedback made the
+suffix look like the value the user was editing.
+
+**Generalizable rule.** Label an empty replacement field and give its clear action
+visible feedback. Verify clearing with an existing saved value as well as a draft.
+
+## 2026-11-25 — OpenRouter account state and the profile key are stored separately
+
+**Evidence.** In a disposable profile, Hermes 0.23.4 rejected OpenRouter in
+`model.save_key`. Its environment endpoint saved a synthetic key and the next
+Providers inventory showed it. Calling only `model.disconnect` left that key in
+the profile even when the command reported success. The provider service tests
+exercise success, refusal, missing keys and interrupted replies.
+[Provider service tests](../../crates/talaria-app/tests/integration/provider_service.rs)
+
+**Mechanism.** The model key handler looks up the provider in a registry that
+omits the built-in OpenRouter route. Its environment entry still belongs to the
+selected profile. Talaria saves it through the profile's gateway ticket. Removing
+credentials calls the account and environment operations and checks their replies.
+
+**Generalizable rule.** Check credential changes by reopening the inventory and
+verifying each affected store in a disposable profile.
+
+## 2026-11-25 — Keyboard shortcuts depend on the focused overlay
+
+**Evidence.** A code review of `terminal_input_actions` in `crates/talaria-cli/src/run.rs`.
+Kanban used to discard every Ctrl, Alt, and Super key. Ctrl-C closes the session picker,
+interrupts the turn on cron, model roles, and settings, and quits setup on a second
+press. The full notes are in
+[docs/handoff/2026-11-25-tui-usability/README.md](../handoff/2026-11-25-tui-usability/README.md).
+
+**Mechanism.** Each overlay branch in the input router chooses its own meaning for
+Esc, Ctrl-C, and Ctrl-Z. Text fields sometimes return before those chords are
+considered.
+
+**Generalizable rule.** Check each shortcut with the list and its text fields
+focused. Exercise suspend and resume from a shell that supports job control.
+
+## 2026-11-25 — A failed worker can leave a usable report
+
+**Evidence.** The fake gateway tests in
+`crates/talaria-workflow/tests/integration/report_recovery.rs` cover a failed turn,
+an unusable reply, and replay after deleting the worker folder. They also cover
+a stale file and a file that fails validation.
+
+**Mechanism.** Talaria records what was at the declared path before the attempt.
+When the reply fails, Talaria validates the changed file against the worker's
+schema and stores its bytes in the run journal's blob store. The recorded outcome
+names both the failure and the evidence.
+
+**Generalizable rule.** Keep validated evidence with a failed outcome, and make its
+storage independent of the worker's checkout.
+
+## 2026-11-24 — Searching a folded provider should preserve how the list was left
+
+**Evidence.** The model browsing tests in `crates/talaria-core/tests/integration/model_browse.rs`
+search for a model in a folded provider, clear the query and check that focus returns to
+the same folded heading. They also cover clicking while offline and reloading the catalogue.
+
+**Mechanism.** The picker stores expansion by provider slug. A search shows matching routes
+from every provider in the current view. Clearing the filter can hide the selected route,
+so the reducer uses its provider to recover a visible place in the list.
+
+**Generalizable rule.** Keep the user's fold choices separate from a search's temporary
+expansion and restore focus by identity when a selected result disappears.
+
+## 2026-11-24 — Marking a model must preserve its place in the list
+
+**Evidence.** In the running picker with 375 models, Ctrl+F moved a model from
+its provider on rows 3–13 to a new Starred group on rows 1–11.
+The regression in `crates/talaria-tui/tests/integration/picker_frame_render.rs`
+checks the model name's screen position, the visible row range and the next Down
+at three terminal sizes.
+
+**Mechanism.** Talaria tracked the provider and model correctly. The All view
+then promoted the starred route and removed its original row. Keeping the
+catalogue in provider order lets the marker change in place. The Starred view
+owns the separate shortlist.
+
+**Generalizable rule.** For an in-place list action, check the selected item's
+screen coordinates and the item reached by the next navigation key.
+
+## 2026-11-24 — A theme needs a readable selection after its fill disappears
+
+**Evidence.** Homebrew uses bright green text on a deep green selection. In an inline picker,
+painting the selection fill as text put deep green letters on black. The inline selection test
+in `crates/talaria-tui/tests/integration/theme_file_contrast.rs` covers this case. The screen
+checks in `crates/talaria-tui/tests/integration/theme_readability.rs` also exercise the
+converted colour pairs, including tool text reused on the review panel's secondary background.
+
+**Mechanism.** Inline pickers omit background fills to preserve the terminal's scrollback.
+The selection now uses the readable side of its colour pair and retains an underline. On a
+16-colour terminal, independent conversion can also collapse two distinct colours into one.
+Talaria checks the converted foreground against the surfaces where it is drawn.
+
+The independent review found a second case in the Terminal theme. Its foreground
+and background both use the emulator default. Removing reverse video left a selected
+slash command the same colour as the next one. Talaria now preserves reverse video
+for this pair. The inline Terminal selection test in
+`crates/talaria-tui/tests/integration/theme_file_contrast.rs` checks that the
+emulator owns the background and the selected row keeps its underline.
+
+**Generalizable rule.** Check contrast on the finished screen after removing fills or reducing
+colour depth. Checking the original palette alone misses both failures.
+
+## 2026-11-24 — A short terminal could hide the choice that Enter would send
+
+**Evidence.** The short-window question test in
+`crates/talaria-tui/tests/integration/prompt_cards.rs` moves to the 25th choice
+and checks the question, visible selection, and submitted answer in six rows.
+
+**Mechanism.** The old card rendered the first 16 options and then kept its last
+lines when space ran short. Moving the selection did not change that window.
+The answer pane now places its window around the selection. Mouse input uses
+the row positions from that same draw, including wrapped answer text.
+
+**Generalizable rule.** Check the option an operator can see against the value
+Enter will send after scrolling and resizing.
+
+## 2026-11-24 — Preview a light theme on a dark physical terminal
+
+**Evidence.** In a real terminal, previewing Paper on a dark background showed
+dark brown text on black. The colour catalogue contained the correct light
+background. The inline writer discarded it before drawing the preview.
+
+**Mechanism.** The composer and preview now paint the authored pair when the
+selected theme and terminal have opposite backgrounds. New scrollback uses the
+terminal's foreground when the selected text colour would be hard to read there.
+The regression in `crates/talaria-tui/tests/integration/theme_file_contrast.rs`
+checks both directions and verifies the native background used by the writer.
+
+**Generalizable rule.** Exercise both directions of a theme change in the actual
+terminal as well as inspecting its resolved colour pairs.
+
+## 2026-11-24 — A finished child agent can have failed
+
+The work panel assigned a check mark to every recent completion. The recent history
+kept the goal and identifier but dropped the outcome when a child was pruned.
+`RecentCompletion` in `crates/talaria-core/src/subagents/tree.rs` now retains that state.
+The mixed-outcome test in `crates/talaria-tui/tests/integration/work_panel_content.rs`
+checks that a failed and a successful child get different markers.
+
+**Generalizable rule.** Keep the outcome when projecting a terminal event into history.
+
+## 2026-11-24 — A paste could look correct in the composer and reach a skill as a label
+
+**Evidence.** The terminal regression `a_collapsed_paste_reaches_each_skill_as_multiline_text`
+in `crates/talaria-cli/tests/integration/cli_process.rs` pastes five lines through a
+pseudo-terminal and inspects the arguments received by a test gateway. The original
+direct skill call received the label. The corrected direct and Hivecode calls receive the lines.
+
+**Mechanism.** Ordinary submission expanded the stored paste. Skill dispatch and
+some queue actions branched off earlier and forwarded the display string. A held
+workflow could also outlive the composer that owned its paste.
+
+**Generalizable rule.** Test what each submission route delivers, including the
+text returned to the editor if an asynchronous request is refused.
+
+## 2026-11-23 — Resume failed the agents a run stop interrupted, because their stop had no finish record
+
+**Evidence.** A run was stopped and resumed (journal of that day: `turn_settled` with
+`stopped_by: run_stop` at one sequence, then on resume a `call_finished` failed with "the runner
+stopped it because the run was being stopped"). Later a `hermes update` restarted the gateway
+under the same run: the gateway interrupted the running turn, the runner noted a run stop and was
+killed as a tool subprocess before it journaled anything else. Code:
+`crates/talaria-workflow/src/journal/durable.rs` (the settled-turn branch); test
+`a_turn_the_run_stop_ended_is_run_again_by_the_next_execution`.
+
+**Mechanism.** Resume reruns a call whose last record from an earlier execution is a failed or
+stopped finish. A run stop cancels the engine first, so the interrupted call gets a settled turn
+but no finish. The next execution read that settled turn as a plain failure of its own and
+finished the call failed, which made it wait for a second resume.
+
+**Generalizable rule.** When recovery keys on a terminal record, check every path that can end
+without writing one; the interrupted path usually writes less than the failed path.
+
+## 2026-11-23 — A test fixture gave a session two ids the real gateway never sends
+
+**Evidence.** Left arrow never went back from a workflow agent's session on a real gateway.
+`origin_row` (`crates/talaria-app/src/workflow_origin.rs`) remembered the session a person came
+from only when its stored id differed from its runtime id. The Hermes session authority returns
+one id in both fields (`gateway/session_controls.py`, the resume result builds both from
+`ref.session_id`; 8 of 8 sessions in a run journal of that day had equal ids). Every test passed
+because the fixtures used `runtime-origin` and `stored-origin`. Test:
+`an_origin_whose_runtime_and_stored_ids_are_equal_is_remembered`.
+
+**Mechanism.** The fixture's shape was invented, then a rule was written against the fixture.
+The rule ("no stored id of its own") described a state the gateway does not produce, and it
+excluded the only state it does produce.
+
+**Generalizable rule.** Take the shape of gateway data in a fixture from a recorded reply of the
+gateway the user runs, and include that shape in the tests of any rule that compares its fields.
+
+## 2026-11-23 — The journal wrote a record before checking it
+
+**Evidence.** A restart request for an agent waiting on a retry made the resume append a
+`call_finished` line the journal's own grammar rejects. The writer synced the line and only then
+applied the grammar, so every later open failed and the run could not be resumed
+(`crates/talaria-workflow/src/journal/store.rs` `append_inner`; test
+`a_record_its_call_cannot_take_is_refused_before_it_reaches_the_file`).
+
+**Mechanism.** Validation ran after the durable write, in an append-only file.
+
+**Generalizable rule.** Validate a record before it reaches an append-only log, never only after.
+
+## 2026-11-23 — A "we did this" note was written before the action and outlived it
+
+**Evidence.** Run-stop notes were written for every target before any stop was sent; a target
+whose stop never went out kept its note, and a person's later stop of that turn was blamed on the
+runner (`crates/talaria-workflow/src/runner/execute.rs` `settle_stop`; test
+`a_run_stop_that_was_not_sent_leaves_no_note_behind`).
+
+**Generalizable rule.** Write the note next to the action, and remove it only when the action
+certainly did not happen.
+
+## 2026-11-23 — A fake gateway showed turns the real one cannot
+
+**Evidence.** The review found `use-reply` waiting forever on a resumed runner while every test
+passed: the fake gateway's `next_reply` scanned every stored turn, and Hermes's snapshot lists
+only queued and started turns (`crates/talaria-workflow/src/journal/fake_gateway.rs`). The fake
+now shows a client only turns made while it was subscribed, or queued or running when it
+subscribed.
+
+**Mechanism.** The tests proved behaviour that does not exist in Hermes.
+
+**Generalizable rule.** A fake may show only what the real service can show.
+
+## 2026-11-23 — `git add --ignore-errors` still exits 1
+
+**Evidence.** One unreadable file made the whole save of an agent's work fail, although git had
+indexed everything else (`crates/talaria-workflow/src/worktree/git/save.rs`). Writing the tree
+also runs the clean filter on entries git must re-read, so filter overrides go on every command
+that touches the temporary index, and a filter is only switched off with `required=false` beside
+empty `clean` and `process`.
+
+**Mechanism.** The option tolerates per-file errors but reports them in the exit status, and the
+caller treated any non-zero status as failure.
+
+**Generalizable rule.** When a git option tolerates per-file errors, judge by the exit status
+and the error output together.
+
+## 2026-11-23 — A replayed run cannot say why money is unknown the way a live run can
+
+**Evidence.** Only the cost Hermes reports is journaled; money priced from the price list is not
+(`crates/talaria-workflow/src/runner/execute.rs`, the replay path). The replay said "Hermes has
+no price for the models used" for a run the live path had priced.
+
+**Mechanism.** One message was written for two code paths that know different things.
+
+**Generalizable rule.** A message about why a value is missing describes what the code that
+built that value knows.
+
+## 2026-11-23 — A free-text argument swallowed words that look like flags
+
+**Evidence.** `workflow lessons add --run R pass --cwd to check` exited 2 until the positional
+argument got `trailing_var_arg` and `allow_hyphen_values`
+(`crates/talaria-cli/src/workflow_lessons.rs`, test `lesson_text_may_name_flags`).
+
+**Generalizable rule.** A free-text positional argument needs both settings and a test with a
+hyphen word.
+
+## 2026-11-23 — A relayed stop was read as a provider timeout
+
+**Evidence.** A real run's planner ended with turn exit reason `interrupted_during_api_call` and
+the text "waiting for model response (80.0s elapsed)". Talaria's reason was the fixed text
+"stopped in Hermes (outcome 'interrupted')" (`crates/talaria-workflow/src/hermes/policy.rs`). The
+calling agent found the 80 seconds in the journal, concluded the provider had an 80 second limit,
+moved every long phase to other models and reported that as fact. The stop was an explicit stop
+request sent from a Talaria window showing the agent's session.
+
+**Mechanism.** Talaria dropped Hermes's detail and did not say who asked for the stop, so the
+only number the reader could find was an elapsed time, which reads like a limit.
+
+**Generalizable rule.** When relaying a stop, say that it was a stop, who asked when known, and
+what any number in the text means.
+
+## 2026-11-23 — A runner can adopt a turn another window started on the same session
+
+**Evidence.** Hermes's session authority serves a turn's receipt to the same owner for any
+admission on the session, and every frame carries its admission id. The runner's Hermes port now
+remembers every admission it sees (`crates/talaria-workflow/src/hermes/port.rs`), and the
+`use-reply` answer takes the next settled turn as the parked call's result.
+
+**Mechanism.** The owner rule is per session owner, not per connection, so a turn typed into the
+agent's session from a Talaria window is visible to the runner.
+
+**Generalizable rule.** Check the authority's owner rule before assuming a client can read only
+the turns it started.
+
+## 2026-11-23 — A free-text status field let whole phases silently not run
+
+**Evidence.** In two real runs an agent answered `complete` where the script tested for `done`:
+reviewers reviewed the wrong branch in one, and the verify and playtest phases never ran in the
+other. Talaria already enforces `enum` with a full JSON Schema validator and one correction turn
+(`crates/talaria-workflow/src/hermes/validate.rs`); the skill never said to use it.
+
+**Mechanism.** A plain string field accepts any word, and the script's branch simply did not run.
+
+**Generalizable rule.** Any field a script branches on gets an `enum`, and the prompt names the
+same words.
+
+## 2026-11-23 — A trial run reported declared phases as if it had reached them
+
+**Evidence.** `workflow check` filled its report from `meta.phases`, so a trial run that returned
+at the first phase listed all nine (`crates/talaria-workflow/src/script_check.rs`).
+
+**Mechanism.** Declared and observed were the same field.
+
+**Generalizable rule.** Report what a probe observed, not what the script declared.
+
+## 2026-11-23 — Git runs hooks on a plain update-ref
+
+**Evidence.** The test `a_repository_hook_does_not_run_when_the_branch_is_made` fails without
+`-c core.hooksPath=/dev/null` (`crates/talaria-workflow/src/worktree/git/save.rs`).
+
+**Mechanism.** Every reference transaction runs the `reference-transaction` hook from
+`core.hooksPath`, and configuration written by an agent can point that anywhere.
+
+**Generalizable rule.** Any git command that writes references in an agent's folder switches the
+hooks path off.
+
+## 2026-11-23 — A branch's age comes from its reflog, not from its commit
+
+**Evidence.** The test `a_branch_that_existed_before_the_run_is_never_deleted`
+(`crates/talaria-workflow/src/worktree/git/manage.rs`). Reflog times come from the committer
+date, and `%gd` with `--date=unix` reads them back.
+
+**Mechanism.** A branch made during a run can point at an old commit, and an old branch can point
+at a new one.
+
+**Generalizable rule.** Judge when a branch was created from its reflog, never from the commit it
+points at.
+
 ## 2026-11-23 — A test that spaces key presses with sleeps measures the machine
 
 **Evidence.** The process-level test for a held interrupt key wrote one press every 40 ms from the
@@ -8887,3 +9293,75 @@ regardless of which machine will check or release the build.
 **Mechanism.** The review path already prefixes every child with `-c core.fsmonitor=false`. The launch runner did not, and it treated any hit from `git config --get core.sshCommand` as the operator's ssh command, so a repository value suppressed `BatchMode` and executed on `fetch` and `ls-remote`. `Command::envs` does not erase inherited `GIT_DIR`, and `git config --global` skips includes and reads only one of the two global files. The probe therefore clears the child environment, rebuilds it without repository-selection or command-scope variables, and runs one `git config --includes --show-scope --null --get-all` outside any repository. The last `system` or `global` value is pinned with `-c`. `GIT_SSH` is shell-quoted first because it is an executable path, not shell syntax. `GIT_SSH_COMMAND` is left untouched because it already wins over config. A positional `-c core.fsmonitor=false` after the subcommand does not count as the override.
 
 **Generalizable rule.** Every git child that can see a repository's config carries `-c core.fsmonitor=false` before the subcommand, and a network git child pins `core.sshCommand` from the operator's environment or from system and global config only, read with includes from a cleared environment.
+
+## 2026-11-26 — Validate the value that reaches the sink
+
+**Evidence.** `crates/talaria-app/src/attachments.rs` and
+`crates/talaria-app/tests/integration/attachments_routing.rs` cover collapsed paste expansion,
+trailing punctuation and `:N` or `:N-M` line selectors on credential references.
+`crates/talaria-cli/src/workflow.rs` applies the terminal sanitizer to human-readable workflow
+JSON while preserving its multiline layout.
+
+**Mechanism.** The composer checked credential-looking file references before expanding collapsed
+pastes, so the text sent to Hermes could differ from the text that passed the guard. The guard also
+compared the display token instead of the underlying path grammar. Workflow results had the same
+boundary error in another form: untrusted JSON strings reached the terminal after formatting but
+before terminal-control neutralization.
+
+**Generalizable rule.** Normalize and validate the final value immediately before submission or
+display, after every expansion and display-only suffix has been removed.
+
+## 2026-11-26 — Read-only Git commands still execute repository programs
+
+**Evidence.** `crates/talaria-workflow/src/worktree/git.rs`,
+`crates/talaria-workflow/src/worktree/git/save.rs` and
+`crates/talaria-workflow/src/runner/leftover.rs` share a regression test that installs repository
+clean and smudge filters plus a hook, then verifies Talaria's status and worktree operations do not
+run any of those programs.
+
+**Mechanism.** Git status and diff can invoke clean filters while determining whether a file is
+modified. Worktree operations can invoke hooks. Disabling filesystem monitors alone therefore does
+not make a repository inspection non-executable. Talaria now disables hooks, signing, filesystem
+monitors, untracked-cache programs and repository-scoped filter drivers while retaining the
+operator's system and global filters.
+
+**Generalizable rule.** Treat every Git command that reads an agent-writable repository as a
+program-execution boundary, including status, diff and dry-run inspection.
+
+## 2026-11-26 — File validation needs bounds, containment and stable identity
+
+**Evidence.** `crates/talaria-workflow/src/journal/reader.rs`,
+`crates/talaria-workflow/src/journal/record.rs`,
+`crates/talaria-workflow/src/journal/run_dir.rs`,
+`crates/talaria-workflow/src/runner/resolver.rs`,
+`crates/talaria-workflow/src/runner/execute.rs` and `crates/talaria-cli/src/workflow.rs` reject
+invalid script hashes, special or oversized files, escaping nested-script paths and files whose
+identity changes during a read. The same bounded readers cover top-level scripts, resumed scripts,
+nested scripts, journals, declared reports and workflow argument files. On Unix, attacker-controlled
+inputs are opened nonblocking and without following a final symlink. Their unit and integration
+tests cover oversized journals, scripts and argument files, symlinks, named pipes and parent or
+absolute paths.
+
+**Mechanism.** A hash-shaped value used as a path component is safe only when its grammar is
+validated. A path that was regular or contained before opening can change before or during the
+read. A named pipe introduced in that interval can block the runner indefinitely, and an otherwise
+valid regular file can still exhaust memory. The workflow readers now bind each assumption to the
+actual read with canonical containment, nonblocking and no-follow opens, byte limits and
+before-and-after identity checks.
+
+**Generalizable rule.** For every untrusted local file, validate the name, contain the canonical
+path, reject non-regular files, cap the read and verify that the opened object did not change.
+
+## 2026-11-26 — Deferred prompt actions carry their owning session
+
+**Evidence.** `crates/talaria-tui/src/prompts/mod.rs`,
+`crates/talaria-tui/src/prompts/stack.rs`, `crates/talaria-cli/src/run.rs` and
+`crates/talaria-tui/tests/integration/prompt_cards.rs` retain the prompt card's session identifier
+through the Ctrl+C outcome and refuse to interrupt a different foreground session.
+
+**Mechanism.** The prompt stack can display a request owned by a background session while another
+session is in the foreground. Converting Ctrl+C directly into a foreground interrupt discarded the
+only identity that distinguished those sessions.
+
+**Generalizable rule.** A deferred action must carry the identity of the object it authorizes all
+the way to the side effect; never substitute the currently focused object.
