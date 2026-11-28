@@ -537,6 +537,162 @@ fn reveal_is_one_shot() {
     }
 }
 
+fn notices(effects: &[SettingsEffect]) -> Vec<String> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            SettingsEffect::Notice(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn closed_config_command_notice_names_the_restart() {
+    let restart = "May need a gateway restart to take effect: display.compact.";
+    let after = json!({"display":{"compact":true,"animations":false,"password":"example"}});
+
+    // The settings screen is closed, so the command opens it, saves, and closes it again.
+    let mut closed = SettingsState::new(&[]);
+    assert_eq!(
+        closed.update(SettingsInput::Command {
+            profile: "fixture".into(),
+            args: "display.compact=true".into()
+        }),
+        vec![SettingsEffect::Load {
+            profile: "fixture".into()
+        }]
+    );
+    assert!(
+        closed
+            .update(SettingsInput::Loaded(snapshot(initial(), json!({}))))
+            .is_empty()
+    );
+    assert_eq!(closed.view().screen, Screen::Reviewing);
+    assert_eq!(enter(&mut closed), vec![SettingsEffect::FetchFresh]);
+    assert_eq!(
+        closed.update(SettingsInput::Fresh(initial())),
+        vec![SettingsEffect::Write {
+            patch: json!({"display":{"compact":true}})
+        }]
+    );
+    assert_eq!(
+        closed.update(SettingsInput::Written(WriteResult::Ok)),
+        vec![SettingsEffect::ReadBack]
+    );
+    let effects = closed.update(SettingsInput::ReadBack {
+        effective: after.clone(),
+        raw: json!({"display":{"compact":true}}),
+    });
+    assert_eq!(
+        effects.len(),
+        2,
+        "expected CloseOverlay and a notice: {effects:?}"
+    );
+    assert_eq!(effects[0], SettingsEffect::CloseOverlay);
+    let found = notices(&effects);
+    assert_eq!(found.len(), 1, "expected exactly one notice: {found:?}");
+    assert!(
+        found[0].contains("Settings saved for profile fixture"),
+        "the notice should say what was saved: {}",
+        found[0]
+    );
+    assert!(
+        found[0].contains(restart),
+        "the notice after a closed /config command should name the restart: {}",
+        found[0]
+    );
+
+    // The settings screen is already open, so the notice comes later, when it closes.
+    let mut open_screen = open(&[]);
+    writing(&mut open_screen);
+    assert_eq!(
+        open_screen.update(SettingsInput::Written(WriteResult::Ok)),
+        vec![SettingsEffect::ReadBack]
+    );
+    assert!(
+        open_screen
+            .update(SettingsInput::ReadBack {
+                effective: after.clone(),
+                raw: json!({"display":{"compact":true}})
+            })
+            .is_empty()
+    );
+    assert!(
+        banner(&open_screen).contains(restart),
+        "the banner should name the restart: {}",
+        banner(&open_screen)
+    );
+    let effects = action(&mut open_screen, SettingsAction::Close);
+    let found = notices(&effects);
+    assert_eq!(found.len(), 1, "expected exactly one notice: {found:?}");
+    assert!(
+        found[0].contains("Settings saved for profile fixture"),
+        "the notice should say what was saved: {}",
+        found[0]
+    );
+    assert!(
+        found[0].contains(restart),
+        "the notice left by closing the screen should name the restart: {}",
+        found[0]
+    );
+
+    // display.skin applies now, so its notice must not mention a restart.
+    let mut skin_snapshot = snapshot(json!({}), json!({}));
+    skin_snapshot
+        .schema
+        .fields
+        .push(field("display.skin", FieldKind::String, "display"));
+    let before = json!({"display":{"compact":false,"animations":false,"password":"example",
+        "skin":"other"}});
+    skin_snapshot.effective = before.clone();
+    let mut skin = SettingsState::new(&[]);
+    assert_eq!(
+        skin.update(SettingsInput::Command {
+            profile: "fixture".into(),
+            args: "display.skin=mono".into()
+        }),
+        vec![SettingsEffect::Load {
+            profile: "fixture".into()
+        }]
+    );
+    assert!(skin.update(SettingsInput::Loaded(skin_snapshot)).is_empty());
+    assert_eq!(skin.view().screen, Screen::Reviewing);
+    assert_eq!(enter(&mut skin), vec![SettingsEffect::FetchFresh]);
+    assert_eq!(
+        skin.update(SettingsInput::Fresh(before)),
+        vec![SettingsEffect::Write {
+            patch: json!({"display":{"skin":"mono"}})
+        }]
+    );
+    assert_eq!(
+        skin.update(SettingsInput::Written(WriteResult::Ok)),
+        vec![SettingsEffect::ReadBack]
+    );
+    let effects = skin.update(SettingsInput::ReadBack {
+        effective: json!({"display":{"compact":false,"animations":false,"password":"example",
+            "skin":"mono"}}),
+        raw: json!({"display":{"skin":"mono"}}),
+    });
+    let found = notices(&effects);
+    assert_eq!(found.len(), 1, "expected exactly one notice: {found:?}");
+    assert!(
+        found[0].contains("Settings saved for profile fixture"),
+        "the notice should say what was saved: {}",
+        found[0]
+    );
+    assert!(
+        found[0].contains("display.skin"),
+        "the notice should name the saved key: {}",
+        found[0]
+    );
+    assert!(
+        !found[0].contains("restart"),
+        "a key that applies now should not mention a restart: {}",
+        found[0]
+    );
+}
+
 fn choice_field(key: &str, kind: FieldKind, options: Option<Vec<Value>>) -> FieldView {
     FieldView {
         options,
