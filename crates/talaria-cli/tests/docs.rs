@@ -618,7 +618,7 @@ fn required_statements_are_present() {
         "git show v0.6.5:docs/examples/status_bar_starter.py",
         "TALARIA_STATUS_INTERVAL_SECONDS",
         "formats/status-line.md",
-        "version 1",
+        "receives a version 2 JSON document",
         "2 second",
     ] {
         assert!(
