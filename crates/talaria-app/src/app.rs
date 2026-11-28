@@ -68,10 +68,10 @@ use talaria_core::queue::{
     IdSource, QueueAction, QueueIntent, RECONCILE_WAIT, SubmissionId, update_queue,
 };
 use talaria_core::rewind::{
-    CallFailure, DiffCommand, DiffSource, DoubleEsc, InterruptConfirm, InterruptPress, Reply,
-    RewindEffect, RewindInput, RewindKey, RewindState, RewindView, RollbackCommand,
-    parse_diff as parse_diff_command, parse_rollback, parse_undo, text as rewind_text,
-    update as rewind_update,
+    Call as RewindCall, CallFailure, DiffCommand, DiffSource, DoubleEsc, InterruptConfirm,
+    InterruptPress, Reply, RewindEffect, RewindInput, RewindKey, RewindState, RewindView,
+    RollbackCommand, parse_diff as parse_diff_command, parse_rollback, parse_undo,
+    text as rewind_text, update as rewind_update,
 };
 use talaria_core::session::{
     Cell, ConnectionChoice, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState,
@@ -1028,6 +1028,8 @@ pub struct AppState {
     rewind: RewindState,
     /// Session that owns the rewind state and outstanding calls.
     rewind_owner: Option<RowKey>,
+    /// A forked prompt waiting for the new session's composer.
+    pub fork_prefill: Option<ForkPrefill>,
     /// Two quick eligible Esc presses open the rewind overlay.
     double_esc: DoubleEsc,
     /// The first press of the interrupt key while a turn runs waits here for a second one.
@@ -1345,6 +1347,7 @@ impl AppState {
             link_epoch: Arc::new(AtomicU64::new(0)),
             rewind: RewindState::default(),
             rewind_owner: None,
+            fork_prefill: None,
             double_esc: DoubleEsc::default(),
             interrupt_confirm: InterruptConfirm::default(),
             keys_waiting: false,
@@ -3135,7 +3138,9 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
     for effect in rewind_update(&mut state.rewind, input, wall_ms()) {
         match effect {
             RewindEffect::Call { ticket, call } => {
-                if let Some(owner) = state.rewind_owner.clone() {
+                if matches!(call, RewindCall::Branch { .. }) {
+                    effects.extend(fork_effects(state, &call));
+                } else if let Some(owner) = state.rewind_owner.clone() {
                     effects.push(AppEffect::Rewind {
                         owner,
                         ticket,
@@ -3174,6 +3179,86 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
         }
     }
     effects.push(AppEffect::Redraw);
+    effects
+}
+
+/// A forked prompt held until the new session is open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForkPrefill {
+    /// The text the composer receives.
+    pub text: String,
+    /// The prompt had parts that are not text, which were not copied.
+    pub attachments_omitted: bool,
+}
+
+/// The notice when a forked prompt's attachments stay behind.
+const FORK_ATTACHMENTS_TEXT: &str = "The attachments on this prompt were not copied.";
+
+/// The first sentence when a fork from the oldest prompt opens a new session.
+const FORK_STARTED_TEXT: &str =
+    "Started a new session in this folder with that prompt in the composer.";
+
+/// Start a fork from the rewind picker: a branch through the row before the prompt, or, for
+/// the oldest prompt, a new session in this folder. The prompt waits for the new composer.
+pub fn fork_effects(state: &mut AppState, call: &RewindCall) -> Vec<AppEffect> {
+    let RewindCall::Branch {
+        through_message_id,
+        text,
+        attachments_omitted,
+    } = call
+    else {
+        return Vec::new();
+    };
+    if let Some(refusal) = session_busy(state) {
+        return refusal;
+    }
+    if turn_running(state) {
+        return vec![AppEffect::CommitLines(vec![
+            crate::switch::BRANCH_BUSY_TEXT.to_owned(),
+        ])];
+    }
+    let prefill = ForkPrefill {
+        text: text.clone(),
+        attachments_omitted: *attachments_omitted,
+    };
+    let Some(through) = *through_message_id else {
+        state.fork_prefill = Some(prefill);
+        let cwd = state
+            .folder
+            .cwd
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| state.launch_folder.clone());
+        return vec![AppEffect::ClearSession {
+            skip_detach: state.session_gone,
+            cwd,
+        }];
+    };
+    match crate::switch::branch_request(state, None, Some(through)) {
+        Ok(request) => {
+            state.switching = true;
+            state.session_action = true;
+            state.fork_prefill = Some(prefill);
+            vec![AppEffect::BranchSession { request }]
+        }
+        Err(BranchOutcome::Refused { text } | BranchOutcome::Branched { notice: text }) => {
+            vec![AppEffect::CommitLines(vec![text])]
+        }
+    }
+}
+
+/// Put a forked prompt into the new session's composer by the rule of [`return_prompt`]:
+/// only into an empty composer, and a draft is never overwritten. `fits` is whether the
+/// composer was empty when the notice was chosen.
+fn place_fork_prefill(state: &mut AppState, prefill: ForkPrefill, fits: bool) -> Vec<AppEffect> {
+    let mut effects = if fits {
+        load_draft(state, prefill.text)
+    } else {
+        vec![notice_lines(&rewind_text::fork_draft_kept(&prefill.text))]
+    };
+    if prefill.attachments_omitted {
+        effects.push(notice_lines(FORK_ATTACHMENTS_TEXT));
+    }
     effects
 }
 
@@ -4659,54 +4744,66 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::Cd(input) => cd_input(state, input),
         AppMessage::Automation(event) => automation_event(state, event),
         AppMessage::Picker(input) => picker_input(state, input),
-        AppMessage::SessionCleared(result) => match result {
-            SessionCleared::DetachFailed { reason } => vec![notice_lines(&format!(
-                "Could not leave the current session: {reason}. You are still in it."
-            ))],
-            SessionCleared::Started {
-                install,
-                resume_previous,
-            } => {
-                let notice = if resume_previous {
-                    let previous = state
-                        .opened
-                        .as_ref()
-                        .map(|opened| opened.session_id.as_str())
-                        .unwrap_or_default();
-                    let hint = crate::launch::exit_hint(previous, &state.profile);
-                    format!(
-                        "Started a new session in this folder. The previous session was not ended; resume it with {}",
-                        hint.lines().nth(1).unwrap_or_default().trim()
-                    )
-                } else {
-                    "Started a new session in this folder.".to_owned()
-                };
-                opened_session(state, install.opened, Some(notice))
+        AppMessage::SessionCleared(result) => {
+            let prefill = state.fork_prefill.take();
+            match result {
+                SessionCleared::DetachFailed { reason } => vec![notice_lines(&format!(
+                    "Could not leave the current session: {reason}. You are still in it."
+                ))],
+                SessionCleared::Started {
+                    install,
+                    resume_previous,
+                } => {
+                    let fits = state.draft.is_empty();
+                    let first = match &prefill {
+                        Some(_) if fits => FORK_STARTED_TEXT,
+                        _ => "Started a new session in this folder.",
+                    };
+                    let notice = if resume_previous {
+                        let previous = state
+                            .opened
+                            .as_ref()
+                            .map(|opened| opened.session_id.as_str())
+                            .unwrap_or_default();
+                        let hint = crate::launch::exit_hint(previous, &state.profile);
+                        format!(
+                            "{first} The previous session was not ended; resume it with {}",
+                            hint.lines().nth(1).unwrap_or_default().trim()
+                        )
+                    } else {
+                        first.to_owned()
+                    };
+                    let mut effects = opened_session(state, install.opened, Some(notice));
+                    if let Some(prefill) = prefill {
+                        effects.extend(place_fork_prefill(state, prefill, fits));
+                    }
+                    effects
+                }
+                SessionCleared::OpenFailed {
+                    previous_id,
+                    reason,
+                    left,
+                } => {
+                    state.opened = None;
+                    state.workflow_agent = None;
+                    state.workflow_origin = None;
+                    state.workflow_return = None;
+                    let notice = if left {
+                        let hint = crate::launch::exit_hint(&previous_id, &state.profile);
+                        format!(
+                            "Left the previous session, but a new one could not be started: {reason}. Resume the previous session with {}",
+                            hint.lines().nth(1).unwrap_or_default().trim()
+                        )
+                    } else {
+                        format!(
+                            "The previous session had ended, and a new one could not be started: {reason}."
+                        )
+                    };
+                    vec![notice_lines(&notice)]
+                }
+                SessionCleared::Skipped => Vec::new(),
             }
-            SessionCleared::OpenFailed {
-                previous_id,
-                reason,
-                left,
-            } => {
-                state.opened = None;
-                state.workflow_agent = None;
-                state.workflow_origin = None;
-                state.workflow_return = None;
-                let notice = if left {
-                    let hint = crate::launch::exit_hint(&previous_id, &state.profile);
-                    format!(
-                        "Left the previous session, but a new one could not be started: {reason}. Resume the previous session with {}",
-                        hint.lines().nth(1).unwrap_or_default().trim()
-                    )
-                } else {
-                    format!(
-                        "The previous session had ended, and a new one could not be started: {reason}."
-                    )
-                };
-                vec![notice_lines(&notice)]
-            }
-            SessionCleared::Skipped => Vec::new(),
-        },
+        }
         AppMessage::Switched {
             outcome,
             install,
@@ -8640,7 +8737,7 @@ fn branch_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
 /// Build the branch request with the one ledger, so a request id is never used twice, and
 /// hand it to the executor.
 fn start_branch(state: &mut AppState, title: Option<String>) -> Vec<AppEffect> {
-    match crate::switch::branch_request(state, title) {
+    match crate::switch::branch_request(state, title, None) {
         Ok(request) => {
             state.switching = true;
             state.session_action = true;
@@ -8947,6 +9044,7 @@ fn branched(
     outcome: BranchOutcome,
     install: Option<SwitchInstall>,
 ) -> Vec<AppEffect> {
+    let prefill = state.fork_prefill.take();
     state.switching = false;
     state.session_action = false;
     match outcome {
@@ -8977,6 +9075,10 @@ fn branched(
                 None => effects.push(notice_lines(&notice)),
             }
             effects.extend(close_picker(state));
+            if let Some(prefill) = prefill {
+                let fits = state.draft.is_empty();
+                effects.extend(place_fork_prefill(state, prefill, fits));
+            }
             effects
         }
         BranchOutcome::Refused { text } => {

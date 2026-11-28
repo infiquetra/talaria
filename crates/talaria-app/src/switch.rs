@@ -287,7 +287,7 @@ fn forward_events(app: &AppState, inbound: tokio::sync::mpsc::Receiver<LinkEvent
 /// the child.
 pub async fn branch_foreground(app: &mut AppState, title: Option<String>) -> BranchOutcome {
     let name = title.clone();
-    let request = match branch_request(app, title) {
+    let request = match branch_request(app, title, None) {
         Ok(request) => request,
         Err(refused) => return refused,
     };
@@ -326,6 +326,7 @@ pub async fn branch_foreground(app: &mut AppState, title: Option<String>) -> Bra
 pub fn branch_request(
     app: &mut AppState,
     title: Option<String>,
+    through_message_id: Option<i64>,
 ) -> Result<MutationRequest, BranchOutcome> {
     // A turn that is running cannot be branched.
     if app
@@ -346,6 +347,10 @@ pub fn branch_request(
     let mut payload = Map::new();
     if let Some(title) = title {
         payload.insert("title".to_owned(), Value::String(title));
+    }
+    // The last stored row the branch keeps; absent keeps the whole conversation.
+    if let Some(through) = through_message_id {
+        payload.insert("through_message_id".to_owned(), Value::from(through));
     }
     app.ledger
         .build(&session_id, "branch", payload, true)
