@@ -453,3 +453,15 @@ fn keys_map_to_inputs() {
         Some(RewindKey::PageDown)
     );
 }
+
+#[test]
+fn fork_key_is_not_f() {
+    assert_eq!(
+        key_to_rewind(&plain(KeyCode::Char('b')), RewindScreen::Actions),
+        Some(RewindKey::Branch)
+    );
+    assert_eq!(
+        key_to_rewind(&plain(KeyCode::Char('f')), RewindScreen::Actions),
+        Some(RewindKey::F)
+    );
+}

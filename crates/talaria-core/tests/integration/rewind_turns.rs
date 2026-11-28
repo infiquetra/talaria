@@ -1,7 +1,9 @@
 //! Eligible prompts. Issue 233. Checkpoint rewind and diff.
 
 use serde_json::{Value, json};
-use talaria_core::rewind::{RewindTurn, is_active_row, lossless_text, rewind_turns};
+use talaria_core::rewind::{
+    RewindTurn, is_active_row, lossless_text, rewind_turns, through_row_before,
+};
 
 fn user(id: i64, content: Value, extra: Value) -> Value {
     let mut row = json!({"role": "user", "row_id": id, "content": content});
@@ -172,4 +174,23 @@ fn later_count_and_turn_window() {
         !by_id(&turns, 11).edits_files,
         "a tool call without function.name is not a file edit"
     );
+}
+
+#[test]
+fn through_row_before_is_the_previous_stored_row() {
+    let messages = vec![
+        user(4, json!("four"), json!({})),
+        json!({"role": "assistant", "content": "answer", "row_id": 9}),
+    ];
+    assert_eq!(through_row_before(&messages, 9), Some(4));
+    assert_eq!(through_row_before(&messages, 4), None);
+    assert_eq!(through_row_before(&messages, 7), None);
+
+    let skipped = vec![
+        user(4, json!("four"), json!({})),
+        user(6, json!("archived"), json!({"archived": true})),
+        json!({"role": "assistant", "content": "zero", "row_id": 0}),
+        json!({"role": "user", "content": "nine", "row_id": 9}),
+    ];
+    assert_eq!(through_row_before(&skipped, 9), Some(4));
 }
