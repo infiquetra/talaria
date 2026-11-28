@@ -387,21 +387,26 @@ fn prepush_script_matches_the_ubuntu_pull_request_checks() {
         }
     }
 
-    for (path, guide) in [("AGENTS.md", &agents_guide), ("CLAUDE.md", &claude_guide)] {
+    assert_eq!(
+        claude_guide.lines().next(),
+        Some("@AGENTS.md"),
+        "CLAUDE.md must import AGENTS.md on its first line"
+    );
+
+    let (path, guide) = ("AGENTS.md", &agents_guide);
+    assert!(
+        guide.contains("tools/prepush.sh"),
+        "{path} must mention tools/prepush.sh"
+    );
+    assert!(
+        !guide.contains("sh tools/prepush.sh"),
+        "{path} must not contain `sh tools/prepush.sh`"
+    );
+    for command in SHORT_LOOP_COMMANDS {
         assert!(
-            guide.contains("tools/prepush.sh"),
-            "{path} must mention tools/prepush.sh"
+            guide.lines().any(|line| line.trim() == *command),
+            "{path} is missing short-loop command: {command}"
         );
-        assert!(
-            !guide.contains("sh tools/prepush.sh"),
-            "{path} must not contain `sh tools/prepush.sh`"
-        );
-        for command in SHORT_LOOP_COMMANDS {
-            assert!(
-                guide.lines().any(|line| line.trim() == *command),
-                "{path} is missing short-loop command: {command}"
-            );
-        }
     }
 }
 
