@@ -222,9 +222,7 @@ pub struct PromptStack {
     draft_empty: bool,
     focused_at: Option<Instant>,
     stopping: HashSet<Option<String>>,
-    /// The time of the last `sync`, so a card set between frames starts its key guard then.
-    synced_at: Option<Instant>,
-    /// A card was set before any `sync`; the next one starts its key guard.
+    /// A new usage-limit card took the top; the next `sync` or key starts its key guard.
     refocus: bool,
 }
 
@@ -289,7 +287,6 @@ impl PromptStack {
             draft_empty: false,
             focused_at: None,
             stopping: HashSet::new(),
-            synced_at: None,
             refocus: false,
         }
     }
@@ -327,10 +324,7 @@ impl PromptStack {
                 .is_some_and(|card| card.id == Identity::UsageLimit)
         {
             // A new card must not take a key pressed before it was drawn.
-            match self.synced_at {
-                Some(at) => self.focused_at = Some(at),
-                None => self.refocus = true,
-            }
+            self.refocus = true;
         }
     }
 
@@ -581,7 +575,6 @@ impl PromptStack {
         {
             self.focused_at = Some(now);
         }
-        self.synced_at = Some(now);
         self.draft_empty = draft_empty;
         self.foreground = foreground.map(str::to_owned);
         self.stopping.retain(|session| {
@@ -609,8 +602,20 @@ impl PromptStack {
         if key.kind == KeyKind::Release {
             return result;
         }
+        if std::mem::take(&mut self.refocus) {
+            self.focused_at = Some(now);
+        }
         self.cards[0].expire_connection_sent(now);
         let control_c = key.mods.ctrl && matches!(key.code, KeyCode::Char('c' | 'C'));
+        if control_c && matches!(self.cards[0].content, Content::UsageLimit(_)) {
+            // The refused turn has already finished, so there is nothing to stop.
+            return KeyOutcome::Consumed {
+                intent: Some(PromptIntent::UsageLimit { confirm: false }),
+                interrupt_requested: false,
+                interrupt_session: None,
+                notice: None,
+            };
+        }
         let session = self.cards[0].session().map(str::to_owned);
         if self.stopping.contains(&session) {
             return result;

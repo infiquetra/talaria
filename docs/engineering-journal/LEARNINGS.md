@@ -2,6 +2,20 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-28 — A card set between frames must start its own key guard
+
+**Evidence.** Review of the usage-limit card found that Enter could confirm a model switch the
+moment the card appeared, when the previous screen update was a second old.
+[Prompt-card regression test](../../crates/talaria-tui/tests/integration/prompt_cards.rs)
+
+**Mechanism.** `set_usage_limit` gives no time, so the first version reused the previous
+`sync` time as the card's focus time. By the time the card was drawn, its 250 ms guard had
+already expired. The card now marks that it needs focus, and the next `sync` or key press
+starts the guard.
+
+**Generalizable rule.** Start an input guard from the moment the new thing takes focus,
+never from a timestamp recorded for an earlier screen.
+
 ## 2026-11-28 — A late picker connection can take focus out of search
 
 **Evidence.** The terminal test held the side connection open until the user

@@ -191,6 +191,10 @@ impl Rig {
             "payload": payload,
         });
         self.next_seq += 1;
+        self.deliver(raw)
+    }
+
+    fn deliver(&mut self, raw: Value) -> Vec<AppEffect> {
         update(
             &mut self.state,
             AppMessage::Link(LinkEvent::Inbound {
@@ -202,6 +206,21 @@ impl Rig {
                 replayed: false,
             }),
         )
+    }
+
+    fn open_snapshot(&mut self, snapshot: Value) {
+        let opened = OpenedSession::from_snapshot(
+            serde_json::from_value(snapshot).expect("a contract-shaped snapshot"),
+        );
+        self.epoch = opened.cursor.replay_epoch.clone();
+        self.next_seq = opened.cursor.last_sequence + 1;
+        update(
+            &mut self.state,
+            AppMessage::Opened {
+                opened,
+                notice: None,
+            },
+        );
     }
 
     /// A new turn that ends with `status` and the given error surface.
@@ -386,4 +405,154 @@ fn failed_error_opens_the_card_and_confirm_does_not_rename() {
     rig.event("message.start", json!({}));
     assert_eq!(rig.card(), None);
     assert_eq!(rig.viewed_card(), None);
+}
+
+#[test]
+fn cross_session_committed_switch_preserves_the_new_foreground_card() {
+    let mut rig = open_card();
+    let first_session = rig.session_id();
+    let confirmation = rig.user(UserAction::UsageLimit { confirm: true });
+    let [(request, target)]: [(MutationRequest, String); 1] =
+        mutations(&confirmation).try_into().unwrap();
+    assert_eq!(target, first_session);
+    assert_eq!(request.session_id, first_session);
+
+    let second_session = "local-session-2";
+    rig.open_snapshot(second_session_snapshot());
+    assert_eq!(rig.session_id(), second_session);
+
+    let mut second_detail = sample_detail();
+    second_detail["usage_limit"]["suggestions"][0]["model"] = json!("small-2");
+    let refused_turn = rig.failed_turn("error", &second_detail);
+    assert!(mutations(&refused_turn).is_empty());
+    let second_card = rig
+        .viewed_card()
+        .expect("the second session shows its own card");
+    assert_eq!(second_card.session_id, second_session);
+    assert_eq!(second_card.model, "small-2");
+
+    let late_reply = rig.reply(request, committed());
+    let retry_sessions: Vec<_> = late_reply
+        .iter()
+        .filter_map(|effect| match effect {
+            AppEffect::Rewind {
+                owner,
+                call: talaria_core::rewind::Call::ReadSession,
+                ..
+            } => Some(owner.session_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        (rig.viewed_card(), retry_sessions),
+        (Some(second_card), Vec::new()),
+        "the first session's committed reply must preserve the second session's card without starting a retry"
+    );
+}
+
+fn second_session_snapshot() -> Value {
+    let mut snapshot = mock_gateway::recorded_resume_snapshot();
+    snapshot["session_id"] = json!("local-session-2");
+    snapshot["stored_session_id"] = json!("stored-2");
+    snapshot
+}
+
+#[test]
+fn cross_session_turn_started_in_background_retires_the_old_card() {
+    let mut rig = open_card();
+    let first_session = rig.session_id();
+    let epoch = rig.epoch.clone();
+    let sequence = rig.next_seq;
+    rig.open_snapshot(second_session_snapshot());
+    assert_ne!(rig.session_id(), first_session);
+    assert_eq!(rig.viewed_card(), None);
+
+    rig.deliver(json!({
+        "session_id": first_session,
+        "replay_epoch": epoch,
+        "seq": sequence,
+        "type": "message.start",
+        "payload": {},
+    }));
+
+    // The retained cursor must reject that sequence a second time and accept the next one.
+    // Completed side answers survive snapshot replacement, making the cursor visible here.
+    for (seq, question) in [(sequence, "duplicate"), (sequence + 1, "next")] {
+        rig.deliver(json!({
+            "session_id": first_session,
+            "replay_epoch": epoch,
+            "seq": seq,
+            "type": "btw.complete",
+            "payload": {"task_id": question, "question": question, "text": "answer"},
+        }));
+    }
+
+    let mut running_snapshot = mock_gateway::data_snapshot("running_turn.json");
+    running_snapshot["replay_epoch"] = json!(epoch);
+    running_snapshot["last_sequence"] = json!(sequence + 1);
+    rig.open_snapshot(running_snapshot);
+    assert_eq!(rig.session_id(), first_session);
+    assert!(rig.state.view().turn_running());
+    let side_questions: Vec<_> = rig
+        .state
+        .opened
+        .as_ref()
+        .expect("the first session is foreground")
+        .state
+        .cells()
+        .iter()
+        .filter_map(|cell| match cell {
+            Cell::Side(side) => Some(side.question.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        side_questions,
+        ["next"],
+        "the retained turn start advanced the cursor"
+    );
+    assert_eq!(
+        rig.viewed_card(),
+        None,
+        "a new turn in the retained session supersedes its old offer"
+    );
+}
+
+#[test]
+fn a_switch_sent_for_a_closed_card_never_settles_the_next_card() {
+    let mut rig = open_card();
+    let session = rig.session_id();
+    let effects = rig.user(UserAction::UsageLimit { confirm: true });
+    let (request, _) = mutations(&effects).remove(0);
+
+    // The operator dismisses that card, and a later turn in the same session is refused too.
+    rig.user(UserAction::UsageLimit { confirm: false });
+    let mut later = sample_detail();
+    later["usage_limit"]["suggestions"][0]["model"] = json!("small-3");
+    rig.failed_turn("error", &later);
+    let next_card = rig
+        .viewed_card()
+        .expect("the later refusal opens its own card");
+    assert_eq!(next_card.session_id, session);
+    assert_eq!(next_card.model, "small-3");
+
+    // The first switch commits late: the later card stays and nothing is retried.
+    let effects = rig.reply(request, committed());
+    let retries = effects
+        .iter()
+        .filter(|effect| matches!(effect, AppEffect::Rewind { .. }))
+        .count();
+    assert_eq!(
+        retries, 0,
+        "a closed card's switch started a retry: {effects:?}"
+    );
+    assert_eq!(rig.viewed_card(), Some(next_card));
+    assert!(
+        committed_lines(&effects)
+            .iter()
+            .any(|line| line.contains("the turn was not retried")),
+        "{:?}",
+        committed_lines(&effects)
+    );
+    assert_eq!(rig.state.usage_limit_request, None);
 }

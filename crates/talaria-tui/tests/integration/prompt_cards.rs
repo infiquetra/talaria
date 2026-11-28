@@ -2034,3 +2034,68 @@ fn usage_limit_enter_confirms_and_esc_dismisses() {
         KeyOutcome::NotHandled
     ));
 }
+
+#[test]
+fn a_new_usage_limit_card_starts_its_own_key_guard() {
+    let confirm = "Switch to Small (included)";
+    // The screen was drawn a second earlier with no card.
+    let mut stack = PromptStack::new();
+    let first = Instant::now();
+    stack.sync(Some(MAIN), &[], &[], true, first);
+    let arrived = first + Duration::from_secs(1);
+    stack.set_usage_limit(Some(limit_card(Some(confirm))));
+    stack.sync(Some(MAIN), &[], &[], true, arrived);
+    consumed(stack.handle_key(named(KeyCode::Enter), arrived + INSIDE_GUARD)).nothing();
+    assert!(matches!(
+        consumed(stack.handle_key(named(KeyCode::Enter), arrived + AFTER_GUARD)).intent,
+        Some(PromptIntent::UsageLimit { confirm: true })
+    ));
+
+    // A replacement card for a later refused turn starts the guard again.
+    let replaced = arrived + Duration::from_secs(2);
+    let mut next = limit_card(Some(confirm));
+    next.model = "small-2".to_owned();
+    stack.set_usage_limit(Some(next));
+    stack.sync(Some(MAIN), &[], &[], true, replaced);
+    consumed(stack.handle_key(named(KeyCode::Enter), replaced + INSIDE_GUARD)).nothing();
+
+    // A card that takes a key before any redraw starts its guard at that key.
+    let mut stack = PromptStack::new();
+    let first = Instant::now();
+    stack.sync(Some(MAIN), &[], &[], true, first);
+    stack.set_usage_limit(Some(limit_card(Some(confirm))));
+    let pressed = first + Duration::from_secs(1);
+    consumed(stack.handle_key(named(KeyCode::Enter), pressed)).nothing();
+    assert!(matches!(
+        consumed(stack.handle_key(named(KeyCode::Enter), pressed + AFTER_GUARD)).intent,
+        Some(PromptIntent::UsageLimit { confirm: true })
+    ));
+}
+
+#[test]
+fn ctrl_c_on_a_usage_limit_card_dismisses_it_without_stopping() {
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    let mut rig = limit_rig(limit_card(Some("Switch to Small (included)")));
+    let outcome = rig.press(press(KeyCode::Char('c'), ctrl));
+    assert!(
+        !outcome.interrupt_requested,
+        "the refused turn has already finished; there is nothing to stop"
+    );
+    assert_eq!(outcome.interrupt_session, None);
+    assert!(matches!(
+        outcome.intent,
+        Some(PromptIntent::UsageLimit { confirm: false })
+    ));
+    // The card's session is not left stopping: while it is still shown, Esc and Enter work.
+    assert!(matches!(
+        rig.press(named(KeyCode::Esc)).intent,
+        Some(PromptIntent::UsageLimit { confirm: false })
+    ));
+    assert!(matches!(
+        rig.press(named(KeyCode::Enter)).intent,
+        Some(PromptIntent::UsageLimit { confirm: true })
+    ));
+}

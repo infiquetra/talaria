@@ -21,3 +21,13 @@ pub fn after_usage_limit_switch(
         None
     }
 }
+
+/// The session, and the refused turn within it, that a usage-limit card was offered for.
+///
+/// Each card that opens gets the next `offer` number, so a switch sent for one card never
+/// settles a later card, even in the same session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsageLimitOwner {
+    pub session: talaria_core::directory::rows::RowKey,
+    pub offer: u64,
+}
