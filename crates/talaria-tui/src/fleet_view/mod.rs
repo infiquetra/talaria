@@ -48,6 +48,10 @@ pub struct PeekPanel<'a> {
     pub session: &'a SessionState,
     pub stack: Option<&'a PromptStack>,
     pub now: f64,
+    /// Live sub-agents for this row; `None` when unknown.
+    pub subagents: Option<u32>,
+    /// Running processes and detached tasks; `None` when unknown.
+    pub background: Option<usize>,
 }
 
 /// A transcript and permission choices owned by an external agent.
