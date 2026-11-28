@@ -2,6 +2,25 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-28 — A one-shot fleet list must ask a resting session how its turn ended
+
+**Evidence.** `talaria fleet list --json` reported a finished `--bg` session as `idle`
+with `outcome: null` on every run. The new wire test reproduced it: before the fix the
+row was `Idle` with no outcome, and after it the row is `Done` with `Completed`.
+[Fleet wire test](../../crates/talaria-app/tests/integration/fleet_wire.rs)
+
+**Mechanism.** The registry only asks for an outcome when it watches a turn end or sees
+the message count rise. A one-shot list connects after the turn ended, so it sees
+neither. The one-shot registry now probes each live session it first sees at rest, and
+the first round's gate stays shut until those probes answer. The gate's own limit, one
+call timeout, and each probe's deadline bound the wait. The `--watch` registry and the
+interactive application leave this off: they would announce, as just finished, turns
+that ended before they attached.
+
+**Generalizable rule.** A snapshot reader that joins late must ask for state that a
+long-lived reader learns from watching transitions, and the long-lived reader must not
+inherit that question.
+
 ## 2026-11-28 — A late picker connection can take focus out of search
 
 **Evidence.** The terminal test held the side connection open until the user

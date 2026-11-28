@@ -293,7 +293,11 @@ impl FleetService {
         let scope = HostDial::new(home.clone(), foreground_profile.clone()).scope();
         let hub = Arc::new(Hub {
             state: Mutex::new(Published {
-                registry: FleetRegistry::new(),
+                registry: if cfg.first_sight_outcomes {
+                    FleetRegistry::new().with_first_sight_outcomes()
+                } else {
+                    FleetRegistry::new()
+                },
                 link: FleetLinkState::Connecting,
                 scope: scope.clone(),
                 service_diagnostics: Vec::new(),
@@ -443,6 +447,10 @@ pub async fn list_once_with_herdr(
     cfg: &FleetConfig,
 ) -> Result<FleetSnapshot, FleetListError> {
     let profile = check_fleet_profile(home, cfg).await?;
+    let cfg = FleetConfig {
+        first_sight_outcomes: true,
+        ..cfg.clone()
+    };
     let handle = FleetService::start(home.to_path_buf(), profile, cfg.clone(), |_| {});
     let started = Instant::now();
     let deadline = cfg.connect_timeout + cfg.call_timeout;
@@ -898,7 +906,10 @@ impl FleetTask {
         let Some(gate) = &self.gate else {
             return;
         };
-        if !gate.waiting.is_empty() && now < gate.until {
+        // A one-shot list also waits for the outcome probes of its first round, at most
+        // until the gate's own limit; each probe is bounded by its deadline.
+        let settling = self.cfg.first_sight_outcomes && !self.probes.is_empty();
+        if (!gate.waiting.is_empty() || settling) && now < gate.until {
             return;
         }
         self.gate = None;

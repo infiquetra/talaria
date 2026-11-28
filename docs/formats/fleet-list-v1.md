@@ -47,7 +47,7 @@ Field values:
 | need `summary` | The command (approval) or the question (question), raw text; `null` otherwise. |
 | need `exact` | True only while a Talaria view attached to the session reports the need; such a need has its `execution_generation`. A need with `exact: false` is never answered as it stands. |
 
-A one-shot Hermes listing has no history, so its rows are not `done` or `failed`. An external owner can report an already completed row.
+A one-shot Hermes listing asks each live session that is at rest how its last turn ended. When the gateway still holds that turn's completion, the row is `done` or `failed` and `outcome` is `completed` or `failed`. When the completion is not available, or the check gets no reply in time, the row stays `idle` with `outcome` `null`. The listing waits for these checks at most as long as one call. `--watch` does not check sessions it first sees at rest. An external owner can report an already completed row.
 
 ## Watch lines
 
