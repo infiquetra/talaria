@@ -158,6 +158,11 @@ pub struct ModelsState {
     details_scroll_limit: Option<usize>,
 }
 
+/// Only a committed model change counts as accepted.
+pub fn switch_was_accepted(outcome: &MutationOutcome) -> bool {
+    matches!(outcome, MutationOutcome::Committed(_))
+}
+
 fn notice(session_id: &str, level: NoticeLevel, text: impl Into<String>) -> ModelsEffect {
     ModelsEffect::Notice {
         session_id: session_id.into(),

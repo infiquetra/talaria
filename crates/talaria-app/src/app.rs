@@ -75,7 +75,8 @@ use talaria_core::rewind::{
 };
 use talaria_core::session::{
     Cell, ConnectionChoice, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState,
-    SessionId, SessionState, TurnState,
+    SessionId, SessionState, TurnState, UsageLimitCard, usage_limit_card,
+    usage_limit_model_payload,
 };
 use talaria_core::side::{
     NO_SESSION_NOTICE, SHELL_EMPTY_HINT, SIDE_USAGE, Submission, btw_command, carry_over, classify,
@@ -185,6 +186,10 @@ const FLEET_PAGE: usize = 10;
 const PICKER_PAGE: usize = 20;
 /// The line a rename that could not be sent gets.
 const RENAME_FAILED: &str = "Hermes could not rename the session.";
+const USAGE_LIMIT_NOT_CONFIRMED: &str =
+    "The model switch was not confirmed, so the turn was not retried. Use /model, then /retry.";
+const USAGE_LIMIT_NOT_IN_FRONT: &str =
+    "Model switched; the retry was not sent because another session is in front.";
 /// The line a rename the session changed under gets.
 const RENAME_FENCE: &str = "Hermes refused the rename: the session changed while the rename was being prepared. Try again.";
 /// The line a rename to a title another session holds gets.
@@ -347,6 +352,10 @@ pub enum UserAction {
         target: MaskedTarget,
         value: Zeroizing<String>,
     },
+    /// Answer the usage-limit card: switch to its model and retry, or dismiss it.
+    UsageLimit {
+        confirm: bool,
+    },
     /// A line the screen wants shown.
     Notice(String),
     /// A queue key in selection or edit mode. Issue #232.
@@ -405,6 +414,8 @@ pub enum ToggleContext {
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
     pub layout: &'a talaria_core::layout::LayoutState,
+    /// The usage-limit card, while its session is the one in front.
+    pub usage_limit: Option<&'a UsageLimitCard>,
     pub menu_fleet_enabled: bool,
     pub menu_remote_gateway: bool,
     pub kanban: Option<&'a talaria_core::kanban::KanbanBoardState>,
@@ -825,6 +836,10 @@ struct CronBinding {
 
 pub struct AppState {
     pub gateway_version: Option<String>,
+    /// The card offered after a turn Hermes refused for a usage limit.
+    pub usage_limit: Option<UsageLimitCard>,
+    /// The model switch that card sent, until Hermes answers it.
+    pub usage_limit_request: Option<MutationRequest>,
     compat_notice_shown: bool,
     pub layout: talaria_core::layout::LayoutState,
     pub kanban: Option<talaria_core::kanban::KanbanBoardState>,
@@ -1175,6 +1190,8 @@ impl AppState {
         let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
             gateway_version: None,
+            usage_limit: None,
+            usage_limit_request: None,
             compat_notice_shown: false,
             voice: crate::voice::VoiceService::new(),
             client_voice: talaria_core::voice::client::ClientVoice::default(),
@@ -1446,6 +1463,10 @@ impl AppState {
         let opened = self.opened.as_ref();
         View {
             layout: &self.layout,
+            usage_limit: self
+                .usage_limit
+                .as_ref()
+                .filter(|card| opened.is_some_and(|opened| opened.session_id == card.session_id)),
             menu_fleet_enabled: self.fleet_enabled,
             menu_remote_gateway: self.remote_gateway,
             acp_agents: &self.acp_agents,
@@ -7593,6 +7614,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             route(state, produced, note)
         }
         UserAction::Clarify { key, answer } => reduce(state, Event::AnswerClarify { key, answer }),
+        UserAction::UsageLimit { confirm } => usage_limit_answer(state, confirm),
         UserAction::Masked { target, value } => match target {
             MaskedTarget::Recovered { request_id } => {
                 if state.opened.as_ref().is_some_and(|opened| {
@@ -9160,6 +9182,10 @@ fn mutated(
     outcome: MutationOutcome,
 ) -> Vec<AppEffect> {
     state.ledger.settle(&request, &outcome);
+    if state.usage_limit_request.as_ref() == Some(&request) {
+        state.usage_limit_request = None;
+        return usage_limit_switched(state, &outcome);
+    }
     match &outcome {
         MutationOutcome::Committed(result) => {
             state.session_action = false;
@@ -9201,6 +9227,64 @@ fn mutated(
             state.session_action = false;
             vec![AppEffect::CommitLines(vec![RENAME_FAILED.to_owned()])]
         }
+    }
+}
+
+/// Answer the usage-limit card. Confirm sends one model change for the card's session; the
+/// retry waits for Hermes to accept it.
+fn usage_limit_answer(state: &mut AppState, confirm: bool) -> Vec<AppEffect> {
+    let Some(card) = state.usage_limit.as_ref().filter(|card| {
+        state
+            .opened
+            .as_ref()
+            .is_some_and(|opened| opened.session_id == card.session_id)
+    }) else {
+        return Vec::new();
+    };
+    if !confirm {
+        state.usage_limit = None;
+        return vec![AppEffect::Redraw];
+    }
+    if card.confirm.is_none() || state.usage_limit_request.is_some() {
+        return Vec::new();
+    }
+    let session_id = card.session_id.clone();
+    let payload = usage_limit_model_payload(card);
+    match state.ledger.build(&session_id, "model", payload, true) {
+        Ok(request) => {
+            state.usage_limit_request = Some(request.clone());
+            vec![AppEffect::Mutate {
+                request,
+                session_id,
+            }]
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Hermes answered the usage-limit card's model change.
+fn usage_limit_switched(state: &mut AppState, outcome: &MutationOutcome) -> Vec<AppEffect> {
+    let Some(card_session) = state
+        .usage_limit
+        .as_ref()
+        .map(|card| card.session_id.clone())
+    else {
+        // The card closed before the reply arrived.
+        return Vec::new();
+    };
+    match crate::usage_limit::after_usage_limit_switch(&mut state.usage_limit, outcome) {
+        Some(retry) => {
+            let in_front = state
+                .opened
+                .as_ref()
+                .is_some_and(|opened| opened.session_id == card_session);
+            if in_front {
+                rewind_input(state, retry)
+            } else {
+                vec![notice_lines(USAGE_LIMIT_NOT_IN_FRONT)]
+            }
+        }
+        None => vec![notice_lines(USAGE_LIMIT_NOT_CONFIRMED)],
     }
 }
 
@@ -10518,8 +10602,38 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     rewound_count: payload.get("rewound_count").and_then(Value::as_u64),
                 });
                 opened.state.background_mut().observe_time(state.now_ms);
+                let cells_before = opened.state.cells().len();
                 let produced =
                     apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
+                // Only the notice this failed completion added can open the card.
+                let limit_card = (completed
+                    && payload.get("status").and_then(Value::as_str) == Some("error"))
+                .then(|| {
+                    opened
+                        .state
+                        .cells()
+                        .get(cells_before..)
+                        .unwrap_or_default()
+                        .iter()
+                        .find_map(|cell| match cell {
+                            Cell::Notice(notice) => notice.detail.as_ref(),
+                            _ => None,
+                        })
+                        .and_then(usage_limit_card)
+                })
+                .flatten();
+                let turn_running = *opened.state.turn() == TurnState::Running;
+                if let Some(mut card) = limit_card {
+                    card.session_id = session_id.clone();
+                    state.usage_limit = Some(card);
+                } else if turn_running
+                    && state
+                        .usage_limit
+                        .as_ref()
+                        .is_some_and(|card| card.session_id == session_id)
+                {
+                    state.usage_limit = None;
+                }
                 effects.extend(route(state, produced, None));
                 // The move's fences and the folder come from this session's own events (#237).
                 state

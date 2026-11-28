@@ -15,7 +15,7 @@ use ratatui::{
 };
 use talaria_core::session::{
     ConnectionCard, ConnectionChoice, PromptCell, PromptKey, PromptKind, PromptState,
-    is_answerable, recovered_limit_seconds,
+    UsageLimitCard, is_answerable, recovered_limit_seconds,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -37,6 +37,7 @@ enum Identity {
     Connection(String),
     Prompt(PromptKey),
     Masked(String),
+    UsageLimit,
 }
 
 #[derive(Clone)]
@@ -44,6 +45,7 @@ enum Content {
     Connection(ConnectionContent),
     Prompt(PromptCell),
     Masked(MaskedView),
+    UsageLimit(UsageLimitCard),
 }
 
 #[derive(Clone)]
@@ -70,7 +72,7 @@ struct Card {
 impl Card {
     fn masked(&self) -> bool {
         match &self.content {
-            Content::Connection(_) => false,
+            Content::Connection(_) | Content::UsageLimit(_) => false,
             Content::Masked(_) => true,
             Content::Prompt(cell) => {
                 cell.kind == PromptKind::ServerRequest
@@ -101,6 +103,7 @@ impl Card {
             Content::Connection(connection) => Some(&connection.session_id),
             Content::Prompt(cell) => Some(cell.key.session_id.as_str()),
             Content::Masked(view) => view.session_id.as_deref(),
+            Content::UsageLimit(card) => Some(&card.session_id),
         }
     }
 
@@ -129,7 +132,7 @@ impl Card {
         let value = std::mem::replace(&mut self.secret, MaskedValue::new());
         self.secret_chars = 0;
         let target = match &self.content {
-            Content::Connection(_) => return None,
+            Content::Connection(_) | Content::UsageLimit(_) => return None,
             Content::Masked(view) => {
                 self.sent = true;
                 MaskedTarget::Live(view.target.clone())
@@ -219,11 +222,16 @@ pub struct PromptStack {
     draft_empty: bool,
     focused_at: Option<Instant>,
     stopping: HashSet<Option<String>>,
+    /// The time of the last `sync`, so a card set between frames starts its key guard then.
+    synced_at: Option<Instant>,
+    /// A card was set before any `sync`; the next one starts its key guard.
+    refocus: bool,
 }
 
 /// The fields that decide whether the top card is still the same prompt.
 fn same_focus(left: &Content, right: &Content) -> bool {
     match (left, right) {
+        (Content::UsageLimit(before), Content::UsageLimit(after)) => before == after,
         (Content::Masked(before), Content::Masked(after)) => {
             before.request_id == after.request_id
                 && before.session_id == after.session_id
@@ -281,6 +289,48 @@ impl PromptStack {
             draft_empty: false,
             focused_at: None,
             stopping: HashSet::new(),
+            synced_at: None,
+            refocus: false,
+        }
+    }
+
+    /// Show, replace or remove the usage-limit card. `sync` keeps it; it sits after any prompt.
+    pub fn set_usage_limit(&mut self, card: Option<UsageLimitCard>) {
+        let index = self
+            .cards
+            .iter()
+            .position(|card| card.id == Identity::UsageLimit);
+        let changed = match (card, index) {
+            (Some(card), Some(index)) => {
+                let same =
+                    matches!(&self.cards[index].content, Content::UsageLimit(old) if *old == card);
+                if !same {
+                    self.cards[index] = Card::new(Identity::UsageLimit, Content::UsageLimit(card));
+                }
+                !same
+            }
+            (Some(card), None) => {
+                self.cards
+                    .push(Card::new(Identity::UsageLimit, Content::UsageLimit(card)));
+                true
+            }
+            (None, Some(index)) => {
+                self.cards.remove(index);
+                false
+            }
+            (None, None) => false,
+        };
+        if changed
+            && self
+                .cards
+                .first()
+                .is_some_and(|card| card.id == Identity::UsageLimit)
+        {
+            // A new card must not take a key pressed before it was drawn.
+            match self.synced_at {
+                Some(at) => self.focused_at = Some(at),
+                None => self.refocus = true,
+            }
         }
     }
 
@@ -358,6 +408,34 @@ impl PromptStack {
             ),
             _ => None,
         })
+    }
+
+    fn usage_limit_lines(&self, width: u16, key_hints: bool) -> Vec<Line<'static>> {
+        let Some(card) = self.cards.first() else {
+            return Vec::new();
+        };
+        let Content::UsageLimit(limit) = &card.content else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        add(&mut rows, &card_header(&limit.title, card, self), width);
+        for line in &limit.lines {
+            add(&mut rows, line, width);
+        }
+        if let Some(confirm) = &limit.confirm {
+            add_choice(&mut rows, 0, 0, confirm, width);
+        }
+        if key_hints {
+            let hint = if !self.draft_empty {
+                "Send or clear your draft to answer".to_owned()
+            } else if limit.confirm.is_some() {
+                format!("Enter confirm · Esc {}", limit.dismiss)
+            } else {
+                format!("Esc {}", limit.dismiss)
+            };
+            add(&mut rows, &hint, width);
+        }
+        rows
     }
 
     pub fn connection_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -447,6 +525,10 @@ impl PromptStack {
         {
             self.cards.push(old.remove(index));
         }
+        let usage_limit = old
+            .iter()
+            .position(|card| card.id == Identity::UsageLimit)
+            .map(|index| old.remove(index));
         let incoming = masked
             .iter()
             .map(|view| {
@@ -485,6 +567,7 @@ impl PromptStack {
             };
             self.cards.push(card);
         }
+        self.cards.extend(usage_limit);
         let new_first = self.cards.first().map(|card| card.id.clone());
         let new_top = self.cards.first().map(|card| card.content.clone());
         let content_changed = old_first.is_some()
@@ -493,9 +576,12 @@ impl PromptStack {
                 (Some(before), Some(after)) => !same_focus(before, after),
                 _ => false,
             };
-        if draft_empty && (!self.draft_empty || old_first != new_first || content_changed) {
+        if std::mem::take(&mut self.refocus)
+            || (draft_empty && (!self.draft_empty || old_first != new_first || content_changed))
+        {
             self.focused_at = Some(now);
         }
+        self.synced_at = Some(now);
         self.draft_empty = draft_empty;
         self.foreground = foreground.map(str::to_owned);
         self.stopping.retain(|session| {
@@ -557,6 +643,13 @@ impl PromptStack {
         }
         let card = &mut self.cards[0];
         let intent = match &card.content {
+            Content::UsageLimit(limit) => match key.code {
+                KeyCode::Enter if limit.confirm.is_some() => {
+                    Some(PromptIntent::UsageLimit { confirm: true })
+                }
+                KeyCode::Esc => Some(PromptIntent::UsageLimit { confirm: false }),
+                _ => None,
+            },
             Content::Connection(connection) => {
                 let choices = connection_choices(&connection.card);
                 match key.code {
@@ -756,6 +849,10 @@ impl PromptStack {
             }
             _ if card.answering() => "Waiting for Hermes to acknowledge the answer.",
             Content::Connection(_) => "Up / Down select\nEnter or 1–9 choose\nEsc skip",
+            Content::UsageLimit(limit) if limit.confirm.is_some() => {
+                "Enter switch the model and retry\nEsc dismiss"
+            }
+            Content::UsageLimit(_) => "Esc dismiss",
             _ if card.masked() => "Type the requested value\nEnter submit\nEsc cancel",
             Content::Prompt(cell) if cell.kind == PromptKind::Approval && card.field => {
                 "Type a note\nEnter submit the selected answer\nEsc or Tab return to choices"
@@ -1000,6 +1097,7 @@ impl PromptSection<'_> {
             Content::Connection(_) => {
                 return stack.connection_lines_with_hints(width, self.key_hints);
             }
+            Content::UsageLimit(_) => return stack.usage_limit_lines(width, self.key_hints),
             Content::Prompt(cell) => (
                 if cell.kind == PromptKind::ServerRequest {
                     cell.command.as_deref().unwrap_or_default()
@@ -1049,6 +1147,7 @@ impl PromptSection<'_> {
             Content::Connection(_) => {
                 return stack.connection_lines_with_hints(width, self.key_hints);
             }
+            Content::UsageLimit(_) => return stack.usage_limit_lines(width, self.key_hints),
             Content::Prompt(cell) if cell.kind == PromptKind::ServerRequest => {
                 let method = cell.command.as_deref().unwrap_or_default();
                 rows.add(t::DIALOG_MUTED, "asked while you were away");

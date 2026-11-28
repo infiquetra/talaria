@@ -53,6 +53,10 @@ pub enum PromptIntent {
         target: MaskedTarget,
         value: MaskedValue,
     },
+    /// The usage-limit card: switch to its model and retry, or dismiss it.
+    UsageLimit {
+        confirm: bool,
+    },
 }
 
 impl fmt::Debug for PromptIntent {
@@ -74,6 +78,10 @@ impl fmt::Debug for PromptIntent {
             Self::Masked { value, .. } => f
                 .debug_struct("Masked")
                 .field("value_chars", &value.len_chars())
+                .finish(),
+            Self::UsageLimit { confirm } => f
+                .debug_struct("UsageLimit")
+                .field("confirm", confirm)
                 .finish(),
         }
     }

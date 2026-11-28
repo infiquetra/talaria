@@ -2,6 +2,24 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-28 — A usage-limit card is not a prompt and not a need
+
+**Context.** When Hermes refuses a turn because a usage limit was reached, the failed turn's
+`error_surface` can name smaller models to switch to and a credits action.
+
+**Decision.** Talaria shows a card on the prompt stack. It lists the suggestions and Hermes's
+own credits sentence, offers to switch to the first suggested model, and has a dismiss choice.
+The card is not a prompt and not a need: the failed turn stays failed, its error notice stays,
+and the seat reports `error`, never `blocked`, while the card is open. Confirming sends one
+model change for that session without saving a default, and the turn is retried once only
+after Hermes commits the change. Any other answer keeps the card and retries nothing.
+
+**Rejected.** Modelling the card as a prompt would make the seat look blocked on the operator
+and would let fleet answers reach it. Retrying before the change is committed could resend the
+turn to the model that was just refused.
+
+**Revisit when** a usage limit should pause the seat instead of failing the turn.
+
 ## 2026-11-28 — The status record is Talaria's only report to Herdr
 
 **Context.** Talaria reported its state to old Herdr by running `herdr pane report-agent`, and
