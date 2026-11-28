@@ -425,23 +425,12 @@ async fn skin_command_restores_the_previous_skin_when_the_list_cannot_be_fetched
         .await;
     assert_eq!(
         lines,
-        [
-            "The skin was not kept. Hermes has no skin named \"nosuch\", and the list of skins \
-          could not be fetched. The profile is still \"default\"."
-        ],
-        "an unknown skin was kept when the list could not be fetched"
+        ["The skin could not be checked, so nothing was changed."],
+        "an unconfirmed skin was written when the list could not be fetched"
     );
-    let sets = mock.requests("config.set");
-    let saved = sets
-        .last()
-        .and_then(|seen| seen.params.get("value"))
-        .and_then(Value::as_str);
-    assert_eq!(saved, Some("default"), "the previous skin was not restored");
     assert!(
-        mock.requests("config.get")
-            .iter()
-            .any(|seen| { seen.params.get("key").and_then(Value::as_str) == Some("skin") }),
-        "the previous skin was not read before the change"
+        mock.requests("config.set").is_empty(),
+        "config.set was sent when the list could not be fetched"
     );
     assert!(mock.violations().is_empty());
 }
@@ -461,7 +450,7 @@ async fn skin_command_does_not_change_an_unrestorable_previous_value() {
         .await;
     assert_eq!(
         lines,
-        ["Talaria could not read the previous skin, so nothing was changed."]
+        ["The skin could not be checked, so nothing was changed."]
     );
     assert!(mock.requests("config.set").is_empty());
 }
