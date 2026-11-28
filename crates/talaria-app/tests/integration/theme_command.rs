@@ -240,6 +240,139 @@ fn file_commands_route_to_effects() {
     }
 }
 
+const SCAFFOLD: &str = "schema = 1\nextends = \"terminal\"\nname = \"quiet-amber\"\n";
+const NEW_LINE: &str = "Wrote themes/quiet-amber.toml. Run /theme use quiet-amber.";
+
+fn bare_session(dir: &std::path::Path) -> ThemeFileSession {
+    let loaded = parse("");
+    assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+    ThemeFileSession::new(dir.join("config.toml"), loaded.config.theme, "fixture")
+}
+
+#[test]
+fn new_writes_a_theme_file_beside_config() {
+    let (dir, mut session) = fixture("");
+    let config = dir.path().join("config.toml");
+    let before = fs::read(&config).unwrap();
+    let target = dir.path().join("themes/quiet-amber.toml");
+    let (lines, change) = session.command("new quiet-amber");
+    assert_eq!(lines, [NEW_LINE]);
+    assert_eq!(change, AppearanceChange::Unchanged);
+    assert_eq!(session.selected_id(), None);
+    assert_eq!(session.active_id(), None);
+    assert_eq!(fs::read(&config).unwrap(), before);
+    assert_eq!(fs::read_to_string(&target).unwrap(), SCAFFOLD);
+    let file = talaria_app::theme_file::load(&config, "quiet-amber").unwrap();
+    assert_eq!(file.name.as_deref(), Some("quiet-amber"));
+    assert_eq!(file.extends.as_str(), "terminal");
+
+    let bare = tempfile::tempdir().unwrap();
+    fs::write(bare.path().join("config.toml"), "").unwrap();
+    assert!(!bare.path().join("themes").exists());
+    let mut session = bare_session(bare.path());
+    let (lines, change) = session.command("new quiet-amber");
+    assert_eq!(lines, [NEW_LINE]);
+    assert_eq!(change, AppearanceChange::Unchanged);
+    assert_eq!(
+        fs::read_to_string(bare.path().join("themes/quiet-amber.toml")).unwrap(),
+        SCAFFOLD
+    );
+
+    let (dir, mut session) = fixture("");
+    for arg in ["new", "new quiet-amber extra", "new ../outside"] {
+        let (lines, change) = session.command(arg);
+        assert_eq!(lines, [THEME_USAGE], "{arg}");
+        assert_eq!(change, AppearanceChange::Unchanged);
+    }
+    assert!(!dir.path().join("themes/quiet-amber.toml").exists());
+    assert!(!dir.path().join("themes/outside.toml").exists());
+    assert!(!dir.path().join("outside.toml").exists());
+}
+
+#[test]
+fn new_refuses_a_reserved_id() {
+    for id in ["terminal", "dark", "light", "ember", "paper"] {
+        let (dir, mut session) = fixture("");
+        let config = dir.path().join("config.toml");
+        let before = fs::read(&config).unwrap();
+        let (lines, change) = session.command(&format!("new {id}"));
+        assert_eq!(
+            lines,
+            [format!("themes/{id}.toml: reserved theme identifier")]
+        );
+        assert_eq!(change, AppearanceChange::Unchanged, "{id}");
+        assert!(
+            !dir.path().join(format!("themes/{id}.toml")).exists(),
+            "{id}"
+        );
+        assert_eq!(fs::read(&config).unwrap(), before, "{id}");
+        assert_eq!(session.selected_id(), None, "{id}");
+    }
+}
+
+#[test]
+fn new_refuses_an_existing_file() {
+    use std::os::unix::fs::symlink;
+    let dir_line = "themes/quiet-amber.toml: cannot open themes directory";
+    let file_line = "themes/quiet-amber.toml: cannot open theme file";
+
+    let (dir, mut session) = fixture("");
+    let config = dir.path().join("config.toml");
+    let before = fs::read(&config).unwrap();
+    let target = dir.path().join("themes/quiet-amber.toml");
+    fs::write(&target, "kept").unwrap();
+    let (lines, change) = session.command("new quiet-amber");
+    assert_eq!(lines, ["themes/quiet-amber.toml: file already exists"]);
+    assert_eq!(change, AppearanceChange::Unchanged);
+    assert_eq!(fs::read_to_string(&target).unwrap(), "kept");
+    assert_eq!(fs::read(&config).unwrap(), before);
+    assert_eq!(session.selected_id(), None);
+
+    let elsewhere = tempfile::tempdir().unwrap();
+    fs::remove_dir_all(dir.path().join("themes")).unwrap();
+    symlink(elsewhere.path(), dir.path().join("themes")).unwrap();
+    let (lines, change) = session.command("new quiet-amber");
+    assert_eq!(lines, [dir_line]);
+    assert_eq!(change, AppearanceChange::Unchanged);
+    assert!(!elsewhere.path().join("quiet-amber.toml").exists());
+
+    let (dir, mut session) = fixture("");
+    let existing = dir.path().join("existing.toml");
+    fs::write(&existing, "target").unwrap();
+    symlink(&existing, dir.path().join("themes/quiet-amber.toml")).unwrap();
+    let (lines, change) = session.command("new quiet-amber");
+    assert_eq!(lines, [file_line]);
+    assert_eq!(change, AppearanceChange::Unchanged);
+    assert_eq!(fs::read_to_string(&existing).unwrap(), "target");
+
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("config.toml"), "").unwrap();
+    fs::write(dir.path().join("themes"), "not a directory").unwrap();
+    let mut session = bare_session(dir.path());
+    let (lines, change) = session.command("new quiet-amber");
+    assert_eq!(lines, [dir_line]);
+    assert_eq!(change, AppearanceChange::Unchanged);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("themes")).unwrap(),
+        "not a directory"
+    );
+}
+
+#[test]
+fn new_routes_through_the_file_command() {
+    let mut state = AppState::new("fixture");
+    let effects = update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/theme new quiet-amber".into())),
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::ThemeFileCommand(_))),
+        "{effects:?}"
+    );
+}
+
 #[test]
 fn theme_picker_does_not_commit_the_report_but_report_is_explicit() {
     let mut state = AppState::new("fixture");

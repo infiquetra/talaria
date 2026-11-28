@@ -1,8 +1,8 @@
 use super::{ThemeFile, builtin, builtin_description, parse};
-use rustix::fs::{Mode, OFlags, open, openat};
+use rustix::fs::{AtFlags, FileType, Mode, OFlags, mkdirat, open, openat, statat, unlinkat};
 use rustix::io::Errno;
-use std::io::Read;
-use std::path::Path;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 pub fn valid_id(id: &str) -> bool {
     let bytes = id.as_bytes();
@@ -66,6 +66,75 @@ pub fn list_themes(config: &Path) -> Vec<(String, Result<ThemeFile, String>)> {
             (id, file)
         })
         .collect()
+}
+
+/// Write a new theme file `themes/<id>.toml` beside `config`, holding only `schema`, `extends`
+/// and `name`. A reserved identifier, an existing file and a linked `themes` folder or file are
+/// refused before anything is written, and a failed write leaves no file behind.
+pub fn write_scaffold(config: &Path, id: &str) -> Result<PathBuf, String> {
+    if !valid_id(id) {
+        return Err(String::from("invalid theme identifier"));
+    }
+    let label = format!("themes/{id}.toml");
+    if reserved_id(id) {
+        return Err(format!("{label}: reserved theme identifier"));
+    }
+    let parent = config
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let folder_error = || format!("{label}: cannot open themes directory");
+    let file_error = || format!("{label}: cannot open theme file");
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let base = open(parent, flags, Mode::empty())
+        .map_err(|_| format!("{label}: cannot open configuration directory"))?;
+    let open_folder = || openat(&base, "themes", flags | OFlags::NOFOLLOW, Mode::empty());
+    let themes = match open_folder() {
+        Ok(themes) => themes,
+        Err(Errno::NOENT) => {
+            mkdirat(
+                &base,
+                "themes",
+                Mode::RWXU | Mode::RGRP | Mode::XGRP | Mode::ROTH | Mode::XOTH,
+            )
+            .map_err(|_| folder_error())?;
+            open_folder().map_err(|_| folder_error())?
+        }
+        Err(_) => return Err(folder_error()),
+    };
+    let name = format!("{id}.toml");
+    // Exclusive creation never follows a link and never truncates an existing file.
+    let created = openat(
+        &themes,
+        &name,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR | Mode::RGRP | Mode::ROTH,
+    );
+    let fd = match created {
+        Ok(fd) => fd,
+        Err(Errno::EXIST) => {
+            let regular = statat(&themes, &name, AtFlags::SYMLINK_NOFOLLOW)
+                .is_ok_and(|stat| FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile);
+            return Err(if regular {
+                format!("{label}: file already exists")
+            } else {
+                file_error()
+            });
+        }
+        Err(_) => return Err(file_error()),
+    };
+    let mut file = std::fs::File::from(fd);
+    let bytes = format!("schema = 1\nextends = \"terminal\"\nname = \"{id}\"\n");
+    if file
+        .write_all(bytes.as_bytes())
+        .and_then(|()| file.flush())
+        .is_err()
+    {
+        drop(file);
+        let _ = unlinkat(&themes, &name, AtFlags::empty());
+        return Err(file_error());
+    }
+    Ok(parent.join("themes").join(name))
 }
 
 pub fn load(config: &Path, id: &str) -> Result<ThemeFile, String> {

@@ -745,7 +745,7 @@ pub fn background_restored_line(polarity: Polarity, source_label: &str) -> Strin
 }
 
 /// The `/theme` usage line.
-pub const THEME_USAGE: &str = "Usage: /theme [report|light|dark|auto|use [<id>]|reload]";
+pub const THEME_USAGE: &str = "Usage: /theme [report|light|dark|auto|use [<id>]|new <id>|reload]";
 
 /// The theme configuration and saved preferences for the active profile.
 #[derive(Clone, Debug)]
@@ -857,6 +857,14 @@ impl ThemeFileSession {
         let result = match words.as_slice() {
             ["use", id] if crate::theme_file::valid_id(id) => self.save_file(Some(id)),
             ["use"] => self.save_file(None),
+            ["new", id] if crate::theme_file::valid_id(id) => {
+                // A new file is written but not selected, and config.toml is not touched.
+                let line = match crate::theme_file::write_scaffold(&self.config_path, id) {
+                    Ok(_) => format!("Wrote themes/{id}.toml. Run /theme use {id}."),
+                    Err(error) => error,
+                };
+                return (vec![line], AppearanceChange::Unchanged);
+            }
             ["reload"] => self.reload(),
             _ => return (vec![THEME_USAGE.to_owned()], AppearanceChange::Unchanged),
         };

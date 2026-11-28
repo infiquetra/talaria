@@ -167,7 +167,7 @@ const BUILTIN: &[LocalCommand] = &[
         name: "theme",
         aliases: &[],
         summary: "Show appearance, select or reload a theme file, or set the background",
-        args_hint: "[report|light|dark|auto|use [<id>]|reload]",
+        args_hint: "[report|light|dark|auto|use [<id>]|new <id>|reload]",
         takes_argument: true,
         action: LocalAction::Theme,
         tag: "talaria",

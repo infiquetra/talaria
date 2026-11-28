@@ -81,6 +81,7 @@ Talaria first tries the profile's saved choice, then its configured theme, then 
 `[theme] file`. With no selection, it follows the existing Hermes skin behaviour.
 Talaria stores confirmed choices in `~/.talaria/theme-selection.json`. Run `/theme use`
 to clear the saved file choice for this profile.
+/theme new <id> writes themes/<id>.toml beside config.toml and does not select the theme.
 
 `schema = 1` is required. `extends` defaults to `terminal` and accepts only `terminal`, `dark`
 or `light`, never another file or a URL. `name` is an optional display label. The twelve palette
