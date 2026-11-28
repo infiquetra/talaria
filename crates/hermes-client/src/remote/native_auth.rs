@@ -4,8 +4,10 @@ use super::{
 };
 use super::{http, loopback, pkce, token_store};
 use serde_json::json;
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::sync::Arc;
 use url::Url;
 
@@ -39,8 +41,13 @@ pub async fn refresh(cfg: &RemoteConfig, store: &TokenStore) -> Result<TokenSet,
     let cached = store
         .load()
         .map_err(|_| RefreshError::Other(String::new()))?
-        .ok_or(RefreshError::SessionExpired)?;
+        .ok_or_else(|| session_expired(cfg))?;
     refresh_cached(cfg, store, &cached, None).await
+}
+fn session_expired(cfg: &RemoteConfig) -> RefreshError {
+    RefreshError::SessionExpired {
+        endpoint: crate::redact_url(cfg.base_url.as_str()),
+    }
 }
 pub(crate) async fn refresh_cached(
     cfg: &RemoteConfig,
@@ -49,10 +56,39 @@ pub(crate) async fn refresh_cached(
     root: Option<&[u8]>,
 ) -> Result<TokenSet, RefreshError> {
     let _guard = store.refresh_lock.lock().await;
+    store
+        .load()
+        .map_err(|_| RefreshError::Other(String::new()))?
+        .ok_or_else(|| session_expired(cfg))?;
+    // Another Talaria process may be refreshing the same sign-in. The exclusive lock is held
+    // until this function returns; dropping the file releases it.
+    let path = store.lock_path();
+    let _lock = tokio::task::spawn_blocking(move || {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .open(path)
+            .ok()?;
+        let meta = file.metadata().ok()?;
+        if !meta.is_file() || meta.uid() != rustix::process::geteuid().as_raw() {
+            return None;
+        }
+        file.lock().ok()?;
+        Some(file)
+    })
+    .await
+    .ok()
+    .flatten()
+    .ok_or_else(|| RefreshError::Other(String::new()))?;
+    // Read again under the lock: the holder before us may have replaced the token.
     let current = store
         .load()
         .map_err(|_| RefreshError::Other(String::new()))?
-        .ok_or(RefreshError::SessionExpired)?;
+        .ok_or_else(|| session_expired(cfg))?;
     if &current != cached && super::now() < current.expires_at.saturating_sub(60) {
         return Ok(current);
     }
@@ -80,7 +116,7 @@ pub(crate) async fn refresh_cached(
             store
                 .clear()
                 .map_err(|_| RefreshError::Other(String::new()))?;
-            Err(RefreshError::SessionExpired)
+            Err(session_expired(cfg))
         }
         503 => Err(RefreshError::ProviderUnreachable),
         _ => Err(RefreshError::Other(String::new())),

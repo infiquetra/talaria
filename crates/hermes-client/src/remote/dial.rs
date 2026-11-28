@@ -55,10 +55,12 @@ impl RemoteDial {
                 reason: format!("not signed in to {name}."),
                 next_step: format!("run talaria remote login {name}"),
             },
-            RemoteError::Refresh(RefreshError::SessionExpired) => DialFailure::GiveUp {
-                reason: format!("sign-in for {name} expired."),
-                next_step: format!("run talaria remote login {name}"),
-            },
+            RemoteError::Refresh(RefreshError::SessionExpired { endpoint }) => {
+                DialFailure::GiveUp {
+                    reason: format!("sign-in for {name} at {endpoint} expired."),
+                    next_step: format!("run talaria remote login {name}"),
+                }
+            }
             RemoteError::Refresh(RefreshError::ProviderUnreachable) => DialFailure::Retry {
                 reason: format!("the sign-in provider for {name} is unreachable (HTTP 503)."),
                 next_step: "try again later".into(),

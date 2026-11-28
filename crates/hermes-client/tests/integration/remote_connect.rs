@@ -134,7 +134,10 @@ async fn ws_ticket_retries_once_after_refresh() {
     assert!(store.path().exists());
     assert_eq!(
         error.to_string(),
-        "the gateway refused the sign-in for work after a refresh."
+        format!(
+            "the gateway at {} refused the sign-in for work after a refresh.",
+            hermes_client::redact_url(g.base().as_str())
+        )
     );
     assert_eq!(g.counts().tickets, 4);
     assert_eq!(g.counts().refresh, 2);
@@ -256,7 +259,20 @@ async fn upgrade_rejections_map_to_messages() {
         );
         let message = connect::upgrade_error(&g.base(), code);
         assert!(message.contains(expected));
+        if matches!(code, 403 | 502 | 503 | 504) {
+            let endpoint = hermes_client::redact_url(g.base().as_str());
+            assert!(
+                message.contains(&endpoint),
+                "HTTP {code} message must name the gateway {endpoint}: {message}"
+            );
+        }
     }
+    let with_credentials = Url::parse("https://user:secret@gateway.example.com/").unwrap();
+    let message = connect::upgrade_error(&with_credentials, 404);
+    assert!(
+        !message.contains("secret"),
+        "HTTP 404 message must not print the password: {message}"
+    );
 }
 
 #[tokio::test]

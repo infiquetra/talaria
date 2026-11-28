@@ -2,6 +2,29 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-28 — A refresh lock must live on a file that saving never replaces
+
+**Evidence.** `refresh_waits_on_the_token_lock` holds `File::lock` on `<name>.json.lock` and
+shows a refresh waiting, then using the token another holder saved, with no refresh call.
+Saving a token replaces the token file through `NamedTempFile::persist`.
+[Refresh lock](../../crates/hermes-client/src/remote/native_auth.rs),
+[lock path](../../crates/hermes-client/src/remote/token_store.rs),
+[regression test](../../crates/hermes-client/tests/integration/remote_auth.rs)
+
+**Mechanism.** An advisory lock belongs to an open file, that is to one inode. `persist`
+renames a new inode over the token path, so a lock on the token file stops nobody who opens
+the path after the save. The lock therefore sits on a separate file that is created but never
+written, truncated or replaced. Opening it with `create(true)` needs an explicit
+`truncate(false)` to pass `clippy::suspicious_open_options` on Rust 1.98.1. `NOFOLLOW` alone
+still opens a FIFO or another user's file planted at that path, so the open also checks
+`is_file()` and the owner, as `load` does. The wait for the lock has no limit: a process that
+dies releases it, and a healthy holder finishes within the 15-second HTTP deadline. On a
+filesystem without advisory locks the lock call fails, and refresh fails instead of running
+unguarded.
+
+**Generalizable rule.** Lock a sidecar file that nothing replaces, never a file that is saved
+by atomic rename, and re-read the protected file after the lock is taken.
+
 ## 2026-11-28 — A late picker connection can take focus out of search
 
 **Evidence.** The terminal test held the side connection open until the user

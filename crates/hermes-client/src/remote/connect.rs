@@ -155,10 +155,15 @@ pub(crate) async fn connect_observed(
     .map_err(|_| ConnectError::Timeout)?
 }
 pub fn upgrade_error(base: &url::Url, status: u16) -> String {
+    let endpoint = crate::redact_url(base.as_str());
     match status {
-        403 => "the gateway refused the WebSocket upgrade (expired ticket, host not accepted by dashboard.public_url, or chat disabled)".into(),
-        404 => format!("no /api/ws at {base}"),
-        502..=504 => format!("the tunnel or gateway is unavailable (HTTP {status})"),
+        403 => format!(
+            "the gateway refused the WebSocket upgrade (expired ticket, host not accepted by dashboard.public_url, or chat disabled); gateway {endpoint}"
+        ),
+        404 => format!("no /api/ws at {endpoint}"),
+        502..=504 => {
+            format!("the tunnel or gateway is unavailable (HTTP {status}); gateway {endpoint}")
+        }
         _ => format!("the gateway refused the WebSocket upgrade (HTTP {status})"),
     }
 }
