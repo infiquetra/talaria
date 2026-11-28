@@ -1460,3 +1460,153 @@ async fn peek_mismatched_masked_target_writes_nothing() {
         "the stale target wrote a reply"
     );
 }
+
+#[tokio::test]
+async fn peek_attaches_subagent_counts_for_unopened_session() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "local-bg", false, false);
+    let (report_tx, mut report_rx) = mpsc::unbounded_channel();
+    let worker = PeekWorker::start(PeekSetup {
+        launch: launch(),
+        home: home.path().to_path_buf(),
+        fleet: Arc::new(FakeFleetSink::new()),
+        next_submission_id: Box::new(|| "talaria-0123456789abcdef-1".to_owned()),
+        timeouts: PeekTimeouts::scaled_for_tests(),
+        reports: Some(report_tx),
+    });
+
+    let mut state = AppState::new("fixture");
+    let (app_tx, mut app_rx) = mpsc::unbounded_channel();
+    state.subagents = Some(talaria_app::subagents::SubagentHub::new(
+        talaria_app::subagents::SubagentsConfig::default(),
+        app_tx,
+    ));
+    let mut fleet_view = FleetViewState::new(None, NOW);
+    assert!(
+        fleet_view::update(
+            &mut fleet_view,
+            FleetViewInput::Snapshot {
+                version: 1,
+                rows: vec![fleet_row("local-bg", RowState::Working)],
+                queue: Vec::new(),
+                profiles: vec![(
+                    "fixture".to_owned(),
+                    ProfileStatus::Listed { truncated: false }
+                )],
+                scope_note: None,
+                link_note: None,
+            },
+            4
+        )
+        .is_empty()
+    );
+    state.fleet = Some(fleet_view);
+
+    let row_bg = key("fixture", "local-bg");
+    let inputs = tokio::time::timeout(
+        Duration::from_secs(5),
+        worker.run(FleetViewEffect::OpenPeek(row_bg.clone())),
+    )
+    .await
+    .expect("open peek completed")
+    .expect("open peek result");
+    assert!(
+        matches!(
+            inputs.as_slice(),
+            [FleetViewInput::Peek {
+                status: talaria_core::fleet_view::PeekStatus::Open { .. },
+                ..
+            }]
+        ),
+        "unexpected open peek inputs: {inputs:?}"
+    );
+
+    // Wait for both Attached and Frame reports from the peek worker.
+    let mut saw_attached = false;
+    let mut saw_frame = false;
+    gateway.push_result(json!({
+        "subagents": [
+            {
+                "subagent_id": "child-1",
+                "goal": "delegate one task",
+                "status": "running",
+                "task_index": 0,
+                "task_count": 1
+            }
+        ],
+        "delegations": []
+    }));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !(saw_attached && saw_frame) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let report = tokio::time::timeout(remaining, report_rx.recv())
+            .await
+            .expect("peek report before timeout")
+            .expect("peek report channel open");
+        if matches!(report, fleet_actions::PeekReport::Attached { .. }) {
+            saw_attached = true;
+        }
+        if matches!(report, fleet_actions::PeekReport::Frame(_)) {
+            saw_frame = true;
+        }
+        app::update(&mut state, AppMessage::Peek(report));
+    }
+
+    // Receive the subagent.list reply sparked by attaching the peeked row.
+    let msg = tokio::time::timeout(Duration::from_secs(5), app_rx.recv())
+        .await
+        .expect("subagent list reply before timeout")
+        .expect("app channel open");
+    assert!(
+        matches!(msg, AppMessage::Subagents(_)),
+        "expected subagent message"
+    );
+    app::update(&mut state, msg);
+
+    let list_reqs = gateway.requests("subagent.list");
+    assert_eq!(list_reqs.len(), 1, "expected one subagent.list for peek");
+    assert_eq!(list_reqs[0].params, json!({"session_id": "local-bg"}));
+    assert_eq!(
+        state
+            .view()
+            .subagents
+            .and_then(|hub| hub.counts(&row_bg))
+            .map(|counts| counts.live),
+        Some(1),
+        "first peek of an unopened session must surface its live sub-agent count"
+    );
+    assert_eq!(
+        state.view().peek.map(|frame| &frame.key),
+        Some(&row_bg),
+        "peek frame must remain active for local-bg"
+    );
+
+    // Closing the peek detaches the temporary non-foreground tracker.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(5),
+        worker.run(FleetViewEffect::ClosePeek),
+    )
+    .await
+    .expect("close peek completed");
+    let close_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = close_deadline.saturating_duration_since(Instant::now());
+        let report = tokio::time::timeout(remaining, report_rx.recv())
+            .await
+            .expect("gone report before timeout")
+            .expect("report channel open");
+        let is_gone = matches!(report, fleet_actions::PeekReport::Gone);
+        app::update(&mut state, AppMessage::Peek(report));
+        if is_gone {
+            break;
+        }
+    }
+    assert!(
+        state
+            .view()
+            .subagents
+            .and_then(|hub| hub.counts(&row_bg))
+            .is_none(),
+        "closing the peek must detach the non-foreground sub-agent tracker"
+    );
+}
