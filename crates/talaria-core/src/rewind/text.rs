@@ -17,6 +17,8 @@ pub enum CallKind {
     Mutate,
     /// `rollback.restore`.
     Restore,
+    /// A fork. The application handles it without a rewind call.
+    Branch,
 }
 
 /// Why a call did not return a decoded success.
@@ -333,6 +335,15 @@ pub fn draft_kept(prompt_text: &str) -> String {
     )
 }
 
+/// The notice when a fork's prompt finds a draft in the composer.
+#[must_use]
+pub fn fork_draft_kept(prompt_text: &str) -> String {
+    format!(
+        "Your draft was kept. The forked prompt was: {}",
+        cut_code_points(prompt_text, DRAFT_NOTICE_CODE_POINTS)
+    )
+}
+
 /// Text T14. The files were restored but the further rewind was refused.
 /// `refusal` is the text of the refusal, for example from `mutate_refusal_text`.
 #[must_use]
@@ -511,7 +522,7 @@ fn method_name(call: CallKind) -> &'static str {
         CallKind::ListCheckpoints => "rollback.list",
         CallKind::CheckpointDiff => "rollback.diff",
         CallKind::SessionDiff => "rollback.session_diff",
-        CallKind::Mutate => "session.mutate",
+        CallKind::Mutate | CallKind::Branch => "session.mutate",
         CallKind::Restore => "rollback.restore",
     }
 }
@@ -522,7 +533,7 @@ fn action_name(call: CallKind) -> &'static str {
         CallKind::ReadSession => "read the session",
         CallKind::ListCheckpoints => "list checkpoints",
         CallKind::CheckpointDiff | CallKind::SessionDiff => "compare files",
-        CallKind::Mutate => "change the session",
+        CallKind::Mutate | CallKind::Branch => "change the session",
         CallKind::Restore => "restore files",
     }
 }
@@ -790,6 +801,8 @@ pub const FILES_STAY: &str = "Files stay as they are.";
 /// Layout text. The conversation-only action.
 pub const ACTION_REWIND: &str =
     "c  Rewind the conversation to before this prompt (files stay as they are)";
+/// Layout text. The fork action.
+pub const ACTION_FORK: &str = "b  Fork a new session from before this prompt";
 /// Layout text. The diff action.
 pub const ACTION_DIFF: &str = "d  Show file changes since this prompt";
 /// Layout text. Restore confirm line on the Checkpoints screen.

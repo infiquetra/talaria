@@ -17,6 +17,7 @@ fn turn(start: Option<i64>, end: Option<i64>, edits: bool) -> RewindTurn {
         window_end: end,
         edits_files: edits,
         later_count: 1,
+        through_message_id: None,
     }
 }
 

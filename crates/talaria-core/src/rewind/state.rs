@@ -33,6 +33,16 @@ pub enum Call {
         file_path: Option<String>,
         all: bool,
     },
+    /// Fork a new session from before the chosen prompt. The application handles it; nothing
+    /// awaits a reply.
+    Branch {
+        /// The stored row before the prompt. `None` for the oldest prompt.
+        through_message_id: Option<i64>,
+        /// The prompt's text, for the new session's composer.
+        text: String,
+        /// The prompt had parts that are not text, which are not copied.
+        attachments_omitted: bool,
+    },
 }
 
 /// A fresh session read.
@@ -96,6 +106,8 @@ pub enum RewindKey {
     F,
     D,
     R,
+    /// Fork a new session from before the chosen prompt.
+    Branch,
 }
 
 /// Which screen is showing. `Working` from a typed command is not an open overlay.
@@ -542,6 +554,8 @@ impl RewindState {
         view.body.push(view_line("", LineStyle::Normal));
         view.body
             .push(view_line(text::ACTION_REWIND, LineStyle::Normal));
+        view.body
+            .push(view_line(text::ACTION_FORK, LineStyle::Normal));
         match self.match_for(chosen) {
             Ok(found) => {
                 let checkpoint = &found.checkpoint;
@@ -736,6 +750,7 @@ impl RewindState {
             Call::SessionDiff => CallKind::SessionDiff,
             Call::Mutate { .. } => CallKind::Mutate,
             Call::Restore { .. } => CallKind::Restore,
+            Call::Branch { .. } => CallKind::Branch,
         };
         self.next_ticket += 1;
         let ticket = self.next_ticket;
@@ -990,6 +1005,26 @@ impl RewindState {
                 Ok(found) => self.start_checkpoint_diff(found.checkpoint, Back::Actions),
                 Err(_) => Vec::new(),
             },
+            RewindKey::Branch => {
+                let (text, attachments_omitted) = if chosen.attachments {
+                    (chosen.text_parts.clone(), true)
+                } else {
+                    (
+                        chosen
+                            .prompt_text
+                            .clone()
+                            .unwrap_or_else(|| chosen.text_parts.clone()),
+                        false,
+                    )
+                };
+                let call = Call::Branch {
+                    through_message_id: chosen.through_message_id,
+                    text,
+                    attachments_omitted,
+                };
+                // The application opens the fork; nothing here awaits it.
+                self.close_with(vec![RewindEffect::Call { ticket: 0, call }])
+            }
             _ => Vec::new(),
         }
     }

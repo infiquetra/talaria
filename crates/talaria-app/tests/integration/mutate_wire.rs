@@ -629,7 +629,7 @@ async fn a_turns_new_fences_reach_the_next_mutation() {
         .clone();
 
     // The session's revision and generation as the session opened with them.
-    let before = branch_request(&mut app, None).expect("the branch is prepared");
+    let before = branch_request(&mut app, None, None).expect("the branch is prepared");
     assert_eq!(before.expected_revision, 1);
     assert_eq!(before.expected_generation, Some(1));
 
@@ -642,7 +642,7 @@ async fn a_turns_new_fences_reach_the_next_mutation() {
         )),
     );
 
-    let after = branch_request(&mut app, None).expect("the branch is prepared");
+    let after = branch_request(&mut app, None, None).expect("the branch is prepared");
     assert_eq!(
         after.expected_revision, 2,
         "the branch presents the revision the turn left behind"
