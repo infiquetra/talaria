@@ -2,6 +2,22 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-28 — A late picker connection can take focus out of search
+
+**Evidence.** The terminal test held the side connection open until the user
+typed `needl` and Ctrl+C sent the foreground interrupt. When the connection
+completed, the query stayed visible but the footer switched from “Esc clear”
+to “Esc close” and the next character did not appear.
+[Terminal regression test](../../crates/talaria-cli/tests/integration/working_row.rs)
+
+**Mechanism.** The picker opened in list mode before the side connection
+responded. The same opening event was then reused to populate its connection
+scope. That event changed the editing mode even though the user was already
+in the search field.
+
+**Generalizable rule.** Preserve the user's editing mode when an asynchronous
+response supplies data to an already open view.
+
 ## 2026-11-26 — A running child can go quiet during a tool call
 
 **Evidence.** During a two-child terminal run, one child finished in three seconds. The

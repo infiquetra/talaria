@@ -9,7 +9,7 @@ pub struct CompatRow {
 }
 
 pub const CURRENT: CompatRow = CompatRow {
-    talaria: "0.9.2",
+    talaria: "0.9.3",
     floor: "v0.23.0",
     pinned_tag: "v0.23.1",
     pinned_commit: "3b421578588243f920886e6fe79a6faa87ea026e",

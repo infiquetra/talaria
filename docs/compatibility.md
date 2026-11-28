@@ -13,3 +13,4 @@ tested release gets one plain note that some features may be missing.
 | 0.9.0 | v0.23.0 | v0.23.1 3b421578 | v0.23.1 |
 | 0.9.1 | v0.23.0 | v0.23.1 3b421578 | v0.23.1 |
 | 0.9.2 | v0.23.0 | v0.23.1 3b421578 | v0.23.1 |
+| 0.9.3 | v0.23.0 | v0.23.1 3b421578 | v0.23.1 |
