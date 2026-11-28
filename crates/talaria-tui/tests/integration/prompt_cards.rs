@@ -11,7 +11,9 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use serde_json::json;
-use talaria_core::session::{CellId, PromptCell, PromptKey, PromptKind, PromptState};
+use talaria_core::session::{
+    CellId, PromptCell, PromptKey, PromptKind, PromptState, UsageLimitCard,
+};
 use talaria_tui::keys::{Key, KeyCode, KeyKind, Mods};
 use talaria_tui::live::LiveSection;
 use talaria_tui::prompts::{
@@ -182,6 +184,7 @@ fn intent_kind(intent: &Option<PromptIntent>) -> &'static str {
         Some(PromptIntent::Clarify { .. }) => "a clarification intent",
         Some(PromptIntent::Masked { .. }) => "a masked intent",
         Some(PromptIntent::Connect { .. }) => "a connect intent",
+        Some(PromptIntent::UsageLimit { .. }) => "a usage-limit intent",
     }
 }
 
@@ -1927,4 +1930,107 @@ fn connection_card_esc_skips_and_ctrl_c_sends_nothing() {
         !has_row_containing(&env_rows, "Approve"),
         "Approve must not be offered when required_env is non-empty: {env_rows:?}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Usage-limit card
+// ---------------------------------------------------------------------------------------------
+
+fn limit_card(confirm: Option<&str>) -> UsageLimitCard {
+    UsageLimitCard {
+        title: "Limit reached".to_owned(),
+        lines: vec![
+            "Daily limit reached".to_owned(),
+            "Small (included)".to_owned(),
+            "Medium (slower)".to_owned(),
+        ],
+        confirm: confirm.map(str::to_owned),
+        dismiss: "Dismiss".to_owned(),
+        model: if confirm.is_some() { "small-1" } else { "" }.to_owned(),
+        provider: None,
+        session_id: MAIN.to_owned(),
+    }
+}
+
+/// A stack that holds only the usage-limit card, synced with no prompts, at a time when keys are
+/// taken.
+fn limit_rig(card: UsageLimitCard) -> Rig {
+    let start = Instant::now();
+    let mut stack = PromptStack::new();
+    stack.set_usage_limit(Some(card));
+    stack.sync(Some(MAIN), &[], &[], true, start);
+    Rig {
+        stack,
+        at: start + AFTER_GUARD,
+    }
+}
+
+#[test]
+fn usage_limit_enter_confirms_and_esc_dismisses() {
+    // With a confirm choice, Enter confirms.
+    let mut rig = limit_rig(limit_card(Some("Switch to Small (included)")));
+    let rows = rig.rows();
+    assert!(
+        has_row_containing(&rows, "Limit reached"),
+        "the title is drawn: {rows:?}"
+    );
+    assert!(has_row_containing(&rows, "Daily limit reached"), "{rows:?}");
+    assert!(has_row_containing(&rows, "Medium (slower)"), "{rows:?}");
+    assert!(
+        has_row_containing(&rows, "Switch to Small (included)"),
+        "the confirm choice is drawn: {rows:?}"
+    );
+    assert!(
+        has_row_containing(&rows, "Esc"),
+        "the dismiss hint names Esc: {rows:?}"
+    );
+    let outcome = rig.press(named(KeyCode::Enter));
+    assert!(!outcome.interrupt_requested);
+    assert!(matches!(
+        outcome.intent,
+        Some(PromptIntent::UsageLimit { confirm: true })
+    ));
+
+    // Esc dismisses and never confirms.
+    let mut rig = limit_rig(limit_card(Some("Switch to Small (included)")));
+    let outcome = rig.press(named(KeyCode::Esc));
+    assert!(!outcome.interrupt_requested);
+    assert!(matches!(
+        outcome.intent,
+        Some(PromptIntent::UsageLimit { confirm: false })
+    ));
+
+    // With no confirm choice, Enter does nothing and Esc still dismisses.
+    let mut rig = limit_rig(limit_card(None));
+    let rows = rig.rows();
+    assert!(
+        !has_row_containing(&rows, "Switch to"),
+        "no confirm choice is drawn: {rows:?}"
+    );
+    assert!(has_row_containing(&rows, "Esc"), "{rows:?}");
+    rig.press(named(KeyCode::Enter)).nothing();
+    let outcome = rig.press(named(KeyCode::Esc));
+    assert!(matches!(
+        outcome.intent,
+        Some(PromptIntent::UsageLimit { confirm: false })
+    ));
+
+    // `sync` with no prompts keeps the card; `set_usage_limit(None)` removes it.
+    let mut rig = limit_rig(limit_card(Some("Switch to Small (included)")));
+    rig.stack.sync(Some(MAIN), &[], &[], true, rig.at);
+    assert!(
+        rig.stack.section().is_some(),
+        "sync dropped the usage-limit card"
+    );
+    let outcome = rig.press(named(KeyCode::Enter));
+    assert!(matches!(
+        outcome.intent,
+        Some(PromptIntent::UsageLimit { confirm: true })
+    ));
+    rig.stack.set_usage_limit(None);
+    assert!(rig.stack.section().is_none(), "the card was not removed");
+    assert!(matches!(
+        rig.stack.handle_key(named(KeyCode::Enter), rig.at),
+        KeyOutcome::NotHandled
+    ));
 }

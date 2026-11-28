@@ -13,7 +13,7 @@ use hermes_contract::events::{EventFrame, Notification};
 use serde_json::{Value, json};
 use talaria_core::session::{
     AnswerRefusal, Cell, Effect, Event, NoticeKind, PromptKind, PromptState, SessionState,
-    Settlement, ToolStatus, TurnOutcome, TurnState, update,
+    Settlement, ToolStatus, TurnOutcome, TurnState, update, usage_limit_card,
 };
 
 use events::{SESSION, approval_request, clarify_request, ev, ev_gen, ev_session, key, submit};
@@ -415,6 +415,109 @@ fn error_status_makes_a_notice_and_never_assistant_text() {
             .any(|note| note.kind == NoticeKind::Warning && note.text == "heads up")
     );
     assert_eq!(state.turn(), &TurnState::Finished(TurnOutcome::Failed));
+}
+
+/// The `error_surface` of a refused turn: the sample usage limit is a message, a small model
+/// with no provider, a medium model on `ollama-cloud`, and the `add_credits` action.
+fn usage_limit_surface() -> Value {
+    json!({
+        "code": "usage_limit",
+        "layer": "provider",
+        "retryable": false,
+        "usage_limit": {
+            "credits": {"action": "add_credits"},
+            "current_model": "big-1",
+            "gauge_id": "daily",
+            "limit_name": "Daily",
+            "message": "Daily limit reached",
+            "scope": "account",
+            "suggestions": [
+                {"label": "Small", "note": "included", "model": "small-1"},
+                {"label": "Medium", "note": "slower", "model": "med-1", "provider": "ollama-cloud"}
+            ]
+        }
+    })
+}
+
+#[test]
+fn usage_limit_on_a_failed_turn_builds_a_card() {
+    let (state, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "message.complete",
+            json!({
+                "status": "error",
+                "error": "limit",
+                "error_surface": usage_limit_surface()
+            }),
+        ),
+    ]);
+    let notes = notices(&state);
+    let failed = notes
+        .iter()
+        .find(|note| note.kind == NoticeKind::Error)
+        .expect("the failed turn makes an error notice");
+    assert_eq!(failed.text, "limit");
+    let detail = failed
+        .detail
+        .as_ref()
+        .expect("the error notice keeps the error surface");
+    let card = usage_limit_card(detail).expect("the stored detail makes a card");
+    assert!(card.lines.contains(&"Small (included)".to_owned()));
+    assert!(card.lines.contains(&"Medium (slower)".to_owned()));
+    assert_eq!(state.turn(), &TurnState::Finished(TurnOutcome::Failed));
+}
+
+#[test]
+fn failed_turn_without_usage_limit_has_no_card() {
+    let surface = json!({"layer": "gateway", "code": "refused", "retryable": false});
+    let (state, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "message.complete",
+            json!({
+                "status": "error",
+                "error": "gateway down",
+                "error_surface": surface.clone()
+            }),
+        ),
+    ]);
+    let notes = notices(&state);
+    let detail = notes
+        .iter()
+        .find(|note| note.kind == NoticeKind::Error)
+        .and_then(|note| note.detail.as_ref())
+        .expect("the error notice keeps the error surface");
+    assert_eq!(detail, &surface);
+    assert_eq!(usage_limit_card(detail), None);
+    assert_eq!(usage_limit_card(&surface), None);
+}
+
+#[test]
+fn complete_status_does_not_keep_a_usage_limit_detail() {
+    let (state, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "message.complete",
+            json!({
+                "status": "complete",
+                "text": "Done.",
+                "error_surface": usage_limit_surface()
+            }),
+        ),
+    ]);
+    assert_eq!(state.turn(), &TurnState::Finished(TurnOutcome::Completed));
+    assert!(
+        notices(&state).iter().all(|note| {
+            note.detail
+                .as_ref()
+                .is_none_or(|detail| !detail.to_string().contains("usage_limit"))
+        }),
+        "a completed turn keeps no usage limit on any notice"
+    );
 }
 
 #[test]

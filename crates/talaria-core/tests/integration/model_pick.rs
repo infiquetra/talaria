@@ -7,7 +7,7 @@ use drive::{PROFILE, SID, confirmation, mutates, notices, one_mutate, open_loade
 use serde_json::json;
 use talaria_core::models::{
     ConfirmKey, Effort, EffortCommand, ModelCommand, ModelCommandOrEffort, ModelsEffect,
-    ModelsInput, ModelsState, NoticeLevel, PickerKey, SavedModels,
+    ModelsInput, ModelsState, NoticeLevel, PickerKey, SavedModels, switch_was_accepted,
 };
 use talaria_core::mutation::MutationOutcome;
 
@@ -804,4 +804,29 @@ fn receipt_broadcast_is_silent() {
     let fences = state.fences(SID);
     assert_eq!(fences.revision, Some(13));
     assert_eq!(fences.execution_generation, Some(5));
+}
+
+#[test]
+fn only_a_committed_switch_is_accepted() {
+    assert!(switch_was_accepted(&MutationOutcome::Committed(
+        serde_json::Value::Null
+    )));
+    assert!(!switch_was_accepted(&MutationOutcome::Refused {
+        reason: String::new(),
+        field: None,
+        detail: None,
+        rpc_code: 0,
+    }));
+    assert!(!switch_was_accepted(&MutationOutcome::FenceRefused {
+        reason: String::new(),
+        revision: None,
+        execution_generation: None,
+    }));
+    assert!(!switch_was_accepted(&MutationOutcome::Deferred(
+        serde_json::Value::Null
+    )));
+    assert!(!switch_was_accepted(&MutationOutcome::Unknown));
+    assert!(!switch_was_accepted(&MutationOutcome::NotSent {
+        reason: String::new(),
+    }));
 }

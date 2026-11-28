@@ -12,7 +12,7 @@ mod text;
 pub use browse::{BrowseCounts, BrowseView, ListScope};
 pub use catalog::{Catalog, CatalogKind, CatalogRow, DisplayZone, FilterRow, filter_row_indexes};
 pub use effort::Effort;
-pub use pick::ModelsState;
+pub use pick::{ModelsState, switch_was_accepted};
 pub use picker::{
     ConfirmKey, EffortCommand, EffortControl, ModelCommand, ModelCommandOrEffort, ModelsEffect,
     ModelsInput, NoticeLevel, PickerKey, PickerRow, PickerView, RowKey, Scope,

@@ -255,6 +255,9 @@ mod model_saved;
 #[path = "integration/model_service.rs"]
 mod model_service;
 
+#[path = "integration/models_switch.rs"]
+mod models_switch;
+
 #[path = "integration/mutate_wire.rs"]
 mod mutate_wire;
 

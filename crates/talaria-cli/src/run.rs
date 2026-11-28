@@ -871,7 +871,7 @@ fn card_answer(
     row: Option<&talaria_core::directory::rows::RowKey>,
 ) -> Option<CardAnswer> {
     Some(match intent {
-        PromptIntent::Connect { .. } => return None,
+        PromptIntent::Connect { .. } | PromptIntent::UsageLimit { .. } => return None,
         PromptIntent::Approve { key, choice, note } => CardAnswer::Approve { key, choice, note },
         PromptIntent::Clarify { key, answer } => CardAnswer::Clarify { key, answer },
         PromptIntent::Masked { target, value } => CardAnswer::Masked {
@@ -2447,6 +2447,7 @@ impl TuiScreen {
             .state
             .map(|state| state.open_prompts().collect())
             .unwrap_or_default();
+        self.prompts.set_usage_limit(view.usage_limit.cloned());
         self.prompts.sync(
             view.session_id,
             &open,
@@ -2530,6 +2531,9 @@ impl TuiScreen {
                 target: app_target(target),
                 value: value.into_inner(),
             }),
+            Some(PromptIntent::UsageLimit { confirm }) => {
+                actions.push(UserAction::UsageLimit { confirm });
+            }
             None => {}
         }
         if interrupt_requested {

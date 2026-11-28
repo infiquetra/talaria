@@ -32,6 +32,8 @@ pub fn apply_intent(
         PromptIntent::Clarify { key, answer } => {
             update(state, Event::AnswerClarify { key, answer })
         }
-        PromptIntent::Masked { .. } | PromptIntent::Connect { .. } => Vec::new(),
+        PromptIntent::Masked { .. }
+        | PromptIntent::Connect { .. }
+        | PromptIntent::UsageLimit { .. } => Vec::new(),
     }
 }
