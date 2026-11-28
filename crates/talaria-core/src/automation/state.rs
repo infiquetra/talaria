@@ -306,6 +306,11 @@ pub struct AutomationState {
     goal_progress: Option<GoalProgress>,
     pending_goal_completion: bool,
     panel_goal: Option<GoalView>,
+    /// The control read made at attach succeeded, so Talaria knows which goal already existed.
+    attach_read_succeeded: bool,
+    /// Creation time and title of the one finished goal that needs no completion notice: the
+    /// attach read's goal, or the goal whose completion was last announced.
+    settled_goal: Option<(Option<u64>, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -411,6 +416,17 @@ impl AutomationState {
                 && (held.shown || !visible)
         });
         if !continuing {
+            let identity = (goal.created_ms, goal.title.clone());
+            let note_pending = self.pending_goal_completion
+                || self
+                    .goal_progress
+                    .as_ref()
+                    .is_some_and(|held| held.shown && held.completion_noted);
+            // A goal first seen finished is new only against a known attach baseline.
+            let announce = !visible
+                && self.attach_read_succeeded
+                && !note_pending
+                && self.settled_goal.as_ref() != Some(&identity);
             self.goal_progress = Some(GoalProgress {
                 created_ms: goal.created_ms,
                 title: goal.title.clone(),
@@ -418,11 +434,23 @@ impl AutomationState {
                 completion_noted: !visible || self.pending_goal_completion,
             });
             self.pending_goal_completion = false;
-            return None;
+            if !visible && note_pending {
+                self.settled_goal = Some(identity);
+                return None;
+            }
+            if !announce {
+                return None;
+            }
+            self.settled_goal = Some(identity);
+            return Some(goal_completion_text(goal));
         }
         let held = self.goal_progress.as_mut()?;
-        let completed = held.shown && !visible && !held.completion_noted;
+        let transitioned_finished = held.shown && !visible;
+        let completed = transitioned_finished && !held.completion_noted;
         held.shown = visible;
+        if transitioned_finished {
+            self.settled_goal = Some((goal.created_ms, goal.title.clone()));
+        }
         if completed {
             held.completion_noted = true;
             Some(goal_completion_text(goal))
@@ -607,6 +635,8 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
             state.control = ControlStatus::Reading;
             state.goal_progress = None;
             state.pending_goal_completion = false;
+            state.attach_read_succeeded = false;
+            state.settled_goal = None;
             state.yolo = ModeValue::NotRead;
             state.fast = ModeValue::NotRead;
             let control = state.new_token();
@@ -637,6 +667,8 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
             state.control = ControlStatus::NotRead;
             state.goal_progress = None;
             state.pending_goal_completion = false;
+            state.attach_read_succeeded = false;
+            state.settled_goal = None;
             state.pending_control = None;
             state.yolo = ModeValue::NotRead;
             state.fast = ModeValue::NotRead;
@@ -654,6 +686,10 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
             let visible = state.control_rows_visible();
             match result {
                 Ok(view) => {
+                    state.attach_read_succeeded = true;
+                    if let Some(goal) = &view.goal {
+                        state.settled_goal = Some((goal.created_ms, goal.title.clone()));
+                    }
                     if let Some(text) = state.show(view) {
                         effects.push(AutomationEffect::Notice { text });
                     }
