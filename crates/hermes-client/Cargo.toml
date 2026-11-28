@@ -64,6 +64,6 @@ static_assertions.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = { workspace = true, features = ["connect", "handshake", "rustls-tls-native-roots"] }
-trybuild = "=1.0.121"
+trybuild = "=1.0.125"
 talaria-app.workspace = true
 talaria-core.workspace = true
