@@ -55,6 +55,70 @@ pub fn assistant_reply(cells: &[Cell], n: u32) -> Result<String, ReplyMiss> {
         .ok_or(ReplyMiss::Missing)
 }
 
+/// Replies longer than this many characters are not copied.
+const COPY_LIMIT_CHARS: usize = 100_000;
+
+/// What the transcript copy finds at or below a cell.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CopyBelow {
+    /// No finished reply at or below the cell.
+    Miss,
+    /// Reply `n` has `count` characters, more than the copy limit.
+    TooLong { n: u32, count: usize },
+    /// Reply `n`, ready to copy.
+    Ready { n: u32, text: String },
+}
+
+impl CopyBelow {
+    /// The notice for this result.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Self::Miss => "No reply below this point to copy.".to_owned(),
+            Self::TooLong { n, count } => {
+                format!("Reply {n} is too long to copy ({count} characters). Use /export.")
+            }
+            Self::Ready { n, text } => format!(
+                "Copy requested: reply {n}, {} characters. Your terminal must allow clipboard access.",
+                text.chars().count()
+            ),
+        }
+    }
+
+    /// The text to copy, only when a reply is ready.
+    #[must_use]
+    pub fn copied(&self) -> Option<&str> {
+        match self {
+            Self::Ready { text, .. } => Some(text),
+            Self::Miss | Self::TooLong { .. } => None,
+        }
+    }
+}
+
+/// The first finished reply at or below cell `index`, numbered as [`assistant_reply`] numbers
+/// it: 1 is the newest finished reply.
+#[must_use]
+pub fn copy_below(cells: &[Cell], index: usize) -> CopyBelow {
+    let finished =
+        |cell: &Cell| matches!(cell, Cell::Assistant(reply) if reply.sealed && !reply.interim);
+    let below = cells.get(index..).unwrap_or_default();
+    if !below.iter().any(finished) {
+        return CopyBelow::Miss;
+    }
+    let Ok(n) = u32::try_from(below.iter().filter(|cell| finished(cell)).count()) else {
+        return CopyBelow::Miss;
+    };
+    let Ok(text) = assistant_reply(cells, n) else {
+        return CopyBelow::Miss;
+    };
+    let count = text.chars().count();
+    if count > COPY_LIMIT_CHARS {
+        CopyBelow::TooLong { n, count }
+    } else {
+        CopyBelow::Ready { n, text }
+    }
+}
+
 impl Cell {
     /// A warning or diagnostic that can arrive before a conversation starts.
     pub fn is_advisory_notice(&self) -> bool {

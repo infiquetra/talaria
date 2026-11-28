@@ -160,6 +160,7 @@ fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
         Action::PagerPrevMatch => &["Shift+N"],
         Action::PagerDetails => &["T"],
         Action::PagerClose => &["Q"],
+        Action::PagerCopy => &["Y"],
         Action::ToggleTasks => &["Ctrl+T"],
         Action::ApprovalsToggle => &["Shift+Tab"],
         Action::QueueEdit => &["Enter", "E"],

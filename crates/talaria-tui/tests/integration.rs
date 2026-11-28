@@ -152,6 +152,8 @@ mod no_blink;
 mod overlay;
 #[path = "integration/overlay_cursor.rs"]
 mod overlay_cursor;
+#[path = "integration/pager_keys.rs"]
+mod pager_keys;
 #[path = "integration/pager_nav.rs"]
 mod pager_nav;
 #[path = "integration/pager_prop.rs"]

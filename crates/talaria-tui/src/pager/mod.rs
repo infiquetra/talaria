@@ -136,6 +136,8 @@ pub enum PagerAction {
     Escape,
     /// Close.
     Close,
+    /// Copy the finished reply at or below the top cell.
+    Copy,
 }
 
 /// One edit to the search prompt.
@@ -163,6 +165,12 @@ pub enum PagerOutcome {
     },
     /// The transcript closed. The agent was not interrupted.
     Close,
+    /// Copy the finished reply at or below cell `index`, the cell at the top. The transcript
+    /// stays open.
+    Copy {
+        /// The cell at the top of the transcript.
+        index: usize,
+    },
 }
 
 /// The state of the search prompt while it is open.
@@ -282,6 +290,9 @@ impl Pager {
         }
         match action {
             PagerAction::Close => PagerOutcome::Close,
+            PagerAction::Copy => PagerOutcome::Copy {
+                index: self.cell_index,
+            },
             PagerAction::Escape => {
                 if self.confirmed.is_some() {
                     self.confirmed = None;
@@ -409,6 +420,11 @@ impl Pager {
         }
     }
 
+    /// Show `sentence` in the footer until the next search.
+    pub fn show_notice(&mut self, sentence: &str) {
+        self.notice = Some(sentence.to_owned());
+    }
+
     /// A search query is being typed.
     #[must_use]
     pub fn is_typing_search(&self) -> bool {
@@ -480,9 +496,23 @@ impl Pager {
         self.resize(area.width, area.height);
         let cols = area.width;
         let banners = self.banners(ctx);
-        let body = area
-            .height
-            .saturating_sub(2 + u16::try_from(banners.len()).unwrap_or(u16::MAX));
+        let right_raw = self.right_part(ctx);
+        let right = sanitize(&right_raw);
+        let right_width = right.width();
+        let reserved = 1 + u16::try_from(banners.len()).unwrap_or(u16::MAX);
+        let max_footer_rows = usize::from(area.height.saturating_sub(reserved + 2)).max(1);
+        let wrapped_notice =
+            self.wrapped_notice_lines(usize::from(cols), right_width, max_footer_rows);
+        let footer_rows =
+            u16::try_from(wrapped_notice.as_ref().map_or(1, |(lines, share_last)| {
+                if *share_last {
+                    lines.len()
+                } else {
+                    lines.len() + 1
+                }
+            }))
+            .unwrap_or(1);
+        let body = area.height.saturating_sub(reserved + footer_rows);
         if cols < 20 || body < 2 {
             let text = fit(TOO_SMALL, usize::from(cols));
             buf.set_stringn(area.x, area.y, text, usize::from(cols), theme.header);
@@ -522,8 +552,20 @@ impl Pager {
             width: area.width,
             height: body,
         };
+        let footer_area = Rect {
+            x: area.x,
+            y: area.y + area.height.saturating_sub(footer_rows),
+            width: area.width,
+            height: footer_rows,
+        };
         self.draw_body(body_area, buf, ctx, render, &theme);
-        self.draw_footer(area, buf, ctx, &theme);
+        self.draw_footer(
+            footer_area,
+            buf,
+            right.as_ref(),
+            wrapped_notice.as_ref(),
+            &theme,
+        );
         views.finish(area, buf, t::TRANSCRIPT_BACKGROUND, true);
     }
 
@@ -671,55 +713,107 @@ impl Pager {
         );
     }
 
-    /// The footer row: the key hints on the left, the position on the right.
+    /// Wrap a footer notice across rows when it does not fit beside the right status.
+    ///
+    /// Returns `Some((lines, share_last))` only when wrapping is needed. When `share_last` is
+    /// `true`, the final wrapped line shares the bottom row with the right-hand position text;
+    /// otherwise the right-hand text sits on an extra bottom row below the wrapped lines.
+    fn wrapped_notice_lines(
+        &self,
+        width: usize,
+        right_width: usize,
+        max_rows: usize,
+    ) -> Option<(Vec<String>, bool)> {
+        let notice = self.notice.as_deref()?;
+        let clean = sanitize(notice);
+        let avail = width.saturating_sub(right_width + 1);
+        if clean.width() <= avail || max_rows <= 1 || width < 2 {
+            return None;
+        }
+        let mut lines = wrap_words(clean.as_ref(), width);
+        if lines.is_empty() {
+            return None;
+        }
+        if lines.len() > max_rows {
+            let tail = lines.split_off(max_rows - 1).join(" ");
+            lines.push(fit(&tail, avail.max(1)));
+            return Some((lines, true));
+        }
+        let last_fits_beside_right = lines.last().is_some_and(|line| line.width() <= avail);
+        if last_fits_beside_right {
+            Some((lines, true))
+        } else if lines.len() < max_rows {
+            Some((lines, false))
+        } else {
+            if let Some(last) = lines.last_mut() {
+                *last = fit(last, avail.max(1));
+            }
+            Some((lines, true))
+        }
+    }
+
+    /// The footer row(s): wrapped notice rows when needed, hints on the left, position on the right.
     fn draw_footer(
         &self,
-        area: Rect,
+        footer: Rect,
         buf: &mut Buffer,
-        ctx: &PagerContext<'_>,
+        right: &str,
+        wrapped_notice: Option<&(Vec<String>, bool)>,
         theme: &PagerTheme,
     ) {
-        let row = area.y + area.height.saturating_sub(1);
-        let footer = Rect {
-            x: area.x,
-            y: row,
-            width: area.width,
-            height: 1,
-        };
-        for x in footer.x..footer.x + footer.width {
-            buf[(x, row)].reset();
+        for y in footer.y..footer.y + footer.height {
+            for x in footer.x..footer.x + footer.width {
+                buf[(x, y)].reset();
+            }
         }
         buf.set_style(footer, theme.footer);
-        let right_raw = self.right_part(ctx);
-        let right = sanitize(&right_raw);
+        let row = footer.y + footer.height.saturating_sub(1);
         let right_width = right.width();
-        let avail = usize::from(area.width).saturating_sub(right_width + 1);
-        let left_raw = self.left_part(avail);
-        let left_clean = sanitize(&left_raw);
-        let left = if avail < 2 {
-            String::new()
+        let avail = usize::from(footer.width).saturating_sub(right_width + 1);
+        if let Some((lines, share_last)) = wrapped_notice {
+            let upper = if *share_last {
+                lines.len().saturating_sub(1)
+            } else {
+                lines.len()
+            };
+            for (offset, line) in lines.iter().take(upper).enumerate() {
+                let y = footer.y + u16::try_from(offset).unwrap_or(0);
+                buf.set_stringn(footer.x, y, line, usize::from(footer.width), theme.footer);
+            }
+            if *share_last
+                && let Some(last) = lines.last()
+                && avail >= 2
+            {
+                buf.set_stringn(footer.x, row, fit(last, avail), avail, theme.footer);
+            }
         } else {
-            fit(&left_clean, avail)
-        };
-        buf.set_stringn(area.x, row, left, avail, theme.footer);
-        if right_width <= usize::from(area.width) {
-            let right_cols = u16::try_from(right_width).unwrap_or(area.width);
-            let x = area
+            let left_raw = self.left_part(avail);
+            let left_clean = sanitize(&left_raw);
+            let left = if avail < 2 {
+                String::new()
+            } else {
+                fit(&left_clean, avail)
+            };
+            buf.set_stringn(footer.x, row, left, avail, theme.footer);
+        }
+        if right_width <= usize::from(footer.width) {
+            let right_cols = u16::try_from(right_width).unwrap_or(footer.width);
+            let x = footer
                 .x
-                .saturating_add(area.width.saturating_sub(right_cols.min(area.width)));
+                .saturating_add(footer.width.saturating_sub(right_cols.min(footer.width)));
             buf.set_stringn(
                 x,
                 row,
-                right.as_ref(),
-                right_width.min(usize::from(area.right().saturating_sub(x))),
+                right,
+                right_width.min(usize::from(footer.right().saturating_sub(x))),
                 theme.footer,
             );
         } else {
             buf.set_stringn(
-                area.x,
+                footer.x,
                 row,
-                fit(right.as_ref(), usize::from(area.width)),
-                usize::from(area.width),
+                fit(right, usize::from(footer.width)),
+                usize::from(footer.width),
                 theme.footer,
             );
         }
@@ -1364,4 +1458,58 @@ fn fit(text: &str, width: usize) -> String {
     }
     out.push('\u{2026}');
     out
+}
+
+/// Word-wrap sanitized text to `width` display columns, breaking a single overlong token by char.
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+    for word in text.split_whitespace() {
+        let word_width = word.width();
+        if current.is_empty() {
+            if word_width <= width {
+                current.push_str(word);
+                current_width = word_width;
+            } else {
+                for ch in word.chars() {
+                    let cols = ch.width().unwrap_or(0);
+                    if current_width + cols > width && !current.is_empty() {
+                        lines.push(std::mem::take(&mut current));
+                        current_width = 0;
+                    }
+                    current.push(ch);
+                    current_width += cols;
+                }
+            }
+        } else if current_width + 1 + word_width <= width {
+            current.push(' ');
+            current.push_str(word);
+            current_width += 1 + word_width;
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+            if word_width <= width {
+                current.push_str(word);
+                current_width = word_width;
+            } else {
+                for ch in word.chars() {
+                    let cols = ch.width().unwrap_or(0);
+                    if current_width + cols > width && !current.is_empty() {
+                        lines.push(std::mem::take(&mut current));
+                        current_width = 0;
+                    }
+                    current.push(ch);
+                    current_width += cols;
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }

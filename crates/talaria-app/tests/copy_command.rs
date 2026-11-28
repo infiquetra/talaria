@@ -4,7 +4,8 @@ use serde_json::json;
 use talaria_app::app::{AppEffect, AppMessage, AppState, UserAction, update};
 use talaria_app::sessions::{OpenedSession, SessionInfoSummary};
 use talaria_core::session::{
-    AssistantCell, Cell, CellId, Event, SessionId, SessionState, update as session_update,
+    AssistantCell, Cell, CellId, Event, SessionId, SessionState, UserCell, copy_below,
+    update as session_update,
 };
 
 fn opened_state(session_id: &str) -> AppState {
@@ -343,4 +344,45 @@ fn copy_link_requests_the_sign_in_text() {
         !has_notice(&other, "disk"),
         "non-login notice must not print disk"
     );
+}
+
+fn pager_user(id: u64, text: &str) -> Cell {
+    Cell::User(UserCell {
+        id: CellId::new(id),
+        text: text.into(),
+        expanded_paste: None,
+    })
+}
+
+fn pager_reply(id: u64, text: &str, interim: bool) -> Cell {
+    Cell::Assistant(AssistantCell {
+        id: CellId::new(id),
+        text: text.into(),
+        sealed: true,
+        interim,
+        transformed: false,
+    })
+}
+
+#[test]
+fn pager_copy_success_is_the_slash_copy_sentence() {
+    let cells = vec![
+        pager_user(1, "ask"),
+        pager_reply(2, "draft", true),
+        pager_reply(3, "pong", false),
+        pager_user(4, "next"),
+        pager_reply(5, "later", false),
+    ];
+    let ready = copy_below(&cells, 0);
+    assert_eq!(
+        ready.sentence(),
+        "Copy requested: reply 2, 4 characters. Your terminal must allow clipboard access."
+    );
+    assert_eq!(ready.copied(), Some("pong"));
+
+    let lonely = vec![pager_user(1, "ask")];
+    let miss = copy_below(&lonely, 0);
+    assert_eq!(miss.sentence(), "No reply below this point to copy.");
+    assert_ne!(miss.sentence(), "No reply 1 to copy.");
+    assert_eq!(miss.copied(), None);
 }

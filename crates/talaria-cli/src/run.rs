@@ -58,7 +58,7 @@ use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
 use talaria_core::review::{ReviewFocus, ReviewKey, ReviewView};
 use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, PromptKind, ReasoningCell, SessionState,
-    TurnState as SessionTurn,
+    TurnState as SessionTurn, copy_below,
 };
 use talaria_core::subagents::{Clock as SubagentClock, FinishedBatch};
 use talaria_tui::activity::{ActivityClock, ActivityLine, ActivityStyle};
@@ -86,8 +86,8 @@ use talaria_tui::markdown::section::MarkdownTailSection;
 use talaria_tui::mention::MentionSection;
 use talaria_tui::model_picker::ModelConfirmSection;
 use talaria_tui::pager::{
-    ConnectionBanner, Details, Pager, PagerAction, PagerCellLines, PagerContext, SearchIndex,
-    SearchInput,
+    ConnectionBanner, Details, Pager, PagerAction, PagerCellLines, PagerContext, PagerOutcome,
+    SearchIndex, SearchInput,
 };
 use talaria_tui::palette::{
     ChoiceSection, EffortScaleSection, PaletteSection, sample_lines, scale_key_labels,
@@ -3921,6 +3921,7 @@ fn pager_action(action: Action) -> Option<PagerAction> {
         Action::PagerPrevMatch => PagerAction::PrevMatch,
         Action::PagerDetails => PagerAction::ToggleDetails,
         Action::PagerClose => PagerAction::Close,
+        Action::PagerCopy => PagerAction::Copy,
         _ => return None,
     })
 }
@@ -4151,14 +4152,31 @@ impl TuiScreen {
                 self.color,
                 &self.theme,
             );
-            transcript.pager.handle_action_with_renderer(
+            let outcome = transcript.pager.handle_action_with_renderer(
                 action,
                 &transcript_context(view),
                 &mut transcript.index,
                 &renderer,
             );
+            if let PagerOutcome::Copy { index } = outcome {
+                self.transcript_copy(view, index);
+            }
         }
         Vec::new()
+    }
+
+    /// Copy the finished reply at or below cell `index` of the transcript, and say what
+    /// happened in the transcript's footer and in scrollback. The transcript stays open.
+    fn transcript_copy(&mut self, view: &View<'_>, index: usize) {
+        let found = copy_below(transcript_context(view).cells, index);
+        let sentence = found.sentence();
+        if let Some(transcript) = self.transcript.as_mut() {
+            transcript.pager.show_notice(&sentence);
+        }
+        Screen::commit_lines(self, vec![format!("\u{b7} {sentence}")]);
+        if let Some(text) = found.copied() {
+            self.copy_mcp_text(text);
+        }
     }
 
     /// Whether the key opens the transcript.
@@ -4232,12 +4250,15 @@ impl TuiScreen {
                             self.color,
                             &self.theme,
                         );
-                        transcript.pager.handle_action_with_renderer(
+                        let outcome = transcript.pager.handle_action_with_renderer(
                             action,
                             &ctx,
                             &mut transcript.index,
                             &renderer,
                         );
+                        if let PagerOutcome::Copy { index } = outcome {
+                            self.transcript_copy(view, index);
+                        }
                     }
                 }
             }

@@ -2,6 +2,23 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-28 — The pager copies the finished reply at or below its top cell
+
+**Context.** The transcript pager can scroll a conversation, and `/copy` can copy a numbered
+reply. Nothing in the pager copied the reply the operator was looking at.
+
+**Decision.** `y` in the pager (`pager_copy`) copies the first finished assistant reply at or
+below the cell at the top of the pager. It uses the `/copy` rules: styling removed, code fences
+kept, and nothing over 100,000 characters. The reply keeps the number `/copy` would give it, and
+the `/copy` success sentence is shown in the pager footer and committed to scrollback. When no
+finished reply is at or below the top, the sentence is `No reply below this point to copy.`, not
+the `/copy` miss sentence, because the operator chose a place, not a number. The pager stays
+open.
+
+**Costs and revisit conditions.** The top cell is the only anchor, so to copy a reply further
+down the screen the operator scrolls it to the top first. Revisit when the pager grows a cursor
+inside a cell.
+
 ## 2026-11-28 — A rewind-picker fork is a branch through the row before the prompt
 
 **Context.** The rewind picker could cut the session in front (`c`) and restore files (`f`).
