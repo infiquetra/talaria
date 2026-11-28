@@ -79,13 +79,15 @@ pub fn rewind_turns(messages: &[Value]) -> Vec<RewindTurn> {
 
     let mut turns: Vec<RewindTurn> = Vec::new();
     let mut newest_time: Option<f64> = None;
+    let mut previous_valid_row_id: Option<i64> = None;
     for row in messages {
         if is_archived(row) {
             continue;
         }
+        let valid_row_id = integer_row_id(row).filter(|id| *id > 0);
         let timestamp = row.get("timestamp").and_then(Value::as_f64);
         if let Some(mut turn) = turn_from_row(row, timestamp, newest_time, &active_ids) {
-            turn.through_message_id = through_row_before(messages, turn.row_id);
+            turn.through_message_id = previous_valid_row_id;
             if let Some(previous) = turns.last_mut() {
                 previous.window_end = timestamp.map(floor_seconds);
             }
@@ -95,6 +97,9 @@ pub fn rewind_turns(messages: &[Value]) -> Vec<RewindTurn> {
             && let Some(current) = turns.last_mut()
         {
             current.edits_files = true;
+        }
+        if let Some(id) = valid_row_id {
+            previous_valid_row_id = Some(id);
         }
         if let Some(time) = timestamp {
             newest_time = Some(newest_time.map_or(time, |newest| newest.max(time)));

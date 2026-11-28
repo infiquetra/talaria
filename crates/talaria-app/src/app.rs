@@ -3218,10 +3218,13 @@ pub fn fork_effects(state: &mut AppState, call: &RewindCall) -> Vec<AppEffect> {
         ])];
     }
     let prefill = ForkPrefill {
-        text: text.clone(),
+        // A routed workflow prompt returns to the composer as typed; sending it routes again.
+        text: talaria_core::hivecode::shown_text(text).to_owned(),
         attachments_omitted: *attachments_omitted,
     };
     let Some(through) = *through_message_id else {
+        state.switching = true;
+        state.session_action = true;
         state.fork_prefill = Some(prefill);
         let cwd = state
             .folder
@@ -4745,6 +4748,8 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::Automation(event) => automation_event(state, event),
         AppMessage::Picker(input) => picker_input(state, input),
         AppMessage::SessionCleared(result) => {
+            state.switching = false;
+            state.session_action = false;
             let prefill = state.fork_prefill.take();
             match result {
                 SessionCleared::DetachFailed { reason } => vec![notice_lines(&format!(
@@ -6471,6 +6476,9 @@ fn local_effect(
         let Some(opened) = state.opened.as_ref() else {
             return vec![notice_lines("No session is open.")];
         };
+        if let Some(refusal) = session_busy(state) {
+            return refusal;
+        }
         if opened.state.turn() == &talaria_core::session::TurnState::Running
             || opened.state.open_prompts().next().is_some()
         {
@@ -6484,6 +6492,8 @@ fn local_effect(
         if state.link_failed {
             return vec![notice_lines(LINK_STOPPED_NOTICE)];
         }
+        state.switching = true;
+        state.session_action = true;
         let cwd = state
             .folder
             .cwd

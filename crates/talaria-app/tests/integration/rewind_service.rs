@@ -1249,3 +1249,58 @@ async fn oldest_prompt_starts_a_session_and_prefills() {
         "Your draft was kept. The forked prompt was: second"
     );
 }
+
+#[tokio::test]
+async fn oldest_prompt_fork_blocks_overlapping_clear_and_strips_hivecode_text() {
+    let (_mock, mut app) = opened_app(prompts_snapshot()).await;
+    let routed = "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\n\nThe user has provided the following instruction alongside the skill invocation: fix the parser";
+    let effects = fork_effects(
+        &mut app,
+        &Call::Branch {
+            through_message_id: None,
+            text: routed.into(),
+            attachments_omitted: false,
+        },
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [AppEffect::ClearSession {
+            skip_detach: false,
+            ..
+        }]
+    ));
+    assert_eq!(
+        app.fork_prefill
+            .as_ref()
+            .map(|prefill| prefill.text.as_str()),
+        Some("fix the parser")
+    );
+    assert!(app.switching);
+    assert!(app.session_action);
+
+    let overlap = update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("/clear".into())),
+    );
+    assert!(
+        !overlap
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::ClearSession { .. })),
+        "an overlapping /clear must be refused while oldest-prompt fork is in flight"
+    );
+    assert_eq!(
+        app.fork_prefill
+            .as_ref()
+            .map(|prefill| prefill.text.as_str()),
+        Some("fix the parser"),
+        "the refused /clear must not clear fork_prefill"
+    );
+
+    let _ = update(
+        &mut app,
+        AppMessage::SessionCleared(talaria_app::app::SessionCleared::Skipped),
+    );
+    assert!(!app.switching);
+    assert!(!app.session_action);
+    assert_eq!(app.fork_prefill, None);
+}
