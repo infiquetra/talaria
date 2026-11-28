@@ -134,3 +134,13 @@ fn clear_is_local_and_takes_no_argument() {
     );
     assert_eq!(clear.action, LocalAction::Clear);
 }
+
+#[test]
+fn theme_palette_hint_names_new() {
+    let table = LocalCommandTable::builtin();
+    let theme = table.find("theme").expect("/theme");
+    assert_eq!(
+        theme.args_hint,
+        "[report|light|dark|auto|use [<id>]|new <id>|reload]"
+    );
+}
