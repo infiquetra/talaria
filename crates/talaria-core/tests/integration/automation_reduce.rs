@@ -465,6 +465,167 @@ fn goal_completion_already_done_at_attach_is_silent() {
     }
 }
 
+/// A snapshot at `revision` with no goal at all.
+fn goal_absent_snapshot(revision: &str) -> Value {
+    let mut snapshot = full_snapshot();
+    snapshot["revision"] = json!(revision);
+    snapshot["goal"] = Value::Null;
+    snapshot
+}
+
+#[test]
+fn goal_first_seen_finished_after_attach_emits_once() {
+    use talaria_core::automation::ControlView;
+
+    // Attach one fresh state and deliver `first` as the attach's control read.
+    fn attach_with(first: &Value) -> AutomationState {
+        let mut state = AutomationState::default();
+        let effects = talaria_core::automation::update(&mut state, attached(SESSION));
+        let (token, _, _) = attach_tokens(&effects);
+        let effects = talaria_core::automation::update(
+            &mut state,
+            AutomationEvent::ControlRead {
+                token,
+                result: Ok(ControlView::decode(first).unwrap()),
+            },
+        );
+        assert!(
+            goal_completion_notices(&effects).is_empty(),
+            "attach read must not announce anything: {effects:?}"
+        );
+        state
+    }
+    fn step(state: &mut AutomationState, event: AutomationEvent) -> Vec<String> {
+        let effects = talaria_core::automation::update(state, event);
+        goal_completion_notices(&effects)
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
+    fn assert_none(arm: &str, label: &str, notices: &[String]) {
+        assert!(
+            notices.is_empty(),
+            "{arm} {label}: expected none: {notices:?}"
+        );
+    }
+    fn assert_one_done(arm: &str, label: &str, notices: &[String]) {
+        assert_eq!(notices.len(), 1, "{arm} {label}: expected one: {notices:?}");
+        for part in ["done", "Release notes reviewed and shipped", "3", "20"] {
+            assert!(
+                notices[0].contains(part),
+                "{arm} {label}: notice must contain {part:?}: {notices:?}"
+            );
+        }
+    }
+
+    // Arm 1: the attach read has no goal; a goal first seen finished later announces once.
+    let mut state = attach_with(&goal_absent_snapshot("r1"));
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r2")),
+    );
+    assert_one_done("arm 1", "done at r2", &notices);
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r3")),
+    );
+    assert_none("arm 1", "done again at r3", &notices);
+    let notices = step(&mut state, updated(SESSION, goal_absent_snapshot("r4")));
+    assert_none("arm 1", "goal null at r4", &notices);
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r5")),
+    );
+    assert_none("arm 1", "same done goal at r5", &notices);
+
+    // Arm 2: a different active goal at attach, then another goal first seen finished.
+    let mut active_other = full_snapshot();
+    active_other["goal"]["title"] = json!("Keep the lights on");
+    active_other["goal"]["status"] = json!("active");
+    let mut state = attach_with(&active_other);
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r2")),
+    );
+    assert_one_done("arm 2", "release notes done at r2", &notices);
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r3")),
+    );
+    assert_none("arm 2", "done again at r3", &notices);
+
+    // Arm 3: already done at attach stays silent, also after the goal clears and returns.
+    let mut state = attach_with(&goal_completion_snapshot("done", "r1"));
+    let notices = step(&mut state, updated(SESSION, goal_absent_snapshot("r2")));
+    assert_none("arm 3", "goal null at r2", &notices);
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r3")),
+    );
+    assert_none("arm 3", "same done goal at r3", &notices);
+
+    // Arm 4: the goal was active at attach, cleared, then the same goal reappears done.
+    let mut active_same = full_snapshot();
+    active_same["revision"] = json!("r1");
+    let mut state = attach_with(&active_same);
+    let notices = step(&mut state, updated(SESSION, goal_absent_snapshot("r2")));
+    assert_none("arm 4", "goal null at r2", &notices);
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r3")),
+    );
+    assert_none("arm 4", "same goal done at r3", &notices);
+
+    // Arm 5: the Hermes note announces first; the later snapshot is a duplicate.
+    let mut state = attach_with(&goal_absent_snapshot("r1"));
+    let notices = step(&mut state, goal_completion_note());
+    assert_eq!(
+        notices.len(),
+        1,
+        "arm 5 Hermes note: expected one: {notices:?}"
+    );
+    assert!(
+        notices[0].contains("Release notes reviewed and shipped"),
+        "arm 5 Hermes note: wrong text: {notices:?}"
+    );
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r2")),
+    );
+    assert_none("arm 5", "done at r2 after the note", &notices);
+}
+
+#[test]
+fn goal_finished_after_a_failed_attach_read_is_silent() {
+    for failure in [
+        ReadFailure::MethodMissing,
+        ReadFailure::Refused("not_found".into()),
+        ReadFailure::TimedOut,
+        ReadFailure::Lost,
+        ReadFailure::BadResult,
+    ] {
+        let label = format!("{failure:?}");
+        let mut state = AutomationState::default();
+        let effects = talaria_core::automation::update(&mut state, attached(SESSION));
+        let (token, _, _) = attach_tokens(&effects);
+        talaria_core::automation::update(
+            &mut state,
+            AutomationEvent::ControlRead {
+                token,
+                result: Err(failure),
+            },
+        );
+        let effects = talaria_core::automation::update(
+            &mut state,
+            updated(SESSION, goal_completion_snapshot("done", "r2")),
+        );
+        assert!(
+            goal_completion_notices(&effects).is_empty(),
+            "{label}: a goal finished after a failed attach read must stay silent"
+        );
+    }
+}
+
 #[test]
 fn goal_completion_without_verdict_or_reason_names_final_status() {
     let mut state = AutomationState::default();
