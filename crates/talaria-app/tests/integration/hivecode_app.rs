@@ -242,6 +242,71 @@ fn failures_restore_composer_and_never_fall_back() {
     }
 }
 #[test]
+fn a_typed_draft_survives_a_failed_ultracode_command() {
+    use hermes_client::replay::Cursor;
+    use talaria_app::app::{AppEffect, AppMessage, AppState, update};
+    use talaria_app::sessions::{OpenedSession, SessionInfoSummary};
+    use talaria_core::session::SessionState;
+
+    let mut state = AppState::new("fixture");
+    update(
+        &mut state,
+        AppMessage::Opened {
+            opened: OpenedSession {
+                state: SessionState::empty(SessionId::new("fixture-session")),
+                session_id: "fixture-session".into(),
+                stored_session_id: "fixture-session".into(),
+                subscription_id: "subscription-fixture".into(),
+                info: SessionInfoSummary {
+                    model: None,
+                    provider: None,
+                    cwd: None,
+                    branch: None,
+                },
+                title: None,
+                cursor: Cursor {
+                    replay_epoch: "epoch-fixture".into(),
+                    last_sequence: 0,
+                },
+                revision: 0,
+                execution_generation: 0,
+                launch_notices: vec![],
+                effort: None,
+            },
+            notice: None,
+        },
+    );
+    let failed = || AppMessage::HivecodeDone {
+        session: SessionId::new("fixture-session"),
+        original_text: "fix this".into(),
+        restore_text: None,
+        outcome: Err(ErrorView::TimedOut),
+    };
+
+    state.draft = "newer line".into();
+    let effects = update(&mut state, failed());
+    assert_eq!(
+        state.draft, "newer line",
+        "a draft typed while the command ran is kept"
+    );
+    assert!(
+        effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::CommitLines(lines) if lines.iter().any(|line| line.contains(
+                "The connection to Hermes was lost before the workflow request answered"
+            ))
+        )),
+        "the failure notice is still shown: {effects:?}"
+    );
+
+    state.draft = String::new();
+    update(&mut state, failed());
+    assert_eq!(
+        state.draft, "fix this",
+        "an empty composer gets the original prompt back"
+    );
+}
+#[test]
 fn slash_shell_and_keyword_paths() {
     let id = session();
     let service = on();
