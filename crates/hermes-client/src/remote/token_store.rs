@@ -47,6 +47,13 @@ impl TokenStore {
             .join("remote-tokens")
             .join(format!("{}.json", self.name.as_str()))
     }
+    /// The advisory lock file beside the token file. Saving replaces the token file, so the
+    /// lock lives on a file that is never replaced.
+    pub fn lock_path(&self) -> PathBuf {
+        let mut path = self.path().into_os_string();
+        path.push(".lock");
+        PathBuf::from(path)
+    }
     pub fn load(&self) -> Result<Option<TokenSet>, RemoteError> {
         let mut file = match OpenOptions::new()
             .read(true)

@@ -105,17 +105,22 @@ impl fmt::Debug for SignInError {
 impl std::error::Error for SignInError {}
 #[derive(Clone, PartialEq, Eq)]
 pub enum RefreshError {
-    SessionExpired,
+    SessionExpired { endpoint: String },
     ProviderUnreachable,
     Other(String),
 }
 impl fmt::Display for RefreshError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::SessionExpired => "sign-in expired; run talaria remote login <name>",
-            Self::ProviderUnreachable => "the sign-in provider is unreachable (HTTP 503)",
-            Self::Other(_) => "could not refresh the sign-in",
-        })
+        match self {
+            Self::SessionExpired { endpoint } => write!(
+                f,
+                "sign-in expired for {endpoint}; run talaria remote login <name>"
+            ),
+            Self::ProviderUnreachable => {
+                f.write_str("the sign-in provider is unreachable (HTTP 503)")
+            }
+            Self::Other(_) => f.write_str("could not refresh the sign-in"),
+        }
     }
 }
 impl fmt::Debug for RefreshError {
@@ -130,7 +135,7 @@ pub enum RemoteError {
     NotGated { url: String },
     NoNativeFlow { url: String },
     NotSignedIn { name: String },
-    RefusedAfterRefresh { name: String },
+    RefusedAfterRefresh { name: String, endpoint: String },
     UnservedProfile(String),
     Other(String),
     InvalidName,
@@ -153,9 +158,9 @@ impl fmt::Display for RemoteError {
                 "the gateway at {url} has no interactive sign-in provider"
             ),
             Self::NotSignedIn { name } => write!(f, "not signed in to {name}."),
-            Self::RefusedAfterRefresh { name } => write!(
+            Self::RefusedAfterRefresh { name, endpoint } => write!(
                 f,
-                "the gateway refused the sign-in for {name} after a refresh."
+                "the gateway at {endpoint} refused the sign-in for {name} after a refresh."
             ),
             Self::UnservedProfile(name) => {
                 write!(f, "the remote gateway does not serve the profile {name}")
@@ -363,6 +368,7 @@ pub(crate) async fn request_authenticated(
     }
     Err(RemoteError::RefusedAfterRefresh {
         name: cfg.name.as_str().to_owned(),
+        endpoint: crate::redact_url(cfg.base_url.as_str()),
     })
 }
 

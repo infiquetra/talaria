@@ -41,5 +41,6 @@ pub(crate) async fn mint_with_root(
     }
     Err(RemoteError::RefusedAfterRefresh {
         name: cfg.name.as_str().to_owned(),
+        endpoint: crate::redact_url(cfg.base_url.as_str()),
     })
 }

@@ -195,8 +195,10 @@ pub fn visible(text: &str) -> String {
 }
 fn auth_failure(error: RemoteError, name: &str) -> String {
     match error {
-        RemoteError::Refresh(hermes_client::remote::RefreshError::SessionExpired) => {
-            format!("sign-in for {name} expired.\nNext step: run talaria remote login {name}")
+        RemoteError::Refresh(hermes_client::remote::RefreshError::SessionExpired { endpoint }) => {
+            format!(
+                "sign-in for {name} at {endpoint} expired.\nNext step: run talaria remote login {name}"
+            )
         }
         RemoteError::Refresh(hermes_client::remote::RefreshError::ProviderUnreachable) => format!(
             "the sign-in provider for {name} is unreachable (HTTP 503).\nNext step: try again later"
