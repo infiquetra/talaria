@@ -10,10 +10,33 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-11-28
+
+Talaria 0.9.3 is the stable release of the workflow recovery, terminal
+usability, themes, and security changes staged in [0.9.2]. It also fixes
+session search when the picker is still connecting.
+
+See the [release notes](https://github.com/infiquetra/talaria/blob/v0.9.3/docs/release-notes/v0.9.3.md).
+
+### Added
+
+- Stable macOS and Linux packages for the workflow commands and 15 built-in
+  themes described under [0.9.2].
+
+### Changed
+
+- Session search stays editable when the picker's connection to Hermes finishes
+  in the background. You can keep typing after interrupting the current turn.
+
+### Removed
+
+- None.
+
 ## [0.9.2] — 2026-11-28
 
 Talaria 0.9.2 brings the workflow recovery changes from the two prereleases
 together with terminal usability, theme and input handling fixes.
+The tag was created before the picker fix. Its binary release was cancelled.
 
 See the [release notes](https://github.com/infiquetra/talaria/blob/v0.9.2/docs/release-notes/v0.9.2.md).
 
@@ -869,8 +892,9 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.9.2...HEAD
-[0.9.2]: https://github.com/infiquetra/talaria/releases/tag/v0.9.2
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/infiquetra/talaria/releases/tag/v0.9.3
+[0.9.2]: https://github.com/infiquetra/talaria/tree/v0.9.2
 [0.9.1]: https://github.com/infiquetra/talaria/releases/tag/v0.9.1
 [0.9.0]: https://github.com/infiquetra/talaria/releases/tag/v0.9.0
 [0.8.1]: https://github.com/infiquetra/talaria/releases/tag/v0.8.1

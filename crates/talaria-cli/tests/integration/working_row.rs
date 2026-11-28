@@ -150,7 +150,7 @@ fn wait_row(terminal: &support::Terminal, offers: bool, what: &str) {
     );
 }
 
-/// Ctrl+C targets the foreground turn even from an editable field in an overlay.
+/// Search stays editable when the picker connects after Ctrl+C interrupts the foreground turn.
 #[test]
 fn session_search_keeps_its_query_while_interrupting_the_turn() {
     let home = temp_home();
@@ -169,6 +169,8 @@ fn session_search_keeps_its_query_while_interrupting_the_turn() {
         .spawn();
     let limit = Duration::from_secs(8);
     assert!(terminal.wait_for_text("── Resumed: ", limit));
+    let lists_before_open = gateway.requests("session.list").len();
+    let (_reached, release) = gateway.hold_second_handshake();
     terminal.type_keys("/resume");
     assert!(terminal.wait_for_text("/resume", limit));
     // Let the composer's fast-paste window close before sending a separate Enter press.
@@ -181,11 +183,25 @@ fn session_search_keeps_its_query_while_interrupting_the_turn() {
     );
     terminal.type_keys("/needl");
     assert!(terminal.wait_for_text("needl", limit));
+    assert!(terminal.wait_for_text("Esc clear", limit));
     terminal.type_keys("\x03");
     let interrupt = gateway.wait_request("session.interrupt", 0, limit);
     assert!(interrupt.is_some(), "{}", terminal.screen_text());
+
+    // The first list request follows the picker's connection response.
+    release.send(()).expect("release the picker connection");
+    assert!(
+        gateway
+            .wait_request("session.list", lists_before_open, limit)
+            .is_some(),
+        "the picker never processed the new connection"
+    );
     terminal.type_keys("e");
-    assert!(terminal.wait_for_text("needle", limit));
+    assert!(
+        terminal.wait_for_text("needle", limit),
+        "search stopped accepting text after the picker connected:\n{}",
+        terminal.screen_text()
+    );
     assert!(terminal.screen_text().contains("Esc clear"));
 }
 

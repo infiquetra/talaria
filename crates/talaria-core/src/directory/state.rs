@@ -472,8 +472,8 @@ pub fn update(state: &mut PickerState, input: PickerInput, page: usize) -> Vec<P
                 }
             }
             order(&mut state.rows);
+            // Refresh the rows without taking focus from a search already underway.
             state.refresh_visible();
-            state.mode = PickerMode::List;
             state.cursor = 0;
             vec![PickerEffect::List { generation }]
         }
