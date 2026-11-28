@@ -3,10 +3,10 @@ use crate::support;
 use serde_json::json;
 use support::{ByteSink, Vt, probe};
 use talaria_core::settings::{
-    Conflict, ReviewRow, Screen, SettingsEditorView, SettingsRow, SettingsView,
+    Conflict, FieldHelp, ReviewRow, Screen, SettingsEditorView, SettingsRow, SettingsView,
 };
 use talaria_tui::live::FrameStats;
-use talaria_tui::settings::draw_settings;
+use talaria_tui::settings::{draw_settings, draw_settings_with_theme};
 use talaria_tui::terminal::{InlineTerminal, RestoreLink};
 
 fn row(key: &str, value: &str, origin: &str, marker: &str, effect: &str) -> SettingsRow {
@@ -30,6 +30,47 @@ fn browse() -> SettingsView {
         detail: "display.compact · boolean · Compact display. Default: false.".into(),
         ..Default::default()
     }
+}
+
+#[test]
+fn themes_colour_the_settings_surface_selected_row_and_footer() {
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
+    use talaria_tui::theme::{ColorDepth, DepthSource, resolve_with_theme_file};
+
+    let file = talaria_app::theme_file::parse(
+        r##"
+schema = 1
+extends = "dark"
+[elements."list.background"]
+bg = "#112233"
+[elements."list.header"]
+fg = "#aabbcc"
+[elements."list.selected"]
+bg = "#ccbb88"
+fg = "#010203"
+[elements."list.muted"]
+fg = "#8090a0"
+"##,
+    )
+    .unwrap();
+    let area = Rect::new(0, 0, 80, 24);
+    let mut buffer = Buffer::empty(area);
+    let theme = crate::view_colours_support::resolve(Some(&file)).theme;
+    draw_settings_with_theme(&browse(), area, &mut buffer, &theme.views);
+    assert_eq!(buffer[(79, 1)].bg, Color::Rgb(0x11, 0x22, 0x33));
+    assert_eq!(buffer[(0, 0)].fg, Color::Rgb(0xaa, 0xbb, 0xcc));
+    assert_eq!(buffer[(0, 3)].fg, Color::Rgb(1, 2, 3));
+    assert_eq!(buffer[(0, 3)].bg, Color::Rgb(0xcc, 0xbb, 0x88));
+    assert_eq!(buffer[(0, 23)].fg, Color::Rgb(0x80, 0x90, 0xa0));
+    let inputs = crate::view_colours_support::inputs((ColorDepth::None, DepthSource::Config));
+    let theme = resolve_with_theme_file(&inputs, Some(&file)).theme;
+    draw_settings_with_theme(&browse(), area, &mut buffer, &theme.views);
+    assert!(crate::view_colours_support::no_colour(&buffer).is_none());
+    assert!(
+        buffer[(0, 3)]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED)
+    );
 }
 fn rig(cols: u16, rows: u16) -> (InlineTerminal<ByteSink>, ByteSink, Vt) {
     let sink = ByteSink::default();
@@ -57,6 +98,22 @@ fn paint(
         .unwrap();
     vt.absorb(sink);
     vt.rows().join("\n")
+}
+
+#[test]
+fn narrow_settings_footers_keep_escape() {
+    let (mut term, sink, mut vt) = rig(40, 16);
+    let mut view = browse();
+    let screen = paint(&mut term, &sink, &mut vt, &view);
+    let footer = screen.lines().last().unwrap();
+    assert!(footer.ends_with("Esc close"), "{footer}");
+    assert!(!footer.contains("reload"), "{footer}");
+
+    view.screen = Screen::Conflict;
+    let screen = paint(&mut term, &sink, &mut vt, &view);
+    let footer = screen.lines().last().unwrap();
+    assert!(footer.ends_with("Esc back"), "{footer}");
+    assert!(!footer.contains("take theirs"), "{footer}");
 }
 
 #[test]
@@ -271,9 +328,9 @@ fn browse_review_conflict_160x48() {
         "true",
         "set",
         "may need a restart",
-        "display.skin",
+        "Skin",
         "\"mono\"",
-        "applies now",
+        "Selected setting",
     ] {
         assert!(screen.contains(expected), "missing {expected:?}: {screen}");
     }
@@ -329,17 +386,199 @@ fn browse_review_conflict_160x48() {
 }
 
 #[test]
+fn inspector_gives_the_readable_field_name_and_description_priority() {
+    let mut view = browse();
+    view.category = "display".into();
+    view.rows[0] = row(
+        "display.layout.deep_compact_density_for_thin_terminals",
+        "First value words continue across a terminal row until value-tail",
+        "set",
+        "",
+        "may need a restart",
+    );
+    view.field_help = Some(FieldHelp {
+        description: "Control the number of settings visible at once.".into(),
+        default_value: "standard".into(),
+        note: "This applies to the selected display profile.".into(),
+    });
+    for width in [60, 118] {
+        let (mut term, sink, mut vt) = rig(width, 24);
+        let screen = paint(&mut term, &sink, &mut vt, &view);
+        let panel = if width >= 108 {
+            let x = usize::from(width - width / 3 + 2);
+            screen
+                .lines()
+                .skip(1)
+                .map(|row| row.chars().skip(x).collect::<String>())
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            let start = screen.find("\nLayout › deep compact density").unwrap();
+            screen[start..].to_owned()
+        };
+        let panel = panel.split_whitespace().collect::<Vec<_>>().join(" ");
+        let heading = panel
+            .find("Layout › deep compact density for thin terminals")
+            .unwrap();
+        let description = panel
+            .find("Control the number of settings visible at once.")
+            .unwrap();
+        let value = panel
+            .find("First value words continue across a terminal row until value-tail")
+            .unwrap();
+        let key = panel.find("Key display.layout").unwrap();
+        let source = panel.find("Source Profile setting").unwrap();
+        assert!(
+            heading < description && description < value && value < key && key < source,
+            "{panel}"
+        );
+        assert!(
+            panel[key..source]
+                .split_whitespace()
+                .collect::<String>()
+                .contains("display.layout.deep_compact_density_for_thin_terminals"),
+            "{panel}"
+        );
+        assert!(
+            panel.contains("Default standard") && panel.contains("may need a restart"),
+            "{panel}"
+        );
+        assert!(
+            panel.contains("This applies to the selected display profile."),
+            "{panel}"
+        );
+    }
+}
+
+#[test]
+fn settings_pointer_follows_the_visible_rows_after_resize_and_filtering() {
+    use ratatui::{buffer::Buffer, layout::Rect};
+    use talaria_core::settings::{
+        ConfigSchemaView, EditKey, FieldKind, FieldView, SettingsAction, SettingsInput,
+        SettingsKey, SettingsSnapshot, SettingsState, SettingsTarget,
+    };
+    use talaria_tui::settings::{PointerMotion, pointer_enabled, pointer_key};
+
+    let field = |category: &str, name: &str| FieldView {
+        key: format!("{category}.{name}"),
+        kind: FieldKind::String,
+        description: String::new(),
+        category: category.into(),
+        options: None,
+        searchable: false,
+        clearable: false,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: std::iter::once(field("general", "example"))
+                .chain((0..20).map(|i| field("display", &format!("option_{i:02}"))))
+                .collect(),
+            category_order: vec!["general".into(), "display".into()],
+        },
+        effective: json!({}),
+        raw: json!({}),
+        defaults: json!({}),
+    }));
+    let at = |state: &SettingsState, area: Rect, x: u16, y: u16, motion| {
+        pointer_key(&state.view(), area, area.x + x, area.y + y, motion)
+    };
+    let press = |state: &mut SettingsState, key| {
+        assert!(state.update(SettingsInput::Key(key)).is_empty());
+    };
+    let select = PointerMotion::Select;
+    let wide = Rect::new(3, 4, 118, 24);
+    let category = at(&state, wide, 0, 3, select).unwrap();
+    assert!(
+        matches!(&category, SettingsKey::Select(SettingsTarget::Category(name)) if name == "display")
+    );
+    press(&mut state, category);
+    let wheel = at(&state, wide, 20, 2, PointerMotion::Down).unwrap();
+    press(&mut state, wheel);
+    assert_eq!(state.view().cursor, 1);
+    for _ in 0..2 {
+        press(&mut state, SettingsKey::Action(SettingsAction::PageDown));
+    }
+
+    let compact = Rect::new(5, 7, 60, 18);
+    let mut buffer = Buffer::empty(compact);
+    draw_settings(&state.view(), compact, &mut buffer);
+    let key = at(&state, compact, 2, 3, select).unwrap();
+    let SettingsKey::Select(SettingsTarget::Field(ref field)) = key else {
+        panic!("expected the top visible field");
+    };
+    let rendered = (compact.x..compact.right())
+        .map(|x| buffer[(x, compact.y + 3)].symbol())
+        .collect::<String>();
+    let number = field.strip_prefix("display.option_").unwrap();
+    assert!(rendered.contains(&format!("Option {number}")));
+    press(&mut state, key);
+    assert!(state.view().review_rows.is_empty());
+    assert!(matches!(
+        at(&state, compact, 0, 1, select),
+        Some(SettingsKey::Action(SettingsAction::PrevCategory))
+    ));
+    assert!(at(&state, compact, 0, compact.height - 1, select).is_none());
+
+    for key in [
+        SettingsKey::Action(SettingsAction::Filter),
+        SettingsKey::Paste("option_18".into()),
+        SettingsKey::Edit(EditKey::Enter),
+    ] {
+        press(&mut state, key);
+    }
+    assert!(at(&state, compact, 0, 1, select).is_none());
+    assert!(
+        matches!(at(&state, compact, 2, 4, select), Some(SettingsKey::Select(SettingsTarget::Field(ref key))) if key == "display.option_18")
+    );
+    let filter = at(&state, compact, 2, 3, select).unwrap();
+    assert!(matches!(
+        filter,
+        SettingsKey::Action(SettingsAction::Filter)
+    ));
+    press(&mut state, filter);
+    assert!(!pointer_enabled(&state.view(), compact));
+    assert!(at(&state, compact, 2, 4, PointerMotion::Down).is_none());
+    press(&mut state, SettingsKey::Paste("_discovery_timeout".into()));
+    let mut buffer = Buffer::empty(wide);
+    draw_settings(&state.view(), wide, &mut buffer);
+    let filter_row = (wide.x..wide.right())
+        .map(|x| buffer[(x, wide.y + 2)].symbol())
+        .collect::<String>();
+    let footer = (wide.x..wide.right())
+        .map(|x| buffer[(x, wide.bottom() - 1)].symbol())
+        .collect::<String>();
+    assert!(
+        footer.contains("show matches · Esc clear filter"),
+        "{footer}"
+    );
+    assert!(
+        filter_row.contains("│ / option_18_discovery_timeout"),
+        "{filter_row}"
+    );
+    assert_eq!(
+        state.view().filter_cursor,
+        Some("option_18_discovery_timeout".len())
+    );
+}
+
+#[test]
 fn narrow_and_too_small() {
     let (mut term, sink, mut vt) = rig(80, 24);
     let view = browse();
     let screen = paint(&mut term, &sink, &mut vt, &view);
-    assert!(screen.contains("‹ display ›"), "{screen}");
+    assert!(screen.contains("‹ Display ›"), "{screen}");
     assert!(screen.contains("display.compact"));
     assert!(screen.contains("may need a restart"));
     let (mut term, sink, mut vt) = rig(59, 11);
     let screen = paint(&mut term, &sink, &mut vt, &view);
     assert!(
-        screen.contains("Make the terminal at least 60 by 12 to use settings."),
+        screen.contains("Settings needs 40 columns and 12 rows. Esc closes."),
         "{screen}"
     );
     assert!(!screen.contains("display.compact"));

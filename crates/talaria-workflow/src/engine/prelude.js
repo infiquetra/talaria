@@ -66,7 +66,7 @@
     }
     return decode(encode(schema));
   };
-  const allowed = ["label", "phase", "schema", "tier", "model", "provider", "effort", "profile", "toolsets", "skills", "isolation", "maxTurns", "stallMs"];
+  const allowed = ["label", "phase", "schema", "tier", "model", "provider", "effort", "profile", "toolsets", "skills", "isolation", "reportFile", "maxTurns", "stallMs"];
   const normalize = (prompt, opts) => {
     if (!nonblank(prompt)) bad("agent(): prompt must be a non-blank string");
     if (opts == null) opts = {};
@@ -80,7 +80,7 @@
       const value = opts[key];
       if (value === undefined) continue;
       if (value === null) bad(`agent(): ${key} must not be null`);
-      if (["label", "phase", "tier", "model", "provider", "profile"].includes(key)) {
+      if (["label", "phase", "tier", "model", "provider", "profile", "reportFile"].includes(key)) {
         if (!nonblank(value)) bad(`agent(): ${key} must be a non-blank string`);
         if (key === "label" && Array.from(value).length > 120) bad("agent(): label exceeds 120 characters");
       } else if (key === "effort") {
@@ -93,7 +93,8 @@
         if (!Array.isArray(value) || value.length === 0 || value.some(v => !nonblank(v)) || new Set(value).size !== value.length) bad(`agent(): ${key} must be a non-empty array of distinct non-blank strings`);
         for (let i = 0; i < value.length; i++) if (!Object.hasOwn(value, i)) bad(`agent(): ${key} has an array hole`);
       }
-      result[key === "maxTurns" ? "max_turns" : key] = key === "schema" ? schemaJSON(value) : value;
+      const name = key === "maxTurns" ? "max_turns" : key === "reportFile" ? "report_file" : key;
+      result[name] = key === "schema" ? schemaJSON(value) : value;
     }
     result.label ??= cut(trim(prompt.split("\n").find(nonblank)), 60);
     return result;
@@ -151,7 +152,7 @@
         request.phase ??= currentPhase;
         request.workflow_path = path;
         const id = nextId++;
-        const promise = new Promise((resolve, reject) => pending.set(id, {resolve, reject, label: request.label}));
+        const promise = new Promise((resolve, reject) => pending.set(id, {resolve, reject, label: request.label, reportFile: request.report_file}));
         send({kind: "agent", id, request});
         return promise;
       } catch (e) { return Promise.reject(e); }
@@ -240,7 +241,7 @@
           if (typeof value.cut_short.saved_branch === "string") mark.savedBranch = value.cut_short.saved_branch;
           stoppedAtCap.push({label: entry.label, ...mark});
           // Hidden from keys, spread and JSON, so a script that ignores the mark sees the value as before.
-          const v = value.value;
+          const v = entry.reportFile === undefined ? value.value : value.value.value;
           if (v !== null && typeof v === "object" && !Object.hasOwn(v, "cutShort")) Object.defineProperty(v, "cutShort", {value: Object.freeze(mark)});
         }
         entry.resolve(value.value);

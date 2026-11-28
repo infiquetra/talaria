@@ -14,6 +14,7 @@ pub mod schedule;
 pub mod script_check;
 pub mod staffing;
 pub mod tokens;
+mod untrusted_file;
 
 pub mod worktree;
 

@@ -1,6 +1,7 @@
 //! The list part of the fleet overlay: header text, columns, group headers and rows.
 
 use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use std::collections::BTreeMap;
 
 use ratatui::style::Style;
@@ -23,8 +24,11 @@ const MARK_WIDTH: usize = 1;
 const TITLE_WIDTH: usize = 28;
 /// Width of the profile column.
 const PROFILE_WIDTH: usize = 12;
-/// Width of the model column.
+/// Width the model column starts with.
 const MODEL_WIDTH: usize = 18;
+/// Maximum model width when the activity column has room to give.
+const MAX_MODEL_WIDTH: usize = 42;
+const MIN_ACTIVITY_WIDTH: usize = 14;
 /// Width of the pull-request column.
 const PR_WIDTH: usize = 14;
 /// Width of the age column.
@@ -34,7 +38,7 @@ const COST_WIDTH: usize = 7;
 /// The profile column needs this many columns.
 const PROFILE_MIN_WIDTH: u16 = 80;
 /// The model column needs this many columns.
-const MODEL_MIN_WIDTH: u16 = 60;
+const MODEL_MIN_WIDTH: u16 = 72;
 /// The pull-request column needs this many columns.
 const PR_MIN_WIDTH: u16 = 110;
 /// The cost column needs this many columns.
@@ -186,8 +190,9 @@ pub(super) fn not_listed_lines(profiles: &[(String, ProfileStatus)]) -> Vec<Stri
 
 /// The columns a width allows.
 pub(super) struct Columns {
+    width: u16,
     profile: bool,
-    model: bool,
+    model: Option<usize>,
     pr: bool,
     cost: bool,
     title: usize,
@@ -207,7 +212,7 @@ impl Columns {
         profiles.sort_unstable();
         profiles.dedup();
         let profile = width >= PROFILE_MIN_WIDTH && profiles.len() > 1;
-        let model = width >= MODEL_MIN_WIDTH;
+        let model = width >= MODEL_MIN_WIDTH && (!profile || width >= 90);
         let pr = width >= PR_MIN_WIDTH
             && groups
                 .iter()
@@ -226,14 +231,56 @@ impl Columns {
         let room = usize::from(width).saturating_sub(others);
         let title = TITLE_WIDTH.min(room.max(TITLE_FLOOR));
         let detail = room.saturating_sub(title);
+        let extra_model = if model && detail > MIN_ACTIVITY_WIDTH {
+            groups
+                .iter()
+                .flat_map(|group| group.rows.iter())
+                .filter_map(|(row, _)| row.model.as_deref())
+                .map(|model| columns_of(&sanitize(short_model(model))))
+                .max()
+                .unwrap_or(0)
+                .min(MAX_MODEL_WIDTH)
+                .saturating_sub(MODEL_WIDTH)
+                .min(detail - MIN_ACTIVITY_WIDTH)
+        } else {
+            0
+        };
         Self {
+            width,
             profile,
-            model,
+            model: model.then_some(MODEL_WIDTH + extra_model),
             pr,
             cost,
             title,
-            detail,
+            detail: detail - extra_model,
         }
+    }
+
+    pub(super) fn headings(&self) -> String {
+        let mut parts = vec![
+            " ".to_owned(),
+            " ".to_owned(),
+            cut("Session", self.title, true),
+        ];
+        if self.profile {
+            parts.push(cut("Profile", PROFILE_WIDTH, true));
+        }
+        if let Some(width) = self.model {
+            parts.push(cut("Model", width, true));
+        }
+        if self.pr {
+            parts.push(cut("PR", PR_WIDTH, true));
+        }
+        parts.push(cut(
+            if self.detail >= 8 { "Activity" } else { "" },
+            self.detail,
+            true,
+        ));
+        parts.push(cut("Age", AGE_WIDTH, true));
+        if self.cost {
+            parts.push(cut("Cost", COST_WIDTH, true));
+        }
+        parts.join(GAP)
     }
 }
 
@@ -278,7 +325,10 @@ pub(super) fn body_lines<'a>(
 
 fn empty_text(state: &FleetViewState) -> String {
     if !state.filter_text().is_empty() {
-        return format!("No sessions match \"{}\".", sanitize(state.filter_text()));
+        return format!(
+            "No sessions match \"{}\". Change the filter or press Esc to clear it.",
+            sanitize(state.filter_text())
+        );
     }
     match state.profile_filter() {
         ProfileFilter::One(profile) => {
@@ -301,7 +351,7 @@ pub(super) fn draw_body_line(
     labels: &BTreeMap<RowKey, PrLabel>,
     theme: &FleetTheme,
 ) {
-    let width = usize::from(buf.area.right().saturating_sub(x));
+    let width = usize::from(columns.width);
     match line {
         BodyLine::Group(group, count) => {
             let text = format!("{} ({count})", group_name(*group));
@@ -315,6 +365,7 @@ pub(super) fn draw_body_line(
             let mut style = theme.row_style(row.state, row.stale);
             if on_cursor {
                 style = style.patch(theme.cursor);
+                buf.set_style(Rect::new(x, y, columns.width, 1), style);
             }
             let label = labels.get(&row.key);
             let (text, pr_at) = row_text(row, detail, columns, on_cursor, state, label);
@@ -322,7 +373,11 @@ pub(super) fn draw_body_line(
             // The label is drawn over its blank cell so that its tone can differ from the row's.
             if let (Some(at), Some(label)) = (pr_at, label) {
                 let at = u16::try_from(at).unwrap_or(u16::MAX);
-                let cell = style.patch(theme.label_style(label.tone));
+                let cell = if on_cursor {
+                    style
+                } else {
+                    style.patch(theme.label_style(label.tone))
+                };
                 let text = cut(&label.text, PR_WIDTH, true);
                 draw_text(buf, x.saturating_add(at), y, &text, PR_WIDTH, cell);
             }
@@ -347,13 +402,13 @@ fn row_text(
     if columns.profile {
         parts.push(cut(&row.key.profile, PROFILE_WIDTH, true));
     }
-    if columns.model {
+    if let Some(width) = columns.model {
         let model = row
             .model
             .as_deref()
             .filter(|model| !model.is_empty())
             .map_or("-", short_model);
-        parts.push(cut(model, MODEL_WIDTH, true));
+        parts.push(model_cell(model, width));
     }
     let mut pr_at = None;
     if columns.pr {
@@ -378,6 +433,18 @@ fn row_text(
         parts.push(cut(&cost, COST_WIDTH, true));
     }
     (parts.join(GAP), pr_at)
+}
+
+fn model_cell(model: &str, width: usize) -> String {
+    let clean = sanitize(model);
+    if columns_of(&clean) <= width {
+        return cut(&clean, width, true);
+    }
+    let tail_width = width / 2 + 1;
+    let prefix = cut(&clean, width - tail_width + 1, false);
+    let (tail, _) = cut_tail(&clean, tail_width);
+    let prefix = prefix.strip_suffix('…').unwrap_or(&prefix);
+    cut(&format!("{prefix}{tail}"), width, true)
 }
 
 /// The title with its marker, cut so that the marker stays.

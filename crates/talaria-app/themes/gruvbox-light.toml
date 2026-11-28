@@ -1,0 +1,18 @@
+schema = 1
+name = "Gruvbox Light"
+extends = "light"
+follow_hermes_skin = false
+
+[palette]
+background = "#fbf1c7"
+surface = "#ebdbb2"
+foreground = "#3c3836"
+muted = "#504945"
+disabled = "#645b53"
+border = "#7c6f64"
+primary = "#a62f03"
+accent = "#076678"
+success = "#635f0b"
+warning = "#73530e"
+error = "#9d0006"
+attention = "#8f2f71"

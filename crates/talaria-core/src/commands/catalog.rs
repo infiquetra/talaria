@@ -422,6 +422,17 @@ impl CommandCatalog {
         self.warning.as_deref()
     }
 
+    /// Built-in command names and the skills that have to be invoked through `/skill`.
+    pub fn skill_collisions(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.warning()
+            .and_then(|warning| warning.strip_prefix("slash command /"))
+            .into_iter()
+            .flat_map(|warnings| warnings.split("; slash command /"))
+            .filter_map(|warning| {
+                warning.split_once(" unavailable — name taken by built-in; use /skill ")
+            })
+    }
+
     /// The plugin discovery error. `None` when it is empty.
     #[must_use]
     pub fn plugin_discovery_error(&self) -> Option<&str> {

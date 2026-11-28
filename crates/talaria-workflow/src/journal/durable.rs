@@ -1,5 +1,7 @@
 use super::{replay::CallHistory, *};
-use crate::engine::{AgentBackend, AgentOutcome, AgentRequest, BudgetSnapshot};
+use crate::engine::{
+    AgentBackend, AgentOutcome, AgentRequest, BudgetSnapshot, Isolation, RecoveredReport,
+};
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
@@ -188,7 +190,12 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         };
         if let Ok(ended) = &finished {
             // Only a failed call can leave work behind on its route.
-            if sweep && matches!(ended, AgentOutcome::Failed { .. }) {
+            if sweep
+                && matches!(
+                    ended,
+                    AgentOutcome::Failed { .. } | AgentOutcome::FailedWithReport { .. }
+                )
+            {
                 // The outcome is recorded; the caller's scheduler permit is already dropped.
                 let _ = self.route_busy(key).await;
             }
@@ -204,7 +211,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
     async fn save_work(&self, key: &str, outcome: AgentOutcome) -> AgentOutcome {
         let state = match &outcome {
             AgentOutcome::CutShort { .. } => "was cut short at its step limit",
-            AgentOutcome::Failed { .. } => "failed",
+            AgentOutcome::Failed { .. } | AgentOutcome::FailedWithReport { .. } => "failed",
             AgentOutcome::Stopped { .. } => "was stopped",
             _ => return outcome,
         };
@@ -231,6 +238,15 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             }
             AgentOutcome::Failed { reason } => AgentOutcome::Failed {
                 reason: attach(reason),
+            },
+            AgentOutcome::FailedWithReport {
+                reason,
+                value,
+                report,
+            } => AgentOutcome::FailedWithReport {
+                reason: attach(reason),
+                value,
+                report,
             },
             AgentOutcome::Stopped { reason } => AgentOutcome::Stopped {
                 reason: attach(reason),
@@ -443,6 +459,12 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         busy
     }
     async fn run(&self, request: AgentRequest) -> Result<AgentOutcome, JournalError> {
+        if request.report_file.is_some()
+            && let Some((key, outcome, seq)) = self.journal.kept_report(&request.call_id)?
+        {
+            self.journal.encounter(&key)?;
+            return blobs::outcome(self.journal.dir().path(), &outcome, seq);
+        }
         let launch = match self.resolver.resolve(&request) {
             Ok(launch) => launch,
             Err(reason) => {
@@ -483,16 +505,21 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             let h = self.journal.history(&key)?;
             let old_attempt = h.attempt();
             let restart_requested = self.journal.restart_requested(&key, old_attempt)?;
-            let failed_resume = (h.execution != self.journal.execution() || restart_requested)
-                && matches!(
-                    h.last().map(|r| &r.record),
-                    Some(
-                        Record::CallFinished {
-                            outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
-                            ..
-                        } | Record::CallRetryFinished { .. }
-                    )
-                );
+            let retry_report = matches!(
+                h.last().map(|r| &r.record),
+                Some(Record::CallReportRestartRequested { .. })
+            );
+            let failed_resume = retry_report
+                || (h.execution != self.journal.execution() || restart_requested)
+                    && matches!(
+                        h.last().map(|r| &r.record),
+                        Some(
+                            Record::CallFinished {
+                                outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
+                                ..
+                            } | Record::CallRetryFinished { .. }
+                        )
+                    );
             let fresh = h.last().is_none() || next_attempt.is_some() || failed_resume;
             let attempt = if let Some(a) = next_attempt.take() {
                 a
@@ -510,6 +537,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 // Register in scheduler order before asynchronous journal writes can reorder calls.
                 let mut admission = self.gate.acquire(&request, &launch, GateReason::Fresh);
                 let ready = futures::poll!(&mut admission);
+                let report_baseline = self.report_baseline(&request, &launch).await;
                 // Keep intent durable while the admission gate holds the call.
                 self.queued
                     .lock()
@@ -524,6 +552,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     workflow_path: request.workflow_path.clone(),
                     launch: launch.clone(),
                     request_id: request_id(self.journal.dir().run_id(), &key, attempt),
+                    report_baseline,
                 };
                 match self.journal.append(record).await {
                     Err(JournalError::RecordTooLarge { t, .. }) => {
@@ -975,6 +1004,15 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 Record::TurnSettled { .. } => {
                     let turns = h.turns(self.journal.dir().path())?;
                     let next = self.policy.after_turn(&request, &turns);
+                    if let Some(turn) = turns.last()
+                        && let Some(outcome) =
+                            self.recover_report(&request, &h, turn, &next).await?
+                    {
+                        drop(permit.take());
+                        return self
+                            .finish_call(&key, attempt, turns.len() as u32, outcome)
+                            .await;
+                    }
                     // A finished answer is kept; anything else would spend past the budget.
                     if !matches!(
                         next,
@@ -1221,6 +1259,100 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 }
             }
         }
+    }
+
+    async fn report_baseline(
+        &self,
+        request: &AgentRequest,
+        launch: &ResolvedLaunch,
+    ) -> Option<String> {
+        if launch.isolation != Some(Isolation::Worktree) {
+            return None;
+        }
+        let path = request.report_file.clone()?;
+        let dir = self.journal.dir().path().to_owned();
+        let cwd = std::path::PathBuf::from(launch.cwd.as_ref()?);
+        let call = request.call_id.clone();
+        tokio::task::spawn_blocking(move || {
+            match crate::worktree::read_report_bytes(&dir, &cwd, &call, &path) {
+                Ok(bytes) => Some(keys::sha(&bytes)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some("absent".into()),
+                Err(_) => None,
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn recover_report(
+        &self,
+        request: &AgentRequest,
+        history: &CallHistory,
+        turn: &SettledTurn,
+        next: &NextStep,
+    ) -> Result<Option<AgentOutcome>, JournalError> {
+        if !matches!(turn.outcome.as_str(), "completed" | "failed")
+            || StopSource::from_meta(&turn.result_meta).is_some()
+        {
+            return Ok(None);
+        }
+        let (Some(path), Some(schema), Some(baseline), Some((call, launch, ..))) = (
+            &request.report_file,
+            &request.schema,
+            history.report_baseline(),
+            history.intent(),
+        ) else {
+            return Ok(None);
+        };
+        let (reason, reply) = match next {
+            NextStep::Finish(AgentOutcome::Failed { reason }) => (Some(reason.clone()), None),
+            NextStep::Turn { .. } => (None, turn.final_text.clone()),
+            _ => return Ok(None),
+        };
+        let Some(folder) = &launch.cwd else {
+            return Ok(None);
+        };
+        let (dir, folder, call, path, schema, baseline) = (
+            self.journal.dir().path().to_owned(),
+            std::path::PathBuf::from(folder),
+            call.clone(),
+            path.clone(),
+            schema.clone(),
+            baseline.to_owned(),
+        );
+        tokio::task::spawn_blocking(move || {
+            let Ok((bytes, value)) =
+                crate::worktree::read_report_file(&dir, &folder, &call, &path, &schema)
+            else {
+                return Ok(None);
+            };
+            if keys::sha(&bytes) == baseline {
+                return Ok(None);
+            }
+            let reason = reason.unwrap_or_else(|| {
+                let errors =
+                    crate::hermes::validate_output(reply.as_deref().unwrap_or(""), &schema)
+                        .err()
+                        .unwrap_or_default();
+                format!(
+                    "agent's reply does not fit the schema: {}",
+                    errors.into_iter().take(3).collect::<Vec<_>>().join("; ")
+                )
+            });
+            let stored = put_report_blob(&dir, &bytes)?;
+            Ok(Some(AgentOutcome::FailedWithReport {
+                reason: cut(&reason, 4096),
+                value,
+                report: RecoveredReport {
+                    path: path.into(),
+                    sha256: stored.sha256,
+                    bytes: stored.bytes,
+                },
+            }))
+        })
+        .await
+        .map_err(io_error)?
     }
     async fn turn_intent(
         &self,

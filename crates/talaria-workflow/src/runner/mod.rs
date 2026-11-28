@@ -2,6 +2,7 @@
 
 pub mod agents;
 pub mod control;
+pub mod evidence;
 pub mod execute;
 mod files;
 mod leftover;
@@ -37,8 +38,11 @@ pub struct ProgressPicker {
 }
 impl ProgressPicker {
     pub fn load(runs_dir: &std::path::Path) -> Self {
+        Self::load_with_local_cache(runs_dir, true)
+    }
+    pub fn load_with_local_cache(runs_dir: &std::path::Path, read_local_cache: bool) -> Self {
         Self {
-            rows: discover_runs(runs_dir),
+            rows: runs::discover_runs_with_local_cache(runs_dir, read_local_cache),
             selected: 0,
         }
     }

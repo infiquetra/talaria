@@ -6,4 +6,4 @@ mod input;
 mod preview;
 
 pub use input::handle_selection_key;
-pub use preview::{composer_title, render_indicator, render_preview};
+pub use preview::{composer_title, render_indicator, render_preview, render_preview_with_theme};

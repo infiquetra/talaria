@@ -91,7 +91,7 @@ pub fn draw_connectors_with_palette(
         return;
     }
     let mut body = vec![
-        view.title.clone(),
+        format!("Keyboard only · {}", view.title),
         match view.tab {
             ConnectorsTab::Connectors => "[Connectors]   Messaging",
             ConnectorsTab::Messaging => "Connectors   [Messaging]",

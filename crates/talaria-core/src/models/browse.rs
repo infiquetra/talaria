@@ -1,6 +1,6 @@
 //! Pure grouping and presentation facts above the unchanged gateway catalogue.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::catalog::EFFORT_NOT_OFFERED;
 use super::text::token_count;
@@ -75,6 +75,7 @@ pub(super) struct BrowseRows {
 
 pub(super) fn same_route(left: &RowKey, right: &RowKey) -> bool {
     match (left, right) {
+        (RowKey::Provider { provider: a, .. }, RowKey::Provider { provider: b, .. }) => a == b,
         (RowKey::NotSetUp { provider: a }, RowKey::NotSetUp { provider: b }) => a == b,
         (
             RowKey::Favourite {
@@ -99,6 +100,9 @@ pub(super) fn same_route(left: &RowKey, right: &RowKey) -> bool {
 }
 
 fn matches(row: &CatalogRow, terms: &[String]) -> bool {
+    if terms.is_empty() {
+        return true;
+    }
     let text = format!("{} {} {}", row.provider_name, row.provider_slug, row.model).to_lowercase();
     terms.iter().all(|term| text.contains(term))
 }
@@ -110,6 +114,7 @@ pub(super) fn rows(
     zone: DisplayZone,
     scope: ListScope,
     filter: &str,
+    provider_expansion: &BTreeMap<String, bool>,
 ) -> BrowseRows {
     let configured = catalog
         .result
@@ -141,19 +146,35 @@ pub(super) fn rows(
     let mut seen = BTreeSet::new();
     let mut visible_providers = BTreeSet::new();
     let mut pending_header = None;
-    for row in catalog.rows(favourites, zone) {
+    let grouped = matches!(scope, ListScope::All | ListScope::Configured);
+    let current_provider = catalog.current_provider();
+    let expanded = |slug: &str| {
+        provider_expansion
+            .get(slug)
+            .copied()
+            .unwrap_or(slug == current_provider)
+    };
+    let mut model_count = 0;
+    for row in catalog.rows_for_providers(favourites, zone, |slug| {
+        grouped && (!terms.is_empty() || expanded(slug))
+    }) {
         if row.kind == CatalogKind::Header {
             let allowed = if row.provider_slug.is_empty() {
                 if row.text == "Favourites" {
-                    matches!(scope, ListScope::All | ListScope::Starred)
+                    scope == ListScope::Starred
                 } else {
                     matches!(scope, ListScope::All | ListScope::SetUp)
                 }
             } else {
                 matches!(scope, ListScope::All | ListScope::Configured)
             };
+            let foldable =
+                allowed && !row.provider_slug.is_empty() && row.model_count > 0 && terms.is_empty();
             pending_header = allowed.then(|| PickerRow {
-                key: None,
+                key: foldable.then(|| RowKey::Provider {
+                    provider: row.provider_slug.clone(),
+                    expanded: expanded(&row.provider_slug),
+                }),
                 text: if row.text == "Favourites" {
                     "Starred".into()
                 } else if row.text.starts_with("Not set up (") {
@@ -164,19 +185,31 @@ pub(super) fn rows(
                         .collect::<Vec<_>>()
                         .join(" · ")
                 },
-                badges: Vec::new(),
+                badges: if foldable {
+                    vec![format!(
+                        "{} model{}",
+                        row.model_count,
+                        if row.model_count == 1 { "" } else { "s" }
+                    )]
+                } else {
+                    Vec::new()
+                },
                 price: None,
                 dim: false,
                 header: true,
             });
-            // A configured provider can return no models; retain an honest non-action row.
+            if foldable && !expanded(&row.provider_slug) {
+                if let Some(header) = pending_header.take() {
+                    result.rows.push(header);
+                    result.facts.push(RowFacts::default());
+                }
+                visible_providers.insert(row.provider_slug);
+                model_count += row.model_count;
+                continue;
+            }
             if allowed
                 && !row.provider_slug.is_empty()
-                && catalog
-                    .result
-                    .providers
-                    .iter()
-                    .any(|p| p.slug == row.provider_slug && p.models.is_empty())
+                && row.model_count == 0
                 && matches(&row, &terms)
             {
                 if let Some(header) = pending_header.take() {
@@ -197,11 +230,8 @@ pub(super) fn rows(
             continue;
         }
         let allowed = match row.kind {
-            CatalogKind::Favourite => matches!(scope, ListScope::All | ListScope::Starred),
-            CatalogKind::Model => {
-                matches!(scope, ListScope::All | ListScope::Configured)
-                    && !(scope == ListScope::All && row.favourite)
-            }
+            CatalogKind::Favourite => scope == ListScope::Starred,
+            CatalogKind::Model => matches!(scope, ListScope::All | ListScope::Configured),
             CatalogKind::NotSetUp => matches!(scope, ListScope::All | ListScope::SetUp),
             CatalogKind::Header => false,
         };
@@ -222,6 +252,9 @@ pub(super) fn rows(
             not_listed: row.badges.iter().any(|b| b == "not listed"),
             unavailable: row.badges.iter().any(|b| b == "unavailable"),
         };
+        if !facts.not_listed && matches!(row.kind, CatalogKind::Model | CatalogKind::Favourite) {
+            model_count += 1;
+        }
         let badge = if facts.not_listed {
             "not listed".into()
         } else if facts.unavailable {
@@ -276,18 +309,7 @@ pub(super) fn rows(
         });
         result.facts.push(facts);
     }
-    result.counts.models = result
-        .rows
-        .iter()
-        .zip(&result.facts)
-        .filter(|(row, facts)| {
-            !facts.not_listed
-                && matches!(
-                    row.key,
-                    Some(RowKey::Model { .. } | RowKey::Favourite { .. })
-                )
-        })
-        .count();
+    result.counts.models = model_count;
     result.counts.providers = visible_providers.len();
     result
 }
@@ -305,6 +327,13 @@ pub(super) fn details(
         return vec!["No action until a valid row is selected.".into()];
     };
     let (slug, model) = match key {
+        RowKey::Provider { expanded, .. } => {
+            return vec![if *expanded {
+                "Enter folds this provider. Down selects a model.".into()
+            } else {
+                "Enter shows this provider’s models.".into()
+            }];
+        }
         RowKey::NotSetUp { provider } => {
             let p = catalog
                 .result

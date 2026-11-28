@@ -7,18 +7,36 @@ use ratatui::widgets::{Clear, Widget};
 use talaria_core::model_roles::RoutePickerView;
 
 use super::{paint, paint_rows};
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// Draw the picker: its title, the typed filter, the rows and, at the foot, a status line.
 pub fn draw_route_picker(view: &RoutePickerView, area: Rect, buf: &mut Buffer) {
+    draw_route_picker_with_theme(view, area, buf, &ViewStyles::default());
+}
+
+pub(super) fn draw_route_picker_with_theme(
+    view: &RoutePickerView,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
     let area = area.intersection(buf.area);
     if area.is_empty() {
         return;
     }
     Clear.render(area, buf);
+    views.finish(area, buf, t::DIALOG_BACKGROUND, true);
     let margin = u16::from(area.width > 2);
     let x = area.x + margin;
     let width = area.width.saturating_sub(2 * margin);
-    paint(&view.title, x, area.y, width, Style::default().bold(), buf);
+    paint(
+        &view.title,
+        x,
+        area.y,
+        width,
+        views.style(t::LIST_HEADER, Style::default().bold()),
+        buf,
+    );
     if area.height < 2 {
         return;
     }
@@ -27,7 +45,7 @@ pub fn draw_route_picker(view: &RoutePickerView, area: Rect, buf: &mut Buffer) {
         x,
         area.y + 1,
         width,
-        Style::default(),
+        views.style(t::DIALOG_INPUT, Style::default()),
         buf,
     );
     let mut bottom = area.bottom();
@@ -40,13 +58,13 @@ pub fn draw_route_picker(view: &RoutePickerView, area: Rect, buf: &mut Buffer) {
             x,
             bottom,
             width,
-            Style::default().add_modifier(Modifier::DIM),
+            views.style(t::LIST_MUTED, Style::default().add_modifier(Modifier::DIM)),
             buf,
         );
     }
     let top = area.y + 2;
     let list = Rect::new(x, top, width, bottom.saturating_sub(top));
-    paint_rows(&view.rows, true, list, buf);
+    paint_rows(&view.rows, true, list, buf, views);
 }
 
 #[cfg(test)]

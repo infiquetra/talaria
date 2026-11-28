@@ -7,12 +7,12 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use talaria_core::directory::rows::format_age;
 use talaria_core::fleet::{FleetRow, Outcome, RowState};
-use talaria_core::fleet_view::{FleetViewState, Focus, glyph, row_detail, title_or_untitled};
+use talaria_core::fleet_view::{FleetViewState, glyph, row_detail, title_or_untitled};
 use talaria_core::session::{Cell, NoticeKind, PromptState, SessionState, TurnOutcome, TurnState};
 
 use super::rows::cut;
 use super::{FleetTheme, Panel, PeekPanel};
-use crate::history::{CellLines, sanitize, sanitize_line, wrap_lines};
+use crate::history::{CellLines, sanitize, sanitize_line, word_wrapped, wrap_lines};
 use crate::live::LiveSection;
 use crate::markdown::{MarkdownTheme, cells::MarkdownCellLines};
 use crate::prompts::PromptStack;
@@ -61,20 +61,6 @@ pub(super) fn draw_panel(
     used
 }
 
-/// The hint line of the first card, read from the card's own rendering.
-pub(super) fn card_hint(stack: &PromptStack, width: u16) -> Option<String> {
-    let section = stack.section()?;
-    let height = section.height(width);
-    if height == 0 {
-        return None;
-    }
-    let mut scratch = Buffer::empty(Rect::new(0, 0, width, height));
-    section.render(*scratch.area(), &mut scratch);
-    let last = height - 1;
-    let text: String = (0..width).map(|x| scratch[(x, last)].symbol()).collect();
-    Some(text.trim_end().to_owned())
-}
-
 fn render(
     state: &FleetViewState,
     panel: &Panel<'_>,
@@ -110,7 +96,16 @@ fn render(
         (None, None) => String::new(),
     };
     let header_style = row.map_or(theme.header, |row| theme.row_style(row.state, false));
-    put(scratch, &cut(&header, width, false), header_style, &mut y);
+    let header = word_wrapped(&sanitize(&header), scratch.area.width);
+    let header_rows = height.saturating_sub(3).clamp(1, 3);
+    for (index, text) in header.iter().take(header_rows).enumerate() {
+        let text = if index + 1 == header_rows && header.len() > header_rows {
+            cut(&format!("{text}…"), width, false)
+        } else {
+            text.clone()
+        };
+        put(scratch, &text, header_style, &mut y);
+    }
 
     match panel {
         Panel::Opening => {
@@ -135,53 +130,18 @@ fn render(
                 put(scratch, &line.to_string(), theme.header, &mut y);
             }
         }
-        Panel::Session(panel) => {
-            let card_area = session_body(
-                panel,
-                row,
-                scratch,
-                theme,
-                &mut y,
-                height.max(CHROME_ROWS),
-                views,
-            );
-            if let Some(area) = card_area {
-                rewrite_approval_hint(scratch, area, state.focus());
-            }
-        }
+        Panel::Session(panel) => session_body(
+            panel,
+            row,
+            scratch,
+            theme,
+            &mut y,
+            height.max(CHROME_ROWS),
+            views,
+        ),
         Panel::External(panel) => external_body(panel, scratch, theme, &mut y, height, views),
     }
     y.min(height)
-}
-
-fn rewrite_approval_hint(scratch: &mut Buffer, area: Rect, focus: &Focus) {
-    let replacement = match focus {
-        Focus::List => "ctrl+c close",
-        Focus::Answer => "ctrl+c back to list",
-        _ => return,
-    };
-    let suffix = "Ctrl+C deny and stop";
-    let suffix_width = suffix.len();
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            if usize::from(area.right() - x) < suffix_width {
-                break;
-            }
-            if suffix.bytes().enumerate().all(|(offset, byte)| {
-                scratch[(x + u16::try_from(offset).unwrap_or(0), y)]
-                    .symbol()
-                    .as_bytes()
-                    == [byte]
-            }) {
-                let style = scratch[(x, y)].style();
-                for offset in 0..suffix_width {
-                    scratch[(x + u16::try_from(offset).unwrap_or(0), y)].set_symbol(" ");
-                }
-                scratch.set_stringn(x, y, replacement, suffix_width, style);
-                break;
-            }
-        }
-    }
 }
 
 fn external_body(
@@ -341,7 +301,7 @@ fn session_body(
     y: &mut usize,
     height: usize,
     views: Option<&ViewStyles>,
-) -> Option<Rect> {
+) {
     let width = scratch.area.width;
     let session = panel.session;
     let running = matches!(session.turn(), TurnState::Running);
@@ -360,13 +320,16 @@ fn session_body(
     let room = height.saturating_sub(*y).saturating_sub(footer.len());
 
     let section = panel.stack.and_then(PromptStack::section);
-    let mut card_area = None;
     if let Some(section) = section {
+        let section = section.without_key_hints();
+        let section = match views {
+            Some(views) => section.with_theme(views),
+            None => section,
+        };
         let shown = usize::from(section.height(width)).min(room);
         if shown > 0 {
             let area = Rect::new(0, u16::try_from(*y).unwrap_or(0), width, width_u16(shown));
             section.render(area, scratch);
-            card_area = Some(area);
             *y += shown;
         }
     } else {
@@ -394,7 +357,6 @@ fn session_body(
             *y += 1;
         }
     }
-    card_area
 }
 
 fn ended_of(session: &SessionState, row: Option<&FleetRow>) -> Option<Ended> {

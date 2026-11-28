@@ -13,7 +13,7 @@ use talaria_core::session::{Cell, CellId, NoticeKind, ReasoningCell};
 
 use super::Theme;
 use crate::automation::hermes_command_lines_with_options_and_theme;
-use crate::history::{CellLines, PlainCellLines};
+use crate::history::{CellLines, PlainCellLines, Speaker, word_wrapped};
 use crate::markdown::{MarkdownOptions, render_markdown_with_theme};
 
 /// Draws Markdown cells with one theme; every other cell keeps its owner's look. A presented
@@ -37,15 +37,33 @@ pub fn reasoning_base(theme: &Theme) -> Style {
 
 impl CellLines for ThemedCells<'_> {
     fn lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
+        self.cell_lines(cell, width, false)
+    }
+
+    fn continuation_lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
+        self.cell_lines(cell, width, true)
+    }
+}
+
+impl ThemedCells<'_> {
+    fn cell_lines(&self, cell: &Cell, width: u16, continuation: bool) -> Vec<Line<'static>> {
         let (text, base_style) = match cell {
             Cell::Assistant(cell) => (&cell.text, Style::default()),
             Cell::Reasoning(cell) => (&cell.text, reasoning_base(self.theme)),
-            Cell::User(cell) if self.theme.views.active() => {
-                let style = self.theme.views.inline(
+            Cell::User(cell) => {
+                let body = self.theme.views.inline(
                     super::surfaces::tokens::TRANSCRIPT_USER_TEXT,
-                    Style::default().add_modifier(Modifier::BOLD),
+                    Style::default(),
                 );
-                return crate::history::prefixed_wrapped("> ", &cell.text, style, width);
+                let label = self.theme.views.inline(
+                    super::surfaces::tokens::TRANSCRIPT_USER_LABEL,
+                    self.theme.status.style(crate::status::Tone::Accent),
+                );
+                let lines = word_wrapped(&cell.text, Speaker::body_width(width))
+                    .into_iter()
+                    .map(|row| Line::styled(row, body))
+                    .collect();
+                return Speaker::User.lines(lines, width, label, continuation);
             }
             Cell::Notice(cell) => {
                 let dim = Style::default().add_modifier(Modifier::DIM);
@@ -107,7 +125,11 @@ impl CellLines for ThemedCells<'_> {
         let mut lines = render_markdown_with_theme(
             text,
             &MarkdownOptions {
-                width,
+                width: if matches!(cell, Cell::Assistant(_)) {
+                    Speaker::body_width(width)
+                } else {
+                    width
+                },
                 theme: self.theme.markdown.clone(),
                 color: self.theme.color,
                 base_style,
@@ -119,6 +141,12 @@ impl CellLines for ThemedCells<'_> {
                 0,
                 Line::styled(reasoning_heading(reasoning), heading_style(self.theme)),
             );
+        } else {
+            let label = self.theme.views.inline(
+                super::surfaces::tokens::TRANSCRIPT_ASSISTANT_LABEL,
+                self.theme.status.style(crate::status::Tone::Muted),
+            );
+            lines = Speaker::Assistant.lines(lines, width, label, continuation);
         }
         lines
     }
@@ -154,11 +182,11 @@ pub fn reasoning_summary_text(
     let label = if !cell.sealed {
         "\u{2234} thinking\u{2026}".to_owned()
     } else if cell.latest_step {
-        "\u{2234} thinking, latest step".to_owned()
+        "\u{2234} reasoning, last step".to_owned()
     } else {
         match took.filter(|took| took.as_secs() >= 1) {
             Some(took) => format!("\u{2234} thought for {}", took_label(took)),
-            None => "\u{2234} thinking".to_owned(),
+            None => "\u{2234} reasoning".to_owned(),
         }
     };
     let count = crate::history::split_lines(cell.text.trim()).count();
@@ -265,7 +293,9 @@ impl ReasoningClock {
 /// tools is only the latest step's thinking, drawn after that step, so its heading says so.
 pub fn reasoning_heading(cell: &ReasoningCell) -> &'static str {
     if cell.latest_step {
-        "∴ thinking (latest step)"
+        "∴ reasoning (last step)"
+    } else if cell.sealed {
+        "∴ reasoning"
     } else {
         "∴ thinking"
     }

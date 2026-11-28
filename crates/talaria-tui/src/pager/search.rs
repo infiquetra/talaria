@@ -125,7 +125,7 @@ fn parts_of<'a>(cell: &'a Cell, other: &'a dyn CellLines) -> Vec<Cow<'a, str>> {
     // The wildcard arm keeps a cell kind added later from breaking the build.
     #[allow(unreachable_patterns)]
     match cell {
-        Cell::User(inner) => parts.push(Cow::Borrowed(inner.text.as_str())),
+        Cell::User(inner) => parts.push(Cow::Borrowed(inner.transcript_text())),
         Cell::Assistant(inner) => parts.push(Cow::Borrowed(inner.text.as_str())),
         Cell::Reasoning(inner) => parts.push(Cow::Borrowed(inner.text.as_str())),
         Cell::Tool(inner) => {
@@ -136,7 +136,7 @@ fn parts_of<'a>(cell: &'a Cell, other: &'a dyn CellLines) -> Vec<Cow<'a, str>> {
             if let Some(args) = &inner.args
                 && !args.as_object().is_some_and(serde_json::Map::is_empty)
             {
-                parts.push(Cow::Owned(pretty_json(args)));
+                parts.push(Cow::Owned(crate::tool_cell::argument_text(args)));
             }
             if let Some(summary) = &inner.summary {
                 parts.push(Cow::Borrowed(summary.as_str()));
@@ -213,11 +213,6 @@ fn folded_search_text(cell: &Cell, other: &dyn CellLines) -> String {
 /// The raw search text of one cell, used by a case-sensitive query.
 fn raw_search_text(cell: &Cell, other: &dyn CellLines) -> String {
     parts_of(cell, other).join("\n")
-}
-
-/// The arguments of a tool call, as the screen shows them.
-fn pretty_json(value: &serde_json::Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
 
 /// The text of one line, with the span contents joined.

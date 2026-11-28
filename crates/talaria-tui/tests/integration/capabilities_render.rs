@@ -16,6 +16,18 @@ use talaria_tui::terminal::{InlineTerminal, RestoreLink};
 const SKILL_HINTS: &str = "Space on/off  Enter read  / filter  Tab next tab  r refresh  Esc close";
 
 #[test]
+fn capability_details_wrap_before_a_word_that_fits_on_its_own() {
+    let mut view = sample();
+    view.detail_focus = true;
+    view.detail = vec![format!("{} background", "Will run ".repeat(4).trim_end())];
+    let rows = screen(&view, 40, 16);
+    assert!(
+        rows.iter().any(|row| row.trim() == "background"),
+        "{rows:?}"
+    );
+}
+
+#[test]
 fn three_digit_counts_fit_every_selected_tab_at_eighty_columns() {
     for tab in [
         CapTab::Skills,

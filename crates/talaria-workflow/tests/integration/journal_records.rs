@@ -39,6 +39,7 @@ fn round_trip_every_record_type() {
             workflow_path: vec![],
             launch: launch(),
             request_id: "wf:fixture".into(),
+            report_baseline: None,
         },
         Record::SessionBound {
             key: k.clone(),
@@ -204,6 +205,7 @@ async fn every_allowed_transition_round_trips() {
             workflow_path: vec![],
             launch: launch(),
             request_id: format!("request-{attempt}"),
+            report_baseline: None,
         }
     }
     fn bound() -> Record {

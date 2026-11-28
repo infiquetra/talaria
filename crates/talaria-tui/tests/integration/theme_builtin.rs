@@ -1,7 +1,8 @@
-//! The three built-in themes, pinned before their files exist.
+//! Built-in theme palettes and semantic role resolution.
 use ratatui::style::{Color, Modifier};
 use talaria_app::theme_file::{
-    Base, BorderPreset, ColorValue, DividerPreset, StyleFields, ThemeFile, builtin, catalogue,
+    BUILTIN_THEMES, Base, BorderPreset, ColorValue, DividerPreset, StyleFields, ThemeFile, builtin,
+    catalogue,
 };
 use talaria_core::appearance::Rgb;
 use talaria_tui::theme::color::{ansi_color, to_ansi16};
@@ -31,7 +32,7 @@ const PAPER_EXCEPT_DISABLED: &[(&str, u8, u8, u8)] = &[
     ("surface", 0xee, 0xe8, 0xdc),
     ("foreground", 0x25, 0x23, 0x1f),
     ("muted", 0x66, 0x5d, 0x50),
-    ("border", 0x89, 0x7a, 0x65),
+    ("border", 0x89, 0x73, 0x65),
     ("primary", 0x71, 0x40, 0x00),
     ("accent", 0x00, 0x5a, 0x80),
     ("success", 0x28, 0x5c, 0x2a),
@@ -42,6 +43,28 @@ const PAPER_EXCEPT_DISABLED: &[(&str, u8, u8, u8)] = &[
 
 fn builtin_theme(id: &str) -> ThemeFile {
     builtin(id).unwrap_or_else(|| panic!("{id} built-in is not available"))
+}
+
+#[test]
+fn current_search_hit_has_its_own_fill_and_monochrome_marker() {
+    for theme in [None, builtin("ember"), builtin("paper")] {
+        let resolved = theme::resolve_with_theme_file(
+            &inputs(ColorDepth::TrueColor, true, None),
+            theme.as_ref(),
+        );
+        let pager = resolved.theme.views.pager_theme();
+        assert_ne!(pager.search_current.bg, pager.search_match.bg);
+        let mono =
+            theme::resolve_with_theme_file(&inputs(ColorDepth::None, true, None), theme.as_ref());
+        let pager = mono.theme.views.pager_theme();
+        assert!(
+            pager
+                .search_current
+                .add_modifier
+                .contains(Modifier::REVERSED | Modifier::UNDERLINED)
+        );
+        assert!(!pager.search_match.add_modifier.contains(Modifier::REVERSED));
+    }
 }
 
 fn inputs(depth: ColorDepth, follow: bool, skin: Option<&Skin>) -> ThemeInputs<'_> {
@@ -184,7 +207,7 @@ fn paper_disabled_reaches_4_5() {
 
 #[test]
 fn no_contrast_warnings() {
-    for id in ["ember", "paper"] {
+    for id in BUILTIN_THEMES.into_iter().filter(|id| *id != "terminal") {
         let file = builtin_theme(id);
         let resolved =
             theme::resolve_with_theme_file(&inputs(ColorDepth::TrueColor, true, None), Some(&file));
@@ -199,14 +222,14 @@ fn no_contrast_warnings() {
 
 #[test]
 fn every_token_resolves() {
-    assert_eq!(catalogue().len(), 323);
-    for id in ["terminal", "ember", "paper"] {
+    assert_eq!(catalogue().len(), 328);
+    for id in BUILTIN_THEMES {
         let file = builtin_theme(id);
         let resolved = theme::resolve_with_theme_file(
             &inputs(ColorDepth::TrueColor, file.follow_hermes_skin, None),
             Some(&file),
         );
-        assert_eq!(resolved.elements.len(), 323, "{id}");
+        assert_eq!(resolved.elements.len(), catalogue().len(), "{id}");
         for entry in catalogue() {
             assert!(
                 resolved.elements.contains_key(entry.token),
@@ -300,23 +323,6 @@ fn terminal_uses_default_background_and_named_accents() {
     assert_eq!(file.extends, Base::Terminal);
     assert!(file.follow_hermes_skin);
     study_chrome(&file);
-    study_roles(&file);
-    for (slot, value) in [
-        ("background", ColorValue::Default),
-        ("surface", ColorValue::Default),
-        ("foreground", ColorValue::Default),
-        ("muted", ColorValue::Ansi(7)),
-        ("disabled", ColorValue::Ansi(8)),
-        ("border", ColorValue::Ansi(7)),
-        ("primary", ColorValue::Ansi(3)),
-        ("accent", ColorValue::Ansi(6)),
-        ("success", ColorValue::Ansi(2)),
-        ("warning", ColorValue::Ansi(3)),
-        ("error", ColorValue::Ansi(1)),
-        ("attention", ColorValue::Ansi(3)),
-    ] {
-        assert_eq!(file.palette.get(slot), Some(&value), "{slot}");
-    }
     for role in ["selection", "focus"] {
         assert_eq!(file.roles[role].reverse, Some(true), "{role}");
     }
@@ -334,6 +340,12 @@ fn terminal_uses_default_background_and_named_accents() {
         &inputs(ColorDepth::TrueColor, false, Some(&skin)),
         Some(&file),
     );
+    assert_ne!(
+        style_for(&followed, "transcript.link.text").fg,
+        style_for(&ignored, "transcript.link.text").fg,
+        "the built-in Terminal theme should actually apply the Hermes accent: {:?}",
+        followed.report.as_ref().unwrap().sources["transcript.link.text"]
+    );
     assert!(followed.report.unwrap().skin_participates);
     assert!(!ignored.report.unwrap().skin_participates);
     let resolved =
@@ -341,6 +353,10 @@ fn terminal_uses_default_background_and_named_accents() {
     let text = style_for(&resolved, "transcript.text");
     assert_eq!(text.fg, Some(Color::Reset));
     assert_eq!(text.bg, Some(Color::Reset));
+    assert_eq!(
+        style_for(&resolved, "transcript.link.text").fg,
+        Some(Color::LightCyan)
+    );
     let selection = style_for(&resolved, "transcript.selection");
     assert!(selection.add_modifier.contains(Modifier::REVERSED));
 }

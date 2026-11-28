@@ -21,6 +21,8 @@ use talaria_core::appearance::{
     PolaritySource, Skin, SkippedValue, TerminalColors, ThemeReport,
 };
 
+use crate::theme_file::selection::{self, Background};
+
 /// How long the reconnect describe waits before its one retry.
 const DESCRIBE_RETRY: Duration = Duration::from_secs(1);
 
@@ -45,7 +47,7 @@ pub struct AppearanceService {
     files: Option<ThemeFileSession>,
     file_generation: u64,
     file_loading: bool,
-    file_commands: VecDeque<String>,
+    file_commands: VecDeque<(String, ThemeFileWork)>,
     /// What the `/theme` selector shows in place of the file or background, while it is open.
     preview: Option<ThemePreview>,
 }
@@ -57,6 +59,13 @@ pub enum ThemePreview {
     File(Option<(String, crate::theme_file::ThemeFile)>),
     /// This background, or the start-up decision for `None`, in place of the one in force.
     Background(Option<Polarity>),
+}
+
+/// Local theme work serialized by the application loop.
+#[derive(Clone, Debug)]
+pub(crate) enum ThemeFileWork {
+    Command(String),
+    ProfileChanged,
 }
 
 impl AppearanceService {
@@ -120,12 +129,18 @@ impl AppearanceService {
         AppearanceChange::Changed
     }
 
-    /// The polarity in force: the session override, else the start-up decision.
+    /// The polarity in force, including the active profile's saved preference.
     pub fn polarity(&self) -> (Polarity, PolaritySource) {
         match self.override_ {
             Some(polarity) => (polarity, PolaritySource::Command),
-            None => self.startup_polarity,
+            None => self.files.as_ref().map_or(self.startup_polarity, |files| {
+                files.polarity(self.startup_polarity)
+            }),
         }
+    }
+
+    pub(crate) fn startup_polarity(&self) -> (Polarity, PolaritySource) {
+        self.startup_polarity
     }
 
     /// Set or clear the session polarity override. True when the theme changes.
@@ -135,9 +150,13 @@ impl AppearanceService {
         before != self.polarity()
     }
 
-    /// The session polarity override, if any.
+    /// The chosen background, if any.
     pub fn polarity_override(&self) -> Option<Polarity> {
-        self.override_
+        self.override_.or_else(|| {
+            self.files
+                .as_ref()
+                .and_then(|files| files.background.map(Polarity::from))
+        })
     }
 
     /// Adopt the selection prepared before the first frame.
@@ -151,30 +170,32 @@ impl AppearanceService {
 
     /// Update profile selection without reading a file on the loop.
     pub fn set_file_profile(&mut self, profile: &str) -> bool {
-        let Some(files) = &mut self.files else {
-            return false;
-        };
-        let before = files.selected_id().map(str::to_owned);
-        if !files.set_profile(profile) {
-            return false;
-        }
-        before.as_deref() != files.selected_id()
+        self.files
+            .as_mut()
+            .is_some_and(|files| files.set_profile(profile))
     }
 
-    pub fn queue_file_command(&mut self, argument: String) {
-        self.file_commands.push_back(argument);
+    pub(crate) fn queue_file_work(&mut self, work: ThemeFileWork) {
+        if let Some(files) = &self.files {
+            self.file_commands.push_back((files.profile.clone(), work));
+        }
     }
 
     /// Start one queued command from the last adopted selection.
-    pub fn begin_file_request(&mut self) -> Option<(u64, ThemeFileSession, String)> {
+    pub(crate) fn begin_file_request(&mut self) -> Option<(u64, ThemeFileSession, ThemeFileWork)> {
         if self.file_loading {
             return None;
         }
-        let files = self.files.clone()?;
-        let argument = self.file_commands.pop_front()?;
+        let mut files = self.files.clone()?;
+        let (profile, work) = self.file_commands.pop_front()?;
+        files.set_profile(&profile);
         self.file_loading = true;
         self.file_generation = self.file_generation.wrapping_add(1);
-        Some((self.file_generation, files, argument))
+        Some((self.file_generation, files, work))
+    }
+
+    pub(crate) fn file_loading(&self) -> bool {
+        self.file_loading
     }
 
     pub fn file_generation(&self) -> u64 {
@@ -192,17 +213,13 @@ impl AppearanceService {
     pub fn adopt_file_result(
         &mut self,
         generation: u64,
-        mut files: ThemeFileSession,
+        files: ThemeFileSession,
     ) -> Option<AppearanceChange> {
-        if generation != self.file_generation {
+        let current = self.files.as_ref()?;
+        if generation != self.file_generation || files.profile != current.profile {
             return None;
         }
-        let changed = self.files.as_ref().map(|old| &old.active) != Some(&files.active);
-        // A connection may change profiles while the file is read. Keep that newer identity;
-        // a queued profile refresh then inherits any session choice this command produced.
-        if let Some(current) = &self.files {
-            files.profile.clone_from(&current.profile);
-        }
+        let changed = current.active != files.active || current.background != files.background;
         self.files = Some(files);
         Some(if changed {
             AppearanceChange::Changed
@@ -776,15 +793,16 @@ pub fn background_restored_line(polarity: Polarity, source_label: &str) -> Strin
 }
 
 /// The `/theme` usage line.
-pub const THEME_USAGE: &str = "Usage: /theme [light|dark|auto|use [<id>]|reload]";
+pub const THEME_USAGE: &str = "Usage: /theme [report|light|dark|auto|use [<id>]|reload]";
 
-/// The selected user theme file for one application run.
+/// The theme configuration and saved preferences for the active profile.
 #[derive(Clone, Debug)]
 pub struct ThemeFileSession {
     config_path: PathBuf,
     theme: crate::config::ThemeConfig,
     profile: String,
-    session_file: Option<String>,
+    saved_file: Option<String>,
+    background: Option<Background>,
     active: Option<(String, crate::theme_file::ThemeFile)>,
 }
 
@@ -794,14 +812,15 @@ impl ThemeFileSession {
             config_path: config,
             theme,
             profile: profile.to_owned(),
-            session_file: None,
+            saved_file: None,
+            background: None,
             active: None,
         }
     }
 
-    /// The file chosen for this session with `/theme use <id>`, if any.
-    pub fn session_choice(&self) -> Option<&str> {
-        self.session_file.as_deref()
+    /// The file chosen for this profile with `/theme use <id>`, if any.
+    pub fn saved_choice(&self) -> Option<&str> {
+        self.saved_file.as_deref()
     }
 
     /// The file the configuration selects for this profile, if any.
@@ -813,12 +832,13 @@ impl ThemeFileSession {
             .or(self.theme.file.as_deref())
     }
 
-    /// The `config.toml` table that keeps a file choice for this profile.
-    pub fn file_table(&self) -> String {
-        if self.theme.profiles.contains_key(&self.profile) {
-            format!("[theme.profiles.{}]", self.profile)
-        } else {
-            "[theme]".to_owned()
+    /// Resolve a saved background over the startup decision, honoring `TALARIA_THEME`.
+    pub fn polarity(&self, startup: (Polarity, PolaritySource)) -> (Polarity, PolaritySource) {
+        match self.background {
+            Some(background) if startup.1 != PolaritySource::Environment => {
+                (background.into(), PolaritySource::Command)
+            }
+            _ => startup,
         }
     }
 
@@ -828,10 +848,7 @@ impl ThemeFileSession {
     }
 
     pub fn selected_id(&self) -> Option<&str> {
-        self.session_file
-            .as_deref()
-            .or_else(|| self.theme.profiles.get(&self.profile).map(String::as_str))
-            .or(self.theme.file.as_deref())
+        self.saved_choice().or_else(|| self.configured_id())
     }
     pub fn active_id(&self) -> Option<&str> {
         self.active.as_ref().map(|(id, _)| id.as_str())
@@ -840,16 +857,32 @@ impl ThemeFileSession {
         self.active.as_ref().map(|(_, file)| file)
     }
     pub fn startup(&mut self) -> Vec<String> {
-        if let Err(error) = self.refresh() {
-            return vec![error];
+        self.active = None;
+        self.saved_file = None;
+        let mut notices = Vec::new();
+        let saved = selection::read(&self.config_path, &self.profile).unwrap_or_else(|error| {
+            notices.push(error);
+            selection::Selection::default()
+        });
+        self.background = saved.background;
+        if let Err(error) = self.load_choice(saved.file.as_deref()) {
+            notices.push(error);
+            if saved.file.is_some()
+                && saved.file.as_deref() != self.configured_id()
+                && let Err(error) = self.load_choice(None)
+            {
+                notices.push(error);
+            }
+        } else {
+            self.saved_file = saved.file;
         }
-        self.active_id()
-            .and_then(|id| self.reserved_notice(id))
-            .into_iter()
-            .collect()
+        notices.extend(self.active_id().and_then(|id| self.reserved_notice(id)));
+        notices
     }
     fn reserved_notice(&self, id: &str) -> Option<String> {
-        crate::theme_file::builtin(id)?;
+        if !crate::theme_file::reserved_id(id) {
+            return None;
+        }
         let parent = self
             .config_path
             .parent()
@@ -870,19 +903,9 @@ impl ThemeFileSession {
         let words: Vec<_> = argument.split_whitespace().collect();
         let before = self.active.clone();
         let result = match words.as_slice() {
-            ["use", id] if crate::theme_file::valid_id(id) => match self.load_selection(id) {
-                Ok(file) => {
-                    self.session_file = Some((*id).to_owned());
-                    self.active = Some(((*id).to_owned(), file));
-                    Ok(())
-                }
-                Err(error) => Err(error),
-            },
-            ["use"] => {
-                self.session_file = None;
-                self.refresh()
-            }
-            ["reload"] => self.refresh(),
+            ["use", id] if crate::theme_file::valid_id(id) => self.save_file(Some(id)),
+            ["use"] => self.save_file(None),
+            ["reload"] => self.reload(),
             _ => return (vec![THEME_USAGE.to_owned()], AppearanceChange::Unchanged),
         };
         if let Err(error) = result {
@@ -898,28 +921,85 @@ impl ThemeFileSession {
             |id| format!("Theme file: themes/{id}.toml."),
         );
         let mut lines = vec![line];
+        if let ["use", _] = words.as_slice() {
+            lines.push("Theme choice saved for this profile.".to_owned());
+        }
         if let Some(notice) = self.active_id().and_then(|id| self.reserved_notice(id)) {
             lines.push(notice);
         }
         (lines, change)
     }
 
-    fn refresh(&mut self) -> Result<(), String> {
-        self.active = match self.selected_id() {
-            Some(id) => Some((id.to_owned(), self.load_selection(id)?)),
-            None => None,
+    /// Apply a queued command or load a different profile's preferences.
+    pub(crate) fn run_work(
+        &mut self,
+        work: ThemeFileWork,
+        startup: (Polarity, PolaritySource),
+    ) -> Vec<String> {
+        let argument = match work {
+            ThemeFileWork::ProfileChanged => return self.startup(),
+            ThemeFileWork::Command(argument) => argument,
         };
+        let background = match argument.as_str() {
+            "light" => Some(Background::Light),
+            "dark" => Some(Background::Dark),
+            "auto" => None,
+            _ => return self.command(&argument).0,
+        };
+        if let Err(error) = selection::save(&self.config_path, &self.profile, |saved| {
+            saved.background = background;
+        }) {
+            return vec![error];
+        }
+        self.background = background;
+        match background {
+            Some(background) => {
+                let polarity = polarity_word(background.into());
+                let mut lines = vec![format!("{polarity} background saved for this profile.")];
+                if startup.1 == PolaritySource::Environment {
+                    lines.push("TALARIA_THEME controls the background in this window.".to_owned());
+                } else {
+                    lines.push("Lines already in scrollback keep their colours.".to_owned());
+                }
+                lines
+            }
+            None => vec![background_restored_line(startup.0, &startup.1.label())],
+        }
+    }
+
+    fn save_file(&mut self, id: Option<&str>) -> Result<(), String> {
+        let active = self.resolve_choice(id)?;
+        let id = id.map(str::to_owned);
+        selection::save(&self.config_path, &self.profile, |saved| {
+            saved.file.clone_from(&id);
+        })?;
+        self.saved_file = id;
+        self.active = active;
         Ok(())
     }
 
-    fn load_selection(&self, id: &str) -> Result<crate::theme_file::ThemeFile, String> {
-        if let Some(file) = crate::theme_file::builtin(id) {
-            return Ok(file);
-        }
-        if matches!(id, "dark" | "light") {
-            return Err(format!("{id} is a base for extends, not a theme."));
-        }
-        crate::theme_file::load(&self.config_path, id)
+    fn reload(&mut self) -> Result<(), String> {
+        let saved = selection::read(&self.config_path, &self.profile)?;
+        self.load_choice(saved.file.as_deref())?;
+        self.saved_file = saved.file;
+        self.background = saved.background;
+        Ok(())
+    }
+
+    fn load_choice(&mut self, saved: Option<&str>) -> Result<(), String> {
+        self.active = self.resolve_choice(saved)?;
+        Ok(())
+    }
+
+    fn resolve_choice(
+        &self,
+        saved: Option<&str>,
+    ) -> Result<Option<(String, crate::theme_file::ThemeFile)>, String> {
+        let Some(id) = saved.or_else(|| self.configured_id()) else {
+            return Ok(None);
+        };
+        let file = crate::theme_file::load_selection(&self.config_path, id)?;
+        Ok(Some((id.to_owned(), file)))
     }
 }
 

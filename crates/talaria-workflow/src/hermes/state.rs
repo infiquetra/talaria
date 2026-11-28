@@ -30,6 +30,10 @@ pub(super) struct Session {
     pub resumed_on: u64,
     pub cursor: Option<Cursor>,
     pub latest: Option<Receipt>,
+    /// Whether this port created an empty workflow session on the current route.
+    pub fresh_workflow: bool,
+    /// The first submission this port made on that empty session.
+    pub first_submission: Option<String>,
     pub recovering: bool,
     pub warnings: Warnings,
     pub observing: bool,
@@ -201,6 +205,13 @@ impl State {
         } = binding;
         let key = (profile.clone(), snapshot.session_id.clone());
         let previous = self.view.sessions.get(&key);
+        let same_route = previous
+            .filter(|s| s.stored_id == snapshot.stored_session_id && s.resumed_on == generation);
+        let fresh_workflow = same_route.is_some_and(|s| s.fresh_workflow)
+            || (previous.is_none()
+                && request_id.is_some()
+                && snapshot.message_count == 0
+                && snapshot.pending.is_empty());
         let expected_model =
             expected_model.or_else(|| previous.and_then(|s| s.expected_model.clone()));
         let expected_provider =
@@ -251,6 +262,7 @@ impl State {
             tracing::warn!("Hermes provider differs from the requested provider");
         }
         let latest = previous.and_then(|s| s.latest.clone());
+        let first_submission = same_route.and_then(|s| s.first_submission.clone());
         let known = previous.map(|s| s.admissions.clone()).unwrap_or_default();
         let seen_before = known.len();
         self.view.sessions.insert(
@@ -266,6 +278,8 @@ impl State {
                     last_sequence: snapshot.last_sequence as u64,
                 }),
                 latest,
+                fresh_workflow,
+                first_submission,
                 recovering: false,
                 warnings,
                 observing: true,
@@ -380,6 +394,8 @@ pub(super) fn start(
                             resumed_on: 0,
                             cursor: None,
                             latest: None,
+                            fresh_workflow: false,
+                            first_submission: None,
                             recovering: false,
                             warnings: Warnings::default(),
                             observing: false,
@@ -387,6 +403,11 @@ pub(super) fn start(
                             expected_provider: None,
                             admissions: Vec::new(),
                         });
+                    if submitted && session.fresh_workflow {
+                        session
+                            .first_submission
+                            .get_or_insert_with(|| receipt.admission_id.clone());
+                    }
                     if submitted
                         || session
                             .latest

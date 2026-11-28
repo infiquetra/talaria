@@ -7,6 +7,7 @@ use super::batch::FinishedBatch;
 use super::event::SubagentEvent;
 use super::event::SubagentEventKind;
 use super::row::{RowState, SubagentRow, listed_terminal, terminal};
+use hermes_contract::schemas::SubagentStatus;
 
 /// The two clocks the tree reads: monotonic milliseconds for expiry and
 /// windows, wall-clock seconds since 1970 for elapsed text and ordering.
@@ -30,6 +31,8 @@ pub struct RecentCompletion {
     pub id: String,
     /// The child's goal, as reported.
     pub goal: String,
+    /// The recorded terminal outcome, including failures and interruptions.
+    pub state: RowState,
 }
 
 /// Row counts for the status line and the dock header.
@@ -164,13 +167,19 @@ impl SubagentTree {
             }
             present.insert(id.as_str());
             self.misses.remove(id);
-            if listed_terminal(snapshot.status) {
+            let terminal_status = listed_terminal(snapshot.status);
+            if terminal_status && !self.indices.contains_key(id) {
                 continue;
             }
+            let queued = snapshot.status == Some(SubagentStatus::Queued);
             if !self.indices.contains_key(id) {
                 self.indices.insert(id.clone(), self.rows.len());
-                self.rows
-                    .push(SubagentRow::new(id.clone(), now, RowState::Running));
+                let state = if queued {
+                    RowState::Queued
+                } else {
+                    RowState::Running
+                };
+                self.rows.push(SubagentRow::new(id.clone(), now, state));
                 changed = true;
             }
             let row = &mut self.rows[self.indices[id]];
@@ -178,8 +187,19 @@ impl SubagentTree {
                 continue;
             }
             let before = row.clone();
-            row.state = RowState::Running;
+            if terminal_status {
+                row.state = terminal(snapshot.status);
+                row.stop_requested = false;
+            } else if !queued {
+                row.state = RowState::Running;
+            }
             row.merge_snapshot(snapshot);
+            if row.state != before.state
+                || row.tool_count.unwrap_or_default() > before.tool_count.unwrap_or_default()
+                || row.last_tool != before.last_tool
+            {
+                row.last_event_ms = now.mono_ms;
+            }
             changed |= *row != before;
         }
         for row in &mut self.rows {
@@ -267,6 +287,7 @@ impl SubagentTree {
                         RecentCompletion {
                             id: row.id.clone(),
                             goal: row.goal.clone(),
+                            state: row.state,
                         },
                     ));
                 }
@@ -345,6 +366,33 @@ impl SubagentTree {
         self.indices.get(id).map(|&index| &self.rows[index])
     }
 
+    /// Update only the row that still points at the child session queried.
+    pub fn set_child_route(
+        &mut self,
+        id: &str,
+        child_session_id: &str,
+        model: String,
+        effort: String,
+    ) -> bool {
+        let Some(&index) = self.indices.get(id) else {
+            return false;
+        };
+        let row = &mut self.rows[index];
+        if row.child_session_id.as_deref() != Some(child_session_id)
+            || (row.effort.as_ref() == Some(&effort) && row.model.as_ref() == Some(&model))
+        {
+            return false;
+        }
+        row.model = Some(model);
+        row.effort = Some(effort);
+        self.version += 1;
+        true
+    }
+
+    pub fn rows(&self) -> &[SubagentRow] {
+        &self.rows
+    }
+
     #[must_use]
     pub fn row(&self, index: usize) -> &SubagentRow {
         &self.rows[index]
@@ -375,6 +423,7 @@ impl SubagentTree {
                         RecentCompletion {
                             id: row.id.clone(),
                             goal: row.goal.clone(),
+                            state: row.state,
                         },
                     )
                 }),

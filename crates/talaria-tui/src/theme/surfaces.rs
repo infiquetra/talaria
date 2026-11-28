@@ -2,7 +2,7 @@
 
 use super::Theme;
 use crate::status::{StatusPalette, Tone};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use std::collections::BTreeMap;
 
 /// A catalogue token selected at a drawing site.
@@ -239,6 +239,9 @@ pub mod tokens {
     pub const LIST_DIVIDER: Token = Token("list.divider");
     pub const LIST_SCROLLBAR: Token = Token("list.scrollbar");
     pub const LIST_EMPTY: Token = Token("list.empty");
+    pub const EFFORT_TRACK: Token = Token("effort.track");
+    pub const EFFORT_MODEL: Token = Token("effort.model");
+    pub const EFFORT_SELECTED: Token = Token("effort.selected");
     pub const TRANSCRIPT_BANNER: Token = Token("transcript.banner");
     pub const TRANSCRIPT_COMMAND: Token = Token("transcript.command");
     pub const TRANSCRIPT_NOTICE: Token = Token("transcript.notice");
@@ -359,6 +362,13 @@ impl Default for ViewStyles {
 }
 
 impl ViewStyles {
+    pub(super) fn without_color() -> Self {
+        Self {
+            color: false,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn new(
         elements: BTreeMap<String, Style>,
         color: bool,
@@ -404,7 +414,7 @@ impl ViewStyles {
     }
 
     pub fn style(&self, token: Token, fallback: Style) -> Style {
-        self.elements.get(token.0).copied().unwrap_or(fallback)
+        self.constrain(self.elements.get(token.0).copied().unwrap_or(fallback))
     }
 
     pub fn inline(&self, token: Token, fallback: Style) -> Style {
@@ -416,23 +426,56 @@ impl ViewStyles {
         }
     }
 
+    /// Use readable ink and an underline when the inline surface cannot keep a selection fill.
+    pub fn inline_selection(&self, token: Token, fallback: Style) -> Style {
+        let style = self.style(token, fallback);
+        if !self.active() {
+            return style;
+        }
+        let native_reverse = style.add_modifier.contains(Modifier::REVERSED)
+            && style.fg.unwrap_or(Color::Reset) == Color::Reset
+            && style.bg.unwrap_or(Color::Reset) == Color::Reset;
+        if !self.color || native_reverse {
+            // The terminal can invert its own text and background on an inline row.
+            return Style { bg: None, ..style }.add_modifier(Modifier::UNDERLINED);
+        }
+        Style {
+            fg: super::contrast::selection_ink(
+                style,
+                self.elements
+                    .get(tokens::TRANSCRIPT_BACKGROUND.0)
+                    .and_then(|base| base.bg),
+            ),
+            bg: None,
+            underline_color: None,
+            ..style
+                .remove_modifier(Modifier::REVERSED)
+                .add_modifier(Modifier::UNDERLINED)
+        }
+    }
+
+    fn constrain(&self, mut style: Style) -> Style {
+        if !self.color {
+            style.fg = None;
+            style.bg = None;
+            style.underline_color = None;
+        }
+        style
+    }
+
     /// Supply a view's ordinary text style to unstyled spans on an inline surface.
     pub fn inline_lines(
         &self,
         mut lines: Vec<ratatui::text::Line<'static>>,
         token: Token,
     ) -> Vec<ratatui::text::Line<'static>> {
-        if !self.active() {
+        if !self.active() && self.color {
             return lines;
         }
         let base = self.inline(token, Style::default());
         let constrain = |mut style: Style| {
             style.bg = None;
-            if !self.color {
-                style.fg = None;
-                style.underline_color = None;
-            }
-            style
+            self.constrain(style)
         };
         for line in &mut lines {
             line.style = constrain(base.patch(line.style));
@@ -451,7 +494,7 @@ impl ViewStyles {
         token: Token,
         owned_screen: bool,
     ) {
-        if !self.active() {
+        if !self.active() && self.color {
             return;
         }
         let base = self.style(token, Style::default());
@@ -476,6 +519,19 @@ impl ViewStyles {
                     }
                 }
             }
+        }
+    }
+
+    pub(crate) fn border_set(&self) -> ratatui::symbols::border::Set<'_> {
+        ratatui::symbols::border::Set {
+            top_left: self.border_symbol("┌"),
+            top_right: self.border_symbol("┐"),
+            bottom_left: self.border_symbol("└"),
+            bottom_right: self.border_symbol("┘"),
+            vertical_left: self.border_symbol("│"),
+            vertical_right: self.border_symbol("│"),
+            horizontal_top: self.border_symbol("─"),
+            horizontal_bottom: self.border_symbol("─"),
         }
     }
 

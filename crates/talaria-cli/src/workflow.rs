@@ -1,8 +1,8 @@
 //! Workflow commands run before terminal initialization and use the runner's file protocol.
 
 use std::{
-    fs,
-    io::{self, Write},
+    fs::{self, File},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -22,6 +22,120 @@ use crate::args::{neutralise, required_path, required_text};
 pub mod builtins;
 #[path = "workflow_compile.rs"]
 mod compile_command;
+
+const MAX_WORKFLOW_ARGS_BYTES: u64 = 1024 * 1024;
+
+fn invalid_args_file(reason: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, reason)
+}
+
+fn open_args_file(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        let fd = rustix::fs::open(
+            path,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::CLOEXEC
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::NONBLOCK,
+            rustix::fs::Mode::empty(),
+        )?;
+        Ok(File::from(fd))
+    }
+    #[cfg(not(unix))]
+    {
+        File::open(path)
+    }
+}
+
+fn read_args_file(path: &Path) -> io::Result<String> {
+    let before = fs::metadata(path)?;
+    if !before.is_file() || before.len() > MAX_WORKFLOW_ARGS_BYTES {
+        return Err(invalid_args_file(
+            "workflow arguments must be a regular UTF-8 file no larger than 1 MiB",
+        ));
+    }
+    let file = open_args_file(path)?;
+    let opened = file.metadata()?;
+    if !opened.is_file() || opened.len() > MAX_WORKFLOW_ARGS_BYTES {
+        return Err(invalid_args_file(
+            "workflow arguments must be a regular UTF-8 file no larger than 1 MiB",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.dev() != before.dev() || opened.ino() != before.ino() {
+            return Err(invalid_args_file(
+                "workflow arguments changed while the file was opened",
+            ));
+        }
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_WORKFLOW_ARGS_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_WORKFLOW_ARGS_BYTES {
+        return Err(invalid_args_file(
+            "workflow arguments exceed the 1 MiB limit",
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| invalid_args_file("workflow arguments are not valid UTF-8"))
+}
+
+#[cfg(test)]
+mod file_input_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_arguments_are_regular_utf8_and_bounded() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("args.json");
+        fs::write(&path, br#"{"answer":42}"#).unwrap();
+        assert_eq!(read_args_file(&path).unwrap(), r#"{"answer":42}"#);
+
+        fs::write(&path, [0xff]).unwrap();
+        assert_eq!(
+            read_args_file(&path).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        File::create(&path)
+            .unwrap()
+            .set_len(MAX_WORKFLOW_ARGS_BYTES + 1)
+            .unwrap();
+        assert_eq!(
+            read_args_file(&path).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            read_args_file(temp.path()).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workflow_argument_open_does_not_wait_or_follow_a_link() {
+        let temp = tempfile::tempdir().unwrap();
+        let pipe = temp.path().join("args.pipe");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&pipe)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let file = open_args_file(&pipe).unwrap();
+        assert!(!file.metadata().unwrap().is_file());
+
+        let target = temp.path().join("args.json");
+        fs::write(&target, b"{}").unwrap();
+        let link = temp.path().join("args.link");
+        std::os::unix::fs::symlink(target, &link).unwrap();
+        assert!(open_args_file(&link).is_err());
+    }
+}
 
 #[derive(Clone, Debug, Parser)]
 #[command(name="talaria workflow",bin_name="talaria workflow",color=ColorChoice::Never,about="Run, resume, list, stop, and resolve durable workflow runs")]
@@ -54,6 +168,18 @@ pub enum WorkflowCommand {
     /// Print a finished run's result, or with --agent the value one agent returned, read from
     /// the run's folder. It never starts or resumes anything.
     Result(ResultArgs),
+    /// Validate a saved file against a finished worker's original schema and keep it with the failed attempt.
+    RecoverReport {
+        #[arg(value_name = "RUN", value_parser = required_text)]
+        target: String,
+        #[arg(long, value_parser = required_text)]
+        agent: String,
+        /// Path relative to this worker's isolated worktree.
+        #[arg(long, value_parser = required_text)]
+        file: String,
+        #[arg(long, value_parser = required_path)]
+        runs_dir: Option<PathBuf>,
+    },
     /// Turn a workflow's agent calls into kanban board cards. Kanban boards only; it does not
     /// validate a script, so use `check` for that.
     Compile(CompileArgs),
@@ -195,8 +321,7 @@ pub struct RestartArgs {
 pub struct ResultArgs {
     #[arg(value_name = "RUN", value_parser = required_text)]
     pub target: String,
-    /// The agent's label or key. Without it, the run's own result is printed as a resume of the
-    /// finished run prints it, without starting anything.
+    /// The agent's label or key. Omit to read the run's own result.
     #[arg(long, value_parser = required_text)]
     pub agent: Option<String>,
     #[arg(long)]
@@ -327,6 +452,14 @@ pub fn safe(text: &str) -> String {
     )
     .into_owned()
 }
+fn safe_multiline(text: &str) -> String {
+    talaria_core::text::sanitize_with_options(
+        text,
+        talaria_core::text::SanitizeOptions::LAYOUT,
+        talaria_core::text::Replacement::Char('?'),
+    )
+    .into_owned()
+}
 fn fail(text: impl std::fmt::Display, code: u8) -> u8 {
     eprintln!("{}", safe(&text.to_string()));
     code
@@ -408,6 +541,7 @@ pub fn render_list(runs: &[runner::RunSummary], json_mode: bool) -> String {
 }
 struct Renderer {
     json: bool,
+    single_document: bool,
     dir: Option<PathBuf>,
     failed: bool,
 }
@@ -415,6 +549,7 @@ impl Renderer {
     fn new(json: bool) -> Self {
         Self {
             json,
+            single_document: false,
             dir: None,
             failed: false,
         }
@@ -447,6 +582,9 @@ impl Renderer {
         match event {
             RunnerEvent::RunStarted { run_id, run_dir } => {
                 self.dir = Some(run_dir.clone());
+                if self.single_document {
+                    return;
+                }
                 if self.json {
                     #[derive(Serialize)]
                     struct Started<'a> {
@@ -475,7 +613,9 @@ impl Renderer {
                 }
             }
             RunnerEvent::Log { message } => {
-                if self.json {
+                if self.single_document {
+                    eprintln!("{}", safe(message));
+                } else if self.json {
                     self.json(&json!({"event":"log","message":message}));
                 } else {
                     self.text(&format!("log: {}\n", safe(message)));
@@ -610,6 +750,22 @@ impl Renderer {
         }
     }
     fn finished(&mut self, run_id: &str, outcome: &str, result: Option<&Value>, spend: &SpendView) {
+        let run_attention = self
+            .dir
+            .as_deref()
+            .map(runner::run_attention)
+            .unwrap_or_default();
+        #[derive(Clone, Copy, Serialize)]
+        struct Evidence<'a> {
+            #[serde(skip_serializing_if = "<[_]>::is_empty")]
+            guardrail_halts: &'a [runner::runs::GuardrailHalt],
+            #[serde(skip_serializing_if = "<[_]>::is_empty")]
+            recovered_reports: &'a [runner::runs::ReportLink],
+        }
+        let evidence = Evidence {
+            guardrail_halts: &run_attention.guardrail_halts,
+            recovered_reports: &run_attention.recovered_reports,
+        };
         let saved = self
             .dir
             .as_ref()
@@ -622,15 +778,35 @@ impl Renderer {
         let untracked_work = &saved["untracked_work"];
         let leftover_edits = &saved["leftover_edits"];
         let attention = format!(
-            "{}{}",
+            "{}{}{}{}",
             agent_attention_text(failed_agents, cut_short_agents),
-            leftovers_text(untracked_work, leftover_edits)
+            leftovers_text(untracked_work, leftover_edits),
+            evidence
+                .recovered_reports
+                .iter()
+                .map(|report| format!(
+                    "Saved report: {} · {}\n",
+                    safe(&report.label),
+                    safe(&report.path)
+                ))
+                .collect::<String>(),
+            evidence
+                .guardrail_halts
+                .iter()
+                .map(|halt| format!(
+                    "Warning: agent {}: {}.\n",
+                    safe(&halt.label),
+                    safe(&halt.reason)
+                ))
+                .collect::<String>()
         );
         #[derive(Serialize)]
         struct Completed<'a> {
             event: &'static str,
             run_id: &'a str,
             outcome: &'a str,
+            #[serde(flatten)]
+            evidence: Evidence<'a>,
             #[serde(skip_serializing_if = "is_unlisted")]
             cut_short_agents: &'a Value,
             #[serde(skip_serializing_if = "is_unlisted")]
@@ -645,6 +821,8 @@ impl Renderer {
             event: &'static str,
             run_id: &'a str,
             outcome: &'a str,
+            #[serde(flatten)]
+            evidence: Evidence<'a>,
             reason: &'a str,
             failed_agents: &'a Value,
             #[serde(skip_serializing_if = "is_unlisted")]
@@ -662,6 +840,8 @@ impl Renderer {
             event: &'static str,
             run_id: &'a str,
             outcome: &'a str,
+            #[serde(flatten)]
+            evidence: Evidence<'a>,
             error: &'a Value,
             #[serde(skip_serializing_if = "is_unlisted")]
             untracked_work: &'a Value,
@@ -674,6 +854,8 @@ impl Renderer {
             event: &'static str,
             run_id: &'a str,
             outcome: &'a str,
+            #[serde(flatten)]
+            evidence: Evidence<'a>,
             reason: &'a str,
             #[serde(skip_serializing_if = "is_unlisted")]
             untracked_work: &'a Value,
@@ -689,6 +871,7 @@ impl Renderer {
                         event: "run_finished",
                         run_id,
                         outcome,
+                        evidence,
                         cut_short_agents,
                         untracked_work,
                         leftover_edits,
@@ -698,7 +881,9 @@ impl Renderer {
                 } else {
                     self.text(&format!(
                         "{attention}Result:\n{}\n",
-                        serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
+                        safe_multiline(
+                            &serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into()),
+                        )
                     ));
                 }
             }
@@ -711,6 +896,7 @@ impl Renderer {
                         event: "run_finished",
                         run_id,
                         outcome,
+                        evidence,
                         reason,
                         failed_agents,
                         cut_short_agents,
@@ -724,7 +910,9 @@ impl Renderer {
                     self.text(&format!(
                         "Completed with failures: {}.\n{attention}Result:\n{}\n",
                         safe(reason),
-                        serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
+                        safe_multiline(
+                            &serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into()),
+                        )
                     ));
                 }
             }
@@ -735,6 +923,8 @@ impl Renderer {
                     event: &'static str,
                     run_id: &'a str,
                     outcome: &'a str,
+                    #[serde(flatten)]
+                    evidence: Evidence<'a>,
                     #[serde(skip_serializing_if = "is_unlisted")]
                     failed_agents: &'a Value,
                     #[serde(skip_serializing_if = "is_unlisted")]
@@ -755,6 +945,7 @@ impl Renderer {
                         event: "run_finished",
                         run_id,
                         outcome,
+                        evidence,
                         failed_agents,
                         cut_short_agents,
                         untracked_work,
@@ -770,7 +961,10 @@ impl Renderer {
                         safe(reason),
                         saved["summary"]["refused"].as_u64().unwrap_or(0),
                         saved["summary"]["stopped"].as_u64().unwrap_or(0),
-                        serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".into())
+                        safe_multiline(
+                            &serde_json::to_string_pretty(result)
+                                .unwrap_or_else(|_| "null".into()),
+                        )
                     ));
                 }
             }
@@ -780,6 +974,7 @@ impl Renderer {
                         event: "run_finished",
                         run_id,
                         outcome,
+                        evidence,
                         error: &saved["error"],
                         untracked_work,
                         leftover_edits,
@@ -794,7 +989,7 @@ impl Renderer {
                                 .as_str()
                                 .unwrap_or("workflow failed")
                         ),
-                        leftovers_text(untracked_work, leftover_edits)
+                        attention
                     ));
                 }
             }
@@ -805,30 +1000,22 @@ impl Renderer {
                         event: "run_finished",
                         run_id,
                         outcome,
+                        evidence,
                         reason,
                         untracked_work,
                         leftover_edits,
                         spend,
                     });
                 } else {
-                    self.text(&format!(
-                        "Aborted: {}\n{}",
-                        safe(reason),
-                        leftovers_text(untracked_work, leftover_edits)
-                    ));
+                    self.text(&format!("Aborted: {}\n{}", safe(reason), attention));
                 }
             }
         }
-        if self.json {
+        if self.json && !self.single_document {
             let runs_dir = self.dir.as_deref().and_then(std::path::Path::parent);
-            let attention = self
-                .dir
-                .as_deref()
-                .map(runner::run_attention)
-                .unwrap_or_default();
             self.text(&format!(
                 "{}\n",
-                closing_line(run_id, outcome, spend, runs_dir, &attention)
+                closing_line(run_id, outcome, spend, runs_dir, &run_attention)
             ));
         }
     }
@@ -850,6 +1037,13 @@ fn unknown_money_text(spend: &SpendView) -> String {
 #[cfg(test)]
 mod money_text_tests {
     use super::*;
+
+    #[test]
+    fn multiline_result_text_keeps_layout_and_neutralizes_terminal_controls() {
+        let clean = safe_multiline("{\n  \"answer\": \"left\u{202e}right\"\n}\n");
+        assert_eq!(clean, "{\n  \"answer\": \"left?right\"\n}\n");
+        assert!(!clean.contains('\u{202e}'));
+    }
 
     fn spend(tokens: u64, money_usd: Option<f64>) -> SpendView {
         SpendView {
@@ -1045,6 +1239,12 @@ fn attention_sentence(attention: &runner::RunAttention) -> String {
     if attention.cut_short_agents > 0 {
         parts.push(format!("{} cut short", agents(attention.cut_short_agents)));
     }
+    if !attention.guardrail_halts.is_empty() {
+        parts.push(format!(
+            "{} stopped making progress",
+            agents(attention.guardrail_halts.len() as u32)
+        ));
+    }
     if attention.failed_agents > 0 {
         parts.push(format!("{} failed", agents(attention.failed_agents)));
     }
@@ -1190,6 +1390,27 @@ pub async fn run(args: WorkflowArgs) -> u8 {
         }
         WorkflowCommand::Restart(args) => restart_command(args),
         WorkflowCommand::Result(args) => result_command(args),
+        WorkflowCommand::RecoverReport {
+            target,
+            agent,
+            file,
+            runs_dir,
+        } => {
+            match runner::evidence::associate(
+                &runner::runs_dir(runs_dir.as_deref()),
+                &target,
+                &agent,
+                &file,
+            ) {
+                Ok(saved) => print(&format!(
+                    "Saved validated report {} for {} ({} bytes). The worker remains failed.\n",
+                    safe(&saved.report.path),
+                    safe(&agent),
+                    saved.report.bytes
+                )),
+                Err(e) => agent_error(e),
+            }
+        }
         WorkflowCommand::Resume(args) => {
             let mut renderer = Renderer::new(args.json);
             let req = ResumeRequest {
@@ -1286,6 +1507,7 @@ fn result_command(args: ResultArgs) -> u8 {
     let Some(agent) = &args.agent else {
         // The run's result, printed by the same renderer a resume replay uses.
         let mut renderer = Renderer::new(args.json);
+        renderer.single_document = args.json;
         let exit = runner::replay_result(&runs, &args.target, &mut |event| renderer.emit(event));
         return if renderer.failed { 1 } else { exit_code(exit) };
     };
@@ -1317,7 +1539,7 @@ fn result_command(args: ResultArgs) -> u8 {
                     safe(c)
                 ))
                 .unwrap_or_default(),
-            serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".into())
+            safe_multiline(&serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".into()),)
         ),
         None => format!(
             "agent {} is {} and has no kept value{}\n",
@@ -1330,7 +1552,20 @@ fn result_command(args: ResultArgs) -> u8 {
                 .unwrap_or_default()
         ),
     };
-    match print(&text) {
+    let mut description = String::new();
+    if let Some(report) = &result.recovered_report {
+        description.push_str(&format!(
+            "Agent {} failed: {}. Saved report: {}\n",
+            safe(&result.label),
+            safe(result.reason.as_deref().unwrap_or("reply unavailable")),
+            safe(&report.path)
+        ));
+    }
+    if let Some(warning) = &result.guardrail_halt {
+        description.push_str(&format!("Warning: {}\n", safe(warning)));
+    }
+    description.push_str(&text);
+    match print(&description) {
         0 => code,
         failed => failed,
     }
@@ -1356,7 +1591,7 @@ async fn run_command(args: RunArgs) -> u8 {
     let args_present = args.args.is_some() || args.args_file.is_some();
     let input = match (args.args, args.args_file) {
         (Some(text), _) => serde_json::from_str(&text).map_err(|e| e.to_string()),
-        (_, Some(path)) => fs::read_to_string(path)
+        (_, Some(path)) => read_args_file(&path)
             .map_err(|e| e.to_string())
             .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string())),
         _ => Ok(Value::Null),
@@ -1572,6 +1807,17 @@ mod leftover_text_tests {
         };
         let quiet = closing_line("r1", "completed", &spend, None, &Default::default());
         assert!(!quiet.contains("Attention"), "{quiet}");
+        let warning = runner::RunAttention {
+            guardrail_halts: vec![runner::runs::GuardrailHalt {
+                label: "researcher".into(),
+                reason: "Hermes stopped a turn after it stopped making progress".into(),
+            }],
+            ..Default::default()
+        };
+        assert!(
+            closing_line("r1", "completed", &spend, None, &warning)
+                .contains("Attention: 1 agent stopped making progress")
+        );
         assert!(!quiet.contains("Script status"), "{quiet}");
         assert!(
             quiet.ends_with(" Full result: talaria workflow result --json r1"),
@@ -1585,6 +1831,8 @@ mod leftover_text_tests {
             phases_not_started: 2,
             phases_not_started_names: vec!["Verify".into(), "Synthesize".into()],
             script_status: Some("partial".into()),
+            guardrail_halts: vec![],
+            recovered_reports: vec![],
         };
         let line = closing_line("r1", "completed", &spend, None, &attention);
         let hint = line.find(" Full result: ").unwrap();
@@ -1675,6 +1923,8 @@ mod leftover_text_tests {
                     .map(|n| format!("{n}{}", "p".repeat(200)))
                     .collect(),
                 script_status: Some("s".repeat(500)),
+                guardrail_halts: vec![],
+                recovered_reports: vec![],
             };
             closing_line(
                 &"0".repeat(26),

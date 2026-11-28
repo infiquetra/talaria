@@ -65,6 +65,7 @@ fn request(prompt: &str, schema: Option<Value>, toolsets: Vec<String>) -> AgentR
         phase: None,
         prompt: prompt.into(),
         schema,
+        report_file: None,
         tier: None,
         model: Some("minimax-m3.1-flash".into()),
         provider: Some("ollama-cloud".into()),

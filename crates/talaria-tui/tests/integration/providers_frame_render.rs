@@ -142,9 +142,9 @@ fn browse_and_offline_snapshots_at_both_sizes() {
 #[test]
 fn provider_frame_uses_the_shared_thresholds_and_regions() {
     for (w, h, mode) in [
-        (112, 28, PickerMode::Side),
-        (111, 28, PickerMode::Below),
-        (112, 27, PickerMode::Below),
+        (112, 24, PickerMode::Side),
+        (111, 24, PickerMode::Below),
+        (112, 23, PickerMode::Below),
         (60, 16, PickerMode::Below),
         (59, 16, PickerMode::Compact),
         (60, 15, PickerMode::Compact),
@@ -288,7 +288,7 @@ fn setup_card_content_snapshots_at_both_sizes() {
         let mut visible = [
             "Step 1 of 3: Paste key",
             "EXAMPLE_API_KEY",
-            "••••••••",
+            "New key › ••••••••",
             "Enter check and save · Esc cancel",
         ]
         .into_iter()
@@ -318,6 +318,8 @@ fn masked_editor_never_shows_the_secret() {
         lines: vec!["API key for selected provider".into()],
         footer: "Esc cancel".into(),
     });
+    let empty = text(&buffer(&view, 40, 16, 0));
+    assert!(empty.contains("New key › Type or paste here"), "{empty}");
     let actual = text(&buffer(&view, 80, 24, secret.len()));
     assert!(!actual.contains(sentinel));
     assert!(actual.contains('•'));

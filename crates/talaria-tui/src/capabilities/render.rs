@@ -1,6 +1,6 @@
-use crate::history::{sanitize, wrap_lines};
+use crate::history::{sanitize, word_wrapped};
 use crate::theme::surfaces::{ViewStyles, tokens as t};
-use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Line};
+use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use talaria_core::capabilities::{CapListRow, CapTab, CapView};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -166,12 +166,13 @@ pub fn draw_capabilities_with_theme(
 fn draw_inner(view: &CapView, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     if area.width < 40 || area.height < 10 {
         line(buf, area, 0, "Capabilities needs at least 40 by 10.");
+        line(buf, area, 1, "Keyboard only · Esc closes");
         if let Some(v) = views {
             v.finish(area, buf, t::LIST_BACKGROUND, true);
         }
         return;
     }
-    line(buf, area, 0, &view.title);
+    line(buf, area, 0, &format!("Keyboard only · {}", view.title));
     if let Some(v) = views {
         buf.set_style(
             Rect::new(area.x, area.y, area.width, 1),
@@ -203,25 +204,20 @@ fn draw_inner(view: &CapView, area: Rect, buf: &mut Buffer, views: Option<&ViewS
     let list_notice = view.rows.first().is_some_and(|row| {
         row.is_header && !row.label.is_empty() && row.label == view.message.join("\n")
     });
-    let mut messages = wrap_lines(
-        view.message
-            .iter()
-            .filter(|_| !list_notice)
-            .map(|s| Line::from(sanitize(s).into_owned()))
-            .collect(),
-        area.width.saturating_sub(1),
-    );
+    let mut messages: Vec<_> = view
+        .message
+        .iter()
+        .filter(|_| !list_notice)
+        .flat_map(|s| word_wrapped(s, area.width.saturating_sub(1)))
+        .collect();
     let message_limit = 8.min(usize::from(area.height).saturating_sub(
         5 + usize::from(!view.footer.is_empty()) + usize::from(view.input.is_some()),
     ));
     if messages.len() > message_limit {
         messages.truncate(message_limit);
         if message_limit > 0 {
-            let last = messages.pop().unwrap_or_default().to_string();
-            messages.push(Line::from(format!(
-                "{}…",
-                cut(&last, width.saturating_sub(1))
-            )));
+            let last = messages.pop().unwrap_or_default();
+            messages.push(format!("{}…", cut(&last, width.saturating_sub(1))));
         }
     }
     let bottom = 1
@@ -255,13 +251,11 @@ fn draw_inner(view: &CapView, area: Rect, buf: &mut Buffer, views: Option<&ViewS
     if wide {
         rule(buf, area, (3 + list_height) as u16, views);
     }
-    let detail = wrap_lines(
-        view.detail
-            .iter()
-            .map(|s| Line::from(sanitize(s).into_owned()))
-            .collect(),
-        area.width.saturating_sub(1),
-    );
+    let detail: Vec<_> = view
+        .detail
+        .iter()
+        .flat_map(|s| word_wrapped(s, area.width.saturating_sub(1)))
+        .collect();
     if !wide && view.detail_focus {
         for (i, text) in detail
             .iter()

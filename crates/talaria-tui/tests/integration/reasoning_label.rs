@@ -1,4 +1,4 @@
-//! Each reasoning block starts with one quiet label. An answer does not.
+//! Reasoning gets a quiet heading and the reply uses the conversation gutter.
 
 use std::time::{Duration, Instant};
 
@@ -7,6 +7,7 @@ use ratatui::text::Line;
 use talaria_core::layout::ReasoningDisplay;
 use talaria_core::session::{AssistantCell, Cell, CellId, ReasoningCell};
 use talaria_tui::history::CellLines;
+use talaria_tui::reply_commit::ReplyCommits;
 use talaria_tui::theme::cells::{
     ReasoningClock, ThemedCells, reasoning_collapses, reasoning_summary_lines,
 };
@@ -54,8 +55,8 @@ fn answer(id: u64, text: &str) -> Cell {
 fn is_label(text: &str) -> bool {
     let trimmed = text.trim();
     trimmed == "thinking"
-        || trimmed == "\u{2234} thinking"
-        || trimmed == "\u{2234} thinking (latest step)"
+        || trimmed == "\u{2234} reasoning"
+        || trimmed == "\u{2234} reasoning (last step)"
 }
 
 fn painted(line: &Line<'_>) -> Vec<Style> {
@@ -87,7 +88,7 @@ fn assert_label(line: &Line<'_>, reasoning: Style) {
 }
 
 #[test]
-fn reply_labels_reasoning_once_and_not_the_answer() {
+fn reasoning_has_a_heading_and_the_reply_keeps_its_label_in_the_gutter() {
     let theme = theme();
     let themed = ThemedCells {
         theme: &theme,
@@ -122,7 +123,37 @@ fn reply_labels_reasoning_once_and_not_the_answer() {
         "an answer has no label line"
     );
     assert_eq!(answer_lines.len(), 1, "an answer gains no line");
-    assert_eq!(answer_lines[0].to_string(), answer_text);
+    assert_eq!(
+        answer_lines[0].to_string(),
+        format!(" Hermes  {answer_text}")
+    );
+}
+
+#[test]
+fn partial_reply_commits_its_speaker_once_and_keeps_the_body_aligned() {
+    let theme = theme();
+    let themed = ThemedCells {
+        theme: &theme,
+        transcript_key: None,
+    };
+    let mut commits = ReplyCommits::new();
+    let mut streaming = answer(1, "First paragraph.\n\nSecond paragraph.\n");
+    if let Cell::Assistant(reply) = &mut streaming {
+        reply.sealed = false;
+    }
+    let mut rows = commits.before_frame(&[streaming], 0, true, &themed, WIDTH);
+    let finished = answer(
+        1,
+        "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+    );
+    rows.extend(commits.final_lines(std::slice::from_ref(&finished), &themed, WIDTH));
+    assert_eq!(rows, themed.lines(&finished, WIDTH));
+    assert_eq!(
+        rows.iter()
+            .filter(|line| line.to_string().starts_with(" Hermes"))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -142,7 +173,7 @@ fn latest_step_reasoning_label_names_the_step() {
     });
     let lines = themed.lines(&late, WIDTH);
 
-    assert_eq!(lines[0].to_string(), "\u{2234} thinking (latest step)");
+    assert_eq!(lines[0].to_string(), "\u{2234} reasoning (last step)");
     assert_label(&lines[0], theme.reasoning);
     assert_eq!(
         lines.len(),
@@ -152,7 +183,7 @@ fn latest_step_reasoning_label_names_the_step() {
     assert_eq!(lines[1].to_string(), text);
 
     let plain = themed.lines(&reasoning(2, text), WIDTH);
-    assert_eq!(plain[0].to_string(), "\u{2234} thinking");
+    assert_eq!(plain[0].to_string(), "\u{2234} reasoning");
 }
 
 #[test]
@@ -224,7 +255,7 @@ fn collapsed_reasoning_is_one_quiet_line_naming_the_count_and_key() {
     let lines = reasoning_summary_lines(&cell, &theme, None, Some("Ctrl+O"), WIDTH);
     assert_eq!(
         lines.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        vec!["\u{2234} thinking (+34 lines, Ctrl+O to view)"]
+        vec!["\u{2234} reasoning (+34 lines, Ctrl+O to view)"]
     );
     assert_quiet(&lines[0], theme.reasoning);
 }
@@ -233,7 +264,7 @@ fn collapsed_reasoning_is_one_quiet_line_naming_the_count_and_key() {
 fn collapsed_reasoning_without_a_key_names_the_view() {
     assert_eq!(
         summary(&block(34, true, false, false), None, None),
-        vec!["\u{2234} thinking (+34 lines in transcript view)"]
+        vec!["\u{2234} reasoning (+34 lines in transcript view)"]
     );
 }
 
@@ -241,7 +272,7 @@ fn collapsed_reasoning_without_a_key_names_the_view() {
 fn collapsed_latest_step_reasoning_says_so() {
     assert_eq!(
         summary(&block(34, true, true, false), None, Some("Ctrl+O")),
-        vec!["\u{2234} thinking, latest step (+34 lines, Ctrl+O to view)"]
+        vec!["\u{2234} reasoning, last step (+34 lines, Ctrl+O to view)"]
     );
 }
 
@@ -249,7 +280,7 @@ fn collapsed_latest_step_reasoning_says_so() {
 fn one_line_of_reasoning_counts_in_the_singular() {
     assert_eq!(
         summary(&block(1, true, false, false), None, Some("Ctrl+O")),
-        vec!["\u{2234} thinking (+1 line, Ctrl+O to view)"]
+        vec!["\u{2234} reasoning (+1 line, Ctrl+O to view)"]
     );
 }
 
@@ -266,7 +297,7 @@ fn timed_reasoning_leads_with_how_long_it_took() {
     );
     assert_eq!(
         summary(&cell, Some(Duration::from_millis(400)), Some("Ctrl+O")),
-        vec!["\u{2234} thinking (+34 lines, Ctrl+O to view)"],
+        vec!["\u{2234} reasoning (+34 lines, Ctrl+O to view)"],
         "under a second is not worth a duration"
     );
 }

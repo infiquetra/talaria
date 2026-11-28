@@ -51,6 +51,7 @@ pub(crate) fn unavailable(effect: ConnectorsEffect) -> Vec<ConnectorsInput> {
     use ConnectorsInput as I;
     let failure = || ConnectorsFailure::NotSent("Not connected to Hermes.".into());
     let input = match effect {
+        E::LoadIdentity => I::IdentityReply(core::NousIdentity::Unknown),
         E::ListConnectors => I::ListReply(Err(failure())),
         E::LoadCatalog => I::CatalogReply(Err(failure())),
         E::LoadAccounts => I::AccountsReply(Err(failure())),
@@ -137,6 +138,13 @@ impl ConnectorsService {
         use ConnectorsEffect as E;
         use ConnectorsInput as I;
         let input = match effect {
+            E::LoadIdentity => {
+                let identity = match self.rest.get_json("/api/providers/oauth").await {
+                    Ok(value) => nous_identity(&value),
+                    Err(_) => core::NousIdentity::Unknown,
+                };
+                I::IdentityReply(identity)
+            }
             E::GrantConsent => {
                 self.consent.grant(&self.profile);
                 return Vec::new();
@@ -366,6 +374,39 @@ impl ConnectorsService {
             | E::Close => return Vec::new(),
         };
         vec![input]
+    }
+}
+
+fn nous_identity(value: &Value) -> core::NousIdentity {
+    use core::NousIdentity;
+    let Some(status) = value
+        .get("providers")
+        .and_then(Value::as_array)
+        .and_then(|providers| {
+            providers
+                .iter()
+                .find(|provider| provider.get("id").and_then(Value::as_str) == Some("nous"))
+        })
+        .and_then(|provider| provider.get("status"))
+    else {
+        return NousIdentity::Unknown;
+    };
+    if status
+        .get("error")
+        .and_then(Value::as_str)
+        .is_some_and(|error| !error.is_empty())
+    {
+        return NousIdentity::Unknown;
+    }
+    match (
+        status.get("logged_in").and_then(Value::as_bool),
+        status.get("free_tier").and_then(Value::as_bool),
+        status.get("account_tier").and_then(Value::as_str),
+    ) {
+        (_, _, Some("anonymous")) | (_, Some(true), _) => NousIdentity::Guest,
+        (Some(false), _, _) => NousIdentity::SignedOut,
+        (Some(true), Some(false), _) => NousIdentity::SignedIn,
+        _ => NousIdentity::Unknown,
     }
 }
 

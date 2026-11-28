@@ -1,12 +1,7 @@
-//! Drawing the session picker overlay (#231).
-//!
-//! The layout follows the unit document: a header, up to two banners, the body
-//! (group headers, rows and failed profiles), the notice line and the footer.
-//! Every line starts with a one column margin, and every text is cut to the
-//! width with the ellipsis rule of the unit document.
+//! Session directory layout and rendering.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use talaria_core::directory::export::{ExportFormat, fallback_name};
@@ -19,30 +14,27 @@ use talaria_core::directory::state::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::history::{grapheme_width, sanitize};
+use crate::history::{grapheme_width, sanitize, word_wrapped};
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// The narrowest overlay that draws the list.
 const MIN_WIDTH: u16 = 24;
 /// The shortest overlay that draws the list.
 const MIN_HEIGHT: u16 = 6;
 /// The width of the age column.
-const AGE_WIDTH: usize = 5;
+const AGE_WIDTH: usize = 10;
 /// The width of the message count column.
 const MESSAGE_WIDTH: usize = 9;
 /// The widest the profile column grows.
 const PROFILE_CAP: usize = 12;
 /// The widest the model column grows.
 const MODEL_CAP: usize = 20;
-/// The widest the source column grows.
-const SOURCE_CAP: usize = 10;
 /// Below this width the profile column is left out.
 const PROFILE_MIN_WIDTH: u16 = 40;
 /// Below this width the model column is left out.
-const MODEL_MIN_WIDTH: u16 = 60;
+const MODEL_MIN_WIDTH: u16 = 92;
 /// Below this width the message count column is left out.
-const MESSAGE_MIN_WIDTH: u16 = 80;
-/// Below this width the source column is left out.
-const SOURCE_MIN_WIDTH: u16 = 100;
+const MESSAGE_MIN_WIDTH: u16 = 88;
 /// The text an untitled row carries.
 const UNTITLED: &str = "untitled session";
 /// The text the overlay draws when it does not fit.
@@ -53,21 +45,14 @@ const CARET: &str = "\u{258f}";
 const SCOPE_NOTE_PREFIX: &str = "Showing only the profile";
 /// The opening of the side failure sentence.
 const SIDE_FAILURE_PREFIX: &str = "Could not reach Hermes to list sessions";
-/// The footer of a wide overlay.
-const FOOTER_WIDE: &str = "\u{2191}\u{2193} move \u{b7} Enter open \u{b7} r rename \u{b7} b branch \
-\u{b7} e export \u{b7} / search \u{b7} Tab profile \u{b7} Ctrl+R refresh \u{b7} Esc close";
-/// The footer of an overlay that is not wide enough for the keys.
-const FOOTER_NARROW: &str = "\u{2191}\u{2193} Enter r b e / Tab Esc";
+const FOOTER: &str = "↑↓ move · Enter open · / search · Tab profile · Esc close";
+const FOOTER_NARROW: &str = "Enter open · / search · Esc close";
+const ACTIONS: &str = "r rename · b branch · e export · Ctrl+R refresh";
 /// The footer of the search line.
 const FOOTER_SEARCH: &str = "type to filter \u{b7} Enter keep \u{b7} Esc clear";
 /// The footer of the rename editor.
 const FOOTER_RENAME: &str = "Enter rename \u{b7} Esc cancel";
-/// The width the wide footer needs.
-const FOOTER_WIDE_MIN_WIDTH: u16 = 110;
-/// The width the narrow footer needs.
-const FOOTER_NARROW_MIN_WIDTH: u16 = 60;
-
-/// The picker's styles. A later unit fills them.
+/// The picker's styles.
 #[derive(Clone, Debug)]
 pub struct PickerTheme {
     /// The header line.
@@ -84,6 +69,9 @@ pub struct PickerTheme {
     pub footer: Style,
     /// The chosen format of the export dialog.
     pub chosen: Style,
+    row: Style,
+    divider: Style,
+    running: Style,
 }
 
 impl PickerTheme {
@@ -97,6 +85,31 @@ impl PickerTheme {
             notice: Style::new(),
             footer: Style::new().add_modifier(Modifier::DIM),
             chosen: Style::new().add_modifier(Modifier::REVERSED),
+            row: Style::new(),
+            divider: Style::new().dim(),
+            running: Style::new().bold(),
+        }
+    }
+
+    fn resolve(views: &ViewStyles) -> Self {
+        let base = Self::new();
+        let chosen = views.style(t::LIST_SELECTED, base.chosen);
+        let chosen = if views.color() {
+            chosen
+        } else {
+            chosen.reversed()
+        };
+        Self {
+            header: views.style(t::LIST_HEADER, base.header),
+            group: views.style(t::LIST_MUTED, base.group),
+            marker: views.style(t::LIST_SELECTED, base.marker),
+            dim: views.style(t::LIST_MUTED, base.dim),
+            notice: views.style(t::LIST_EMPTY, base.notice),
+            footer: views.style(t::LIST_MUTED, base.footer),
+            chosen,
+            row: views.style(t::LIST_ROW, base.row),
+            divider: views.style(t::LIST_DIVIDER, base.divider),
+            running: views.style(t::LIST_RUNNING, base.running),
         }
     }
 }
@@ -111,8 +124,60 @@ impl Default for PickerTheme {
 pub struct SessionPickerView;
 
 impl SessionPickerView {
+    /// Resolve a terminal coordinate to the session row drawn at that position.
+    pub fn hit_test(state: &PickerState, area: Rect, column: u16, row: u16) -> Option<&RowKey> {
+        if area.width < MIN_WIDTH
+            || area.height < MIN_HEIGHT
+            || !matches!(state.mode(), PickerMode::List | PickerMode::Search)
+        {
+            return None;
+        }
+        let rows = state.visible_rows();
+        let banner_count = state.banners().len().min(2) as u16;
+        let layout = DirectoryLayout::new(state, area, banner_count, !rows.is_empty());
+        if !layout.rows.contains(Position::new(column, row)) {
+            return None;
+        }
+        let (body, cursor) = body_lines(state, &rows);
+        let offset = body_offset(cursor, layout.rows.height) + usize::from(row - layout.rows.y);
+        match body.get(offset) {
+            Some(BodyLine::Row(row)) => Some(&row.key),
+            _ => None,
+        }
+    }
+
+    /// Draw the picker with the active theme and terminal glyph constraints.
+    pub fn draw_with_theme(
+        state: &PickerState,
+        area: Rect,
+        buf: &mut Buffer,
+        now: f64,
+        views: &ViewStyles,
+    ) {
+        Self::draw_directory(
+            state,
+            area,
+            buf,
+            now,
+            &PickerTheme::resolve(views),
+            Some(views),
+        );
+        views.finish(area, buf, t::LIST_BACKGROUND, true);
+    }
+
     /// Draw the picker into the area. Nothing outside the area is touched.
     pub fn draw(state: &PickerState, area: Rect, buf: &mut Buffer, now: f64, theme: &PickerTheme) {
+        Self::draw_directory(state, area, buf, now, theme, None);
+    }
+
+    fn draw_directory(
+        state: &PickerState,
+        area: Rect,
+        buf: &mut Buffer,
+        now: f64,
+        theme: &PickerTheme,
+        views: Option<&ViewStyles>,
+    ) {
         let area = area.intersection(buf.area);
         if area.is_empty() {
             return;
@@ -129,19 +194,17 @@ impl SessionPickerView {
         }
 
         let banners = state.banners();
-        let banner_count = u16::try_from(banners.len().min(2)).unwrap_or(0);
+        let banner_count = banners.len().min(2) as u16;
         let rows = state.visible_rows();
-        let columns = RowColumns::new(&rows, area.width);
+        let selected = state.selected();
         let dialog = match state.mode() {
             PickerMode::Export(dialog) => Some(dialog.clone()),
             _ => None,
         };
-        // The export dialog takes the notice row and the footer row, and one row more.
-        let dialog_rows = u16::from(dialog.is_some());
-        let body_height = usize::from(area.height)
-            .saturating_sub(3)
-            .saturating_sub(usize::from(banner_count))
-            .saturating_sub(usize::from(dialog_rows));
+        let layout = DirectoryLayout::new(state, area, banner_count, !rows.is_empty());
+        let list = layout.list;
+        let details = layout.details;
+        let columns = RowColumns::new(&rows, list.width);
 
         draw_header(state, &rows, area, buf, theme);
         for (offset, banner) in banners.iter().take(2).enumerate() {
@@ -156,26 +219,47 @@ impl SessionPickerView {
             );
         }
 
+        if let Some(search_row) = layout.search_row {
+            let query = query_text(state);
+            let (label, style) = if matches!(state.mode(), PickerMode::Search) {
+                (format!(" Search  {query}{CARET}"), theme.row)
+            } else if !query.is_empty() {
+                (format!(" Search  {query}"), theme.row)
+            } else {
+                (" Search  Press / to filter".to_owned(), theme.dim)
+            };
+            let width = usize::from(area.width);
+            buf.set_stringn(area.x, search_row, cut(&label, width), width, style);
+        }
+
+        if list.y < layout.rows.y {
+            let header = columns.header();
+            buf.set_stringn(list.x, list.y, header, usize::from(list.width), theme.group);
+        }
+
         let (body, cursor) = body_lines(state, &rows);
-        // The window starts at the smallest offset that keeps the cursor row in sight.
-        let offset = match cursor {
-            Some(index) => index.saturating_add(1).saturating_sub(body_height),
-            None => 0,
-        };
-        let selected = state.selected().map(|row| row.key.clone());
+        let body_height = usize::from(layout.rows.height);
+        let offset = body_offset(cursor, layout.rows.height);
         let foreground = foreground_key(state);
-        let body_top = area.y + 1 + banner_count;
         for (index, line) in body.iter().skip(offset).take(body_height).enumerate() {
-            let y = body_top + u16::try_from(index).unwrap_or(0);
+            let y = layout.rows.y + u16::try_from(index).unwrap_or(0);
+            let selected_key = selected.map(|row| &row.key);
+            if matches!(line, BodyLine::Row(row) if selected_key == Some(&row.key)) {
+                buf.set_style(Rect::new(list.x, y, list.width, 1), theme.chosen);
+            }
             let line = draw_body_line(
                 line,
                 &columns,
-                selected.as_ref(),
+                selected_key,
                 foreground.as_ref(),
                 now,
                 theme,
             );
-            buf.set_line(area.x, y, &line, area.width);
+            buf.set_line(list.x, y, &line, list.width);
+        }
+
+        if let Some(row) = selected.filter(|_| !details.is_empty()) {
+            draw_details(row, foreground.as_ref(), now, details, buf, theme, views);
         }
 
         let notice_row = area.bottom().saturating_sub(2);
@@ -194,6 +278,14 @@ impl SessionPickerView {
                         usize::from(area.width),
                         theme.notice,
                     );
+                } else if area.width >= 48 && state.selected().is_some() {
+                    buf.set_stringn(
+                        area.x + 1,
+                        notice_row,
+                        ACTIONS,
+                        usize::from(area.width - 1),
+                        theme.footer,
+                    );
                 }
                 if let Some(footer) = footer_text(state.mode(), area.width) {
                     let text = cut(footer, usize::from(area.width) - 1);
@@ -210,6 +302,79 @@ impl SessionPickerView {
     }
 }
 
+fn body_offset(cursor: Option<usize>, height: u16) -> usize {
+    // Start at the smallest offset that keeps the selected row in view.
+    cursor.map_or(0, |index| {
+        index.saturating_add(1).saturating_sub(usize::from(height))
+    })
+}
+
+struct DirectoryLayout {
+    list: Rect,
+    details: Rect,
+    rows: Rect,
+    search_row: Option<u16>,
+}
+
+impl DirectoryLayout {
+    fn new(state: &PickerState, area: Rect, banner_count: u16, has_rows: bool) -> Self {
+        // The export dialog takes the notice row and the footer row, and one row more.
+        let dialog_rows = u16::from(matches!(state.mode(), PickerMode::Export(_)));
+        let search = (area.width >= 48 && area.height >= 12)
+            || !state.query().is_empty()
+            || matches!(state.mode(), PickerMode::Search);
+        let column_header = area.height >= 12 && has_rows;
+        let body_top = area.y + 1 + banner_count + u16::from(search);
+        let body = Rect::new(
+            area.x,
+            body_top,
+            area.width,
+            area.bottom()
+                .saturating_sub(2 + dialog_rows)
+                .saturating_sub(body_top),
+        );
+        let (list, details) = match state.selected() {
+            Some(_) if body.width >= 112 && body.height >= 12 => {
+                let list_width = body.width - (body.width / 3).clamp(39, 64);
+                (
+                    Rect::new(body.x, body.y, list_width, body.height),
+                    Rect::new(
+                        body.x + list_width,
+                        body.y,
+                        body.width - list_width,
+                        body.height,
+                    ),
+                )
+            }
+            Some(_) if body.width >= 54 && body.height >= 10 => {
+                let details_height = if body.height >= 16 { 6 } else { 4 };
+                (
+                    Rect::new(body.x, body.y, body.width, body.height - details_height),
+                    Rect::new(
+                        body.x,
+                        body.bottom() - details_height,
+                        body.width,
+                        details_height,
+                    ),
+                )
+            }
+            _ => (body, Rect::default()),
+        };
+        let header_height = u16::from(column_header);
+        Self {
+            list,
+            details,
+            rows: Rect::new(
+                list.x,
+                list.y + header_height,
+                list.width,
+                list.height.saturating_sub(header_height),
+            ),
+            search_row: search.then_some(body_top - 1),
+        }
+    }
+}
+
 /// The widths of the row line's columns.
 struct RowColumns {
     /// The profile column, when it is shown.
@@ -220,8 +385,6 @@ struct RowColumns {
     model: Option<usize>,
     /// The message count column, when it is shown.
     messages: Option<usize>,
-    /// The source column, when it is shown.
-    source: Option<usize>,
 }
 
 impl RowColumns {
@@ -233,7 +396,7 @@ impl RowColumns {
                 .map(|row| columns(&sanitize(&row.key.profile)))
                 .max()
                 .unwrap_or(0);
-            Some(widest.min(PROFILE_CAP))
+            Some(widest.clamp("Profile".len(), PROFILE_CAP))
         } else {
             None
         };
@@ -243,34 +406,18 @@ impl RowColumns {
                 .map(|row| columns(&sanitize(short_model_text(row.model.as_deref()))))
                 .max()
                 .unwrap_or(0);
-            (widest > 0).then_some(widest.min(MODEL_CAP))
+            (widest > 0).then_some(widest.clamp("Model".len(), MODEL_CAP))
         } else {
             None
         };
         let messages = (width >= MESSAGE_MIN_WIDTH).then_some(MESSAGE_WIDTH);
-        let source = if width >= SOURCE_MIN_WIDTH {
-            let widest = rows
-                .iter()
-                .filter_map(|row| source_tag(row.source.as_deref()))
-                .map(|tag| columns(&sanitize(tag)))
-                .max()
-                .unwrap_or(0);
-            (widest > 0).then_some(widest.min(SOURCE_CAP))
-        } else {
-            None
-        };
-        let others = profile.unwrap_or(0)
-            + model.unwrap_or(0)
-            + AGE_WIDTH
-            + messages.unwrap_or(0)
-            + source.unwrap_or(0);
+        let others = profile.unwrap_or(0) + model.unwrap_or(0) + AGE_WIDTH + messages.unwrap_or(0);
         let shown = 2
             + usize::from(profile.is_some())
             + usize::from(model.is_some())
-            + usize::from(messages.is_some())
-            + usize::from(source.is_some());
+            + usize::from(messages.is_some());
         let title = usize::from(width)
-            .saturating_sub(1 + 4)
+            .saturating_sub(6)
             .saturating_sub(others)
             .saturating_sub(2 * (shown - 1));
         Self {
@@ -278,8 +425,22 @@ impl RowColumns {
             title,
             model,
             messages,
-            source,
         }
+    }
+
+    fn header(&self) -> String {
+        let mut cells = vec![cut("Session", self.title)];
+        if let Some(width) = self.profile {
+            cells.push(cut("Profile", width));
+        }
+        if let Some(width) = self.model {
+            cells.push(cut("Model", width));
+        }
+        cells.push(pad_left("Started", AGE_WIDTH));
+        if let Some(width) = self.messages {
+            cells.push(pad_left("Messages", width));
+        }
+        format!("     {}", cells.join("  "))
     }
 }
 
@@ -303,7 +464,7 @@ fn body_lines<'a>(
     let selected = state.selected().map(|row| row.key.clone());
     let mut lines = Vec::new();
     let mut cursor = None;
-    for (origin, label) in [(RowOrigin::Live, "LIVE"), (RowOrigin::Stored, "EARLIER")] {
+    for (origin, label) in [(RowOrigin::Live, "Live"), (RowOrigin::Stored, "Earlier")] {
         let group: Vec<&DirectoryRow> = rows
             .iter()
             .copied()
@@ -325,7 +486,7 @@ fn body_lines<'a>(
     }
     let unavailable = state.unavailable();
     if !unavailable.is_empty() {
-        lines.push(BodyLine::Group(" UNAVAILABLE".to_owned()));
+        lines.push(BodyLine::Group(" Unavailable".to_owned()));
         lines.extend(
             unavailable
                 .into_iter()
@@ -394,38 +555,41 @@ fn row_line(
             "  "
         }
         .to_owned(),
-        if is_foreground || row.running {
-            theme.marker
+        if !is_selected && (is_foreground || row.running) {
+            theme.running
         } else {
             Style::new()
         },
     ));
 
     let mut cells: Vec<Span<'static>> = Vec::new();
+    cells.push(Span::styled(
+        cut(session_title(row), columns.title),
+        if row.title.is_empty() && !is_selected {
+            theme.dim
+        } else {
+            Style::new()
+        },
+    ));
+    let secondary = if is_selected { Style::new() } else { theme.dim };
     if let Some(width) = columns.profile {
-        cells.push(Span::raw(cut(&sanitize(&row.key.profile), width)));
-    }
-    if row.title.is_empty() {
-        cells.push(Span::styled(cut(UNTITLED, columns.title), theme.dim));
-    } else {
-        cells.push(Span::raw(cut(&sanitize(&row.title), columns.title)));
+        cells.push(Span::styled(cut(&row.key.profile, width), secondary));
     }
     if let Some(width) = columns.model {
-        cells.push(Span::raw(cut(
-            &sanitize(short_model_text(row.model.as_deref())),
-            width,
-        )));
+        cells.push(Span::styled(
+            cut(short_model_text(row.model.as_deref()), width),
+            secondary,
+        ));
     }
-    cells.push(Span::raw(pad_left(
-        &format_age(row.started_at, now),
-        AGE_WIDTH,
-    )));
+    cells.push(Span::styled(
+        pad_left(&format_age(row.started_at, now), AGE_WIDTH),
+        secondary,
+    ));
     if let Some(width) = columns.messages {
-        cells.push(Span::raw(pad_left(&message_text(row.message_count), width)));
-    }
-    if let Some(width) = columns.source {
-        let tag = source_tag(row.source.as_deref()).unwrap_or_default();
-        cells.push(Span::styled(cut(&sanitize(tag), width), theme.dim));
+        cells.push(Span::styled(
+            pad_left(&row.message_count.to_string(), width),
+            secondary,
+        ));
     }
 
     for (index, cell) in cells.into_iter().enumerate() {
@@ -434,10 +598,152 @@ fn row_line(
         }
         spans.push(cell);
     }
-    Line::from(spans)
+    Line::from(spans).style(if is_selected { theme.chosen } else { theme.row })
 }
 
-/// The header line: the count on the left, the state of the list on the right.
+fn session_title(row: &DirectoryRow) -> &str {
+    if row.title.is_empty() {
+        UNTITLED
+    } else {
+        &row.title
+    }
+}
+
+fn draw_details(
+    row: &DirectoryRow,
+    foreground: Option<&RowKey>,
+    now: f64,
+    mut area: Rect,
+    buf: &mut Buffer,
+    theme: &PickerTheme,
+    views: Option<&ViewStyles>,
+) {
+    let side = area.height >= 12;
+    if side {
+        let divider = views.map_or("│", |views| views.divider_symbol("│"));
+        for y in area.y..area.bottom() {
+            buf.set_stringn(area.x, y, divider, 1, theme.divider);
+        }
+    }
+    let inset = if side { 2 } else { 1 };
+    area.x += inset;
+    area.width -= inset;
+    buf.set_stringn(
+        area.x,
+        area.y,
+        "Selected session",
+        usize::from(area.width),
+        theme.group,
+    );
+
+    let status = if foreground == Some(&row.key) {
+        "Current session"
+    } else if row.running {
+        "Running"
+    } else {
+        match row.origin {
+            RowOrigin::Live => "Live",
+            RowOrigin::Stored => "Earlier",
+        }
+    };
+    let age = format_age(row.started_at, now);
+    let messages = row.message_count.to_string();
+    let source = row
+        .source
+        .as_deref()
+        .filter(|source| !source.is_empty())
+        .unwrap_or("—");
+    let model = row
+        .model
+        .as_deref()
+        .filter(|model| !model.is_empty())
+        .unwrap_or("—");
+    if side {
+        let mut y = 1;
+        for part in detail_rows(session_title(row), area.width, 2) {
+            draw_detail_line(Line::styled(part, theme.header), area, y, buf);
+            y += 1;
+        }
+        y += 1;
+        let fields = [
+            ("Status", status),
+            ("Model", model),
+            ("Profile", row.key.profile.as_str()),
+            ("Started", &age),
+            ("Messages", &messages),
+            ("Session ID", &row.key.session_id),
+            ("Source", source),
+        ];
+        let width = usize::from(area.width);
+        let label_width = 11;
+        for (index, (label, value)) in fields.into_iter().enumerate() {
+            if y >= area.height {
+                break;
+            }
+            let value = sanitize(value);
+            let remaining_fields = fields.len() - index - 1;
+            let available = usize::from(area.height - y).saturating_sub(remaining_fields);
+            if columns(&value) > width - label_width && available >= 2 {
+                draw_detail_line(Line::styled(label, theme.dim), area, y, buf);
+                y += 1;
+                for part in detail_rows(&value, area.width, available - 1) {
+                    draw_detail_line(Line::styled(part, theme.row), area, y, buf);
+                    y += 1;
+                }
+            } else {
+                let line = Line::from(vec![
+                    Span::styled(format!("{label:<label_width$}"), theme.dim),
+                    Span::styled(cut(&value, width - label_width), theme.row),
+                ]);
+                draw_detail_line(line, area, y, buf);
+                y += 1;
+            }
+        }
+    } else {
+        let width = usize::from(area.width);
+        let model_rows = if area.height >= 6 { 2 } else { 1 };
+        let mut y = 1;
+        for part in detail_rows(model, area.width - 7, model_rows) {
+            let line = Line::from(vec![
+                Span::styled(if y == 1 { "Model  " } else { "       " }, theme.dim),
+                Span::styled(part, theme.row),
+            ]);
+            draw_detail_line(line, area, y, buf);
+            y += 1;
+        }
+        let profile = format!("{} · {status}", sanitize(&row.key.profile));
+        let source = format!("{} · {messages} messages · Started {age}", sanitize(source));
+        let fields = [
+            ("Profile  ", profile.as_str()),
+            ("Source  ", source.as_str()),
+            ("Session ID  ", &row.key.session_id),
+        ];
+        for (offset, (label, value)) in (y..area.height).zip(fields) {
+            let line = Line::from(vec![
+                Span::styled(label, theme.dim),
+                Span::styled(cut(value, width - columns(label)), theme.row),
+            ]);
+            draw_detail_line(line, area, offset, buf);
+        }
+    }
+}
+
+fn detail_rows(text: &str, width: u16, maximum: usize) -> Vec<String> {
+    let mut rows = word_wrapped(&sanitize(text), width);
+    if rows.len() > maximum {
+        rows.truncate(maximum);
+        if let Some(last) = rows.last_mut() {
+            *last = cut(&format!("{last}…"), usize::from(width));
+        }
+    }
+    rows
+}
+
+fn draw_detail_line(line: Line<'_>, area: Rect, offset: u16, buf: &mut Buffer) {
+    buf.set_line(area.x, area.y + offset, &line, area.width);
+}
+
+/// The header line: the count on the left, the loading state on the right.
 fn draw_header(
     state: &PickerState,
     rows: &[&DirectoryRow],
@@ -469,12 +775,6 @@ fn draw_header(
 
 /// The header's right hand text, if any.
 fn right_text(state: &PickerState, rows: &[&DirectoryRow]) -> Option<String> {
-    if !matches!(state.mode(), PickerMode::Search) {
-        let query = query_text(state);
-        if !query.is_empty() {
-            return Some(format!("Search: \"{query}\""));
-        }
-    }
     if rows.is_empty() {
         return state
             .pending_profile()
@@ -504,7 +804,7 @@ fn shows_cached_rows(state: &PickerState, rows: &[&DirectoryRow]) -> bool {
 fn notice_line(state: &PickerState) -> Option<String> {
     match state.mode() {
         PickerMode::Rename(editor) => Some(rename_line(editor)),
-        PickerMode::Search => Some(format!("Search: {}{}", query_text(state), CARET)),
+        PickerMode::Search => None,
         PickerMode::Waiting(waiting) => Some(waiting_line(waiting)),
         _ => state.notice().map(|notice| sanitize(notice).into_owned()),
     }
@@ -548,15 +848,9 @@ fn footer_text(mode: &PickerMode, width: u16) -> Option<&'static str> {
     match mode {
         PickerMode::Search => Some(FOOTER_SEARCH),
         PickerMode::Rename(_) => Some(FOOTER_RENAME),
-        _ => {
-            if width >= FOOTER_WIDE_MIN_WIDTH {
-                Some(FOOTER_WIDE)
-            } else if width >= FOOTER_NARROW_MIN_WIDTH {
-                Some(FOOTER_NARROW)
-            } else {
-                None
-            }
-        }
+        _ if width >= 58 => Some(FOOTER),
+        _ if width >= 35 => Some(FOOTER_NARROW),
+        _ => Some("Enter open · Esc close"),
     }
 }
 
@@ -666,25 +960,6 @@ fn profile_count(rows: &[&DirectoryRow]) -> usize {
     names.len()
 }
 
-/// The tag a row's source shows, if it shows one.
-fn source_tag(source: Option<&str>) -> Option<&str> {
-    match source {
-        None => None,
-        Some("tui") | Some("cli") => None,
-        Some("gui") | Some("desktop") => Some("desktop"),
-        Some(other) => Some(other),
-    }
-}
-
-/// The message count of a row.
-fn message_text(count: u64) -> String {
-    if count == 1 {
-        "1 msg".to_owned()
-    } else {
-        format!("{count} msgs")
-    }
-}
-
 /// The columns a text takes.
 fn columns(text: &str) -> usize {
     UnicodeWidthStr::width(text)
@@ -726,7 +1001,7 @@ fn cut(text: &str, width: usize) -> String {
 fn pad_left(text: &str, width: usize) -> String {
     let used = columns(text);
     if used >= width {
-        return text.to_owned();
+        return cut(text, width);
     }
     format!("{}{text}", " ".repeat(width - used))
 }

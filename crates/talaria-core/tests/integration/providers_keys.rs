@@ -218,6 +218,37 @@ fn preview_shows_only_the_tail() {
 }
 
 #[test]
+fn clearing_a_replacement_keeps_the_saved_key_and_resets_the_card() {
+    let (mut state, _) = open(keys_tab(), true);
+    let mut row = env("OPENCODE_ZEN_API_KEY", "opencode-zen", "OpenCode Zen", true);
+    row.tail = Some("wxyz".into());
+    load_env(&mut state, vec![row]);
+    step(&mut state, ProvidersInput::Key(ProvidersKey::Enter));
+    assert!(joined(&state).contains("Saved key ends in wxyz"));
+
+    for had_draft in [false, true] {
+        if had_draft {
+            step(&mut state, ProvidersInput::SecretEdited { empty: false });
+        }
+        let effects = step(&mut state, ProvidersInput::SecretCleared);
+        assert!(matches!(
+            effects.as_slice(),
+            [ProvidersEffect::ForgetSecret]
+        ));
+        let card = joined(&state);
+        assert!(
+            card.contains("Entry cleared") && !card.contains("wxyz"),
+            "{card}"
+        );
+        assert!(step(&mut state, ProvidersInput::Key(ProvidersKey::Enter)).is_empty());
+    }
+    step(&mut state, ProvidersInput::Key(ProvidersKey::Esc));
+    step(&mut state, ProvidersInput::Key(ProvidersKey::Enter));
+    assert!(joined(&state).contains("Saved key ends in wxyz"));
+    assert!(!joined(&state).contains("Entry cleared"));
+}
+
+#[test]
 fn check_then_save_sequence() {
     let (mut state, _) = open(keys_tab(), true);
     let mut row = env("OPENROUTER_API_KEY", "openrouter", "OpenRouter", false);
@@ -237,11 +268,11 @@ fn check_then_save_sequence() {
     let text = joined(&state);
     assert!(text.contains("API key for OpenRouter"), "{text}");
     assert!(
-        text.contains("Saved to profile fixture's key file as OPENROUTER_API_KEY."),
+        text.contains("Destination: profile fixture · OPENROUTER_API_KEY"),
         "{text}"
     );
     assert!(
-        text.contains("enter save · ctrl+u clear · esc cancel"),
+        text.contains("Ctrl+U clear entry") && !text.contains("Enter save"),
         "{text}"
     );
     assert!(shown.secret_focus, "the key card takes input");
@@ -279,7 +310,7 @@ fn check_then_save_sequence() {
     let saved_row = catalogue(vec![provider("openrouter", "OpenRouter", true, 2)])
         .providers
         .remove(0);
-    let effects = step(&mut state, ProvidersInput::KeySaved(Ok(saved_row)));
+    let effects = step(&mut state, ProvidersInput::KeySaved(Ok(Some(saved_row))));
     assert!(
         effects
             .iter()
@@ -434,7 +465,7 @@ fn check_then_save_sequence() {
     let saved = catalogue(vec![provider("openrouter", "OpenRouter", true, 1)])
         .providers
         .remove(0);
-    let effects = step(&mut saved_late, ProvidersInput::KeySaved(Ok(saved)));
+    let effects = step(&mut saved_late, ProvidersInput::KeySaved(Ok(Some(saved))));
     assert!(
         joined(&saved_late).contains("Saved the key for OpenRouter."),
         "a save that answers after escape still applies: {}",

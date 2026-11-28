@@ -41,6 +41,8 @@ pub enum PanelVisibility {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LayoutState {
     pub preferences: LayoutPreferences,
+    /// Pointer navigation in the transcript and workflow overlays.
+    pub mouse: bool,
     pub panel: PanelVisibility,
     /// The menu row has keyboard focus.
     pub menu_focused: bool,
@@ -65,6 +67,7 @@ impl LayoutState {
     pub fn new(preferences: LayoutPreferences, columns: u16, rows: u16) -> Self {
         let mut state = Self {
             preferences,
+            mouse: false,
             panel: PanelVisibility::Hidden,
             menu_focused: false,
             menu_dropdown: false,
@@ -148,6 +151,7 @@ pub enum LayoutAction {
     Panel,
     Bar,
     Menu,
+    Mouse,
 }
 
 /// Whether the inline subagent dock is drawn.
@@ -163,7 +167,8 @@ pub fn parse_layout_args(argument: &str) -> Result<LayoutAction, String> {
         "panel" => Ok(LayoutAction::Panel),
         "bar" => Ok(LayoutAction::Bar),
         "menu" => Ok(LayoutAction::Menu),
-        _ => Err("Usage: /layout panel|bar|menu".into()),
+        "mouse" => Ok(LayoutAction::Mouse),
+        _ => Err("Usage: /layout panel|bar|menu|mouse".into()),
     }
 }
 

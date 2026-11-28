@@ -210,9 +210,10 @@ impl RunDir {
             .map_err(|e| JournalError::Manifest(e.to_string()))?;
         if manifest.v != 1
             || path.file_name().and_then(|s| s.to_str()) != Some(manifest.run_id.as_str())
+            || !super::valid_sha256(&manifest.workflow.script_sha256)
         {
             return Err(JournalError::Manifest(
-                "manifest version or run id differs from folder".into(),
+                "manifest version, run id or script hash is invalid".into(),
             ));
         }
         Ok(Self {
@@ -638,6 +639,24 @@ mod tests {
         assert_eq!(manifest.build, BuildStamp::default());
         assert_eq!(manifest.build.talaria_commit, "unknown");
         assert_eq!(manifest.approval_policy["mode"], "finite-only");
+    }
+
+    #[test]
+    fn opening_a_run_rejects_an_invalid_script_hash() {
+        let parent = tempfile::tempdir().unwrap();
+        let folder = parent.path().join("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        fs::create_dir(&folder).unwrap();
+        let mut manifest = old_manifest();
+        manifest["workflow"]["script_sha256"] = serde_json::json!("../../outside");
+        fs::write(
+            folder.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            RunDir::open(&folder),
+            Err(JournalError::Manifest(_))
+        ));
     }
 
     #[test]

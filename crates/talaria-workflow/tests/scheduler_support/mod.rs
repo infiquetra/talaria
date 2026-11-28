@@ -31,6 +31,7 @@ pub fn request(n: u32) -> AgentRequest {
         phase: None,
         prompt: "test".into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("m".into()),
         provider: Some("alpha".into()),
@@ -148,6 +149,7 @@ impl Harness {
                 workflow_path: vec![],
                 launch: l.clone(),
                 request_id: format!("request-{attempt}"),
+                report_baseline: None,
             });
         }
         self.append(Record::TurnSettled {

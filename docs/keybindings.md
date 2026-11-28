@@ -2,21 +2,28 @@
 
 These are the built-in bindings. Configure them in [configuration](configuration.md); contexts keep the same key available for different actions.
 
+Press **F3** for the keys available in the composer, a prompt card, the message queue,
+Vim editing, or a model confirmation. Press **Esc** to return to the same focus. To
+change the help key, set `focus_help` in the keymap.
+
 ## Workflow progress keys
 
 | Action | Default keys | What it does | Config name |
 |---|---|---|---|
 | Workflow up | Up | Move the selection up. | `workflow_up` |
 | Workflow down | Down | Move the selection down. | `workflow_down` |
-| Workflow collapse | Left | Collapse the selected workflow item. | `workflow_collapse` |
-| Workflow expand | Right | Expand the selected workflow item. | `workflow_expand` |
-| Workflow open | Enter | Open the selected item. | `workflow_open` |
+| Workflow collapse | Left | Fold the selected branch or move to its parent. | `workflow_collapse` |
+| Workflow expand | Right | Unfold the selected branch or move to its first child. | `workflow_expand` |
+| Workflow open | Enter | Open the selected agent's transcript. | `workflow_open` |
 | Workflow steer | S | Steer the selected agent. | `workflow_steer` |
 | Workflow stop agent | X | Ask to stop the selected agent; X or Y confirms. The run then waits for an answer (`talaria workflow resolve`). | `workflow_stop_agent` |
 | Workflow restart | R | Restart the selected item. | `workflow_restart` |
 | Workflow pause | P | Pause or resume the run. | `workflow_pause` |
 | Workflow stop run | Shift+X | Ask to stop the workflow run. | `workflow_stop_run` |
 | Workflow filter | F | Filter the list. | `workflow_filter` |
+| Workflow next attention | A | Jump to the next agent that needs attention, expanding its branch. | `workflow_next_attention` |
+| Workflow details | D | Open the selected agent’s saved report or details. Up and Down scroll, and Esc returns to the structure. | `workflow_details` |
+| Workflow result | V | Read the workflow’s saved verdict and evidence. Esc returns to the same selection. | `workflow_view_result` |
 | Workflow close | Esc | Close this view. | `workflow_close` |
 | Workflow confirm | Y | Confirm the pending action. | `workflow_confirm` |
 
@@ -49,7 +56,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Submit | Enter | Submit the draft. | `submit` |
 | Newline | Shift+Enter, Alt+Enter, Ctrl+J | Insert a newline. | `newline` |
 | Interrupt | Esc | Interrupt the running turn. Press it twice within two seconds: the first press only asks for confirmation, and the turn is interrupted a moment (110 ms) after the second press if no further press follows, so holding the key does not interrupt (a hold that starts within two seconds of a tap counts as that tap's second press). Ctrl+C interrupts on one press. | `interrupt` |
-| Cancel | Ctrl+C | Clear the draft, interrupt, or exit on a second press. | `cancel` |
+| Cancel | Ctrl+C | In the composer, clear the draft, interrupt, or exit on a second press. In an overlay, interrupt the foreground turn and keep the current field open. | `cancel` |
 | Move left | Left | Move the caret left. | `move_left` |
 | Move right | Right | Move the caret right. | `move_right` |
 | Move up | Up | Move the caret up. | `move_up` |
@@ -72,6 +79,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Attach clipboard image | Ctrl+V, Alt+V | Attach an image from the clipboard. | `attach_clipboard_image` |
 | Transcript open | Ctrl+O | Open or close the transcript pager, where reasoning shows in full. | `transcript_open` |
 | Toggle tasks | Ctrl+T | Show or hide the task checklist. | `toggle_tasks` |
+| Focus help | F3 | Show the keys for the current conversation focus. Esc returns to it. | `focus_help` |
 | Layout panel | Alt+D | Toggle the work panel, or reopen its dismissed overlay. | `layout_panel` |
 | Toggle menu bar | Alt+I | Toggle and focus the menu bar. | `toggle_menu_bar` |
 | Approvals toggle | Shift+Tab | Toggle this session’s approval bypass. | `approvals_toggle` |

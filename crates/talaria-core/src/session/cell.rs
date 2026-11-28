@@ -1,5 +1,7 @@
 //! Transcript cells. Text is raw. Wrapping and colour belong to later units.
 
+use std::sync::Arc;
+
 use serde_json::Value;
 
 use super::{CellId, PromptKey};
@@ -54,6 +56,18 @@ pub fn assistant_reply(cells: &[Cell], n: u32) -> Result<String, ReplyMiss> {
 }
 
 impl Cell {
+    /// A warning or diagnostic that can arrive before a conversation starts.
+    pub fn is_advisory_notice(&self) -> bool {
+        matches!(
+            self,
+            Self::Notice(NoticeCell {
+                kind: NoticeKind::Warning | NoticeKind::Diagnostic,
+                body: None,
+                ..
+            })
+        )
+    }
+
     /// Whether this cell is final and ready to be committed to scrollback once every earlier cell is also final.
     #[must_use]
     pub fn is_final(&self) -> bool {
@@ -130,6 +144,7 @@ mod tests {
         let user = Cell::User(UserCell {
             id: CellId::new(1),
             text: "a question".to_owned(),
+            expanded_paste: None,
         });
         assert!(user.starts_turn());
         assert!(notice(Some("synthetic result")).starts_turn());
@@ -142,8 +157,18 @@ mod tests {
 pub struct UserCell {
     /// Stable id.
     pub id: CellId,
-    /// Raw text.
+    /// Text shown inline, including any paste labels.
     pub text: String,
+    /// Full user text when the inline form abbreviates a paste.
+    pub expanded_paste: Option<Arc<str>>,
+}
+
+impl UserCell {
+    /// The text shown and searched in the transcript.
+    #[must_use]
+    pub fn transcript_text(&self) -> &str {
+        self.expanded_paste.as_deref().unwrap_or(&self.text)
+    }
 }
 
 /// Assistant prose. `sealed` is what makes the cell final.

@@ -319,6 +319,53 @@ fn quit_restores_terminal_and_prints_resume_hint() {
     gateway.assert_no_violations();
 }
 
+#[test]
+fn a_collapsed_paste_reaches_each_skill_as_multiline_text() {
+    for (args, prefix, expected_prefix) in [
+        (
+            &["--no-ensure"][..],
+            "/fixture-skill-1 inspect ",
+            "fixture-skill-1 inspect ",
+        ),
+        (
+            &["--no-ensure", "--hivecode"][..],
+            "Inspect this output: ",
+            "talaria-workflows Inspect this output: ",
+        ),
+    ] {
+        let home = home();
+        let gateway = StandaloneGateway::start(home.path());
+        let mut terminal = Launch::new(home.path()).args(args).answer_queries().spawn();
+        // Paste chips belong to an open session. The creation request can precede its first frame.
+        assert!(
+            terminal.wait_for_text("approvals: manual", Duration::from_secs(5)),
+            "{}",
+            terminal.screen_text()
+        );
+        let paste = "error α\r\n\tfirst detail\nsecond detail\nthird detail\nlast detail";
+        terminal.type_keys(&format!("{prefix}\x1b[200~{paste}\x1b[201~"));
+        assert!(
+            terminal.wait_for_text("[Pasted text #1 +5 lines]", Duration::from_secs(5)),
+            "paste did not reach the composer:\n{}",
+            terminal.screen_text()
+        );
+        assert!(
+            gateway.requests("slash.exec").is_empty(),
+            "paste submitted on its own"
+        );
+        terminal.type_keys("\r");
+        let request = gateway
+            .wait_request("slash.exec", 0, Duration::from_secs(5))
+            .unwrap_or_else(|| panic!("skill was not dispatched:\n{}", terminal.screen_text()));
+        let command = request.params["command"].as_str().expect("skill command");
+        let expected = format!("{expected_prefix}{}", paste.replace("\r\n", "\n"));
+        assert!(
+            command.starts_with(&expected),
+            "submitted skill command was {command:?}"
+        );
+    }
+}
+
 /// Start the binary against a gateway that never answers the create, wait until it has asked,
 /// send the signal to the binary itself, and read how it ended.
 fn signalled(name: &str) -> support::Screen {
@@ -421,6 +468,129 @@ fn sigint_at_the_resume_list_ends_the_process_by_the_signal() {
 }
 
 #[test]
+fn collapsed_paste_stays_compact_inline_and_is_searchable_in_the_transcript() {
+    let home = home();
+    let gateway = StandaloneGateway::start(home.path());
+    let mut terminal = Launch::new(home.path())
+        .args(&["--no-ensure"])
+        .answer_queries()
+        .spawn();
+    gateway
+        .wait_request("session.create", 0, Duration::from_secs(5))
+        .expect("session creation");
+
+    let paste = "first detail\nerror α\n\tthe search needle\nfourth detail\nlast detail";
+    assert!(
+        terminal.wait_for_text("approvals: manual", Duration::from_secs(5)),
+        "{}",
+        terminal.screen_text()
+    );
+    terminal.type_keys(&format!("\x1b[200~{paste}\x1b[201~"));
+    let label = "[Pasted text #1 +5 lines]";
+    assert!(
+        terminal.wait_for_text(label, Duration::from_secs(5)),
+        "{}",
+        terminal.screen_text()
+    );
+    terminal.type_keys("\r");
+    let submitted = gateway
+        .wait_request("prompt.submit", 0, Duration::from_secs(5))
+        .expect("submitted paste");
+    assert_eq!(submitted.params["text"], paste);
+    assert!(
+        terminal.wait_for_text(&format!("You     {label}"), Duration::from_secs(5)),
+        "{}",
+        terminal.screen_text()
+    );
+    assert!(!terminal.screen_text().contains("the search needle"));
+
+    terminal.type_keys("\x0f");
+    assert!(terminal.wait_for_text("the search needle", Duration::from_secs(5)));
+    terminal.type_keys("/");
+    assert!(terminal.wait_for_text("/▏", Duration::from_secs(5)));
+    terminal.type_keys("\x1b[200~search needle\x1b[201~");
+    assert!(terminal.wait_for_text("/search needle", Duration::from_secs(5)));
+    terminal.type_keys("\r");
+    assert!(
+        terminal.wait_for_text("\"search needle\" 1 of 1", Duration::from_secs(5)),
+        "{}",
+        terminal.screen_text()
+    );
+}
+
+#[test]
+fn startup_shortcuts_survive_a_catalog_warning_until_the_first_message() {
+    let home = home();
+    let gateway = StandaloneGateway::start(home.path());
+    // Connection and foreground-session refreshes can both ask for this catalogue.
+    for _ in 0..2 {
+        gateway.push_matched_result(
+            "commands.catalog",
+            serde_json::json!({"session_id": mock_gateway::SESSION_ID}),
+            serde_json::json!({
+                "pairs": [["/plan", "Plan"]],
+                "warning": "slash command /plan unavailable — name taken by built-in; use /skill plan"
+            }),
+        );
+    }
+    let mut terminal = Launch::new(home.path())
+        .size(36, 130)
+        .args(&[
+            "--no-ensure",
+            "--model",
+            "muse-spark-1.3-contributor",
+            "--effort",
+            "max",
+        ])
+        .answer_queries()
+        .spawn();
+    let limit = Duration::from_secs(5);
+    let warning = "Use /skill plan";
+    let check_opening = |screen: &str| {
+        for label in [
+            warning,
+            "skill.",
+            "Resume a session",
+            "Browse workflows",
+            "Choose a model",
+            "New conversation",
+        ] {
+            assert!(screen.contains(label), "missing {label:?}:\n{screen}");
+        }
+    };
+    assert!(
+        terminal.wait_for_text(warning, limit),
+        "{}",
+        terminal.screen_text()
+    );
+    terminal.settle();
+    check_opening(&terminal.screen_text());
+
+    terminal.type_keys("\x1bd"); // Alt+D opens the full-screen workspace.
+    assert!(
+        terminal.wait_for_text("Work", limit),
+        "{}",
+        terminal.screen_text()
+    );
+    check_opening(&terminal.screen_text());
+
+    type_line(&mut terminal, "hello");
+    gateway
+        .wait_request("prompt.submit", 0, limit)
+        .expect("submitted message");
+    assert!(
+        terminal.wait_for_text("You", limit),
+        "{}",
+        terminal.screen_text()
+    );
+    let screen = terminal.screen_text();
+    assert!(
+        screen.contains(warning) && !screen.contains("Browse workflows"),
+        "{screen}"
+    );
+}
+
+#[test]
 fn ctrl_o_close_redraws_inline_composer_immediately() {
     let home = home();
     let _gateway = StandaloneGateway::start(home.path());
@@ -498,4 +668,74 @@ fn ctrl_o_close_redraws_workspace_composer_immediately() {
     type_line(&mut terminal, "/quit");
     let screen = terminal.finish(Duration::from_secs(5));
     assert_eq!(screen.exit_code, Some(0), "{}", screen.text);
+}
+
+#[test]
+fn kanban_footer_clicks_open_edit_and_close_the_filter() {
+    use serde_json::json;
+    use unicode_width::UnicodeWidthStr;
+
+    let home = home();
+    let gateway = StandaloneGateway::start(home.path());
+    gateway.configure_rest_route("GET", "/api/plugins/kanban/board?board=default", |_| {
+        (
+            200,
+            json!({
+                "columns": [{"name": "todo", "tasks": []}],
+                "tenants": [], "assignees": [], "latest_event_id": 1
+            }),
+        )
+    });
+    gateway.configure_rest_route("GET", "/api/plugins/kanban/workflow", |_| {
+        (
+            200,
+            json!({
+                "columns": [{"key": "todo", "label": "To do", "icon": "", "drag_target": true}],
+                "manual": {}, "archived": "archived"
+            }),
+        )
+    });
+    let config = home.path().join(".talaria");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("config.toml"), "[ui]\nmouse = true\n").unwrap();
+    let mut terminal = Launch::new(home.path())
+        .args(&[
+            "--no-ensure",
+            "--profile",
+            "fixture",
+            "--provider",
+            "opencode-go",
+            "--model",
+            "muse-spark-1.3-contributor",
+            "--effort",
+            "max",
+        ])
+        .size(28, 100)
+        .answer_queries()
+        .spawn();
+    let limit = Duration::from_secs(5);
+    assert!(terminal.wait_for_text(COMPOSER_ROW, limit));
+    type_line(&mut terminal, "/kanban");
+    let click = |terminal: &mut Terminal, label: &str| {
+        assert!(
+            terminal.wait_for_text(label, limit),
+            "{}",
+            terminal.screen_text()
+        );
+        let screen = terminal.screen_text();
+        let (y, prefix) = screen
+            .lines()
+            .enumerate()
+            .find_map(|(y, line)| line.split_once(label).map(|(prefix, _)| (y + 1, prefix)))
+            .unwrap();
+        let x = prefix.width() + 1;
+        terminal.type_keys(&format!("\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m"));
+    };
+    click(&mut terminal, "/ filter");
+    assert!(terminal.wait_for_text("Filter:", limit));
+    terminal.type_keys("needle");
+    assert!(terminal.wait_for_text("Filter: needle", limit));
+    click(&mut terminal, "Esc cancel");
+    click(&mut terminal, "Esc close");
+    assert!(terminal.wait_for_text(COMPOSER_ROW, limit));
 }

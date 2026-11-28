@@ -11,6 +11,7 @@ use talaria_core::directory::state::{PickerAction, PickerInput, PickerState, upd
 use talaria_tui::live::LiveView;
 use talaria_tui::session_picker::{PickerTheme, SessionPickerView};
 use talaria_tui::terminal::{InlineTerminal, RestoreLink};
+use unicode_width::UnicodeWidthStr;
 
 const NOW: f64 = 1_792_700_000.0;
 const COLS: u16 = 80;
@@ -163,109 +164,69 @@ fn buffer(state: &PickerState, cols: u16, rows: u16) -> Buffer {
 }
 
 #[test]
-fn loading_and_rows_snapshots() {
+fn session_columns_selection_and_inspector_follow_the_available_width() {
     let state = dataset();
 
-    let wide = render(&state, 160, 48);
-    assert_eq!(wide[0], " Sessions · all profiles · 4 shown");
-    assert_eq!(wide[1], " LIVE (2)");
-    assert_eq!(
-        wide[2],
-        " ▸ ● fixture  Fix the average in calc.py                                                                           minimax-m3.1-flash     2m    12 msgs"
-    );
-    assert_eq!(
-        wide[3],
-        "   ◐ fixture  Review the parser                                                                                    minimax-m3.1-flash    15m    30 msgs"
-    );
-    assert_eq!(wide[4], " EARLIER (2)");
-    assert_eq!(
-        wide[5],
-        "     default  untitled session                                                                                     minimax-m3.1-flash     3d     2 msgs"
-    );
-    assert_eq!(
-        wide[6],
-        "     fixture  Try the other fix                                                                                    minimax-m3.1-flash     1w     8 msgs  desktop"
-    );
-    for row in wide.iter().take(47).skip(7) {
-        assert!(row.is_empty(), "blank body row, found {row:?}");
-    }
-    assert_eq!(
-        wide[47],
-        " ↑↓ move · Enter open · r rename · b branch · e export · / search · Tab profile · Ctrl+R refresh · Esc close"
-    );
+    for (cols, height) in [(60, 24), (80, 24), (120, 24), (160, 48)] {
+        let frame = render(&state, cols, height);
+        assert_eq!(frame[0], " Sessions · all profiles · 4 shown");
+        assert_eq!(frame[1], " Search  Press / to filter");
+        let headings = &frame[2];
+        let title = headings.find("Session").expect("title column");
+        let profile = headings.find("Profile").expect("profile column");
+        let started = headings.find("Started").expect("start time column");
+        assert!(title < profile && profile < started);
 
-    let medium = render(&state, 100, 30);
-    assert_eq!(medium[0], " Sessions · all profiles · 4 shown");
-    assert_eq!(medium[1], " LIVE (2)");
-    assert_eq!(
-        medium[2],
-        " ▸ ● fixture  Fix the average in calc.py               minimax-m3.1-flash     2m    12 msgs"
-    );
-    assert_eq!(
-        medium[3],
-        "   ◐ fixture  Review the parser                        minimax-m3.1-flash    15m    30 msgs"
-    );
-    assert_eq!(medium[4], " EARLIER (2)");
-    assert_eq!(
-        medium[5],
-        "     default  untitled session                         minimax-m3.1-flash     3d     2 msgs"
-    );
-    assert_eq!(
-        medium[6],
-        "     fixture  Try the other fix                        minimax-m3.1-flash     1w     8 msgs  desktop"
-    );
-    for row in medium.iter().take(29).skip(7) {
-        assert!(row.is_empty(), "blank body row, found {row:?}");
-    }
-    assert_eq!(medium[29], " ↑↓ Enter r b e / Tab Esc");
+        let selected = frame
+            .iter()
+            .position(|line| line.starts_with(" ▸ ● Fix the average in calc.py"))
+            .expect("the current session is highlighted");
+        let running = selected + 1;
+        let column = |line: &str, phrase: &str| line.split_once(phrase).unwrap().0.width();
+        assert_eq!(
+            column(&frame[selected], "Fix the average"),
+            column(&frame[running], "Review the parser")
+        );
+        assert_eq!(
+            column(&frame[selected], "fixture"),
+            column(&frame[running], "fixture")
+        );
+        assert!(frame[running].contains('◐'));
+        assert!(frame.iter().any(|line| line.contains("Earlier (2)")));
+        assert!(frame.iter().any(|line| line.contains("untitled session")));
 
-    let narrow = render(&state, 80, 24);
-    assert_eq!(narrow[0], " Sessions · all profiles · 4 shown");
-    assert_eq!(narrow[1], " LIVE (2)");
-    assert_eq!(
-        narrow[2],
-        " ▸ ● fixture  Fix the average in calc.py    minimax-m3.1-flash     2m    12 msgs"
-    );
-    assert_eq!(
-        narrow[3],
-        "   ◐ fixture  Review the parser             minimax-m3.1-flash    15m    30 msgs"
-    );
-    assert_eq!(narrow[4], " EARLIER (2)");
-    assert_eq!(
-        narrow[5],
-        "     default  untitled session              minimax-m3.1-flash     3d     2 msgs"
-    );
-    assert_eq!(
-        narrow[6],
-        "     fixture  Try the other fix             minimax-m3.1-flash     1w     8 msgs"
-    );
-    for row in narrow.iter().take(23).skip(7) {
-        assert!(row.is_empty(), "blank body row, found {row:?}");
-    }
-    assert_eq!(narrow[23], " ↑↓ Enter r b e / Tab Esc");
-
-    let tiny = render(&state, 50, 20);
-    assert_eq!(tiny[0], " Sessions · all profiles · 4 shown");
-    assert_eq!(tiny[1], " LIVE (2)");
-    assert_eq!(
-        tiny[2],
-        " ▸ ● fixture  Fix the average in calc.py        2m"
-    );
-    assert_eq!(
-        tiny[3],
-        "   ◐ fixture  Review the parser                15m"
-    );
-    assert_eq!(tiny[4], " EARLIER (2)");
-    assert_eq!(
-        tiny[5],
-        "     default  untitled session                  3d"
-    );
-    assert_eq!(
-        tiny[6],
-        "     fixture  Try the other fix                 1w"
-    );
-    for row in tiny.iter().skip(7) {
-        assert!(row.is_empty(), "blank row, found {row:?}");
+        let buffer = buffer(&state, cols, height);
+        let list_right = headings.find('│').unwrap_or(usize::from(cols));
+        let selected_y = u16::try_from(selected).unwrap();
+        let highlight_x = u16::try_from(list_right - 1).unwrap();
+        assert!(
+            buffer[(highlight_x, selected_y)]
+                .modifier
+                .contains(Modifier::REVERSED)
+        );
+        assert!(
+            frame
+                .iter()
+                .any(|line| line.contains("ollama-cloud/minimax-m3.1-flash"))
+        );
+        assert!(frame.iter().any(|line| line.contains("Current session")));
+        assert!(frame[height as usize - 1].contains("Enter open"));
+        assert!(frame[height as usize - 1].contains("Esc close"));
+        assert!(frame[height as usize - 2].contains("e export"));
+        let inspector = frame
+            .iter()
+            .position(|line| line.contains("Selected session"))
+            .unwrap();
+        if cols >= 112 {
+            assert_eq!(inspector, 2);
+            assert!(
+                frame
+                    .iter()
+                    .any(|line| line.contains("Session ID") && line.contains("s1"))
+            );
+        } else {
+            assert!(inspector > running);
+        }
     }
 
     // Loading header with no rows.
@@ -287,6 +248,41 @@ fn loading_and_rows_snapshots() {
         rows[0].ends_with("Loading fixture…"),
         "header: {:?}",
         rows[0]
+    );
+}
+
+#[test]
+fn hit_test_only_selects_visible_sessions() {
+    let mut state = dataset();
+    let area = Rect::new(4, 5, 120, 24);
+    assert_eq!(
+        SessionPickerView::hit_test(&state, area, 8, 8),
+        None,
+        "group heading"
+    );
+    assert_eq!(
+        SessionPickerView::hit_test(&state, area, 8, 9),
+        Some(&key("fixture", "s1"))
+    );
+    assert_eq!(
+        SessionPickerView::hit_test(&state, area, 8, 10),
+        Some(&key("fixture", "s2"))
+    );
+    assert_eq!(
+        SessionPickerView::hit_test(&state, area, 95, 9),
+        None,
+        "inspector"
+    );
+    assert_eq!(
+        SessionPickerView::hit_test(&state, area, 8, 22),
+        None,
+        "blank list space"
+    );
+    update(&mut state, PickerInput::Action(PickerAction::Export), 20);
+    assert_eq!(
+        SessionPickerView::hit_test(&state, area, 8, 10),
+        None,
+        "export dialog"
     );
 }
 

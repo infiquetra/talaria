@@ -107,6 +107,77 @@ fn names(state: &PaletteState) -> Vec<String> {
 }
 
 #[test]
+fn completion_filters_unrelated_results_and_deduplicates_resolved_aliases() {
+    let world = World::ready(decode_catalog(json!({
+        "pairs": [["/journey", "Journey"], ["/save", "Save"]],
+        "canon": {"trip": "/journey", "jaunt": "/journey"}
+    })));
+    let mut state = PaletteState::closed();
+    let _ = world.apply(&mut state, draft("/j", 2));
+    let request_id = state.request_id;
+    let _ = world.apply(
+        &mut state,
+        PaletteInput::CompletionArrived {
+            request_id,
+            result: complete(json!({"items": [
+            {"text": "journey"}, {"text": "jaunt"}, {"text": "journey"}, {"text": "save"}
+        ], "replace_from": 1})),
+        },
+    );
+    assert_eq!(names(&state), ["/journey"]);
+}
+
+#[test]
+fn page_and_end_navigation_moves_between_selectable_rows() {
+    let world = World::bare();
+    let mut state = PaletteState::closed();
+    let _ = world.apply(&mut state, draft("/", 1));
+    let first = state.selected;
+    let _ = world.apply(&mut state, PaletteInput::PageDown(3));
+    assert!(state.selected > first);
+    let _ = world.apply(&mut state, PaletteInput::PageUp(3));
+    assert_eq!(state.selected, first);
+    let _ = world.apply(&mut state, PaletteInput::End);
+    assert_eq!(
+        state.selected,
+        state
+            .rows
+            .iter()
+            .rposition(|row| row.kind == RowKind::Command)
+            .unwrap()
+    );
+    let _ = world.apply(&mut state, PaletteInput::Home);
+    assert_eq!(state.selected, first);
+}
+
+#[test]
+fn collision_warning_stays_out_of_the_palette() {
+    let world = World::ready(decode_catalog(json!({
+        "pairs": [["/plan", "Plan"]],
+        "warning": "slash command /plan unavailable — name taken by built-in; use /skill plan"
+    })));
+    let mut state = PaletteState::closed();
+    let _ = world.apply(&mut state, draft("/", 1));
+    assert!(state.footer.is_none());
+    let _ = world.apply(&mut state, draft("/plan", 5));
+    assert!(state.footer.is_none());
+}
+
+#[test]
+fn discovery_warning_stays_in_the_palette() {
+    let world = World::ready(decode_catalog(json!({
+        "pairs": [["/plan", "Plan"]],
+        "warning": "quick_commands discovery unavailable: fixture error"
+    })));
+    let mut state = PaletteState::closed();
+    let _ = world.apply(&mut state, draft("/", 1));
+    assert_eq!(
+        state.footer.as_deref(),
+        Some("Hermes: quick_commands discovery unavailable: fixture error")
+    );
+}
+
+#[test]
 fn opens_only_for_slash_shape() {
     let world = World::bare();
     let mut state = PaletteState::closed();
@@ -509,13 +580,30 @@ fn esc_closes_until_draft_changes() {
     let world = World::ready(search_catalog());
     let mut state = PaletteState::closed();
     let _ = world.apply(&mut state, draft("/he", 3));
-    let _ = world.apply(&mut state, PaletteInput::Close);
+    let _ = world.apply(&mut state, PaletteInput::Escape);
     assert!(!state.open);
     assert_eq!(state.closed_for.as_deref(), Some("/he"));
     let _ = world.apply(&mut state, draft("/he", 3));
     assert!(!state.open);
     let _ = world.apply(&mut state, draft("/hex", 4));
     assert!(state.open);
+}
+
+#[test]
+fn escape_requests_clearing_the_bare_slash() {
+    let world = World::bare();
+    let mut state = PaletteState::closed();
+    let _ = world.apply(&mut state, draft("/", 1));
+    assert_eq!(
+        world.apply(&mut state, PaletteInput::Escape),
+        [
+            PaletteEffect::Redraw,
+            PaletteEffect::ReplaceDraft {
+                text: String::new(),
+            },
+        ]
+    );
+    assert!(!state.open);
 }
 
 #[test]

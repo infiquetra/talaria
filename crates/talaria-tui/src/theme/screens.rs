@@ -22,6 +22,7 @@ use ratatui::{
     text::Line,
 };
 use std::collections::HashSet;
+use talaria_app::theme_file::BUILTIN_THEMES;
 use talaria_core::{
     appearance::Rgb,
     models::PickerView,
@@ -53,12 +54,12 @@ pub fn frames() -> Vec<ThemeScreenFrame> {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let mut frames = Vec::new();
-    for id in ["terminal", "ember", "paper"] {
+    for id in BUILTIN_THEMES {
         for (width, height) in [(80, 24), (120, 40)] {
             frames.push(render(id, width, height, false, None));
         }
     }
-    for id in ["ember", "paper"] {
+    for id in BUILTIN_THEMES.into_iter().filter(|id| *id != "terminal") {
         for background in [Rgb(255, 255, 255), Rgb(16, 16, 20)] {
             frames.push(render(id, 80, 24, true, Some(background)));
         }

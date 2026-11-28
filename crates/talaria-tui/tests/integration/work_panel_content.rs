@@ -88,6 +88,8 @@ fn work<'a>(
         waiting,
         agents,
         parent_model: None,
+        agent_clock: Default::default(),
+        agent_wake_ms: Default::default(),
         recent_limit: 4,
         voice_phase: None,
         read_aloud: None,
@@ -372,7 +374,11 @@ fn agents_are_ordered_waiting_running_queued_recent() {
     ] {
         apply(&mut agents, "subagent.start", child(id, goal, None), at);
         let mut done = child(id, goal, None);
-        done["status"] = json!("completed");
+        done["status"] = if id == "older-done" {
+            json!("failed")
+        } else {
+            json!("completed")
+        };
         apply(&mut agents, "subagent.complete", done, at + 10);
     }
     let waiting = [
@@ -398,6 +404,8 @@ fn agents_are_ordered_waiting_running_queued_recent() {
     let newer = position(&lines, "newer-done");
     assert!(earlier < later && later < running && running < queued);
     assert!(queued < older && older < newer, "{lines:?}");
+    assert!(lines[older].starts_with('✗'), "{lines:?}");
+    assert!(lines[newer].starts_with('✓'), "{lines:?}");
 }
 
 #[test]
@@ -443,7 +451,11 @@ fn model_and_effort_are_reported_or_unknown() {
     apply(
         &mut agents,
         "subagent.start",
-        child("named", "named-child", Some("child-model")),
+        {
+            let mut data = child("named", "named-child", Some("child-model"));
+            data["child_session_id"] = json!("named-session");
+            data
+        },
         1_000,
     );
     apply(
@@ -452,6 +464,12 @@ fn model_and_effort_are_reported_or_unknown() {
         child("bare", "bare-child", None),
         2_000,
     );
+    assert!(agents.set_child_route(
+        "named",
+        "named-session",
+        "child-model".into(),
+        "high".into()
+    ));
     let mut shown = work(None, None, &[], &agents);
     shown.parent_model = Some("parent-model");
     let lines = paint(&shown, 16);
@@ -466,8 +484,9 @@ fn model_and_effort_are_reported_or_unknown() {
     );
     assert!(
         joined.contains("effort: unknown"),
-        "effort is unknown for every child: {lines:?}"
+        "missing child effort is unknown: {lines:?}"
     );
+    assert!(joined.contains("effort: high"));
     assert!(
         !joined.contains("parent-model") && !joined.contains("medium"),
         "neither the parent nor a default effort is borrowed: {lines:?}"

@@ -146,6 +146,8 @@ mod progress_tree;
 mod replay;
 #[path = "integration/report.rs"]
 mod report;
+#[path = "integration/report_recovery.rs"]
+mod report_recovery;
 #[path = "integration/roster.rs"]
 mod roster;
 #[path = "integration/roster_envelope.rs"]

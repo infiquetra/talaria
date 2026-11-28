@@ -12,6 +12,7 @@ use talaria_app::app::{self, UserAction};
 use talaria_app::appearance::ThemeFileSession;
 use talaria_app::config::parse;
 use talaria_app::launch::{Launch, StartMode};
+use talaria_app::theme_file::{BUILTIN_THEMES, builtin_description};
 use talaria_core::appearance::{
     ColorDepth, DepthSource, Motion, MotionSource, NotAppliedReason, Polarity, PolaritySource,
     ThemeReport,
@@ -285,7 +286,7 @@ async fn none_before(
 }
 
 #[test]
-fn bare_theme_reports_then_opens_selector_with_builtins_and_user_files() {
+fn bare_theme_opens_selector_with_builtins_and_user_files() {
     run_with(
         None,
         |_| {},
@@ -295,25 +296,28 @@ fn bare_theme_reports_then_opens_selector_with_builtins_and_user_files() {
         })
         .await;
             tx.send(UserAction::Submit("/theme".into())).unwrap();
-            wait_for(&mut seen, "the report", lines_with("Motion:")).await;
             wait_for(&mut seen, "the selector", |seen| {
-                choice(seen).is_some_and(|shown| {
-                shown.rows
-                    == [
-                        "Theme",
-                        "Configured (current) | Follow config.toml (now themes/global.toml)",
-                        "terminal | Terminal defaults and named colours; follows the Hermes skin",
-                        "ember | A warm dark theme; ignores Hermes skins",
-                        "paper | A light theme with blue and brown accents; ignores Hermes skins",
+                let mut expected = vec![
+                    "Theme".to_owned(),
+                    "Configured (current) | Follow config.toml (now themes/global.toml)".to_owned(),
+                ];
+                expected.extend(
+                    BUILTIN_THEMES.map(|id| format!("{id} | {}", builtin_description(id).unwrap())),
+                );
+                expected.extend(
+                    [
                         "global | Theme file themes/global.toml: Global",
                         "quiet-amber | Theme file themes/quiet-amber.toml: Quiet amber",
                         "Background",
-                        "light | Light terminal background, for this session",
-                        "dark | Dark terminal background, for this session",
-                        "auto (current) | Detect the background, as at start-up",
+                        "light | Use a light terminal background",
+                        "dark | Use a dark terminal background",
+                        "auto (current) | Follow configuration and terminal detection",
                     ]
-                    && shown.selected.as_deref() == Some("file:")
-            })
+                    .map(str::to_owned),
+                );
+                choice(seen).is_some_and(|shown| {
+                    shown.rows == expected && shown.selected.as_deref() == Some("file:")
+                })
             })
             .await;
             key(&tx, ChoiceKey::Cancel);
@@ -344,8 +348,8 @@ fn theme_preview_changes_appearance_and_escape_restores_it() {
                 |seen| matches!(seen, Seen::Appearance { file: Some(file), previewing: true, .. } if file == "ember"),
             )
             .await;
-            // The Background rows preview the polarity with the theme as it was at open.
-            for _ in 0..4 {
+            // Move past the remaining built-ins and two custom themes to the first Background row.
+            for _ in 0..=BUILTIN_THEMES.len() {
                 key(&tx, ChoiceKey::Next);
             }
             wait_for(&mut seen, "the light preview", |seen| {
@@ -359,6 +363,8 @@ fn theme_preview_changes_appearance_and_escape_restores_it() {
         .await;
             // Nothing reached the configuration file, and the session still follows it.
             assert_eq!(fs::read(dir.join("config.toml")).unwrap(), before);
+            assert!(!dir.join("theme-selection.json").exists());
+            assert!(!dir.join("theme-selection.lock").exists());
             tx.send(UserAction::Submit("/theme".into())).unwrap();
             wait_for(&mut seen, "the reopened selector", selected("file:")).await;
             key(&tx, ChoiceKey::Cancel);
@@ -368,7 +374,7 @@ fn theme_preview_changes_appearance_and_escape_restores_it() {
 }
 
 #[test]
-fn theme_enter_selects_file_for_this_session_and_prints_the_line_that_keeps_it() {
+fn theme_enter_saves_the_file_for_the_next_launch() {
     run_with(
         None,
         |_| {},
@@ -385,23 +391,14 @@ fn theme_enter_selects_file_for_this_session_and_prints_the_line_that_keeps_it()
             }
             wait_for(&mut seen, "the filtered list", selected("file:quiet-amber")).await;
             key(&tx, ChoiceKey::Apply);
-            // The line that keeps the choice prints at once; the file is read off the loop.
             wait_for(
                 &mut seen,
-                "the line that keeps it",
-                lines_with(
-                    "To keep quiet-amber after this session, add file = \"quiet-amber\" under \
-                 [theme] in config.toml.",
-                ),
-            )
-            .await;
-            wait_for(
-                &mut seen,
-                "the confirmation",
-                lines_with("Theme file: themes/quiet-amber.toml."),
+                "the saved confirmation",
+                lines_with("Theme choice saved for this profile."),
             )
             .await;
             assert_eq!(fs::read(dir.join("config.toml")).unwrap(), before);
+            assert_eq!(reopen(&dir).active_id(), Some("quiet-amber"));
             tx.send(UserAction::Submit("/theme".into())).unwrap();
             wait_for(&mut seen, "the reopened selector", |seen| {
                 choice(seen).is_some_and(|shown| {
@@ -420,7 +417,7 @@ fn theme_enter_selects_file_for_this_session_and_prints_the_line_that_keeps_it()
 }
 
 #[test]
-fn theme_enter_on_a_file_that_cannot_load_prints_no_line_to_keep_it() {
+fn theme_enter_on_a_file_that_cannot_load_keeps_the_previous_choice() {
     run_with(
         None,
         |_| {},
@@ -429,32 +426,108 @@ fn theme_enter_on_a_file_that_cannot_load_prints_no_line_to_keep_it() {
                 matches!(seen, Seen::Appearance { file: Some(file), .. } if file == "global")
             })
             .await;
-            fs::write(dir.join("themes/broken.toml"), "schema = [\n").unwrap();
+            fs::write(dir.join("themes/dracula.toml"), "schema = [\n").unwrap();
             tx.send(UserAction::Submit("/theme".into())).unwrap();
             wait_for(&mut seen, "the selector", selected("file:")).await;
-            for ch in "broken".chars() {
+            for ch in "dracula".chars() {
                 key(&tx, ChoiceKey::Type(ch));
             }
             wait_for(&mut seen, "the broken row", |seen| {
                 choice(seen).is_some_and(|shown| {
-                    shown.selected.as_deref() == Some("file:broken")
+                    shown.selected.as_deref() == Some("file:dracula")
+                        && shown
+                            .rows
+                            .iter()
+                            .filter(|row| row.starts_with("dracula | "))
+                            .count()
+                            == 1
                         && shown.rows.iter().any(|row| {
-                            row.starts_with("broken | Cannot be used: themes/broken.toml: syntax")
+                            row.starts_with("dracula | Cannot be used: themes/dracula.toml: syntax")
                         })
                 })
             })
             .await;
             key(&tx, ChoiceKey::Apply);
-            // `/theme use broken` reports the load error, and nothing says to keep the file.
+            // `/theme use dracula` reports the custom file's load error.
             none_before(
                 &mut seen,
                 "the load error",
-                |seen| matches!(seen, Seen::Lines(lines) if lines.contains("To keep broken")),
-                lines_with("themes/broken.toml: syntax"),
+                lines_with("Theme choice saved"),
+                lines_with("themes/dracula.toml: syntax"),
             )
             .await;
+            assert!(!dir.join("theme-selection.json").exists());
             tx.send(UserAction::Quit).unwrap();
         },
+    );
+}
+
+fn reopen(dir: &std::path::Path) -> ThemeFileSession {
+    let path = dir.join("config.toml");
+    let config = talaria_app::config::load_file(&path).config.theme;
+    let mut files = ThemeFileSession::new(path, config, "fixture");
+    assert!(files.startup().is_empty());
+    files
+}
+
+#[test]
+fn background_choices_save_and_auto_restores_startup() {
+    run_with(
+        None,
+        |_| {},
+        |tx, mut seen, dir| async move {
+            tx.send(UserAction::Submit("/theme".into())).unwrap();
+            wait_for(&mut seen, "the selector", selected("file:")).await;
+            for _ in 0..BUILTIN_THEMES.len() + 3 {
+                key(&tx, ChoiceKey::Next);
+            }
+            wait_for(&mut seen, "the light preview", selected("background:light")).await;
+            assert!(!dir.join("theme-selection.json").exists());
+            key(&tx, ChoiceKey::Apply);
+            wait_for(
+                &mut seen,
+                "confirmation",
+                lines_with("light background saved"),
+            )
+            .await;
+            let startup = (Polarity::Dark, PolaritySource::Default);
+            assert_eq!(
+                reopen(&dir).polarity(startup),
+                (Polarity::Light, PolaritySource::Command)
+            );
+            let environment = (Polarity::Dark, PolaritySource::Environment);
+            assert_eq!(reopen(&dir).polarity(environment), environment);
+
+            tx.send(UserAction::Submit("/theme auto".into())).unwrap();
+            wait_for(
+                &mut seen,
+                "restored background",
+                lines_with("Background detection restored"),
+            )
+            .await;
+            assert_eq!(reopen(&dir).polarity(startup), startup);
+            tx.send(UserAction::Quit).unwrap();
+        },
+    );
+}
+
+#[test]
+fn accepted_theme_commands_survive_an_immediate_quit() {
+    let (_, dir) = run_with(
+        None,
+        |_| {},
+        |tx, _seen, _| async move {
+            tx.send(UserAction::Submit("/theme use quiet-amber".into()))
+                .unwrap();
+            tx.send(UserAction::Submit("/theme light".into())).unwrap();
+            tx.send(UserAction::Quit).unwrap();
+        },
+    );
+    let files = reopen(dir.path());
+    assert_eq!(files.active_id(), Some("quiet-amber"));
+    assert_eq!(
+        files.polarity((Polarity::Dark, PolaritySource::Default)),
+        (Polarity::Light, PolaritySource::Command),
     );
 }
 

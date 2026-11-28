@@ -1,7 +1,7 @@
 //! The `/theme` and `/skin` selectors: what opening, moving, Enter and Esc do.
 //!
 //! The list itself is `talaria_core::commands::ChoiceList`. A theme preview changes only what the
-//! screen resolves, in memory. Hermes has no call that shows a skin without making it the
+//! screen resolves, in memory. Enter saves the choice for the current profile. Hermes has no call that shows a skin without making it the
 //! profile's skin, so a skin preview writes it once the selection has rested, and Esc or quitting
 //! writes the original back. Every write goes through the connection and session the selector
 //! opened on, and a session or profile switch closes the selector and waits for the writes.
@@ -47,8 +47,6 @@ enum Kind {
     Theme {
         /// Every theme the list offers, loaded, by identifier.
         files: Vec<(String, ThemeFile)>,
-        /// The `config.toml` table that keeps a file choice.
-        table: String,
     },
     Skin {
         /// The profile's skin when the list opened.
@@ -130,9 +128,8 @@ pub enum ChoiceReply {
 /// What the `/theme` selector lists, read off the loop.
 pub struct ThemeListing {
     users: Vec<(String, Result<ThemeFile, String>)>,
-    session: Option<String>,
+    saved: Option<String>,
     configured: Option<String>,
-    table: String,
 }
 
 /// The selector the view draws.
@@ -328,22 +325,18 @@ pub(super) fn run(
                         .as_ref()
                         .map(|files| theme_file::list_themes(files.config_path()))
                         .unwrap_or_default(),
-                    session: files
+                    saved: files
                         .as_ref()
-                        .and_then(|files| files.session_choice().map(str::to_owned)),
+                        .and_then(|files| files.saved_choice().map(str::to_owned)),
                     configured: files
                         .as_ref()
                         .and_then(|files| files.configured_id().map(str::to_owned)),
-                    table: files
-                        .as_ref()
-                        .map_or_else(|| "[theme]".to_owned(), ThemeFileSession::file_table),
                 })
                 .await
                 .unwrap_or(ThemeListing {
                     users: Vec::new(),
-                    session: None,
+                    saved: None,
                     configured: None,
-                    table: "[theme]".to_owned(),
                 });
                 AppMessage::Choice(ChoiceReply::Themes(Box::new(listing)))
             });
@@ -474,9 +467,8 @@ pub(super) fn reply(state: &mut AppState, reply: ChoiceReply) -> Vec<AppEffect> 
 fn open_themes(state: &mut AppState, listing: ThemeListing) -> Vec<AppEffect> {
     let ThemeListing {
         users,
-        session,
+        saved,
         configured,
-        ..
     } = &listing;
     let row =
         |id: String, name: &str, description: String, group: &str, current: bool| ChoiceItem {
@@ -488,7 +480,12 @@ fn open_themes(state: &mut AppState, listing: ThemeListing) -> Vec<AppEffect> {
         };
     let follows = match configured.as_deref() {
         None => "Follow config.toml (no theme file set)".to_owned(),
-        Some(id) if theme_file::builtin(id).is_some() => format!("Follow config.toml (now {id})"),
+        Some(id)
+            if theme_file::builtin_description(id).is_some()
+                && users.iter().all(|(user_id, _)| user_id != id) =>
+        {
+            format!("Follow config.toml (now {id})")
+        }
         Some(id) => format!("Follow config.toml (now themes/{id}.toml)"),
     };
     let mut items = vec![row(
@@ -496,17 +493,20 @@ fn open_themes(state: &mut AppState, listing: ThemeListing) -> Vec<AppEffect> {
         "Configured",
         follows,
         "Theme",
-        session.is_none(),
+        saved.is_none(),
     )];
     let mut files = Vec::new();
     for id in theme_file::BUILTIN_THEMES {
+        if users.iter().any(|(user_id, _)| user_id == id) {
+            continue;
+        }
         let description = theme_file::builtin_description(id).unwrap_or_default();
         items.push(row(
             format!("{FILE}{id}"),
             id,
             description.to_owned(),
             "Theme",
-            session.as_deref() == Some(id),
+            saved.as_deref() == Some(id),
         ));
         if let Some(file) = theme_file::builtin(id) {
             files.push((id.to_owned(), file));
@@ -525,7 +525,7 @@ fn open_themes(state: &mut AppState, listing: ThemeListing) -> Vec<AppEffect> {
             id,
             description,
             "Theme",
-            session.as_deref() == Some(id.as_str()),
+            saved.as_deref() == Some(id.as_str()),
         ));
         if let Ok(file) = loaded {
             files.push((id.clone(), file.clone()));
@@ -535,15 +535,15 @@ fn open_themes(state: &mut AppState, listing: ThemeListing) -> Vec<AppEffect> {
     for (id, description, polarity) in [
         (
             "light",
-            "Light terminal background, for this session",
+            "Use a light terminal background",
             Some(Polarity::Light),
         ),
         (
             "dark",
-            "Dark terminal background, for this session",
+            "Use a dark terminal background",
             Some(Polarity::Dark),
         ),
-        ("auto", "Detect the background, as at start-up", None),
+        ("auto", "Follow configuration and terminal detection", None),
     ] {
         items.push(row(
             format!("{BACKGROUND}{id}"),
@@ -555,10 +555,7 @@ fn open_themes(state: &mut AppState, listing: ThemeListing) -> Vec<AppEffect> {
     }
     state.choice = Some(Selector {
         list: ChoiceList::new(items),
-        kind: Kind::Theme {
-            files,
-            table: listing.table.clone(),
-        },
+        kind: Kind::Theme { files },
     });
     vec![AppEffect::Redraw]
 }
@@ -691,31 +688,17 @@ fn apply(state: &mut AppState, id: &str) -> Vec<AppEffect> {
         return Vec::new();
     };
     match selector.kind {
-        Kind::Theme { files, table } => {
+        Kind::Theme { .. } => {
             state.appearance.set_theme_preview(None);
             let mut effects = vec![AppEffect::Appearance, AppEffect::Redraw];
             if let Some(background) = id.strip_prefix(BACKGROUND) {
                 effects.extend(super::theme_command(state, background));
-                if background != "auto" {
-                    effects.push(notice_lines(&format!(
-                        "To keep the {background} background after this session, set mode = \
-                         \"{background}\" under [theme] in config.toml."
-                    )));
-                }
             } else {
                 let file = id.strip_prefix(FILE).unwrap_or(id);
                 if file.is_empty() {
                     effects.push(AppEffect::ThemeFileCommand("use".to_owned()));
                 } else {
                     effects.push(AppEffect::ThemeFileCommand(format!("use {file}")));
-                    // Only a file that loaded is worth keeping; `/theme use` reports why the
-                    // others cannot be used.
-                    if files.iter().any(|(id, _)| id == file) {
-                        effects.push(notice_lines(&format!(
-                            "To keep {file} after this session, add file = \"{file}\" under \
-                             {table} in config.toml."
-                        )));
-                    }
                 }
             }
             effects

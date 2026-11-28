@@ -189,6 +189,31 @@ async fn perform(
     keys: &HashMap<String, String>,
     at_ms: i64,
 ) -> Vec<ProgressInput> {
+    if let ProgressEffect::LoadEvidence { id, agent } = effect {
+        let path = dir.path().to_owned();
+        let loaded = tokio::task::spawn_blocking(move || {
+            let value = if let Some(agent) = agent {
+                let runs = path
+                    .parent()
+                    .ok_or_else(|| "run folder has no parent".to_owned())?;
+                let target = path
+                    .file_name()
+                    .ok_or_else(|| "run folder has no name".to_owned())?
+                    .to_string_lossy();
+                talaria_workflow::runner::agents::agent_result(runs, &target, &agent)
+                    .map_err(|error| error.to_string())?
+                    .value
+                    .ok_or_else(|| "agent has no saved report".to_owned())?
+            } else {
+                talaria_workflow::runner::evidence::run_document(&path)
+                    .map_err(|error| error.to_string())?
+            };
+            Ok(evidence_text(&value))
+        })
+        .await
+        .unwrap_or_else(|error| Err(format!("could not load evidence: {error}")));
+        return vec![ProgressInput::EvidenceLoaded { id, result: loaded }];
+    }
     if let ProgressEffect::WriteControl(id, request) = effect {
         let dir = dir.clone();
         let result = tokio::task::spawn_blocking(move || {
@@ -412,6 +437,34 @@ async fn perform(
         }
     }
 }
+
+fn evidence_text(value: &Value) -> Vec<String> {
+    fn append(lines: &mut Vec<String>, value: &Value) {
+        let text = value.as_str().map(str::to_owned).unwrap_or_else(|| {
+            serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".into())
+        });
+        lines.extend(text.lines().map(str::to_owned));
+    }
+    let mut lines = Vec::new();
+    if let Value::Object(fields) = value {
+        let priority = ["status", "summary", "final"];
+        for key in priority.iter().copied().chain(
+            fields
+                .keys()
+                .map(String::as_str)
+                .filter(|key| !priority.contains(key)),
+        ) {
+            if let Some(value) = fields.get(key) {
+                lines.push(format!("{key}:"));
+                append(&mut lines, value);
+                lines.push(String::new());
+            }
+        }
+    } else {
+        append(&mut lines, value);
+    }
+    lines
+}
 /// The runtime id of a resume, when it names the attempt that was requested.
 ///
 /// A returned id that differs from the requested id is accepted only when the journal
@@ -477,8 +530,11 @@ impl ProgressViews {
     }
 }
 
-pub(crate) fn load_picker() -> talaria_workflow::runner::ProgressPicker {
-    talaria_workflow::runner::ProgressPicker::load(&talaria_workflow::runner::runs_dir(None))
+pub(crate) fn load_picker(read_local_cache: bool) -> talaria_workflow::runner::ProgressPicker {
+    talaria_workflow::runner::ProgressPicker::load_with_local_cache(
+        &talaria_workflow::runner::runs_dir(None),
+        read_local_cache,
+    )
 }
 pub struct OpenedRun {
     pub path: PathBuf,
@@ -490,10 +546,11 @@ pub struct PollBatch {
     pub lines: Vec<talaria_workflow::journal::RecordLine>,
     pub offset: u64,
     pub controls: talaria_workflow::progress::PendingControls,
+    pub verdict: Option<talaria_workflow::runner::evidence::Verdict>,
     /// Whether a runner held the run lock; `None` when the lock could not be read.
     pub runner_alive: Option<bool>,
 }
-pub(crate) fn open_run(path: PathBuf) -> Result<OpenedRun, String> {
+pub(crate) fn open_run(path: PathBuf, read_local_cache: bool) -> Result<OpenedRun, String> {
     let dir = match RunDir::open(&path) {
         Ok(dir) => dir,
         Err(error) => {
@@ -513,22 +570,17 @@ pub(crate) fn open_run(path: PathBuf) -> Result<OpenedRun, String> {
             });
         }
     };
-    let (state, offset) = match JournalReader::read_from(&path.join("journal.jsonl"), 0) {
-        Ok((lines, offset)) => (
-            ProgressState::new(talaria_workflow::progress::RunProgress::from_records(
-                dir.manifest(),
-                &lines,
-            )),
-            offset,
-        ),
-        Err(error) => {
-            let mut state = ProgressState::new(
-                talaria_workflow::progress::RunProgress::from_records(dir.manifest(), &[]),
-            );
-            state.error = Some(error.to_string());
-            (state, 0)
-        }
-    };
+    let (state, offset) =
+        match talaria_workflow::progress::Tail::open_with_local_cache(&dir, read_local_cache) {
+            Ok((progress, tail)) => (ProgressState::new(progress), tail.offset),
+            Err(error) => {
+                let mut state = ProgressState::new(
+                    talaria_workflow::progress::RunProgress::from_records(dir.manifest(), &[]),
+                );
+                state.error = Some(error.to_string());
+                (state, 0)
+            }
+        };
     Ok(OpenedRun {
         profile: dir.manifest().profile.clone(),
         path,
@@ -549,6 +601,15 @@ pub(crate) fn poll_run(
     talaria_workflow::progress::tail::check_sequence(&lines, last_seq)
         .map_err(|e| e.to_string())?;
     Ok(PollBatch {
+        verdict: lines
+            .last()
+            .filter(|line| {
+                matches!(
+                    line.record,
+                    talaria_workflow::journal::Record::RunFinished { .. }
+                )
+            })
+            .map(|_| talaria_workflow::runner::evidence::verdict(path)),
         lines,
         offset,
         controls: RunControl::pending(&dir),
@@ -568,9 +629,12 @@ pub(crate) fn spawn_effects(
         let dir = tokio::task::spawn_blocking(move || RunDir::open(&target)).await;
         if let Ok(Ok(dir)) = dir {
             let local_only = !effects.is_empty()
-                && effects
-                    .iter()
-                    .all(|e| matches!(e, ProgressEffect::WriteControl(..)));
+                && effects.iter().all(|e| {
+                    matches!(
+                        e,
+                        ProgressEffect::WriteControl(..) | ProgressEffect::LoadEvidence { .. }
+                    )
+                });
             let client = match if local_only {
                 Ok(None)
             } else {
@@ -755,6 +819,41 @@ mod progress_mock_gateway;
 mod connection_tests {
     use super::*;
     use progress_mock_gateway::StandaloneGateway;
+
+    #[test]
+    fn evidence_puts_summary_first_and_keeps_report_lines_readable() {
+        let lines = evidence_text(
+            &json!({"builders":[1], "final":"one\ntwo", "summary":"done", "status":"verified"}),
+        );
+        assert_eq!(&lines[..3], &["status:", "verified", ""]);
+        assert!(lines.windows(2).any(|pair| pair == ["one", "two"]));
+        assert!(
+            lines.iter().position(|line| line == "final:").unwrap()
+                < lines.iter().position(|line| line == "builders:").unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_evidence_loads_without_a_gateway() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = run(root.path());
+        std::fs::write(
+            dir.path().join("outcome.json"),
+            r#"{"result":{"status":"verified"}}"#,
+        )
+        .unwrap();
+        let input = perform(
+            &dir,
+            None,
+            ProgressEffect::LoadEvidence { id: 4, agent: None },
+            &HashMap::new(),
+            0,
+        )
+        .await;
+        assert!(
+            matches!(&input[..], [ProgressInput::EvidenceLoaded { id: 4, result: Ok(lines) }] if lines.iter().any(|line| line == "verified"))
+        );
+    }
 
     fn run(root: &std::path::Path) -> RunDir {
         let folder = root.join("01JB2X9Q4M8Z7K3T5V6W8Y0A1C");

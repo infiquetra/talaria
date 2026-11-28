@@ -302,7 +302,7 @@ fn stored_budget(snapshot: &Value) -> (Option<u64>, Option<f64>) {
     )
 }
 fn read_script(path: &Path, output: &mut Output<'_>) -> Result<(String, ParsedScript), i32> {
-    let source = fs::read_to_string(path).map_err(|e| {
+    let source = super::resolver::read_script(path).map_err(|e| {
         output.diagnostic(format!("cannot read workflow script: {e}"));
         2
     })?;
@@ -565,7 +565,7 @@ async fn resume(
             }
             LockProbe::Free(file) => file,
         };
-        let records = control::read_records(&path).map_err(|e| {
+        let mut records = control::read_records(&path).map_err(|e| {
             output.diagnostic(e.to_string());
             2
         })?;
@@ -590,6 +590,15 @@ async fn resume(
             _ => None,
         };
         if let Some((outcome, code)) = replay.filter(|_| !restarting) {
+            let fold = if fold.cache_unknown_turns == 0 {
+                fold
+            } else {
+                crate::tokens::recover_stored_cache(&mut records);
+                Fold::records(&records).map_err(|e| {
+                    output.diagnostic(e.to_string());
+                    2
+                })?
+            };
             if let Some(path) = &req.record {
                 super::recording::open(path, false)
                     .and_then(|recording| recording.finish().map(|_| ()).map_err(|e| e.to_string()))
@@ -757,7 +766,7 @@ fn replay_finished(dir: &RunDir, fold: Fold, outcome: &str, code: i32, output: &
     });
     code
 }
-/// Print a finished run's stored result, read from its folder only: the same lines and exit
+/// Print a finished run's stored result: the same lines and exit
 /// code as `workflow resume` prints when it replays a finished run, and for a run that failed
 /// or was aborted, what its runner printed when it ended. Nothing is started, no execution is
 /// opened, and a pending restart request is left for the next resume. A run that has not
@@ -778,10 +787,11 @@ pub fn replay_result(runs_dir: &Path, target: &str, out: &mut dyn FnMut(&RunnerE
             2
         })?;
         output.run_id = Some(dir.run_id().as_str().into());
-        let records = control::read_records(&path).map_err(|e| {
+        let mut records = control::read_records(&path).map_err(|e| {
             output.diagnostic(e.to_string());
             2
         })?;
+        crate::tokens::recover_stored_cache(&mut records);
         let fold = Fold::records(&records).map_err(|e| {
             output.diagnostic(e.to_string());
             2

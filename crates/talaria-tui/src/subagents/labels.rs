@@ -9,6 +9,59 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// Give a file-based assignment a readable name. Keep the full instruction in detail.
+pub(crate) fn compact_goal(goal: &str) -> String {
+    use std::path::Path;
+    let goal = super::dock::literal(goal);
+    let mut words = Vec::new();
+    for word in goal.split_whitespace() {
+        let path = word
+            .trim_matches(['\'', '"', '`', ',', '(', ')', ':', ';'])
+            .trim_end_matches('.');
+        if ["/", "~/", "./", "../"]
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+            && !path.contains("://")
+            && let Some((parent, file)) = Path::new(path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|p| p.to_str())
+                .zip(Path::new(path).file_name().and_then(|p| p.to_str()))
+        {
+            if matches!(file, "prompt.txt" | "prompt.md" | "instructions.md")
+                && goal.split_whitespace().next().is_some_and(|verb| {
+                    ["execute", "run", "follow"]
+                        .iter()
+                        .any(|v| verb.eq_ignore_ascii_case(v))
+                })
+            {
+                return parent.to_owned();
+            }
+            words.push(word.replace(path, &format!("{parent}/{file}")));
+        } else {
+            words.push(word.to_owned());
+        }
+    }
+    super::panel::first_sentence(&words.join(" "))
+}
+
+pub(super) fn task_labels(goals: &[&str]) -> GoalLabels {
+    let compact: Vec<_> = goals.iter().map(|goal| compact_goal(goal)).collect();
+    // Different paths can have the same final components. Retain the distinguishing
+    // part of the original instruction for those batches.
+    let mut seen = std::collections::HashMap::new();
+    let collision = compact.iter().zip(goals).any(|(label, &goal)| {
+        seen.insert(label, goal)
+            .is_some_and(|previous| previous != goal)
+    });
+    if collision {
+        let full: Vec<_> = goals.iter().map(|s| super::dock::literal(s)).collect();
+        goal_labels(&full.iter().map(String::as_str).collect::<Vec<_>>())
+    } else {
+        goal_labels(&compact.iter().map(String::as_str).collect::<Vec<_>>())
+    }
+}
+
 /// The labels to show on rows and the shared text to show once above them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GoalLabels {

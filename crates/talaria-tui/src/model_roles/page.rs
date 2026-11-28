@@ -23,7 +23,7 @@ const STALE: &str = "(stale)";
 /// Draw the page: title, tabs, notices, the section (or the preset list and its detail pane),
 /// the footer, and any dialog or picker on top.
 pub fn draw_model_roles(view: &RolesView, area: Rect, buf: &mut Buffer) {
-    draw_inner(view, area, buf, None);
+    draw_model_roles_with_theme(view, area, buf, &ViewStyles::default());
 }
 
 /// Draw model roles with resolved view styles.
@@ -33,10 +33,6 @@ pub fn draw_model_roles_with_theme(
     buf: &mut Buffer,
     views: &ViewStyles,
 ) {
-    draw_inner(view, area, buf, Some(views));
-}
-
-fn draw_inner(view: &RolesView, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     let area = area.intersection(buf.area);
     if area.is_empty() {
         return;
@@ -45,20 +41,32 @@ fn draw_inner(view: &RolesView, area: Rect, buf: &mut Buffer, views: Option<&Vie
     let margin = u16::from(area.width > 2);
     let x = area.x + margin;
     let width = area.width.saturating_sub(2 * margin);
-    paint(&view.title, x, area.y, width, Style::default().bold(), buf);
+    paint(
+        &format!("Keyboard only · {}", view.title),
+        x,
+        area.y,
+        width,
+        views.style(t::LIST_HEADER, Style::default().bold()),
+        buf,
+    );
     if area.height < 4 {
-        if let Some(v) = views {
-            v.finish(area, buf, t::LIST_BACKGROUND, true);
-        }
+        views.finish(area, buf, t::LIST_BACKGROUND, true);
         return;
     }
-    draw_tabs(view, x, area.y + 1, width, buf);
+    draw_tabs(view, x, area.y + 1, width, buf, views);
 
     let footer = footer_lines(view, width, area.height);
     let footer_top = area.bottom() - u16::try_from(footer.len()).unwrap_or(0);
     for (offset, line) in footer.iter().enumerate() {
         let y = footer_top + u16::try_from(offset).unwrap_or(0);
-        paint(line, x, y, width, Style::default(), buf);
+        paint(
+            line,
+            x,
+            y,
+            width,
+            views.style(t::LIST_MUTED, Style::default()),
+            buf,
+        );
     }
 
     let room = footer_top.saturating_sub(area.y + 2).saturating_sub(4);
@@ -70,7 +78,14 @@ fn draw_inner(view: &RolesView, area: Rect, buf: &mut Buffer, views: Option<&Vie
     notice.truncate(usize::from(room));
     for (offset, line) in notice.iter().enumerate() {
         let y = area.y + 2 + u16::try_from(offset).unwrap_or(0);
-        paint(line, x, y, width, Style::default(), buf);
+        paint(
+            line,
+            x,
+            y,
+            width,
+            views.style(t::LIST_WARNING, Style::default()),
+            buf,
+        );
     }
     let body_top = area.y + 2 + u16::try_from(notice.len()).unwrap_or(0) + 1;
     let body = Rect::new(
@@ -88,12 +103,10 @@ fn draw_inner(view: &RolesView, area: Rect, buf: &mut Buffer, views: Option<&Vie
     if let Some(modal) = &view.modal {
         draw_modal(modal, page, buf, views);
     }
-    if let Some(v) = views {
-        v.finish(area, buf, t::LIST_BACKGROUND, true);
-    }
+    views.finish(area, buf, t::LIST_BACKGROUND, true);
 }
 
-fn draw_tabs(view: &RolesView, x: u16, y: u16, width: u16, buf: &mut Buffer) {
+fn draw_tabs(view: &RolesView, x: u16, y: u16, width: u16, buf: &mut Buffer, views: &ViewStyles) {
     let end = x.saturating_add(width);
     let mut at = x;
     for (index, tab) in view.tabs.iter().enumerate() {
@@ -111,9 +124,12 @@ fn draw_tabs(view: &RolesView, x: u16, y: u16, width: u16, buf: &mut Buffer) {
         }
         let label = cut(&label, remaining);
         let style = if tab.current {
-            Style::default().add_modifier(Modifier::REVERSED)
+            views.style(
+                t::LIST_SELECTED,
+                Style::default().add_modifier(Modifier::REVERSED),
+            )
         } else {
-            Style::default()
+            views.style(t::LIST_MUTED, Style::default())
         };
         buf.set_stringn(at, y, &label, usize::from(remaining), style);
         at = at.saturating_add(columns(&label));
@@ -134,12 +150,12 @@ fn footer_lines(view: &RolesView, width: u16, height: u16) -> Vec<String> {
     lines
 }
 
-fn draw_body(view: &RolesView, body: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
+fn draw_body(view: &RolesView, body: Rect, buf: &mut Buffer, views: &ViewStyles) {
     if body.is_empty() {
         return;
     }
     let Some(detail) = &view.detail else {
-        paint_rows(&view.rows, true, body, buf);
+        paint_rows(&view.rows, true, body, buf, views);
         return;
     };
     let left = (body.width / 3)
@@ -157,24 +173,28 @@ fn draw_body(view: &RolesView, body: Rect, buf: &mut Buffer, views: Option<&View
         !view.focus_detail,
         Rect::new(body.x, body.y, left, body.height),
         buf,
+        views,
     );
     for y in body.y..body.bottom() {
         buf.set_stringn(
             body.x + left + 1,
             y,
-            views.map_or("\u{2502}", |v| v.divider_symbol("\u{2502}")),
+            views.divider_symbol("\u{2502}"),
             1,
-            Style::default().add_modifier(Modifier::DIM),
+            views.style(
+                t::LIST_DIVIDER,
+                Style::default().add_modifier(Modifier::DIM),
+            ),
         );
     }
-    paint_rows(detail, view.focus_detail, right, buf);
+    paint_rows(detail, view.focus_detail, right, buf, views);
 }
 
 fn draw_picker_over(
     picker: &talaria_core::model_roles::RoutePickerView,
     area: Rect,
     buf: &mut Buffer,
-    views: Option<&ViewStyles>,
+    views: &ViewStyles,
 ) {
     let inset = u16::from(area.width > 8 && area.height > 8) * 2;
     let outer = Rect::new(
@@ -183,14 +203,14 @@ fn draw_picker_over(
         area.width - 2 * inset,
         area.height - 2 * inset,
     );
-    let mut block = Block::bordered();
-    if let Some(v) = views {
-        block = block.border_set(border_set(v));
-    }
+    let block = Block::bordered()
+        .border_set(border_set(views))
+        .style(views.style(t::DIALOG_BACKGROUND, Style::default()))
+        .border_style(views.style(t::DIALOG_BORDER, Style::default()));
     let inner = block.inner(outer);
     Clear.render(outer, buf);
     block.render(outer, buf);
-    super::draw_route_picker(picker, inner, buf);
+    super::route_picker::draw_route_picker_with_theme(picker, inner, buf, views);
 }
 
 /// A centred box with a border, cleared first. Returns the room inside its padding.
@@ -199,7 +219,7 @@ fn dialog_box(
     content: usize,
     page: Rect,
     buf: &mut Buffer,
-    views: Option<&ViewStyles>,
+    views: &ViewStyles,
 ) -> Rect {
     let width = page.width.min(DIALOG_WIDTH);
     let height = u16::try_from(content.saturating_add(2))
@@ -212,12 +232,14 @@ fn dialog_box(
         height,
     );
     Clear.render(outer, buf);
-    let mut block = Block::bordered();
-    if let Some(v) = views {
-        block = block.border_set(border_set(v));
-    }
+    let mut block = Block::bordered()
+        .border_set(border_set(views))
+        .style(views.style(t::DIALOG_BACKGROUND, Style::default()))
+        .border_style(views.style(t::DIALOG_BORDER, Style::default()));
     if let Some(title) = title {
-        block = block.title(sanitize(title).into_owned());
+        block = block
+            .title(sanitize(title).into_owned())
+            .title_style(views.style(t::DIALOG_TITLE, Style::default()));
     }
     let inner = block.inner(outer);
     block.render(outer, buf);
@@ -229,7 +251,7 @@ fn dialog_box(
     )
 }
 
-fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
+fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer, views: &ViewStyles) {
     // The most lines a dialog may show: the page less its border and a line above and below.
     let most = usize::from(page.height.saturating_sub(4));
     match modal {
@@ -298,7 +320,10 @@ fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer, views: Option<&Vi
                     inner.y,
                     " ",
                     1,
-                    Style::default().add_modifier(Modifier::REVERSED),
+                    views.style(
+                        t::EDITOR_SELECTION,
+                        Style::default().add_modifier(Modifier::REVERSED),
+                    ),
                 );
             }
             if let Some(error) = error {
@@ -307,7 +332,7 @@ fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer, views: Option<&Vi
                     inner.x,
                     inner.y + 1,
                     inner.width,
-                    Style::default(),
+                    views.style(t::DIALOG_ERROR, Style::default()),
                     buf,
                 );
             }
@@ -335,7 +360,7 @@ fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer, views: Option<&Vi
                 inner.width,
                 inner.height.min(u16::try_from(shown).unwrap_or(u16::MAX)),
             );
-            paint_rows(&rows, true, list, buf);
+            paint_rows(&rows, true, list, buf, views);
         }
     }
 }

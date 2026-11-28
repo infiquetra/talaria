@@ -145,14 +145,24 @@ pub fn route_submit_with_model(
     enabled: bool,
     session_model: Option<(&str, &str)>,
 ) -> SubmitRoute {
-    let trimmed = text.trim_start();
+    route_submit_with_request(text, text, enabled, session_model)
+}
+
+/// Classify the visible draft, then put the full request in the workflow command.
+pub fn route_submit_with_request(
+    draft: &str,
+    request: &str,
+    enabled: bool,
+    session_model: Option<(&str, &str)>,
+) -> SubmitRoute {
+    let trimmed = draft.trim_start();
     if trimmed.is_empty()
         || trimmed.starts_with(['/', '!'])
-        || (!enabled && !contains_keyword(text))
+        || (!enabled && !contains_keyword(draft))
     {
         return SubmitRoute::Plain;
     }
-    let mut command_line = format!("{SKILL_COMMAND} {}", text.trim_end());
+    let mut command_line = format!("{SKILL_COMMAND} {}", request.trim_end());
     if let Some(names) = session_model_names(session_model) {
         command_line.push_str(&format!("\n{SESSION_MODEL_LABEL}{names}"));
     }

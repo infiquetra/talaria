@@ -9,8 +9,8 @@ transcript.timestamp|muted||Message time
 transcript.reasoning|muted|italic|Reasoning text
 transcript.reasoning.label|muted|bold|Reasoning heading
 transcript.omission|muted||Folded or omitted text
-transcript.search.match|selection||Pager search match
-transcript.search.current|focus|bold|Current search match
+transcript.search.match|accent|bold|Pager search match
+transcript.search.current|focus|bold,underline|Current search match
 transcript.selection|selection||Selected transcript range
 transcript.heading.1|primary|bold|Markdown heading level one
 transcript.heading.2|primary|bold|Markdown heading level two
@@ -43,10 +43,11 @@ composer.completion.text|text||Completion candidate
 composer.completion.selected|selection||Selected completion
 composer.completion.description|muted||Completion description
 status.background|background||Bottom status surface
-status.text|text||Model effort session and ordinary fields
+status.text|text||Session and ordinary fields
 status.muted|muted||Secondary status
 status.separator|border||Status separators
 status.accent|accent|bold|Workflow label
+status.model|accent|bold|Conversation model and reasoning effort
 status.success|success||Healthy or completed status
 status.warning|warning|bold|Budget warning or degraded status
 status.error|error|bold|Failure or critical budget
@@ -196,6 +197,7 @@ tool.failed|error|bold|Failed tool glyph
 tool.muted|muted||Cancelled or unknown tool glyph
 tool.title|primary|bold|Tool title
 tool.subject|text||Tool subject
+tool.shell.operator|text||Shell command operators in tool headers
 tool.metadata|muted||Duration path and count
 tool.output|text||Tool result text
 tool.error|error||Tool error text
@@ -226,6 +228,9 @@ list.running|accent||Running or focused row
 list.divider|border||Table or list boundary
 list.scrollbar|border||List position indicator
 list.empty|muted||Loading empty or no-results state
+effort.track|accent||Filled portion of the reasoning effort scale
+effort.model|muted||Model name in the reasoning effort picker
+effort.selected|accent|bold|Selected reasoning effort and scale marker
 transcript.banner|primary|bold|Startup banner
 transcript.command|text|bold|Submitted command
 transcript.notice|muted||Plain history notice

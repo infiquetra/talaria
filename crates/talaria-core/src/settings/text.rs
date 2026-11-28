@@ -30,8 +30,10 @@ pub(crate) fn readonly(key: &str, reason: &ReadOnlyReason) -> String {
         ReadOnlyReason::OwnedElsewhere => {
             if ["providers", "custom_providers"].contains(&key) {
                 "edit in Providers".into()
+            } else if key == "model" {
+                "To change the default model, edit in Model roles. Use /model for this session's model.".into()
             } else {
-                "The default model is set on the model roles screen; /model changes this session's model. edit in Model roles".into()
+                "To change this setting, edit in Model roles.".into()
             }
         }
         ReadOnlyReason::EnvReference(names) => format!(

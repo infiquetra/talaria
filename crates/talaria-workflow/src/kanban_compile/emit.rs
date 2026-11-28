@@ -55,6 +55,7 @@ fn resolved(
     for (present, option) in [
         (call.toolsets.is_some(), "toolsets"),
         (call.max_turns.is_some(), "maxTurns"),
+        (call.report_file.is_some(), "reportFile"),
     ] {
         if present {
             return Err(CompileFailure::new(
@@ -609,6 +610,7 @@ mod tests {
             phase: None,
             prompt: "Work".into(),
             schema: None,
+            report_file: None,
             tier: None,
             model: None,
             provider: None,

@@ -15,7 +15,7 @@ use talaria_core::background::{
 use talaria_core::side::clean_output;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::history::{grapheme_width, sanitize, sanitize_line, wrap_lines};
+use crate::history::{grapheme_width, sanitize, sanitize_line, word_wrapped, wrap_lines};
 use crate::keys::{Key, KeyCode, KeyKind};
 use crate::live::LiveSection;
 use crate::markdown::{MarkdownOptions, render_markdown};
@@ -556,7 +556,14 @@ impl ProcessesView {
                 pane.width,
                 Style::default(),
             );
-            lines.extend(body_plain("When the agent runs a command with the terminal tool and background=true, it appears here with its output.", pane.width, theme.dim));
+            lines.extend(
+                word_wrapped(
+                    "When the agent runs a command with the terminal tool and background=true, it appears here with its output.",
+                    pane.width,
+                )
+                .into_iter()
+                .map(|row| Line::styled(row, theme.dim)),
+            );
             draw_lines(lines, pane, buf);
         }
         separator(

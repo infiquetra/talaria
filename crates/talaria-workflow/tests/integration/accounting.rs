@@ -191,6 +191,7 @@ async fn a_live_reading_before_the_turn_settles_counts_without_its_cache_reads()
         workflow_path: vec![],
         launch: l.clone(),
         request_id: "request-0".into(),
+        report_baseline: None,
     });
     h.append(Record::SessionBound {
         key,

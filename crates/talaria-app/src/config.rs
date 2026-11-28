@@ -237,6 +237,8 @@ pub struct UiConfig {
     pub work_panel: bool,
     /// Start with the one-row menu. Runtime toggles do not save this setting.
     pub menu_bar: bool,
+    /// Let transcript and workflow overlays receive mouse clicks and wheel events.
+    pub mouse: bool,
     /// How the main screen draws reasoning. The default is one line per block; `/thinking`
     /// changes the current view without saving this setting.
     pub reasoning: talaria_core::layout::ReasoningDisplay,
@@ -313,6 +315,7 @@ impl Default for Config {
             ui: UiConfig {
                 work_panel: false,
                 menu_bar: false,
+                mouse: false,
                 reasoning: talaria_core::layout::ReasoningDisplay::Collapsed,
                 reduced_motion: false,
             },
@@ -720,6 +723,10 @@ fn read_ui(section: &Table, notices: &mut Vec<String>) -> UiConfig {
             "menu_bar" => match value.as_bool() {
                 Some(enabled) => ui.menu_bar = enabled,
                 None => notices.push("[ui] menu_bar must be true or false; using false.".into()),
+            },
+            "mouse" => match value.as_bool() {
+                Some(enabled) => ui.mouse = enabled,
+                None => notices.push("[ui] mouse must be true or false; using false.".into()),
             },
             "reasoning" => match value.as_str() {
                 Some("collapsed") => {

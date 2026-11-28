@@ -324,6 +324,7 @@ impl<G: Gateway> Consumer<G> {
                 workflow_path: vec![],
                 launch: launch(),
                 request_id: request_id(self.dir.run_id(), &s.key, s.attempt),
+                report_baseline: None,
             })
             .await?;
         Ok(())

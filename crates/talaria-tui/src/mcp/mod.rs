@@ -110,7 +110,13 @@ fn draw_mcp_inner(
     } else {
         format!("filter: {}", view.filter)
     };
-    line(buf, area, 2, &filter, Style::default());
+    line(
+        buf,
+        area,
+        2,
+        &format!("Keyboard only · {filter}"),
+        Style::default(),
+    );
     let mut start = 3;
     if let Some(banner) = &view.banner {
         line(buf, area, start, banner, Style::default());
@@ -166,7 +172,6 @@ fn draw_mcp_inner(
         view.status_line.as_deref(),
         view.pending_line.as_deref(),
         view.notice.as_deref(),
-        Some(view.footer.as_str()),
     ]
     .into_iter()
     .enumerate()
@@ -181,6 +186,13 @@ fn draw_mcp_inner(
             );
         }
     }
+    line(
+        buf,
+        area,
+        area.height - 1,
+        &crate::footer::with_recovery(&view.footer, area.width),
+        Style::default(),
+    );
     if let Some(card) = &view.card {
         draw_card(card, secret_len, area, buf, views);
     }
@@ -250,7 +262,10 @@ fn draw_card(
     );
     Clear.render(rect, buf);
     let title = format!(" {} ", sanitize(&card.title));
-    let footer = format!(" {} ", sanitize(&card.footer));
+    let footer = format!(
+        " {} ",
+        crate::footer::with_recovery(&sanitize(&card.footer), width.saturating_sub(4))
+    );
     let mut block = Block::bordered()
         .title(Line::from(title))
         .title_bottom(Line::from(footer).alignment(Alignment::Left));

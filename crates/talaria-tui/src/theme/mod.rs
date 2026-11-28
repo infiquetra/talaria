@@ -5,6 +5,7 @@
 pub mod cells;
 pub mod color;
 mod contrast;
+pub(crate) use contrast::native_history_line;
 pub mod detect;
 mod file;
 pub mod legacy;
@@ -19,16 +20,31 @@ pub fn resolve_with_theme_file(
     inputs: &ThemeInputs<'_>,
     file: Option<&talaria_app::theme_file::ThemeFile>,
 ) -> ThemeFileResolution {
-    let mut resolved = file::resolve_with_theme_file(inputs, file);
-    if let Some(file) = file {
-        resolved.theme.status = resolved.theme.status.with_border(file.chrome.border);
-        resolved.theme.views = surfaces::ViewStyles::new(
-            resolved.elements.clone(),
-            resolved.theme.color,
-            file.chrome.border,
-            file.chrome.section_divider,
-        );
-    }
+    use talaria_app::theme_file::{Base, ThemeFile};
+    // When the terminal does not report its background, keep its native palette.
+    // Explicit light/dark preferences and a successful probe can use tonal surfaces.
+    let automatic = ThemeFile {
+        name: None,
+        extends: match inputs.polarity {
+            (_, PolaritySource::Default) => Base::Terminal,
+            (Polarity::Dark, _) => Base::Dark,
+            (Polarity::Light, _) => Base::Light,
+        },
+        follow_hermes_skin: true,
+        palette: Default::default(),
+        roles: Default::default(),
+        elements: Default::default(),
+        chrome: Default::default(),
+    };
+    let selected = file.unwrap_or(&automatic);
+    let mut resolved = file::resolve_with_theme_file(inputs, selected, file.is_some());
+    resolved.theme.status = resolved.theme.status.with_border(selected.chrome.border);
+    resolved.theme.views = surfaces::ViewStyles::new(
+        resolved.elements.clone(),
+        resolved.theme.color,
+        selected.chrome.border,
+        selected.chrome.section_divider,
+    );
     resolved
 }
 
@@ -155,6 +171,7 @@ pub fn resolve(inputs: &ThemeInputs<'_>) -> Theme {
         report: report.clone(),
     };
     if depth == ColorDepth::None {
+        theme.views = surfaces::ViewStyles::without_color();
         strip_colours(&mut theme);
         return theme;
     }

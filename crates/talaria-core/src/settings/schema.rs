@@ -46,6 +46,48 @@ impl FieldKind {
     }
 }
 impl ConfigSchemaView {
+    /// Older gateway schemas use the configuration key itself as help for these fields.
+    /// Keep any authored explanation from the gateway when it supplies one.
+    pub(super) fn complete_help(&mut self) {
+        for field in &mut self.fields {
+            let help = match field.key.as_str() {
+                "mcp_discovery_timeout" => {
+                    "Seconds an interactive session waits for tool servers before its first reply. Servers that connect later become available between turns."
+                }
+                "mcp_single_query_discovery_timeout" => {
+                    "Seconds a single-query Hermes command waits for tool servers. A server that misses this window is unavailable for that query."
+                }
+                "mcp.discovery_concurrency" => {
+                    "Maximum tool servers Hermes connects to at once during discovery. Set to 0 to allow all connections to start together."
+                }
+                "mcp.auto_reload_on_config_change" => {
+                    "Reconnect tool servers when their configuration changes. This rebuilds the model's tool list."
+                }
+                "context_file_max_chars" => {
+                    "Maximum characters read from each startup context file, such as AGENTS.md. Leave unset to scale the limit to the model's context window."
+                }
+                "context_file_read_timeout" => {
+                    "Seconds to wait for each startup context file before skipping it and continuing."
+                }
+                "file_read_max_chars" => {
+                    "Maximum characters the file-reading tool can return per call. Larger files must be read in parts."
+                }
+                _ => continue,
+            };
+            let label = field.description.trim().replace(['_', '.'], " ");
+            let same_label = |key: &str| label.eq_ignore_ascii_case(&key.replace(['_', '.'], " "));
+            if label.is_empty()
+                || same_label(&field.key)
+                || field
+                    .key
+                    .rsplit_once('.')
+                    .is_some_and(|(_, leaf)| same_label(leaf))
+            {
+                field.description = help.into();
+            }
+        }
+    }
+
     pub fn from_json_str(text: &str) -> Result<Self, serde_json::Error> {
         #[derive(Deserialize)]
         struct Wire {

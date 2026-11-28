@@ -24,6 +24,7 @@ fn history(
             workflow_path: request.workflow_path.clone(),
             launch,
             request_id: "old-request".into(),
+            report_baseline: None,
         },
         Record::SessionBound {
             key: key.into(),

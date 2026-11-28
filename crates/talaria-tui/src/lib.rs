@@ -14,6 +14,7 @@ pub mod diff_view;
 pub mod doctor_view;
 mod editor;
 pub mod fleet_view;
+mod footer;
 pub mod history;
 pub mod history_search;
 pub mod kanban_view;

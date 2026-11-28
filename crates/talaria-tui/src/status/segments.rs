@@ -2,6 +2,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::text::{Line, Span};
 use talaria_core::review::{LabelTone, PrLabel};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -17,6 +18,8 @@ const FOLDER_WIDTH: usize = 32;
 const BRANCH_WIDTH: usize = 24;
 /// The mark that ends a cut text.
 const ELLIPSIS: char = '…';
+// Five visible model characters and an ellipsis carry more information than a token fragment.
+const MIN_ABBREVIATED_MODEL_COLUMNS: usize = 6;
 /// The prefix of a path that was cut.
 const CUT_PREFIX: &str = "…/";
 
@@ -303,19 +306,15 @@ impl LinePlan {
 
 /// The line for `inputs` at `cols` columns, with the external segment when there is one.
 pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16) -> LinePlan {
-    let notice = inputs.notice.as_ref().and_then(|notice| {
-        if cols == 0 {
-            return None;
-        }
-        let text = sanitize(&notice.text);
-        let cap = usize::from(cols / 2);
-        let text = if UnicodeWidthStr::width(text.as_ref()) > cap {
-            cut_to_width(text.as_ref(), cap)
-        } else {
-            text.into_owned()
-        };
-        (!text.is_empty()).then_some((text, notice.tone))
-    });
+    plan_status(inputs, external, cols, false)
+}
+
+fn plan_status(
+    inputs: &StatusInputs,
+    external: Option<&ExternalSegment>,
+    cols: u16,
+    keep_model: bool,
+) -> LinePlan {
     let warnings = (inputs.warning_count > 0).then(|| {
         let suffix = if inputs.warning_count == 1 {
             "warning"
@@ -323,6 +322,26 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
             "warnings"
         };
         (format!("{} {suffix}", inputs.warning_count), Tone::Muted)
+    });
+    let notice = inputs.notice.as_ref().and_then(|notice| {
+        if cols == 0 {
+            return None;
+        }
+        let text = sanitize(&notice.text);
+        let mut cap = usize::from(cols / 2);
+        if keep_model {
+            let model_width = sanitize(model_name(inputs).unwrap_or_default()).width();
+            let warnings_width = warnings.as_ref().map_or(0, |(text, _)| text.width() + 3);
+            cap = cap.min(usize::from(cols).saturating_sub(
+                4 + warnings_width + model_width.min(MIN_ABBREVIATED_MODEL_COLUMNS),
+            ));
+        }
+        let text = if UnicodeWidthStr::width(text.as_ref()) > cap {
+            cut_to_width(text.as_ref(), cap)
+        } else {
+            text.into_owned()
+        };
+        (!text.is_empty()).then_some((text, notice.tone))
     });
     let mut pieces: Vec<(Segment, String, Tone)> = Vec::new();
     add(&mut pieces, Segment::Connection, connection_segment(inputs));
@@ -376,24 +395,8 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
         }
         if pieces.len() == 1 {
             let (segment, text, tone) = pieces.remove(0);
-            let cut = if segment == Segment::Model
-                && inputs.effort_offered == Some(false)
-                && text.contains(" (not offered)")
-            {
-                let name = inputs
-                    .model
-                    .as_deref()
-                    .unwrap_or("")
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or("")
-                    .trim();
-                let sanitized = sanitize(name);
-                if UnicodeWidthStr::width(sanitized.as_ref()) <= available {
-                    sanitized.into_owned()
-                } else {
-                    cut_to_width(sanitized.as_ref(), available)
-                }
+            let cut = if segment == Segment::Model {
+                compact_model(inputs, available)
             } else {
                 cut_to_width(&text, available)
             };
@@ -406,9 +409,21 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
         let index = pieces
             .iter()
             .enumerate()
-            .max_by_key(|(_, (segment, _, _))| keep_priority(*segment, inputs))
+            .max_by_key(|(_, (segment, _, _))| match segment {
+                Segment::Model if keep_model => 0,
+                _ => keep_priority(*segment, inputs),
+            })
             .map(|(index, _)| index)
             .expect("at least two pieces");
+        let (segment, text, _) = &mut pieces[index];
+        if *segment == Segment::Model {
+            let room = available.saturating_sub(need - text.width());
+            let name_width = sanitize(model_name(inputs).unwrap_or_default()).width();
+            if room >= name_width.min(MIN_ABBREVIATED_MODEL_COLUMNS) {
+                *text = compact_model(inputs, room);
+                break;
+            }
+        }
         pieces.remove(index);
     }
 
@@ -465,11 +480,7 @@ fn connection_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
 
 /// The model segment: the name after the last slash, then the effort.
 fn model_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
-    let model = inputs.model.as_deref()?;
-    let name = model.rsplit('/').next().unwrap_or("").trim();
-    if name.is_empty() {
-        return None;
-    }
+    let name = model_name(inputs)?;
     let effort = inputs
         .reasoning_effort
         .as_deref()
@@ -498,6 +509,16 @@ fn model_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
         }
     }
     Some((sanitize(&text).into_owned(), Tone::Muted))
+}
+
+fn model_name(inputs: &StatusInputs) -> Option<&str> {
+    let name = inputs.model.as_deref()?.rsplit('/').next()?.trim();
+    (!name.is_empty()).then_some(name)
+}
+
+fn compact_model(inputs: &StatusInputs, width: usize) -> String {
+    let name = sanitize(model_name(inputs).unwrap_or_default());
+    crate::tool_cell::cut_to(&name, width)
 }
 
 /// The approvals segment: the text and tone the caller handed over, when there is one.
@@ -713,6 +734,8 @@ pub struct StatusSection<'a> {
     inputs: &'a StatusInputs,
     external: Option<&'a ExternalSegment>,
     palette: &'a StatusPalette,
+    conversation: bool,
+    conversation_hints: &'a [String],
 }
 
 impl<'a> StatusSection<'a> {
@@ -726,7 +749,21 @@ impl<'a> StatusSection<'a> {
             inputs,
             external,
             palette,
+            conversation: false,
+            conversation_hints: &[],
         }
+    }
+
+    /// Arrange chat metadata around the active model and context, with workspace details at the right.
+    pub fn in_conversation(mut self) -> Self {
+        self.conversation = true;
+        self
+    }
+
+    /// Offer low-priority keys when the conversation row has free columns.
+    pub fn with_conversation_hints(mut self, hints: &'a [String]) -> Self {
+        self.conversation_hints = hints;
+        self
     }
 
     /// Draw the line into `buf` over `area`.
@@ -743,6 +780,12 @@ impl<'a> StatusSection<'a> {
         // The section owns the whole row: what was there before is cleared first.
         for x in region.x..region.right() {
             buf[(x, row)].reset();
+        }
+        if self.conversation {
+            let keep_model = region.width <= 40 && model_name(self.inputs).is_some();
+            let line = plan_status(self.inputs, self.external, region.width, keep_model);
+            self.draw_conversation(&line, region, buf);
+            return;
         }
         let line = plan(self.inputs, self.external, region.width);
         if line.parts().next().is_none() {
@@ -779,6 +822,77 @@ impl<'a> StatusSection<'a> {
             );
             x = next;
         }
+    }
+
+    fn draw_conversation(&self, plan: &LinePlan, area: Rect, buf: &mut Buffer) {
+        let mut left = Vec::new();
+        let mut right = Vec::new();
+        let separator = Span::styled(" · ", self.palette.style(Tone::Separator));
+        let push = |group: &mut Vec<Span<'_>>, span: Span<'_>| {
+            if !group.is_empty() {
+                group.push(separator.clone());
+            }
+            group.push(Span::styled(span.content.into_owned(), span.style));
+        };
+        for (text, tone) in plan.notice.iter().chain(&plan.warnings) {
+            push(
+                &mut left,
+                Span::styled(text.as_str(), self.palette.style(*tone)),
+            );
+        }
+        let mut context_end = None;
+        for (segment, text, tone) in &plan.pieces {
+            let right_aligned = matches!(
+                segment,
+                Segment::Folder | Segment::Cost | Segment::PullRequest | Segment::External
+            );
+            let style = match segment {
+                Segment::Model => self.palette.model_style(),
+                _ => self.palette.style(*tone),
+            };
+            push(
+                if right_aligned { &mut right } else { &mut left },
+                Span::styled(text.as_str(), style),
+            );
+            if *segment == Segment::Context {
+                context_end = Some(left.len());
+            }
+        }
+        let right_width: usize = right.iter().map(Span::width).sum();
+        let width = usize::from(area.width);
+        let mut left_width: usize = left.iter().map(Span::width).sum();
+        for hint in self.conversation_hints {
+            let hint = Span::styled(hint.as_str(), self.palette.style(Tone::Muted));
+            let hint_width = hint.width() + usize::from(!left.is_empty()) * separator.width();
+            if left_width + hint_width + right_width + 3 <= width {
+                push(&mut left, hint);
+                left_width += hint_width;
+            }
+        }
+        let gap = width.saturating_sub(left_width + right_width + 3);
+        let track = context_end
+            .zip(self.inputs.context_percent)
+            .filter(|_| gap >= 16);
+        if let Some((index, percent)) = track {
+            let filled = usize::try_from((percent.clamp(0, 100) + 10) / 20).unwrap_or(0);
+            left.splice(
+                index..index,
+                [
+                    Span::raw("  "),
+                    Span::styled("━".repeat(filled), self.palette.style(Tone::Accent)),
+                    Span::styled("─".repeat(5 - filled), self.palette.style(Tone::Separator)),
+                ],
+            );
+        }
+        let mut row = vec![Span::raw(" ")];
+        row.extend(left);
+        if right_width > 0 {
+            // Keep at least one space when unusually long diagnostics fill the row.
+            let gap = gap.saturating_sub(usize::from(track.is_some()) * 7);
+            row.push(Span::raw(" ".repeat(gap.max(1))));
+            row.extend(right);
+        }
+        buf.set_line(area.x, area.y, &Line::from(row), area.width);
     }
 }
 

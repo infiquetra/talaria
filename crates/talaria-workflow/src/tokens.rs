@@ -14,6 +14,9 @@ use std::collections::BTreeMap;
 /// Hermes reported it with the turn. It is a running total, not this turn's share.
 pub const SESSION_CACHE_READ_KEY: &str = "session_cache_read_tokens";
 
+mod stored;
+pub(crate) use stored::recover_stored_cache;
+
 /// A token count split the way the budget counts it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Tokens {
@@ -135,6 +138,23 @@ pub fn turn_total(usage: &Value) -> Option<u64> {
     })
 }
 
+/// Accept a session reading for a single turn only when the gross prompt and output
+/// counts agree with its receipt. The prompt includes cache reads and writes.
+pub(crate) fn matching_cache_read(
+    usage: &Value,
+    prompt: u64,
+    output: u64,
+    cache_read: u64,
+) -> Option<u64> {
+    let total = prompt.checked_add(output)?;
+    (total > 0
+        && turn_total(usage) == Some(total)
+        && usage["input_tokens"].as_u64() == Some(prompt)
+        && usage["output_tokens"].as_u64() == Some(output)
+        && cache_read <= prompt)
+        .then_some(cache_read)
+}
+
 /// One settled turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settled {
@@ -211,7 +231,13 @@ pub fn tokens_text(
     show: impl Fn(u64) -> String,
 ) -> String {
     let base = if cache_unknown_turns > 0 && cache_read == 0 {
-        format!("{} tokens", show(counted))
+        format!("up to {} tokens", show(counted))
+    } else if cache_unknown_turns > 0 {
+        format!(
+            "up to {} tokens + {} known cache reads",
+            show(counted),
+            show(cache_read)
+        )
     } else {
         format!(
             "{} tokens + {} cache reads",
@@ -449,11 +475,11 @@ mod tests {
         assert_eq!(tokens_text(10, 90, 0, digits), "10 tokens + 90 cache reads");
         assert_eq!(
             tokens_text(10, 0, 2, digits),
-            "10 tokens (cache reads unknown for 2 turns, counted in full)"
+            "up to 10 tokens (cache reads unknown for 2 turns, counted in full)"
         );
         assert_eq!(
             tokens_text(10, 90, 1, digits),
-            "10 tokens + 90 cache reads (cache reads unknown for 1 turn, counted in full)"
+            "up to 10 tokens + 90 known cache reads (cache reads unknown for 1 turn, counted in full)"
         );
     }
 }

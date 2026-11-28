@@ -114,6 +114,7 @@ fn request(label: &str, phase: &str, digest: &str, workflow_path: Vec<String>) -
         phase: Some(phase.to_string()),
         prompt: format!("Review for {label}"),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("minimax-m3.1-flash".to_string()),
         provider: Some("ollama-cloud".to_string()),
@@ -165,6 +166,7 @@ fn intent(at_ms: i64, key: &str, label: &str, phase: &str, path: Vec<String>) ->
             workflow_path: path,
             launch: launch(),
             request_id: format!("wf:{RUN_ID}:{key}"),
+            report_baseline: None,
         },
     )
 }
@@ -181,6 +183,7 @@ fn attempt_intent(at_ms: i64, key: &str, attempt: u32) -> (i64, Record) {
             workflow_path: Vec::new(),
             launch: launch(),
             request_id: format!("wf:{RUN_ID}:{key}:a{attempt}"),
+            report_baseline: None,
         },
     )
 }

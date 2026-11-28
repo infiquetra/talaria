@@ -85,7 +85,10 @@ fn line_for(cols: u16) -> &'static str {
         68..=79 => DROP_WORKING,
         52..=67 => DROP_FOLDER,
         42..=51 => " opus-5.5 high │ ⚑ 2 need you │ ✗ 1 failed",
-        26..=41 => DROP_MODEL,
+        37..=41 => " opus-5.5 │ ⚑ 2 need you │ ✗ 1 failed",
+        36 => " opus-5… │ ⚑ 2 need you │ ✗ 1 failed",
+        35 => " opus-… │ ⚑ 2 need you │ ✗ 1 failed",
+        26..=34 => DROP_MODEL,
         13..=25 => NEEDS,
         12 => " ⚑ 2 need y…",
         11 => " ⚑ 2 need …",
@@ -204,7 +207,9 @@ fn priority_ladder_with_fleet_segments() {
             "line at {cols} columns"
         );
     }
-    assert_eq!(bottom_row(&inputs, 80, 24), line_for(80));
+    for cols in [80, 41, 35, 34, 25] {
+        assert_eq!(bottom_row(&inputs, cols, 24), line_for(cols));
+    }
 }
 
 #[test]
@@ -223,7 +228,10 @@ fn zero_counts_draw_nothing_new() {
         (39, GUARD_39),
         (38, GUARD_29),
         (29, GUARD_29),
-        (28, GUARD_13),
+        (28, " opus-5.5 │ ⚑ 2 need you"),
+        (23, " opus-5… │ ⚑ 2 need you"),
+        (22, " opus-… │ ⚑ 2 need you"),
+        (21, GUARD_13),
         (13, GUARD_13),
         (10, " ⚑ 2 need…"),
         (3, " ⚑…"),

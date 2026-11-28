@@ -139,10 +139,11 @@ impl Scheduler {
             }),
             wake: Notify::new(),
         });
-        {
-            let mut s = inner.lock();
-            inner.fold(&mut s, true).map_err(ScheduleError::Journal)?;
-        }
+        let initial = inner.clone();
+        tokio::task::spawn_blocking(move || initial.fold(&mut initial.lock(), true))
+            .await
+            .map_err(|e| ScheduleError::Journal(e.to_string()))?
+            .map_err(ScheduleError::Journal)?;
         let this = Self { inner };
         let events = this.subscribe();
         let weak = Arc::downgrade(&this.inner);
@@ -383,8 +384,11 @@ impl Inner {
         );
     }
     fn fold(&self, s: &mut State, silent: bool) -> Result<(), String> {
-        let (records, offset) =
+        let (mut records, offset) =
             JournalReader::read_from(&self.path, s.offset).map_err(|e| e.to_string())?;
+        if silent {
+            crate::tokens::recover_stored_cache(&mut records);
+        }
         for line in records {
             match line.record {
                 Record::CallIntent {

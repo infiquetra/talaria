@@ -2,7 +2,7 @@
 
 use crate::support;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use hermes_contract::schemas::CanonicalSnapshot;
 use ratatui::Terminal;
@@ -24,6 +24,7 @@ use talaria_core::session::{
 };
 use talaria_tui::fleet_view::{FleetTheme, FleetView, PeekPanel};
 use talaria_tui::history::sanitize;
+use talaria_tui::keys::{Key, KeyCode, KeyKind, Mods};
 use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
 use talaria_tui::prompts::PromptStack;
 use talaria_tui::terminal::{InlineTerminal, RestoreLink};
@@ -285,8 +286,16 @@ fn expect_screen(spec: Expect<'_>) -> (Vec<String>, Marks) {
             .len()
             > 1
             && spec.width >= 80;
-        let show_model = spec.width >= 60;
+        let show_model = spec.width >= 72 && (!show_profile || spec.width >= 90);
         let show_cost = spec.width >= 100;
+        if !visible.is_empty() {
+            body.push(table_headings(
+                spec.width,
+                show_profile,
+                show_model,
+                show_cost,
+            ));
+        }
         let cursor = visible.first().map(|row| row.key.clone());
         for state in [
             RowState::NeedsYou,
@@ -330,10 +339,45 @@ fn expect_screen(spec: Expect<'_>) -> (Vec<String>, Marks) {
     for (index, line) in body.into_iter().take(room).enumerate() {
         lines[index] = line.trim_end().to_owned();
     }
-    let footer = if spec.answer { FOOTER_ANSWER } else { FOOTER };
+    let footer = if spec.answer {
+        FOOTER_ANSWER
+    } else if spec.snapshot && spec.rows.is_empty() {
+        "/ filter · esc close"
+    } else {
+        FOOTER
+    };
     // A footer wider than the screen is cut with an ellipsis, like every other value.
     lines[spec.height - 1] = fit(footer, spec.width).trim_end().to_owned();
     (lines, marks)
+}
+
+pub(super) fn table_headings(width: usize, profile: bool, model: bool, cost: bool) -> String {
+    let mut fixed = 14;
+    let mut trailing = Vec::new();
+    if profile {
+        trailing.push(("Profile", 12));
+    }
+    if model {
+        trailing.push(("Model", 18));
+    }
+    if cost {
+        fixed += 9;
+    }
+    fixed += trailing.iter().map(|(_, width)| width + 2).sum::<usize>();
+    let room = width.saturating_sub(fixed);
+    let title = room.min(28);
+    let activity = room - title;
+    trailing.push((if activity >= 8 { "Activity" } else { "" }, activity));
+    trailing.push(("Age", 4));
+    if cost {
+        trailing.push(("Cost", 7));
+    }
+    let mut result = format!("      {}", fit("Session", title));
+    for (label, width) in trailing {
+        result.push_str("  ");
+        result.push_str(&fit(label, width));
+    }
+    result.trim_end().to_owned()
 }
 
 fn format_row(
@@ -532,6 +576,35 @@ fn groups_and_columns_160x48() {
 }
 
 #[test]
+fn model_names_use_spare_table_width_and_keep_distinguishing_suffixes() {
+    let first = row(
+        "fixture",
+        "fast",
+        "Fast worker",
+        RowState::Idle,
+        Some("test-cloud/muse-spark-1.3-context-fast"),
+    );
+    let second = row(
+        "fixture",
+        "long",
+        "Long context worker",
+        RowState::Idle,
+        Some("test-cloud/muse-spark-1.3-context-long"),
+    );
+    let state = hold(vec![first, second], listed(&["fixture"]), None, None);
+    let (wide, _) = paint(&state, None, 118, 24);
+    let wide = wide.join("\n");
+    for model in ["muse-spark-1.3-context-fast", "muse-spark-1.3-context-long"] {
+        assert!(wide.contains(model), "{wide}");
+    }
+    let (narrow, _) = paint(&state, None, 80, 24);
+    for (title, suffix) in [("Fast worker", "-fast"), ("Long context worker", "-long")] {
+        let row = narrow.iter().find(|row| row.contains(title)).unwrap();
+        assert!(row.contains('…') && row.contains(suffix), "{row}");
+    }
+}
+
+#[test]
 fn narrow_widths_drop_columns() {
     let rows = wide_rows();
     let profiles = listed(&["fixture", "default"]);
@@ -617,6 +690,45 @@ fn peek_row(outcome: Outcome) -> FleetRow {
 }
 
 #[test]
+fn narrow_selected_peek_keeps_its_title_model_and_status() {
+    let mut selected = peek_row(Outcome::Completed);
+    selected.title = "Investigate the parser regression after the nightly validation replay".into();
+    selected.model = Some("example-cloud/selected-production-reasoner".into());
+    let state = hold(vec![selected], listed(&["fixture"]), None, None);
+    let session = finished_session();
+    let (screen, buffer) = paint(
+        &state,
+        Some(PeekPanel {
+            session: &session,
+            stack: None,
+            now: NOW,
+        }),
+        60,
+        24,
+    );
+    let separator = screen
+        .iter()
+        .position(|row| row.contains("── peek ──"))
+        .unwrap();
+    let detail = screen[separator + 1..].join(" ");
+    assert!(detail.contains("validation replay"), "{detail}");
+    assert!(
+        detail.contains("example-cloud/selected-production-reasoner"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("completed now") && detail.contains("peek-ok"),
+        "{detail}"
+    );
+    let selection = screen.iter().position(|row| row.starts_with('›')).unwrap();
+    assert!(
+        buffer[(59, selection as u16)]
+            .modifier
+            .contains(Modifier::REVERSED)
+    );
+}
+
+#[test]
 fn peek_panel_tail_card_and_outcome() {
     let session = finished_session();
     let completed = peek_row(Outcome::Completed);
@@ -659,7 +771,6 @@ fn peek_panel_tail_card_and_outcome() {
         "$ rm -rf ./talaria-peek-probe".to_owned(),
         "\u{203a} 1. once".to_owned(),
         "  2. deny".to_owned(),
-        "1-2 choose \u{b7} Enter confirm \u{b7} Esc deny \u{b7} Tab note \u{b7} ctrl+c close".to_owned(),
         "\u{2713} completed".to_owned(),
     ];
     let stack = approval_stack();
@@ -727,11 +838,11 @@ fn peek_panel_tail_card_and_outcome() {
 #[test]
 fn peek_approval_card_clause_follows_focus() {
     let session = finished_session();
-    let stack = approval_stack();
+    let mut stack = approval_stack();
     let sample = peek_row(Outcome::Completed);
     let profiles = listed(&["fixture"]);
 
-    // Answer focus: card row ends with `ctrl+c back to list`, and the overlay footer shows it once.
+    // Only the fleet footer offers card controls when the peek owns the keyboard.
     let mut state = hold(vec![sample.clone()], profiles.clone(), None, None);
     let _ = update(
         &mut state,
@@ -756,27 +867,40 @@ fn peek_approval_card_clause_follows_focus() {
         80,
         24,
     );
-    let answer_row = "1-2 choose \u{b7} Enter confirm \u{b7} Esc deny \u{b7} Tab note \u{b7} ctrl+c back to list";
     let body = &actual[..actual.len() - 1];
-    assert!(
-        body.iter().any(|line| line.trim_end() == answer_row),
-        "expected answer-focus card row `{answer_row}` in peek body:\n{}",
-        body.join("\n")
-    );
+    assert!(body.iter().any(|line| line.contains("2. deny")));
+    assert!(!body.iter().any(|line| line.contains("Enter confirm")));
     let footer = actual.last().expect("footer row");
     assert_eq!(
-        footer.matches("ctrl+c back to list").count(),
-        1,
-        "footer must show `ctrl+c back to list` once: {footer:?}"
+        footer.trim_end(),
+        "Esc back to list · Enter confirm · 1–2 choose · Tab note"
     );
-    assert!(
-        !footer.contains("deny and stop"),
-        "footer must not contain `deny and stop`: {footer:?}"
+    assert!(!actual.join("\n").contains("Esc deny"));
+    assert!(!actual.join("\n").contains("Ctrl+C"));
+    stack.handle_key(
+        Key {
+            code: KeyCode::Tab,
+            mods: Mods::default(),
+            kind: KeyKind::Press,
+        },
+        Instant::now() + Duration::from_secs(1),
+    );
+    let (actual, _) = paint(
+        &state,
+        Some(PeekPanel {
+            session: &session,
+            stack: Some(&stack),
+            now: NOW,
+        }),
+        80,
+        24,
+    );
+    assert_eq!(
+        actual.last().expect("footer row").trim_end(),
+        "Esc back to list · Enter send with note · Tab choices"
     );
 
-    let shared_row = "1-2 choose \u{b7} Enter confirm \u{b7} Esc deny \u{b7} Tab note \u{b7} Ctrl+C deny and stop";
-
-    // Filter focus: card row keeps the shared hint.
+    // Filter focus shows the approval choices without offering an answer key.
     let mut filter_state = hold(vec![sample.clone()], profiles.clone(), None, None);
     let _ = update(
         &mut filter_state,
@@ -794,13 +918,12 @@ fn peek_approval_card_clause_follows_focus() {
         80,
         24,
     );
-    assert!(
-        actual.iter().any(|line| line.trim_end() == shared_row),
-        "expected filter-focus card row `{shared_row}` in:\n{}",
-        actual.join("\n")
-    );
+    assert!(actual.iter().any(|line| line.contains("2. deny")));
+    assert!(actual.last().unwrap().contains("type to filter"));
+    assert!(!actual.join("\n").contains("Enter confirm"));
+    assert!(!actual.join("\n").contains("Esc deny"));
 
-    // Reply focus: card row keeps the shared hint.
+    // Reply focus shows the approval choices without letting that card take Enter.
     let mut reply_state = hold(vec![sample.clone()], profiles, None, None);
     let _ = update(
         &mut reply_state,
@@ -829,11 +952,10 @@ fn peek_approval_card_clause_follows_focus() {
         80,
         24,
     );
-    assert!(
-        actual.iter().any(|line| line.trim_end() == shared_row),
-        "expected reply-focus card row `{shared_row}` in:\n{}",
-        actual.join("\n")
-    );
+    assert!(actual.iter().any(|line| line.contains("2. deny")));
+    assert!(actual.last().unwrap().contains("enter send"));
+    assert!(!actual.join("\n").contains("Enter confirm"));
+    assert!(!actual.join("\n").contains("Esc deny"));
 }
 
 #[test]

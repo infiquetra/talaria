@@ -1,7 +1,7 @@
 //! Compatibility recordings made from the integrated, unmodified renderers.
 use crate::view_colours_support as support;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 
 #[test]
 fn every_default_view_matches_its_recorded_cells() {
@@ -110,20 +110,20 @@ fn every_default_view_matches_its_recorded_cells() {
 }
 
 #[test]
-fn rewind_palette_follows_the_legacy_no_color_rule() {
+fn rewind_uses_the_resolved_palette_and_respects_disabled_colour() {
     let resolved = support::resolve(None);
     for no_color in [None, Some(""), Some("1")] {
         // The CLI's compatibility rule is presence, including an empty value.
         let palette = resolved.rewind_theme(no_color.is_none());
-        assert_eq!(
-            palette.selected,
-            Style::default().add_modifier(Modifier::REVERSED)
-        );
-        assert_eq!(palette.dim, Style::default().add_modifier(Modifier::DIM));
         if no_color.is_none() {
-            assert_eq!(palette.warning, Style::default().fg(Color::Yellow));
-            assert_eq!(palette.accent, Style::default().fg(Color::Cyan));
+            assert_eq!(palette.warning, resolved.elements["rewind.warning"]);
+            assert_eq!(palette.accent, resolved.elements["rewind.accent"]);
         } else {
+            assert_eq!(
+                palette.selected,
+                Style::default().add_modifier(Modifier::REVERSED)
+            );
+            assert_eq!(palette.dim, Style::default().add_modifier(Modifier::DIM));
             assert_eq!(
                 palette.warning,
                 Style::default().add_modifier(Modifier::BOLD)

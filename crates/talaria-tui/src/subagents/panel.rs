@@ -1,12 +1,12 @@
 //! Full-screen subagent views and finished batch rendering.
 use super::{
-    SubagentStyle,
-    dock::{activity, clean_activity, literal, styled_row},
-    labels::goal_labels,
+    AgentClock, SubagentStyle,
+    dock::{activity, clean_activity, literal, route_label, styled_row},
+    labels::task_labels,
 };
 use crate::{
     checklist::cut_to_width,
-    history::sanitize,
+    history::{sanitize, word_wrapped},
     keys::{Action, KeyMap},
 };
 use ratatui::{
@@ -61,6 +61,8 @@ pub struct AgentsPanel {
     rendered_scroll: Cell<usize>,
     now_ms: u64,
     armed_at: Option<u64>,
+    motion: crate::theme::Motion,
+    next_frame_ms: Cell<Option<u64>>,
 }
 impl AgentsPanel {
     pub fn new(key: RowKey) -> Self {
@@ -84,6 +86,8 @@ impl AgentsPanel {
             rendered_scroll: Cell::new(0),
             now_ms: 0,
             armed_at: None,
+            motion: crate::theme::Motion::Reduced,
+            next_frame_ms: Cell::new(None),
         }
     }
     pub fn key(&self) -> &RowKey {
@@ -104,6 +108,12 @@ impl AgentsPanel {
     }
     pub fn set_style(&mut self, style: SubagentStyle) {
         self.style = style;
+    }
+    pub fn set_motion(&mut self, motion: crate::theme::Motion) {
+        self.motion = motion;
+    }
+    pub fn wake_after_ms(&self) -> Option<u64> {
+        self.next_frame_ms.get()
     }
     pub fn set_spawning(&mut self, spawning: Spawning, running: Option<u32>) {
         self.spawning.set(spawning);
@@ -341,8 +351,10 @@ impl AgentsPanel {
                 "{} {description}",
                 if key == "Shift+X" {
                     "X".into()
-                } else {
+                } else if key.len() == 1 {
                     key.to_lowercase()
+                } else {
+                    key
                 }
             )
         })
@@ -402,7 +414,12 @@ impl AgentsPanel {
         if spaced.width() <= usize::from(width) {
             spaced
         } else {
-            self.footer_groups().join(" · ")
+            let hints = self.footer_groups().join(" · ");
+            if self.keys.label(Action::AgentsBack).is_some() {
+                crate::footer::with_recovery(&hints, width)
+            } else {
+                hints
+            }
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -415,6 +432,7 @@ impl AgentsPanel {
         height: u16,
         now: Clock,
     ) -> Vec<Line<'static>> {
+        self.next_frame_ms.set(None);
         if width == 0 || height == 0 {
             return vec![];
         }
@@ -432,7 +450,7 @@ impl AgentsPanel {
         };
         let rows = tree.rows_in_order();
         let mut lines = vec![Line::styled(
-            panel_header(tree, header, &self.key.session_id, width),
+            panel_header(tree, header, width),
             style.header,
         )];
         // A short terminal keeps its rows and gives up the extra header lines.
@@ -446,8 +464,12 @@ impl AgentsPanel {
                 style.hint,
             ));
         }
+        let clock = AgentClock {
+            now_ms: now.mono_ms,
+            motion: self.motion,
+        };
         let list = (mode == PanelMode::List && !rows.is_empty())
-            .then(|| ListLayout::new(tree, &rows, width, now));
+            .then(|| ListLayout::new(tree, &rows, width, now, clock));
         if let Some(list) = &list {
             if tall && let Some(shared) = &list.caption {
                 lines.push(Line::styled(
@@ -464,7 +486,7 @@ impl AgentsPanel {
         let mut body = match mode {
             PanelMode::Detail => self
                 .selected(tree)
-                .map(|r| detail(r, width, now))
+                .map(|r| detail(r, &self.key.session_id, width, now))
                 .unwrap_or_default(),
             PanelMode::Tail => self
                 .selected(tree)
@@ -476,8 +498,18 @@ impl AgentsPanel {
                 )],
                 Some(list) => {
                     let current = self.cursor.min(rows.len() - 1);
+                    let start = current.saturating_sub(budget.saturating_sub(1));
+                    self.next_frame_ms.set(
+                        rows.iter()
+                            .skip(start)
+                            .take(budget)
+                            .filter_map(|entry| clock.signal(tree.row(entry.index)).wake_ms)
+                            .min(),
+                    );
                     rows.iter()
                         .enumerate()
+                        .skip(start)
+                        .take(budget)
                         .map(|(i, entry)| {
                             list.row(i, entry, tree.row(entry.index), i == current, width, style)
                         })
@@ -491,7 +523,7 @@ impl AgentsPanel {
             self.viewport.set(budget);
         }
         let start = if mode == PanelMode::List {
-            self.cursor.saturating_sub(budget.saturating_sub(1))
+            0
         } else if self.follow && mode == PanelMode::Tail {
             body.len().saturating_sub(budget)
         } else {
@@ -528,6 +560,7 @@ impl AgentsPanel {
         if let Some(flash) = flash {
             lines.push(flash);
         }
+        lines.truncate(usize::from(height.saturating_sub(1)));
         lines.push(Line::styled(self.footer_for(width), style.hint));
         lines
             .into_iter()
@@ -544,10 +577,10 @@ impl AgentsPanel {
     }
 }
 
-fn panel_header(tree: &SubagentTree, header: &PanelHeader, fallback: &str, width: u16) -> String {
+fn panel_header(tree: &SubagentTree, header: &PanelHeader, width: u16) -> String {
     let counts = tree.counts();
     let title = if header.title.trim().is_empty() {
-        fallback
+        "Untitled session"
     } else {
         &header.title
     };
@@ -581,14 +614,7 @@ fn shared_model(tree: &SubagentTree, rows: &[TreeRow]) -> Option<String> {
         .filter(|model| !model.is_empty())
 }
 fn model_name(row: &SubagentRow) -> String {
-    literal(
-        row.model
-            .as_deref()
-            .unwrap_or_default()
-            .rsplit('/')
-            .next()
-            .unwrap_or_default(),
-    )
+    route_label(row, u16::MAX)
 }
 /// The second header line: what spawning allows, plus the model when all rows use one.
 fn status_line(spawning: Spawning, model: Option<String>) -> String {
@@ -651,22 +677,38 @@ struct ListLayout {
     models: Option<(Vec<String>, usize)>,
     times: Vec<String>,
     time_w: usize,
+    clock: AgentClock,
     /// The tool count column, absent on a narrow terminal.
     tools: Option<(Vec<String>, usize)>,
 }
 impl ListLayout {
-    fn new(tree: &SubagentTree, rows: &[TreeRow], width: u16, now: Clock) -> Self {
+    fn new(
+        tree: &SubagentTree,
+        rows: &[TreeRow],
+        width: u16,
+        now: Clock,
+        clock: AgentClock,
+    ) -> Self {
         let width = usize::from(width);
         let wide = width >= usize::from(WIDE_LIST);
-        let goals: Vec<String> = rows
+        let goals: Vec<_> = rows
             .iter()
-            .map(|e| literal(&tree.row(e.index).goal))
+            .map(|e| tree.row(e.index).goal.as_str())
             .collect();
-        let goals: Vec<&str> = goals.iter().map(String::as_str).collect();
-        let found = goal_labels(&goals);
+        let found = task_labels(&goals);
         let times: Vec<String> = rows
             .iter()
-            .map(|e| elapsed(tree.row(e.index), now))
+            .map(|e| {
+                let row = tree.row(e.index);
+                let signal = clock.signal(row);
+                if signal.glyph == '◌' {
+                    signal.label.into_owned()
+                } else {
+                    format!("{} {}", signal.label, elapsed(row, now))
+                        .trim_end()
+                        .to_owned()
+                }
+            })
             .collect();
         let time_w = times
             .iter()
@@ -675,14 +717,20 @@ impl ListLayout {
             .unwrap_or(0)
             .max("Time".width());
         let names: Vec<String> = rows.iter().map(|e| model_name(tree.row(e.index))).collect();
-        let models = (wide && names.iter().any(|name| name != &names[0])).then(|| {
+        let models = (width >= 60 && names.iter().any(|name| name != &names[0])).then(|| {
             let w = names
                 .iter()
                 .map(|n| n.width())
                 .max()
                 .unwrap_or(0)
                 .max("Model".width());
-            (names, w.min(24))
+            let cols = w.min(width / 3);
+            (
+                rows.iter()
+                    .map(|e| route_label(tree.row(e.index), cols as u16))
+                    .collect(),
+                cols,
+            )
         });
         let tools = wide.then(|| {
             let counts: Vec<String> = rows
@@ -731,6 +779,7 @@ impl ListLayout {
             models,
             times,
             time_w,
+            clock,
             tools,
         }
     }
@@ -740,7 +789,7 @@ impl ListLayout {
         if let Some((_, w)) = &self.models {
             text.push_str(&format!("  {}", pad("Model", *w as u16)));
         }
-        text.push_str(&format!("  {}", right_align("Time", self.time_w)));
+        text.push_str(&format!("  {}", right_align("State", self.time_w)));
         if let Some((_, w)) = &self.tools {
             text.push_str(&format!("  {}", right_align("Tools", *w)));
             text.push_str("  Activity");
@@ -774,9 +823,12 @@ impl ListLayout {
                 .min(usize::from(u16::MAX)) as u16,
         );
         // The marker, indent and status glyph keep their own look; the bar starts after the glyph.
-        let mut cells = vec![(label, base)];
+        let mut cells = vec![(label, style.task.patch(base))];
         if let Some((names, w)) = &self.models {
-            cells.push((format!("  {}", pad(&names[at], *w as u16)), dim));
+            cells.push((
+                format!("  {}", pad(&names[at], *w as u16)),
+                style.model.patch(base),
+            ));
         }
         cells.push((
             format!("  {}", right_align(&self.times[at], self.time_w)),
@@ -793,7 +845,10 @@ impl ListLayout {
                 if selected { "▸ " } else { "  " },
                 " ".repeat(indent)
             )),
-            Span::styled(row.state.glyph().to_string(), style.state(row.state)),
+            Span::styled(
+                self.clock.signal(row).glyph.to_string(),
+                style.state(row.state),
+            ),
             Span::styled(" ", base),
         ];
         if self.tools.is_some() {
@@ -858,7 +913,7 @@ fn wrap(text: &str, width: u16) -> Vec<Line<'static>> {
     }
     result
 }
-fn detail(row: &SubagentRow, width: u16, now: Clock) -> Vec<Line<'static>> {
+fn detail(row: &SubagentRow, session_id: &str, width: u16, now: Clock) -> Vec<Line<'static>> {
     let mut fields = vec![
         format!("Goal: {}", literal(&row.goal)),
         format!(
@@ -871,6 +926,7 @@ fn detail(row: &SubagentRow, width: u16, now: Clock) -> Vec<Line<'static>> {
             }
         ),
         format!("Id: {}", literal(&row.id)),
+        format!("Session ID: {}", literal(session_id)),
     ];
     if let Some(parent) = &row.parent_id {
         fields.push(format!("Parent: {}", literal(parent)));
@@ -880,6 +936,16 @@ fn detail(row: &SubagentRow, width: u16, now: Clock) -> Vec<Line<'static>> {
     }
     if let Some(model) = &row.model {
         fields.push(format!("Model: {}", literal(model)));
+    }
+    fields.push(format!(
+        "Reasoning effort: {}",
+        literal(row.effort.as_deref().unwrap_or("unknown"))
+    ));
+    if row.state == RowState::Running {
+        fields.push(format!(
+            "Last update: {} ago",
+            format_elapsed(now.mono_ms.saturating_sub(row.last_event_ms) as f64 / 1000.0)
+        ));
     }
     if !row.toolsets.is_empty() {
         fields.push(format!("Toolsets: {}", literal(&row.toolsets.join(", "))));
@@ -950,7 +1016,10 @@ fn detail(row: &SubagentRow, width: u16, now: Clock) -> Vec<Line<'static>> {
             None => "unknown",
         }
     ));
-    fields.into_iter().flat_map(|s| wrap(&s, width)).collect()
+    fields
+        .into_iter()
+        .flat_map(|text| word_wrapped(&text, width).into_iter().map(Line::from))
+        .collect()
 }
 fn tail_lines(row: &SubagentRow, tail: Option<&TailView>, width: u16) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(format!(
@@ -1009,7 +1078,23 @@ pub fn batch_block_lines(
     {
         header.push_str(&format!(" · {}", format_elapsed(duration)));
     }
-    let mut lines = vec![Line::styled(cut_to_width(&header, width), style.header)];
+    let shared_route = batch.rows.first().filter(|(first, _)| {
+        batch
+            .rows
+            .iter()
+            .all(|(r, _)| r.model == first.model && r.effort == first.effort)
+    });
+    let mut heading = Line::styled(cut_to_width(&header, width), style.header);
+    if let Some((row, _)) = shared_route {
+        let room = usize::from(width).saturating_sub(heading.width() + 3);
+        if room >= 15 {
+            heading.spans.push(Span::styled(
+                format!(" · {}", route_label(row, room as u16)),
+                style.model,
+            ));
+        }
+    }
+    let mut lines = vec![heading];
     let goals: Vec<String> = batch
         .rows
         .iter()
@@ -1017,7 +1102,7 @@ pub fn batch_block_lines(
         .map(|(r, _)| literal(&r.goal))
         .collect();
     let goals: Vec<&str> = goals.iter().map(String::as_str).collect();
-    let found = goal_labels(&goals);
+    let found = task_labels(&goals);
     if let Some(shared) = &found.shared {
         lines.push(Line::styled(
             cut_to_width(&format!("  Task: {shared}"), width),
@@ -1026,10 +1111,14 @@ pub fn batch_block_lines(
     }
     for ((row, depth), label) in batch.rows.iter().take(20).zip(&found.labels) {
         let mut text = format!(
-            "{}{} {label}",
+            "{}{} {}",
             " ".repeat(2 + 2 * usize::from(*depth)),
             row.state.glyph(),
+            cut_to_width(label, width.saturating_sub(4).min(56)),
         );
+        if shared_route.is_none() {
+            text.push_str(&format!(" · {}", route_label(row, width / 2)));
+        }
         if let Some(d) = row.duration_s {
             text.push_str(&format!(" · {}", format_elapsed(d)));
         }
@@ -1104,7 +1193,7 @@ fn looks_like_json(body: &str) -> bool {
         _ => false,
     }
 }
-fn first_sentence(text: &str) -> String {
+pub(super) fn first_sentence(text: &str) -> String {
     let line = text
         .lines()
         .map(str::trim)
@@ -1289,7 +1378,7 @@ mod tests {
         assert!(notices.is_empty());
         let mut panel = panel();
         panel.set_keymap(&map);
-        assert!(panel.footer().contains("ctrl+x stop"));
+        assert!(panel.footer().contains("Ctrl+X stop"));
         assert!(!panel.footer().contains("steer"));
     }
 
@@ -1365,7 +1454,7 @@ mod tests {
         let panel = panel();
         assert_eq!(
             panel.footer(),
-            "enter tail · d detail · o new pane   e steer · x stop · X stop all · p pause spawns   tab session · esc close"
+            "Enter tail · d detail · o new pane   e steer · x stop · X stop all · p pause spawns   Tab session · Esc close"
         );
     }
 }

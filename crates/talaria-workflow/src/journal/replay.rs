@@ -158,6 +158,14 @@ impl CallHistory {
             _ => None,
         })
     }
+    pub fn report_baseline(&self) -> Option<&str> {
+        self.current().find_map(|r| match &r.record {
+            Record::CallIntent {
+                report_baseline, ..
+            } => report_baseline.as_deref(),
+            _ => None,
+        })
+    }
     pub fn session(&self) -> Option<String> {
         self.current().find_map(|r| match &r.record {
             Record::SessionBound { session_id, .. } => Some(session_id.clone()),
@@ -331,6 +339,20 @@ pub(crate) struct Index {
     refused: usize,
 }
 impl Index {
+    /// A recovered report is still a failure, but it already has a durable script delivery.
+    pub fn kept_report(&self, call: &CallId) -> Option<(&str, &CallOutcome, u64)> {
+        self.calls.iter().find_map(|(key, h)| {
+            let line = h.last()?;
+            let Record::CallFinished {
+                outcome: outcome @ CallOutcome::FailedWithReport { .. },
+                ..
+            } = &line.record
+            else {
+                return None;
+            };
+            (h.intent()?.0 == call).then_some((key.as_str(), outcome, line.seq))
+        })
+    }
     /// Check a record against its call's history before it is written, with the same rules
     /// `apply` uses. Only call records are checked; the sequence is the writer's.
     pub fn check_next(&self, record: &Record) -> Result<(), JournalError> {
@@ -536,7 +558,9 @@ impl Index {
                 match &last.record {
                     Record::CallFinished { outcome, .. } => match outcome {
                         CallOutcome::Completed { .. } => summary.completed += 1,
-                        CallOutcome::Failed { .. } => summary.failed += 1,
+                        CallOutcome::Failed { .. } | CallOutcome::FailedWithReport { .. } => {
+                            summary.failed += 1
+                        }
                         CallOutcome::Skipped => summary.skipped += 1,
                         CallOutcome::Stopped { .. } => summary.stopped += 1,
                     },
@@ -590,6 +614,15 @@ impl Index {
         let mut entries = Vec::new();
         self.replay_keys.clear();
         for call_id in history {
+            // The worker's worktree can be removed after recovery. Its report is in the journal.
+            if let Some((key, outcome, seq)) = self.kept_report(&call_id) {
+                entries.push(ReplayEntry {
+                    call_id: call_id.clone(),
+                    outcome: blobs::outcome(dir.path(), outcome, seq)?,
+                });
+                self.replay_keys.insert(call_id, key.to_owned());
+                continue;
+            }
             let Some(request) = requests.get(&call_id) else {
                 continue;
             };
@@ -677,6 +710,7 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
                 outcome: CallOutcome::Failed { .. } | CallOutcome::Stopped { .. },
                 ..
             } | Record::CallRetryFinished { .. }
+                | Record::CallReportRestartRequested { .. }
                 | Record::CallResolved {
                     resolution: Resolution::Rerun | Resolution::Abort,
                     ..
@@ -696,6 +730,12 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
     );
     let attention = matches!(next, Record::CallAttention { .. });
     let allowed = match &last.record {
+        Record::CallFinished {
+            outcome: CallOutcome::FailedWithReport { .. },
+            ..
+        } => {
+            matches!(next, Record::CallReportRestartRequested { .. })
+        }
         Record::CallIntent { .. } => {
             matches!(
                 next,

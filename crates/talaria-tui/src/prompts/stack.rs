@@ -1,9 +1,18 @@
 //! The card stack and its transient input state.
 
+mod question;
+use question::QuestionPane;
+pub use question::QuestionRows;
+use std::cell::{Cell, OnceCell};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use ratatui::{buffer::Buffer, layout::Rect, text::Line};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::Style,
+    text::{Line, Span},
+};
 use talaria_core::session::{
     ConnectionCard, ConnectionChoice, PromptCell, PromptKey, PromptKind, PromptState,
     is_answerable, recovered_limit_seconds,
@@ -17,6 +26,7 @@ use super::{
 use crate::history::{sanitize, wrap_lines};
 use crate::keys::{Key, KeyCode, KeyKind};
 use crate::live::LiveSection;
+use crate::theme::surfaces::{Token, ViewStyles, tokens as t};
 
 const LIMIT: usize = 16_384;
 const DRAWN_LINE_CAP: usize = 10;
@@ -228,6 +238,7 @@ fn same_focus(left: &Content, right: &Content) -> bool {
                 && before.description == after.description
                 && before.question == after.question
                 && before.choices == after.choices
+                && before.multi_select == after.multi_select
                 && before.state == after.state
         }
         (Content::Connection(before), Content::Connection(after)) => {
@@ -247,6 +258,7 @@ fn same_draft(left: &Content, right: &Content) -> bool {
                 && before.description == after.description
                 && before.question == after.question
                 && before.choices == after.choices
+                && before.multi_select == after.multi_select
         }
         _ => same_focus(left, right),
     }
@@ -349,6 +361,10 @@ impl PromptStack {
     }
 
     pub fn connection_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.connection_lines_with_hints(width, true)
+    }
+
+    fn connection_lines_with_hints(&self, width: u16, key_hints: bool) -> Vec<Line<'static>> {
         let Some(card) = self
             .cards
             .iter()
@@ -406,7 +422,9 @@ impl PromptStack {
         } else {
             "Digits choose · Arrows select · Enter confirm · Esc Skip · Ctrl+C interrupt"
         };
-        add(&mut rows, hint, width);
+        if key_hints {
+            add(&mut rows, hint, width);
+        }
         rows
     }
 
@@ -449,16 +467,12 @@ impl PromptStack {
                     }),
             );
         for (id, content) in incoming {
-            let card = if let Some(index) = old.iter().position(|card| card.id == id) {
+            let retained = old
+                .iter()
+                .position(|card| card.id == id && same_draft(&card.content, &content));
+            let card = if let Some(index) = retained {
                 let mut card = old.remove(index);
-                if !same_draft(&card.content, &content) {
-                    card.secret = MaskedValue::new();
-                    card.secret_chars = 0;
-                    card.text.clear();
-                    card.ticks.clear();
-                    card.sent = false;
-                    card.too_long = None;
-                } else if matches!((&card.content, &content), (Content::Prompt(before), Content::Prompt(after))
+                if matches!((&card.content, &content), (Content::Prompt(before), Content::Prompt(after))
                     if matches!(before.state, PromptState::Answering(_)) && after.state == PromptState::Open)
                 {
                     // A failed answer reopens the same card without discarding typed state.
@@ -503,6 +517,7 @@ impl PromptStack {
         let mut result = KeyOutcome::Consumed {
             intent: None,
             interrupt_requested: false,
+            interrupt_session: None,
             notice: None,
         };
         if key.kind == KeyKind::Release {
@@ -526,10 +541,11 @@ impl PromptStack {
                     None
                 }
             };
-            self.stopping.insert(session);
+            self.stopping.insert(session.clone());
             return KeyOutcome::Consumed {
                 intent,
                 interrupt_requested: true,
+                interrupt_session: session,
                 notice: None,
             };
         }
@@ -636,6 +652,7 @@ impl PromptStack {
                             result = KeyOutcome::Consumed {
                                 intent: None,
                                 interrupt_requested: false,
+                                interrupt_session: None,
                                 notice: Some(
                                     "closed without an answer: Hermes did not offer deny".into(),
                                 ),
@@ -670,6 +687,7 @@ impl PromptStack {
         KeyOutcome::Consumed {
             intent: None,
             interrupt_requested: false,
+            interrupt_session: None,
             notice: None,
         }
     }
@@ -679,7 +697,115 @@ impl PromptStack {
     }
 
     pub fn section(&self) -> Option<PromptSection<'_>> {
-        (!self.cards.is_empty()).then_some(PromptSection { stack: self })
+        (!self.cards.is_empty()).then(|| PromptSection {
+            stack: self,
+            views: ViewStyles::default(),
+            pane: OnceCell::new(),
+            hits: Cell::new(None),
+            key_hints: true,
+        })
+    }
+
+    /// Actions the card accepts while the fleet view owns Escape and Ctrl+C.
+    pub(crate) fn fleet_answer_hint(&self) -> Option<String> {
+        let card = self.cards.first()?;
+        if self.stopping.contains(&card.session().map(str::to_owned)) {
+            return Some("Stopping…".into());
+        }
+        if !self.draft_empty {
+            return Some("Clear the draft to answer".into());
+        }
+        if card.answering() {
+            return Some("Sending answer…".into());
+        }
+        let hint = match &card.content {
+            Content::Connection(_) => "↑↓ choose · Enter confirm".into(),
+            _ if card.masked() => "Type value · Enter send".into(),
+            Content::Prompt(cell) if cell.kind == PromptKind::Approval && card.field => {
+                "Enter send with note · Tab choices".into()
+            }
+            Content::Prompt(cell) if cell.kind == PromptKind::Approval => {
+                let count = shown_approval_choices(&cell.choices).len();
+                if count > 1 {
+                    format!("Enter confirm · 1–{count} choose · Tab note")
+                } else {
+                    "Enter confirm · Tab note".into()
+                }
+            }
+            Content::Prompt(cell) if cell.kind == PromptKind::Clarify => {
+                if card.field || cell.choices.is_empty() {
+                    "Type answer · Enter send"
+                } else if cell.multi_select {
+                    "Space toggle · Enter send · ↑↓ move"
+                } else {
+                    "Enter answer · ↑↓ choose"
+                }
+                .into()
+            }
+            _ => return None,
+        };
+        Some(hint)
+    }
+
+    /// The available editing and answer keys for the card that owns the keyboard.
+    pub fn focus_help(&self) -> Option<&'static str> {
+        let card = self.cards.first()?;
+        Some(match &card.content {
+            _ if self.stopping.contains(&card.session().map(str::to_owned)) => {
+                "Waiting for the interruption to finish."
+            }
+            _ if card.answering() => "Waiting for Hermes to acknowledge the answer.",
+            Content::Connection(_) => "Up / Down select\nEnter or 1–9 choose\nEsc skip",
+            _ if card.masked() => "Type the requested value\nEnter submit\nEsc cancel",
+            Content::Prompt(cell) if cell.kind == PromptKind::Approval && card.field => {
+                "Type a note\nEnter submit the selected answer\nEsc or Tab return to choices"
+            }
+            Content::Prompt(cell) if cell.kind == PromptKind::Approval => {
+                "Up / Down select\nEnter or 1–9 answer\nTab add a note"
+            }
+            Content::Prompt(cell) if cell.kind == PromptKind::Clarify && card.field => {
+                if cell.choices.is_empty() {
+                    "Type your answer\nEnter submit\nEsc skip"
+                } else {
+                    "Type your answer\nEnter submit\nEsc return to choices"
+                }
+            }
+            Content::Prompt(cell) if cell.kind == PromptKind::Clarify && cell.multi_select => {
+                "Up / Down select\nSpace toggle a choice\nEnter submit\nEsc skip"
+            }
+            Content::Prompt(cell) if cell.kind == PromptKind::Clarify => {
+                "Up / Down select\nEnter or 1–9 choose\nEsc skip"
+            }
+            _ => "Follow the instructions on the card.",
+        })
+    }
+
+    fn choice_question(&self) -> Option<(&Card, &PromptCell)> {
+        let card = self.cards.first()?;
+        match &card.content {
+            Content::Prompt(cell)
+                if cell.kind == PromptKind::Clarify && !cell.choices.is_empty() =>
+            {
+                Some((card, cell))
+            }
+            _ => None,
+        }
+    }
+
+    /// Clicks select a row. Enter confirms the answer, as in the model and session pickers.
+    pub fn point_to_choice(&mut self, rows: &QuestionRows, col: u16, row: u16, now: Instant) {
+        if !self.ready(now) || !self.draft_empty || !self.shows_prompt(&rows.key) {
+            return;
+        }
+        let card = &mut self.cards[0];
+        if !card.answering()
+            && !card.field
+            && !self.stopping.contains(&card.session().map(str::to_owned))
+            && let Some(index) = rows.index_at(col, row)
+            && offered_choice_count(card).is_some_and(|count| index <= count)
+        {
+            card.selected = index;
+        }
     }
 
     /// Whether the card on top, the one drawn, shows this prompt.
@@ -717,29 +843,19 @@ fn connection_word(choice: ConnectionChoice) -> &'static str {
 
 fn offered_choice_count(card: &Card) -> Option<usize> {
     match &card.content {
-        Content::Prompt(cell) if cell.kind == PromptKind::Clarify => {
-            Some(cell.choices.len().min(MAX_RENDERED_CHOICES))
-        }
+        Content::Prompt(cell) if cell.kind == PromptKind::Clarify => Some(cell.choices.len()),
         _ => None,
     }
 }
 
-fn clarify_answer(card: &Card, count: usize, multi: bool) -> String {
+fn clarify_answer(card: &Card, multi: bool) -> String {
     if !multi {
         return card.text.clone();
     }
     let Content::Prompt(cell) = &card.content else {
         return String::new();
     };
-    let choices: Vec<String> = (0..count)
-        .filter(|index| card.ticks.contains(index))
-        .filter_map(|index| cell.choices.get(index).cloned())
-        .collect();
-    multi_select_answer(
-        &choices,
-        &(0..choices.len()).collect::<Vec<_>>(),
-        Some(&card.text),
-    )
+    multi_select_answer(&cell.choices, &card.ticks, Some(&card.text))
 }
 
 fn clarify_key(card: &mut Card, key: KeyCode) -> Option<PromptIntent> {
@@ -754,7 +870,7 @@ fn clarify_key(card: &mut Card, key: KeyCode) -> Option<PromptIntent> {
                 None
             }
             KeyCode::Enter if multi || !card.text.trim().is_empty() => {
-                card.answer(clarify_answer(card, count, multi))
+                card.answer(clarify_answer(card, multi))
             }
             KeyCode::Backspace => {
                 card.text.pop();
@@ -778,7 +894,15 @@ fn clarify_key(card: &mut Card, key: KeyCode) -> Option<PromptIntent> {
             None
         }
         KeyCode::Esc => card.answer(String::new()),
-        KeyCode::Enter if multi => card.answer(clarify_answer(card, count, multi)),
+        KeyCode::Home => {
+            card.selected = 0;
+            None
+        }
+        KeyCode::End => {
+            card.selected = count;
+            None
+        }
+        KeyCode::Enter if multi => card.answer(clarify_answer(card, multi)),
         KeyCode::Enter => select_clarify(card, count, multi, card.selected),
         KeyCode::Char(' ') if multi => select_clarify(card, count, multi, card.selected),
         KeyCode::Char(ch @ '1'..='9') => {
@@ -797,6 +921,7 @@ fn select_clarify(
     if index > count {
         return None;
     }
+    card.selected = index;
     if index == count {
         card.field = true;
         return None;
@@ -823,15 +948,58 @@ fn shown_approval_choices(choices: &[String]) -> Vec<&str> {
 
 pub struct PromptSection<'a> {
     stack: &'a PromptStack,
+    views: ViewStyles,
+    pane: OnceCell<(u16, QuestionPane)>,
+    hits: Cell<Option<QuestionRows>>,
+    key_hints: bool,
 }
 
 impl PromptSection<'_> {
+    pub(crate) fn without_key_hints(mut self) -> Self {
+        self.key_hints = false;
+        self
+    }
+
+    pub fn with_theme(mut self, views: &ViewStyles) -> Self {
+        self.views = views.clone();
+        self
+    }
+
+    pub fn is_choice_question(&self) -> bool {
+        self.stack.choice_question().is_some()
+    }
+
+    pub fn take_question_rows(&self) -> Option<QuestionRows> {
+        self.hits.take()
+    }
+
+    pub fn question_hint(&self, width: u16) -> Option<String> {
+        self.with_question(width, |pane| pane.hint.clone())
+    }
+
+    fn with_question<R>(&self, width: u16, apply: impl FnOnce(&QuestionPane) -> R) -> Option<R> {
+        let (card, cell) = self.stack.choice_question()?;
+        let build = || QuestionPane::new(self.stack, card, cell, width);
+        let (cached_width, pane) = self.pane.get_or_init(|| (width, build()));
+        Some(if *cached_width == width {
+            apply(pane)
+        } else {
+            apply(&build())
+        })
+    }
+
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
         let stack = self.stack;
         let card = &stack.cards[0];
-        let mut rows = Vec::new();
+        let mut rows = CardLines {
+            rows: Vec::new(),
+            width,
+            views: &self.views,
+        };
         let (title, masked_detail) = match &card.content {
-            Content::Connection(_) => return stack.connection_lines(width),
+            Content::Connection(_) => {
+                return stack.connection_lines_with_hints(width, self.key_hints);
+            }
             Content::Prompt(cell) => (
                 if cell.kind == PromptKind::ServerRequest {
                     cell.command.as_deref().unwrap_or_default()
@@ -876,101 +1044,86 @@ impl PromptSection<'_> {
                 (title, detail)
             }
         };
-        add_capped(&mut rows, &card_header(&title, card, stack), width);
+        rows.capped(t::DIALOG_TITLE, &card_header(&title, card, stack));
         let hint = match &card.content {
-            Content::Connection(_) => return stack.connection_lines(width),
+            Content::Connection(_) => {
+                return stack.connection_lines_with_hints(width, self.key_hints);
+            }
             Content::Prompt(cell) if cell.kind == PromptKind::ServerRequest => {
                 let method = cell.command.as_deref().unwrap_or_default();
-                add(&mut rows, "asked while you were away", width);
+                rows.add(t::DIALOG_MUTED, "asked while you were away");
                 if let Some(seconds) = recovered_limit_seconds(method) {
-                    add(&mut rows, &format!("limit {seconds} s"), width);
+                    rows.add(t::DIALOG_MUTED, &format!("limit {seconds} s"));
                 }
                 if is_answerable(method) {
-                    add(
-                        &mut rows,
-                        &format!("value: {}", "•".repeat(card.secret_chars.min(32))),
-                        width,
-                    );
-                    if card.too_long.is_some() {
-                        add(
-                            &mut rows,
-                            "value too long (16,384 characters at most)",
-                            width,
-                        );
-                    }
+                    rows.masked_input(card);
                     "Enter send · Esc decline · Ctrl+C decline and stop".to_owned()
                 } else {
-                    add(&mut rows, "This request cannot be answered here.", width);
+                    rows.add(t::DIALOG_WARNING, "This request cannot be answered here.");
                     String::new()
                 }
             }
             Content::Masked(view) => {
                 if let Some((prefix, detail)) = masked_detail {
                     if prefix.is_empty() {
-                        add_capped(&mut rows, detail, width);
+                        rows.capped(t::DIALOG_TEXT, detail);
                     } else {
-                        add_capped_prefixed(&mut rows, prefix, detail, width);
+                        rows.append(t::DIALOG_APPROVAL_COMMAND, |rows| {
+                            add_capped_prefixed(rows, prefix, detail, width);
+                        });
                     }
                 }
                 if view.method == "secret" {
-                    add(
-                        &mut rows,
+                    rows.add(
+                        t::DIALOG_MUTED,
                         "Hermes stores this value in the profile's .env file.",
-                        width,
                     );
                 }
-                add(
-                    &mut rows,
-                    &format!("value: {}", "•".repeat(card.secret_chars.min(32))),
-                    width,
-                );
-                if card.too_long.is_some() {
-                    add(
-                        &mut rows,
-                        "value too long (16,384 characters at most)",
-                        width,
-                    );
-                }
+                rows.masked_input(card);
                 "Enter send · Esc decline · Ctrl+C decline and stop".to_owned()
             }
             Content::Prompt(cell) if cell.kind == PromptKind::Approval => {
                 if let Some(command) = cell.command.as_deref().filter(|s| !s.is_empty()) {
-                    append_approval_command(&mut rows, command, width);
+                    rows.append(t::DIALOG_APPROVAL_COMMAND, |rows| {
+                        append_approval_command(rows, command, width);
+                    });
                 }
                 if let Some(description) = &cell.description {
-                    add_capped(&mut rows, description, width);
+                    rows.capped(t::DIALOG_TEXT, description);
                 }
                 if cell.edit.is_some() {
-                    add(&mut rows, "This approval carries a proposed edit.", width);
+                    rows.add(t::DIALOG_WARNING, "This approval carries a proposed edit.");
                 }
                 if let Some(seconds) = cell.timeout_s {
-                    add(
-                        &mut rows,
+                    rows.add(
+                        t::DIALOG_WARNING,
                         &format!(
                             "Hermes denies this after {} s without an answer.",
                             seconds.floor()
                         ),
-                        width,
                     );
                 }
                 let choices = shown_approval_choices(&cell.choices);
                 for (index, label) in choices.iter().enumerate() {
-                    add_choice(&mut rows, card.selected, index, label, width);
+                    let token = if card.selected == index {
+                        t::DIALOG_SELECTION
+                    } else {
+                        t::DIALOG_BUTTON
+                    };
+                    rows.append(token, |rows| {
+                        add_choice(rows, card.selected, index, label, width)
+                    });
                 }
                 if cell.choices.len() > choices.len() {
-                    add(
-                        &mut rows,
+                    rows.add(
+                        t::DIALOG_MUTED,
                         &format!("… ({} more choices)", cell.choices.len() - choices.len()),
-                        width,
                     );
                 }
                 if card.field || !card.text.is_empty() {
-                    add_field(
-                        &mut rows,
-                        "note (sent after the answer) ",
-                        &card.text,
-                        width,
-                    );
+                    rows.append(t::DIALOG_INPUT, |rows| {
+                        add_field(rows, "note (sent after the answer) ", &card.text, width);
+                    });
                 }
                 format!(
                     "1-{} choose · Enter confirm · Esc deny · Tab note · Ctrl+C deny and stop",
@@ -979,69 +1132,26 @@ impl PromptSection<'_> {
             }
             Content::Prompt(cell) => {
                 if let Some(question) = &cell.question {
-                    add_capped(&mut rows, question, width);
+                    rows.capped(t::DIALOG_TEXT, question);
                 }
                 if let Some(seconds) = cell.timeout_s {
-                    add(
-                        &mut rows,
+                    rows.add(
+                        t::DIALOG_MUTED,
                         &format!("Hermes stops waiting after {} s.", seconds.floor()),
-                        width,
-                    );
-                }
-                let count = cell.choices.len().min(MAX_RENDERED_CHOICES);
-                for (index, label) in cell.choices.iter().take(count).enumerate() {
-                    if cell.multi_select {
-                        let (label, _) = bounded_source(label, width);
-                        let mark = if card.ticks.contains(&index) {
-                            "x"
-                        } else {
-                            " "
-                        };
-                        let label = format!("[{mark}] {label}");
-                        add_choice(&mut rows, card.selected, index, &label, width);
-                    } else {
-                        add_choice(&mut rows, card.selected, index, label, width);
-                    }
-                }
-                if cell.choices.len() > count {
-                    add(
-                        &mut rows,
-                        &format!("… ({} more choices)", cell.choices.len() - count),
-                        width,
-                    );
-                }
-                if count > 0 {
-                    add_choice(
-                        &mut rows,
-                        card.selected,
-                        count,
-                        "Other (type an answer)",
-                        width,
                     );
                 }
                 if card.field {
-                    add_field(&mut rows, "answer: ", &card.text, width);
+                    rows.append(t::DIALOG_INPUT, |rows| {
+                        add_field(rows, "answer: ", &card.text, width);
+                    });
                 }
                 if let Some(length) = card.too_long {
-                    add(
-                        &mut rows,
+                    rows.add(
+                        t::DIALOG_ERROR,
                         &format!("answer too long ({length} of 16,384 characters)"),
-                        width,
                     );
                 }
-                if cell.choices.is_empty() {
-                    "Enter send · Esc skip · Ctrl+C skip and stop".into()
-                } else if cell.multi_select {
-                    format!(
-                        "Space or 1-{} tick · Enter send · Esc skip · Ctrl+C skip and stop",
-                        cell.choices.len().min(MAX_RENDERED_CHOICES) + 1
-                    )
-                } else {
-                    format!(
-                        "1-{} choose · Enter confirm · Esc skip · Ctrl+C skip and stop",
-                        cell.choices.len().min(MAX_RENDERED_CHOICES) + 1
-                    )
-                }
+                "Enter send · Esc skip · Ctrl+C skip and stop".into()
             }
         };
         let hint = if stack.stopping.contains(&card.session().map(str::to_owned)) {
@@ -1063,8 +1173,59 @@ impl PromptSection<'_> {
         } else {
             hint
         };
-        add(&mut rows, &hint, width);
-        rows
+        if self.key_hints {
+            rows.add(t::DIALOG_KEY, &hint);
+        }
+        rows.rows
+    }
+}
+
+struct CardLines<'a> {
+    rows: Vec<Line<'static>>,
+    width: u16,
+    views: &'a ViewStyles,
+}
+
+impl CardLines<'_> {
+    fn append(&mut self, token: Token, append: impl FnOnce(&mut Vec<Line<'static>>)) {
+        let start = self.rows.len();
+        append(&mut self.rows);
+        let style = if token == t::DIALOG_SELECTION {
+            self.views.inline_selection(token, Style::default())
+        } else {
+            self.views.inline(token, Style::default())
+        };
+        for row in &mut self.rows[start..] {
+            row.style = style;
+        }
+    }
+
+    fn add(&mut self, token: Token, text: &str) {
+        let width = self.width;
+        self.append(token, |rows| add(rows, text, width));
+    }
+
+    fn capped(&mut self, token: Token, text: &str) {
+        let width = self.width;
+        self.append(token, |rows| add_capped(rows, text, width));
+    }
+
+    fn masked_input(&mut self, card: &Card) {
+        let input = self.views.inline(t::DIALOG_INPUT, Style::default());
+        let mask = self.views.inline(t::DIALOG_SECRET_MASK, Style::default());
+        self.rows.extend(wrap_lines(
+            vec![Line::from(vec![
+                Span::styled("value: ", input),
+                Span::styled("•".repeat(card.secret_chars.min(32)), mask),
+            ])],
+            self.width,
+        ));
+        if card.too_long.is_some() {
+            self.add(
+                t::DIALOG_ERROR,
+                "value too long (16,384 characters at most)",
+            );
+        }
     }
 }
 
@@ -1466,9 +1627,16 @@ fn add_field(rows: &mut Vec<Line<'static>>, prefix: &str, text: &str, width: u16
 
 impl LiveSection for PromptSection<'_> {
     fn height(&self, width: u16) -> u16 {
-        u16::try_from(self.lines(width).len()).unwrap_or(u16::MAX)
+        self.with_question(width, QuestionPane::height)
+            .unwrap_or_else(|| u16::try_from(self.lines(width).len()).unwrap_or(u16::MAX))
     }
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        if let Some(rows) = self.with_question(area.width, |pane| {
+            pane.draw(area, buf, &self.views, self.key_hints)
+        }) {
+            self.hits.set(Some(rows));
+            return;
+        }
         let lines = self.lines(area.width);
         for (index, line) in lines
             .iter()

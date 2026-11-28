@@ -100,6 +100,7 @@ mod tests {
             phase: None,
             prompt: "Review it.".into(),
             schema: None,
+            report_file: None,
             tier: None,
             model: None,
             provider: None,

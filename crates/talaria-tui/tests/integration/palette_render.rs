@@ -280,7 +280,7 @@ fn query_snapshot_60_and_45_columns() {
 
     let narrow = expect_picture("query_45.txt", &state, 45, 24, 24);
     assert_reversed(&narrow, row_starting(&narrow, "  /plan"));
-    assert!(!row_text(&narrow, 0).contains("Plan a task"));
+    assert!(row_text(&narrow, 0).contains("Plan a task"));
 }
 
 #[test]
@@ -292,6 +292,14 @@ fn browse_snapshot_160_columns() {
     let skill = row_starting(&buffer, "  /help");
     let cell = &buffer[(2, skill)];
     assert!(cell.modifier.contains(Modifier::DIM) || !row_text(&buffer, skill).contains("skill"));
+}
+
+#[test]
+fn compact_palette_keeps_descriptions_and_escape_at_40_columns() {
+    let state = state_with(query_rows(), 0, 12);
+    let (_, buffer) = draw(&state, 40, 16, 16);
+    assert!(row_text(&buffer, 0).contains("Plan a task"));
+    assert!(row_text(&buffer, 3).contains("Esc close"));
 }
 
 #[test]

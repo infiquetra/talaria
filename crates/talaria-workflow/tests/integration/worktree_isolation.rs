@@ -39,6 +39,7 @@ fn request(digest: &str, occurrence: u32) -> AgentRequest {
         phase: None,
         prompt: "test".into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("scripted".into()),
         provider: Some("scripted".into()),

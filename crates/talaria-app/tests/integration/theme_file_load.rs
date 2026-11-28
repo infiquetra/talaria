@@ -115,7 +115,26 @@ fn list_themes_returns_user_files_and_skips_reserved_invalid_and_symlinked_entri
 #[test]
 fn each_built_in_theme_has_a_description() {
     use talaria_app::theme_file::{BUILTIN_THEMES, builtin, builtin_description};
-    assert_eq!(BUILTIN_THEMES, ["terminal", "ember", "paper"]);
+    assert_eq!(
+        BUILTIN_THEMES,
+        [
+            "terminal",
+            "ember",
+            "paper",
+            "homebrew",
+            "catppuccin-mocha",
+            "catppuccin-latte",
+            "tokyo-night",
+            "dracula",
+            "nord",
+            "gruvbox-dark",
+            "gruvbox-light",
+            "rose-pine",
+            "rose-pine-dawn",
+            "solarized-dark",
+            "solarized-light",
+        ]
+    );
     for id in BUILTIN_THEMES {
         assert!(builtin(id).is_some(), "{id}");
         let description = builtin_description(id).unwrap();
@@ -125,4 +144,5 @@ fn each_built_in_theme_has_a_description() {
         );
     }
     assert_eq!(builtin_description("quiet-amber"), None);
+    assert!(!reserved_id("dracula"));
 }

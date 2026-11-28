@@ -1481,10 +1481,10 @@ impl CronState {
             None => None,
         };
         let hints = match &self.mode {
-            Mode::Form(_) => "tab next field · ctrl+s save · esc cancel",
-            Mode::Detail(d) if d.run_card.is_some() => "↑↓ scroll · esc back",
-            Mode::Detail(_) => "tab fields/runs · enter run details · o open run · ctrl+t run now · ctrl+e pause/resume · ctrl+d remove · ctrl+r reload · esc back",
-            Mode::List => "enter details · ctrl+n new · ctrl+t run now · ctrl+e pause/resume · ctrl+d remove · ctrl+r reload · esc close",
+            Mode::Form(_) => "Tab next field · Ctrl+S save · Esc cancel",
+            Mode::Detail(d) if d.run_card.is_some() => "↑↓ scroll · Esc back",
+            Mode::Detail(_) => "Tab fields/runs · Enter run details · o open run · Ctrl+T run now · Ctrl+E pause/resume · Ctrl+D remove · Ctrl+R reload · Esc back",
+            Mode::List => "Enter details · Ctrl+N new · Ctrl+T run now · Ctrl+E pause/resume · Ctrl+D remove · Ctrl+R reload · Esc close",
         }.into();
         CronView {
             title: format!("Scheduled jobs · profile {}", text::clean(&self.profile)),
@@ -1502,12 +1502,12 @@ impl CronState {
         let status = self
             .list_error
             .as_ref()
-            .map(|reason| format!("Could not load scheduled jobs: {reason}. ctrl+r tries again."));
+            .map(|reason| format!("Could not load scheduled jobs: {reason}. Ctrl+R tries again."));
         if self.jobs.is_empty() {
             return CronBody::Message(status.unwrap_or_else(|| {
                 if self.loaded {
                     format!(
-                        "No scheduled jobs in profile {}. ctrl+n creates one.",
+                        "No scheduled jobs in profile {}. Ctrl+N creates one.",
                         text::clean(&self.profile)
                     )
                 } else {

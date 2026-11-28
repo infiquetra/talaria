@@ -4,7 +4,7 @@ Start with a pure literal header: `export const meta = {name:'name', description
 
 | Host | Meaning |
 |---|---|
-| `agent(prompt, opts?)` | Promise for final string or JSON; failed or skipped calls yield null. |
+| `agent(prompt, opts?)` | Promise for final string or JSON. Failed or skipped calls normally yield null. `reportFile` opts into the result shape below. |
 | `cutShort()` | Array of `{label, steps, limit}` (plus `savedBranch` when uncommitted work was saved) for each agent so far that Hermes stopped at its step cap, in the order their results arrived; empty when none. See below. |
 | `parallel(thunks)` | Invoke function thunks in order; return their results in input order, with null for failures. |
 | `pipeline(items, ...stages)` | Each item moves through function stages independently. A stage receives previous result, original item, index. |
@@ -32,6 +32,7 @@ Every execution option:
 | `opts.toolsets` | Nonempty array of distinct toolset names. |
 | `opts.skills` | Nonempty array of distinct skill names. |
 | `opts.isolation` | Exactly 'worktree'. |
+| `opts.reportFile` | Relative path to a JSON report, with a schema and worktree isolation. See "Recovering a report". |
 | `opts.maxTurns` | Integer 1 through 10,000. Omitted means the agent has no step cap; the profile's own `agent.max_turns` does not apply to workflow agents. Leave it out (see "Step caps"). |
 | `opts.stallMs` | Positive integer, accepted as a logged no-op. |
 
@@ -52,6 +53,31 @@ Leave `maxTurns` out of every `agent()` call. The token budget is the only limit
 ## Status words
 
 Talaria checks every reply against `opts.schema` with a full JSON Schema validator and sends one correction turn on a mismatch, so `enum` is enforced. A schema field the script tests or branches on must list its allowed words with `enum`, for example `status: {enum: ['done','blocked']}`, and the prompt must name the same words: "Answer status with exactly one of: done, blocked." A plain `{type:'string'}` lets an agent answer "complete" where the script tests for "done"; in real runs that made whole phases silently not run. Test for each enum word you handle, and name or retry anything else. `workflow check` answers an `enum` field with its first word, so list the word that continues the work first and the trial run reaches further.
+
+## Recovering a report
+
+Declare `reportFile` on a worker with the file toolset, `isolation: 'worktree'`, and a `schema`. Use a new relative path with no dot components, for example `reports/review.json`. Talaria asks the worker to write plain JSON matching that schema before replying. Give each finding a short evidence field, such as a source file and line, a test name, or a URL.
+
+A usable final reply takes precedence. If a settled worker fails or its reply does not fit the schema, Talaria can keep a report that was created or changed during the attempt. The report must be regular JSON of at most 1 MiB and fit the same schema. A recovered report ends the call before a correction or automatic retry and the worker still counts as failed. Operator stops and turns stopped for budget exhaustion retain their usual behavior. The kept report is read from the journal on resume, including after the worktree is removed. Use `workflow restart` to explicitly request a new attempt.
+
+```javascript
+const review = await agent("Review the change and cite a file and line for each finding.", {
+  label: "code review",
+  toolsets: ["file"],
+  isolation: "worktree",
+  reportFile: "reports/review.json",
+  schema: {
+    type: "object",
+    properties: {findings: {type: "array", items: {type: "string"}}},
+    required: ["findings"],
+  },
+});
+if (review === null) return {failed: "code review"};
+if (review.recoveredReport) log(`Code review failed: ${review.recoveredReport.reason}`);
+return {findings: review.value.findings, recovery: review.recoveredReport};
+```
+
+With `reportFile`, the call yields `{value, recoveredReport}`. The marker is null for an ordinary reply and `{path, reason}` for recovered evidence. A failure without recoverable evidence still yields null, and a budget stop still rejects. Use the marker when deciding which work to accept or retry. To read saved evidence outside the script, use `workflow result --json <run-id> --agent <label-or-key>`.
 
 ## Reading a failed agent
 

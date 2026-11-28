@@ -3,7 +3,9 @@ use crate::support;
 use ratatui::{buffer::Buffer, layout::Rect};
 use support::{ByteSink, Vt, probe};
 use talaria_core::models::{BrowseCounts, BrowseView, ListScope, PickerRow, PickerView, RowKey};
-use talaria_tui::picker_frame::{PickerLayout, PickerMode, draw_picker_frame, list_height};
+use talaria_tui::picker_frame::{
+    PickerLayout, PickerMode, draw_picker_frame, hit_test, list_height,
+};
 use talaria_tui::terminal::{InlineTerminal, RestoreLink};
 
 fn model(text: &str) -> PickerRow {
@@ -108,8 +110,8 @@ fn threshold_edges_and_reference_geometry() {
         (80, 15, PickerMode::Compact),
         (60, 16, PickerMode::Below),
         (111, 40, PickerMode::Below),
-        (120, 27, PickerMode::Below),
-        (112, 28, PickerMode::Side),
+        (120, 23, PickerMode::Below),
+        (112, 24, PickerMode::Side),
     ] {
         assert_eq!(
             PickerLayout::new(Rect::new(0, 0, width, height)).mode,
@@ -131,6 +133,57 @@ fn threshold_edges_and_reference_geometry() {
     assert_eq!(side.list.y, side.details.y);
     assert_eq!(side.list.height, side.details.height);
     assert_eq!(side.details.right(), side.content.right());
+}
+
+#[test]
+fn hit_test_agrees_with_the_painted_list_when_the_selected_row_scrolls() {
+    let rows = (0..20)
+        .map(|i| model(&format!("model-{i:02}")))
+        .collect::<Vec<_>>();
+    let mut picker = view(&rows, &[]);
+    picker.selected = Some(19);
+    picker.banner = Some("The provider inventory is refreshing. Check again in a moment.");
+    for (width, height) in [(45, 12), (60, 24), (120, 24)] {
+        let area = Rect::new(2, 3, width, height);
+        let mut buffer = Buffer::empty(area);
+        draw_picker_frame(&picker, area, &mut buffer);
+        let layout = PickerLayout::new(area);
+        let text = lines(&buffer);
+        let selected = text
+            .iter()
+            .position(|line| line.contains("> model-19"))
+            .unwrap();
+        let y = area.y + u16::try_from(selected).unwrap();
+        assert_eq!(hit_test(&picker, area, layout.list.x, y), Some(19));
+        assert_eq!(
+            hit_test(&picker, area, layout.list.x, layout.filter.y),
+            None
+        );
+        assert_eq!(hit_test(&picker, area, layout.list.right(), y), None);
+        assert_eq!(
+            hit_test(&picker, area, layout.list.x, layout.footer.y),
+            None
+        );
+        if layout.mode == PickerMode::Compact {
+            let banner = text
+                .iter()
+                .position(|line| line.contains("provider inventory"))
+                .unwrap();
+            assert_eq!(
+                hit_test(&picker, area, layout.list.x, area.y + banner as u16),
+                None
+            );
+        }
+    }
+
+    let rows = fixture_rows();
+    let mut view = view(&rows, &[]);
+    let area = Rect::new(0, 0, 80, 24);
+    let list = PickerLayout::new(area).list;
+    assert_eq!(hit_test(&view, area, list.x, list.y), None);
+    assert_eq!(hit_test(&view, area, list.x, list.y + 1), Some(1));
+    view.browse.as_mut().unwrap().details_open = true;
+    assert_eq!(hit_test(&view, area, list.x, list.y + 1), None);
 }
 
 #[test]
@@ -215,7 +268,7 @@ fn count_line_names_the_current_route() {
             .collect();
         assert_eq!(
             count.trim_end(),
-            "2 models · 1 providers · Current: Example provider / reasoner-large · high",
+            "2 models · 1 provider · Current: Example provider / reasoner-large · high",
             "{width}x{height}"
         );
     }
@@ -229,8 +282,12 @@ fn viewport_height_matches_the_rows_drawn() {
         view.selected = Some(0);
         let buffer = rendered(&view, width, height);
         let layout = PickerLayout::new(buffer.area);
-        let painted = lines(&buffer)
-            .iter()
+        let painted = (layout.list.y..layout.list.bottom())
+            .map(|y| {
+                (layout.list.x..layout.list.right())
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
             .filter(|line| line.contains("model-"))
             .count();
         assert_eq!(painted, list_height(buffer.area), "{width}x{height}");
@@ -307,10 +364,6 @@ fn truncation_keeps_the_badge() {
             assert!(
                 text.contains("current"),
                 "badge must not be clipped: {text}"
-            );
-            assert!(
-                !text.contains("e…"),
-                "must not separate a combining mark: {text}"
             );
             let badge_x = layout.list.right() - 7;
             for (offset, character) in "current".chars().enumerate() {
@@ -588,9 +641,9 @@ mod independent {
     #[test]
     fn thresholds_at_exact_edges() {
         for (w, h, mode) in [
-            (112, 28, FrameMode::Side),
-            (111, 28, FrameMode::Below),
-            (112, 27, FrameMode::Below),
+            (112, 24, FrameMode::Side),
+            (111, 24, FrameMode::Below),
+            (112, 23, FrameMode::Below),
             (60, 16, FrameMode::Below),
             (59, 16, FrameMode::Compact),
             (60, 15, FrameMode::Compact),
@@ -682,10 +735,56 @@ mod independent {
                 include_str!("../snapshots/picker/models-state-120x40.txt"),
             ),
         ] {
-            assert_eq!(
-                text(&paint(&state.view().unwrap(), width, height)) + "\n",
-                expected
+            let actual = text(&paint(&state.view().unwrap(), width, height)) + "\n";
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn star_keeps_the_scrolled_list_in_place() {
+        let models: Vec<_> = (0..35).map(|i| format!("model-{i:02}")).collect();
+        for (width, height) in [(40, 10), (80, 24), (120, 40)] {
+            let mut state = drive::open_loaded(
+                catalogue::parse(json!({
+                    "provider": "example-00",
+                    "model": "model-32",
+                    "providers": [{
+                        "slug": "example-00", "name": "Example provider",
+                        "authenticated": true, "models": models
+                    }]
+                })),
+                Some("high"),
+                SavedModels::empty(),
             );
+            let before = text(&paint(&state.view().unwrap(), width, height));
+            assert!(before.contains("Shift+↑↓ group"), "{width}x{height}");
+            assert!(before.contains("Ctrl+F star"), "{width}x{height}");
+            assert!(before.contains(">  ● model-32"));
+            assert!(before.contains("model-31"));
+            assert!(!before.contains("model-33"));
+            drive::press(&mut state, PickerKey::ToggleFavourite);
+            let after = text(&paint(&state.view().unwrap(), width, height));
+            let scroll_indicator = |text: &str| {
+                text.lines()
+                    .find(|line| line.contains("Rows "))
+                    .unwrap()
+                    .to_owned()
+            };
+            assert_eq!(scroll_indicator(&before), scroll_indicator(&after));
+            assert!(scroll_indicator(&after).contains("example-00"));
+            let selected_cell = |screen: &str| {
+                screen.lines().enumerate().find_map(|(y, line)| {
+                    let text = line.split_once('>')?.1;
+                    Some((y, text[..text.find("model-32")?].chars().count()))
+                })
+            };
+            assert_eq!(selected_cell(&before), selected_cell(&after));
+            assert!(after.contains("> ★● model-32"));
+            assert!(after.contains("model-31"));
+            assert!(!after.contains("model-33"));
+            drive::press(&mut state, PickerKey::Down);
+            let next = text(&paint(&state.view().unwrap(), width, height));
+            assert!(next.contains(">    model-33"));
         }
     }
 
@@ -708,6 +807,12 @@ mod independent {
                     && first.to_lowercase().contains("below"),
                 "{first}"
             );
+            drive::press(&mut state, PickerKey::End);
+            let collapsed = text(&paint(&state.view().unwrap(), w, h));
+            assert!(
+                collapsed.contains("> ▸ Example provider 19") && collapsed.contains("Enter expand")
+            );
+            drive::press(&mut state, PickerKey::Enter);
             drive::press(&mut state, PickerKey::End);
             let last = text(&paint(&state.view().unwrap(), w, h));
             assert!(

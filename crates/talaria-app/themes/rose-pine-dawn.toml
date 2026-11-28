@@ -1,0 +1,18 @@
+schema = 1
+name = "Rosé Pine Dawn"
+extends = "light"
+follow_hermes_skin = false
+
+[palette]
+background = "#faf4ed"
+surface = "#fffaf3"
+foreground = "#575279"
+muted = "#6c6885"
+disabled = "#6e687d"
+border = "#857f95"
+primary = "#bb2f3a"
+accent = "#73598f"
+success = "#286983"
+warning = "#995f10"
+error = "#9b5068"
+attention = "#bb2f3a"

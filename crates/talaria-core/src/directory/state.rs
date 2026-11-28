@@ -142,6 +142,7 @@ pub struct PickerState {
     generation: u64,
     /// The notice line.
     notice: Option<String>,
+    list_hint: Option<String>,
     /// One failed profile and scope pair, with its reason.
     unavailable: Vec<(String, RowOrigin, String)>,
     /// The scope note the gateway sent.
@@ -171,6 +172,7 @@ impl PickerState {
             filter: ProfileFilter::All,
             generation: 0,
             notice: None,
+            list_hint: None,
             unavailable: Vec::new(),
             scope_note: None,
             side_failure: None,
@@ -214,6 +216,11 @@ impl PickerState {
 
     /// The notice line, if any.
     pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref().or(self.list_hint.as_deref())
+    }
+
+    /// Preserve actionable notices when the picker closes. List hints belong to the picker.
+    pub fn closing_notice(&self) -> Option<&str> {
         self.notice.as_deref()
     }
 
@@ -393,6 +400,7 @@ pub enum PickerInput {
         reason: String,
     },
     Action(PickerAction),
+    SelectRow(RowKey),
     Text(char),
     Paste(String),
     Backspace,
@@ -403,7 +411,6 @@ pub enum PickerInput {
     End,
     Enter,
     Escape,
-    CtrlC,
     Renamed {
         key: RowKey,
         title: String,
@@ -451,6 +458,9 @@ pub fn update(state: &mut PickerState, input: PickerInput, page: usize) -> Vec<P
             state.profiles = profiles;
             state.foreground = foreground;
             state.scope_note = scope_note;
+            if generation > state.generation {
+                state.list_hint = None;
+            }
             state.generation = generation;
             state.rows = cached;
             state.loads.clear();
@@ -498,7 +508,7 @@ pub fn update(state: &mut PickerState, input: PickerInput, page: usize) -> Vec<P
                     RowOrigin::Live => "live",
                     RowOrigin::Stored => "earlier",
                 };
-                state.notice = Some(format!(
+                state.list_hint = Some(format!(
                     "{profile}: only the newest 100 {scope} sessions are listed."
                 ));
             }
@@ -551,6 +561,12 @@ pub fn update(state: &mut PickerState, input: PickerInput, page: usize) -> Vec<P
         }
         PickerInput::Resize { .. } => Vec::new(),
         PickerInput::Action(action) => action_effect(state, action, page),
+        PickerInput::SelectRow(key) => {
+            if matches!(state.mode, PickerMode::List | PickerMode::Search) {
+                state.sync_cursor(Some(key));
+            }
+            Vec::new()
+        }
         PickerInput::Text(character) => {
             let held = state.held_key();
             let mut searched = false;
@@ -719,7 +735,6 @@ pub fn update(state: &mut PickerState, input: PickerInput, page: usize) -> Vec<P
             PickerMode::Waiting(_) => vec![PickerEffect::Close],
             PickerMode::List => vec![PickerEffect::Close],
         },
-        PickerInput::CtrlC => vec![PickerEffect::Close],
     }
 }
 

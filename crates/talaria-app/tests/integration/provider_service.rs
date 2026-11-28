@@ -148,10 +148,181 @@ async fn socket_calls_are_typed_and_closed() {
 }
 
 #[tokio::test]
+async fn openrouter_requires_a_confirmed_profile_key_write() {
+    let (gateway, client, _inbound) = MockGateway::start().await;
+    let mock = MockRest::start().await;
+    let rest = RestClient::new(&mock.origin(), minted(), RestOptions::default()).unwrap();
+    let service = ProviderService::new(client, rest, "fixture".into());
+    for (status, reply, expected) in [
+        (
+            403,
+            json!({"detail":"profile is read-only"}),
+            Failure::Http {
+                status: 403,
+                detail: Some("profile is read-only".into()),
+            },
+        ),
+        (
+            200,
+            json!({"ok":true, "key":"OTHER_KEY"}),
+            Failure::BadReply,
+        ),
+    ] {
+        mock.set_route("PUT", "/api/env", move |_| (status, reply.clone()));
+        let result = service
+            .execute(
+                ProvidersEffect::SaveKey {
+                    slug: "openrouter".into(),
+                },
+                Some(Zeroizing::new(PROVIDER_KEY.to_owned())),
+            )
+            .await;
+        assert!(
+            matches!(result.as_slice(), [ProvidersInput::KeySaved(Err(error))] if *error == expected),
+            "{result:?}"
+        );
+    }
+    assert!(gateway.requests("model.save_key").is_empty());
+}
+
+#[tokio::test]
+async fn openrouter_disconnect_clears_both_account_and_profile_environment() {
+    for (rpc_missing, status, reply, success) in [
+        (
+            false,
+            200,
+            json!({"ok":true,"found":true,"key":"OPENROUTER_API_KEY"}),
+            true,
+        ),
+        (
+            true,
+            200,
+            json!({"ok":true,"found":true,"key":"OPENROUTER_API_KEY"}),
+            true,
+        ),
+        (
+            false,
+            404,
+            json!({"detail":"OPENROUTER_API_KEY not found in .env"}),
+            true,
+        ),
+        (
+            true,
+            404,
+            json!({"detail":"OPENROUTER_API_KEY not found in .env"}),
+            false,
+        ),
+        (false, 404, json!({"detail":"Not Found"}), false),
+        (false, 403, json!({"detail":"managed"}), false),
+        (false, 400, json!({"detail":"managed credential"}), false),
+        (
+            false,
+            200,
+            json!({"ok":true,"found":false,"key":"OPENROUTER_API_KEY"}),
+            false,
+        ),
+    ] {
+        let (gateway, client, _inbound) = MockGateway::start().await;
+        if rpc_missing {
+            gateway.script_error("model.disconnect", None, 4005, "no credentials");
+        } else {
+            gateway.push_matched_result(
+                "model.disconnect",
+                json!({"slug":"openrouter"}),
+                json!({"slug":"openrouter","name":"OpenRouter","disconnected":true}),
+            );
+        }
+        let mock = MockRest::start().await;
+        mock.set_route("DELETE", "/api/env", move |request| {
+            assert_eq!(
+                serde_json::from_slice::<Value>(&request.body).unwrap(),
+                json!({"key":"OPENROUTER_API_KEY"})
+            );
+            (status, reply.clone())
+        });
+        let rest = RestClient::new(&mock.origin(), minted(), RestOptions::default()).unwrap();
+        let service = ProviderService::new(client, rest, "fixture".into());
+        let result = service
+            .execute(
+                ProvidersEffect::Disconnect {
+                    slug: "openrouter".into(),
+                },
+                None,
+            )
+            .await;
+        assert_eq!(
+            matches!(result.as_slice(), [ProvidersInput::Disconnected(Ok(()))]),
+            success,
+            "{result:?}"
+        );
+        assert_eq!(gateway.requests("model.disconnect").len(), 1);
+        assert_eq!(mock.requests().await.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn openrouter_disconnect_does_not_delete_environment_after_account_refusal() {
+    let (gateway, client, _inbound) = MockGateway::start().await;
+    gateway.script_error("model.disconnect", None, 5035, "managed credential");
+    let mock = MockRest::start().await;
+    let rest = RestClient::new(&mock.origin(), minted(), RestOptions::default()).unwrap();
+    let service = ProviderService::new(client, rest, "fixture".into());
+    let result = service
+        .execute(
+            ProvidersEffect::Disconnect {
+                slug: "openrouter".into(),
+            },
+            None,
+        )
+        .await;
+    assert!(matches!(
+        result.as_slice(),
+        [ProvidersInput::Disconnected(Err(Failure::Refused {
+            code: 5035,
+            ..
+        }))]
+    ));
+    assert!(mock.requests().await.is_empty());
+}
+
+#[tokio::test]
+async fn openrouter_disconnect_reports_an_unknown_environment_delete() {
+    let (gateway, client, _inbound) = MockGateway::start().await;
+    gateway.push_matched_result(
+        "model.disconnect",
+        json!({"slug":"openrouter"}),
+        json!({"slug":"openrouter","name":"OpenRouter","disconnected":true}),
+    );
+    let mock = MockRest::start().await;
+    mock.drop_after_request("DELETE", "/api/env").await;
+    let rest = RestClient::new(&mock.origin(), minted(), RestOptions::default()).unwrap();
+    let service = ProviderService::new(client, rest, "fixture".into());
+    let result = service
+        .execute(
+            ProvidersEffect::Disconnect {
+                slug: "openrouter".into(),
+            },
+            None,
+        )
+        .await;
+    assert!(matches!(
+        result.as_slice(),
+        [ProvidersInput::Disconnected(Err(Failure::Unknown))]
+    ));
+}
+
+#[tokio::test]
 async fn secret_reaches_only_two_requests() {
     let (gateway, client, _inbound) = MockGateway::start().await;
-    key_write_replies(&gateway, "openrouter", "OpenRouter");
     let mock = MockRest::start().await;
+    mock.set_route("PUT", "/api/env", |request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        assert_eq!(
+            body,
+            json!({"key":"OPENROUTER_API_KEY","value":PROVIDER_KEY,"provider_setup":true})
+        );
+        (200, json!({"ok": true, "key":"OPENROUTER_API_KEY"}))
+    });
     let rest = RestClient::new(&mock.origin(), minted(), RestOptions::default()).expect("loopback");
     let service = ProviderService::new(client, rest, "fixture".into());
     let provider = Zeroizing::new(PROVIDER_KEY.to_owned());
@@ -186,14 +357,18 @@ async fn secret_reaches_only_two_requests() {
         )
         .await;
 
-    let save_frames = gateway
-        .requests("model.save_key")
-        .iter()
-        .filter(|frame| frame.params.to_string().contains(PROVIDER_KEY))
-        .count();
+    assert!(matches!(
+        saved.as_slice(),
+        [ProvidersInput::KeySaved(Ok(_))]
+    ));
+    assert!(gateway.requests("model.save_key").is_empty());
     assert_eq!(
-        save_frames, 1,
-        "the provider key was not sent on exactly one save"
+        mock.requests()
+            .await
+            .iter()
+            .filter(|r| r.method == "PUT" && r.path == "/api/env")
+            .count(),
+        1
     );
     let validate_bodies = mock
         .requests()

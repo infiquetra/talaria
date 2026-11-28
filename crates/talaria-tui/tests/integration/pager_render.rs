@@ -24,9 +24,7 @@ use support::{assistant, context, lines_for, reasoning, row_text, tool, user};
 
 const FULL_HINT: &str =
     "/ search · n N next/prev · { } prompts · g G top/bottom · t details · q close";
-const SHORT_HINT: &str = "/ search · n N · { } · g G · t · q close";
-const HINT_AT_100: &str = "/ search · n N next/prev · { } prompts · g G top/bottom · t detail…";
-const HINT_AT_60: &str = "/ search · n N · { } · g G…";
+const SHORT_HINT: &str = "/ search · t details · q close";
 const TOO_SMALL: &str = "Window too small for the transcript. q closes.";
 const TOO_SMALL_19: &str = "Window too small f…";
 const TOO_SMALL_40: &str = "Window too small for the transcript. q …";
@@ -392,9 +390,9 @@ fn latest_step_reasoning_heading_names_the_step() {
         cell.latest_step = true;
     }
     let late_lines = renderer.lines(&late, 80);
-    assert_eq!(late_lines[0].to_string(), "∴ thinking (latest step)");
+    assert_eq!(late_lines[0].to_string(), "∴ reasoning (last step)");
     let plain_lines = renderer.lines(&reasoning(2, "Kept the shorter route."), 80);
-    assert_eq!(plain_lines[0].to_string(), "∴ thinking");
+    assert_eq!(plain_lines[0].to_string(), "∴ reasoning");
 }
 
 #[test]
@@ -514,7 +512,7 @@ fn footer_and_too_small_by_width() {
     let mut ctx = context(&cells);
     ctx.title = "wide";
     let mut index = SearchIndex::new();
-    let mut pager = Pager::open(&ctx, 160, 48, &mut index);
+    let mut pager = Pager::open(&context(&cells[..1999]), 160, 48, &mut index);
     let _ = pager.handle_action(PagerAction::Top, &ctx, &mut index);
     pager.content_changed(&ctx, &mut index);
 
@@ -526,19 +524,19 @@ fn footer_and_too_small_by_width() {
 
     let hundred = paint(&mut pager, &ctx, 100, 48);
     let at_100 = row_text(&hundred, 47);
-    assert!(at_100.contains(HINT_AT_100), "{at_100}");
+    assert!(at_100.contains(SHORT_HINT), "{at_100}");
     assert!(at_100.contains(RIGHT_MARK), "{at_100}");
-    assert!(!at_100.contains("details"), "{at_100}");
 
     let sixty = paint(&mut pager, &ctx, 60, 48);
     let at_60 = row_text(&sixty, 47);
-    assert!(at_60.contains(HINT_AT_60), "{at_60}");
+    assert!(at_60.contains("/ search · q close"), "{at_60}");
     assert!(at_60.contains("cell 1/2000"), "{at_60}");
     assert!(!at_60.contains(SHORT_HINT), "{at_60}");
 
     let forty = paint(&mut pager, &ctx, 40, 48);
     let at_40 = row_text(&forty, 47);
     assert!(!at_40.contains("/ search"), "{at_40}");
+    assert!(at_40.contains("q close"), "{at_40}");
     assert!(at_40.contains("cell 1/2000"), "{at_40}");
 
     let tiny = paint(&mut pager, &ctx, 19, 10);

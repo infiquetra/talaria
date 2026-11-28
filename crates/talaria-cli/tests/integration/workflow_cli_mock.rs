@@ -836,7 +836,7 @@ fn json_mode_ends_with_a_short_line_naming_the_run_and_how_to_read_it_again() {
     assert!(last.len() < 340, "{last}");
     // The recording gives no cache read total, so the line says they are unknown for that turn.
     assert!(
-        last.contains("10 tokens (cache reads unknown for 1 turn, counted in full)"),
+        last.contains("up to 10 tokens (cache reads unknown for 1 turn, counted in full)"),
         "{last}"
     );
     for part in [
@@ -940,7 +940,7 @@ fn a_failed_agent_ends_the_run_completed_with_failures_and_is_listed_first() {
     assert!(plain_list.contains("  failed 1  "), "{plain_list}");
     assert!(!plain_list.contains("completed_with_failures"), "{plain_list}");
     assert!(
-        plain_list.contains("10 tokens (cache reads unknown for 1 turn, counted in full)"),
+        plain_list.contains("up to 10 tokens (cache reads unknown for 1 turn, counted in full)"),
         "{plain_list}"
     );
     let replay = output(
@@ -1243,14 +1243,17 @@ fn restart_runs_only_the_failed_agent_again_and_kept_values_are_readable_by_labe
         )
     };
 
-    // The run's own result reads exactly as a resume of the finished run replays it, in both
-    // modes and with the same exit code.
+    // A saved JSON result is one document, with the same final payload and exit code as resume.
     for mode in [&["--json"][..], &[][..]] {
         let read = workflow(&[&["result", id.as_str()][..], mode].concat());
         let replayed = workflow(&[&["resume", id.as_str()][..], mode].concat());
         assert_eq!(read.status.code(), Some(5), "{}", text(&read.stderr));
         assert_eq!(replayed.status.code(), Some(5), "{}", text(&replayed.stderr));
-        assert_eq!(text(&read.stdout), text(&replayed.stdout));
+        if mode.is_empty() {
+            assert_eq!(text(&read.stdout), text(&replayed.stdout));
+        } else {
+            assert_eq!(serde_json::from_slice::<Value>(&read.stdout).unwrap(), run_finished(&replayed.stdout));
+        }
         assert_eq!(text(&read.stderr), text(&replayed.stderr));
     }
 

@@ -6,18 +6,33 @@ mod list;
 
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Position, Rect},
     style::Style,
+    text::{Line, Span},
     widgets::{Block, Widget},
 };
 use talaria_core::models::PickerView;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::history::{grapheme_width, sanitize};
+use crate::history::{grapheme_width, sanitize, word_wrapped};
 use crate::theme::surfaces::{Token, ViewStyles, tokens as t};
 
 pub use details::details_line_count;
 pub use layout::{PickerLayout, PickerMode, list_height};
+
+/// Resolve a terminal coordinate to the selectable row drawn at that position.
+pub fn hit_test(view: &PickerView<'_>, area: Rect, column: u16, row: u16) -> Option<usize> {
+    if view.browse.is_some_and(|browse| browse.details_open) {
+        return None;
+    }
+    let list = browse_layout(view, area).list;
+    if !list.contains(Position::new(column, row)) {
+        return None;
+    }
+    let visible = list::visible_rows(view, list);
+    let index = visible.start + usize::from(row - list.y);
+    (visible.contains(&index) && view.rows[index].key.is_some()).then_some(index)
+}
 
 /// Draw a picker inside the supplied area.
 pub fn draw_picker_frame(view: &PickerView<'_>, area: Rect, buffer: &mut Buffer) {
@@ -86,12 +101,12 @@ fn draw_frame(
             buffer[(x, y)].reset();
         }
     }
-    let layout = PickerLayout::new(area);
+    let layout = browse_layout(view, area);
     if layout.mode == PickerMode::SizeMessage {
         paint(
             "Picker needs at least 40×10 · Esc close",
             area,
-            Style::default(),
+            style(views, t::PICKER_EMPTY, Style::default()),
             buffer,
         );
         if let Some(v) = views {
@@ -99,7 +114,11 @@ fn draw_frame(
         }
         return;
     }
-    let title = if view.refreshing && !view.title.contains("refreshing") {
+    let title = if view.browse.is_some_and(|browse| browse.details_open)
+        && let Some(row) = view.selected.and_then(|index| view.rows.get(index))
+    {
+        format!("Details · {}", row.text.trim_start_matches(' '))
+    } else if view.refreshing && !view.title.contains("refreshing") {
         format!("{} · refreshing…", view.title)
     } else {
         view.title.to_owned()
@@ -119,27 +138,53 @@ fn draw_frame(
             buffer,
         );
     } else {
-        let mut block = Block::bordered().title(sanitize(&title).into_owned());
+        let title = cut(&title, area.width - 4);
+        let mut block = Block::bordered().title(format!(" {title} "));
         if let Some(v) = views {
             block = block
-                .border_set(border_set(v))
-                .title_style(v.style(title_token, Style::default()));
+                .border_set(v.border_set())
+                .border_style(v.style(t::PICKER_BORDER, Style::default()))
+                .title_style(v.style(title_token, Style::default().bold()));
         }
         block.render(area, buffer);
     }
     if view.browse.is_some_and(|browse| browse.details_open) {
-        details::draw_full(view, area, buffer);
+        details::draw_full(view, area, buffer, views);
         if let Some(v) = views {
             v.finish(area, buffer, t::PICKER_BACKGROUND, true);
         }
         return;
     }
-    let filter = if view.filter.is_empty() {
-        "> type to filter".into()
+    buffer.set_style(
+        layout.filter,
+        style(views, t::PICKER_FILTER_BACKGROUND, Style::default()),
+    );
+    let (filter, filter_style) = if view.filter.is_empty() {
+        (
+            "type to filter",
+            style(views, t::PICKER_FILTER_PLACEHOLDER, Style::default().dim()),
+        )
     } else {
-        format!("> {}", view.filter)
+        (
+            view.filter,
+            style(views, t::PICKER_FILTER_TEXT, Style::default()),
+        )
     };
-    paint(&filter, layout.filter, Style::default(), buffer);
+    buffer.set_line(
+        layout.filter.x,
+        layout.filter.y,
+        &Line::from(vec![
+            Span::styled(
+                "> ",
+                style(views, t::PICKER_FILTER_TEXT, Style::default().bold()),
+            ),
+            Span::styled(
+                cut(filter, layout.filter.width.saturating_sub(2)),
+                filter_style,
+            ),
+        ]),
+        layout.filter.width,
+    );
     if !layout.chips.is_empty() {
         let scope = labels
             .as_ref()
@@ -155,32 +200,52 @@ fn draw_frame(
             "Configured",
             "Needs setup",
         ]);
-        let chips = scopes
-            .iter()
-            .map(|&label| {
-                if label == scope {
-                    format!("[{label}]")
-                } else {
-                    label.into()
-                }
-            })
-            .collect::<Vec<String>>()
-            .join(" ");
-        paint(&chips, layout.chips, Style::default(), buffer);
+        let mut chips = vec![Span::styled(
+            "View   ",
+            style(views, t::PICKER_ROW_DESCRIPTION, Style::default().dim()),
+        )];
+        for (index, &label) in scopes.iter().enumerate() {
+            if index > 0 {
+                chips.push(Span::raw("   "));
+            }
+            chips.push(if label == scope {
+                Span::styled(
+                    format!("[{label}]"),
+                    style(views, t::PICKER_GROUP_TAB_SELECTED, Style::default().bold()),
+                )
+            } else {
+                Span::styled(
+                    label,
+                    style(views, t::PICKER_GROUP_TAB, Style::default().dim()),
+                )
+            });
+        }
+        buffer.set_line(
+            layout.chips.x,
+            layout.chips.y,
+            &Line::from(chips),
+            layout.chips.width,
+        );
+        let count_style = style(views, t::PICKER_ROW_DESCRIPTION, Style::default().dim());
         if let Some(labels) = &labels {
-            paint(labels.count, layout.count, Style::default().dim(), buffer);
+            paint(labels.count, layout.count, count_style, buffer);
         } else if let Some(browse) = view.browse {
             let current = browse
                 .current
                 .map(|route| format!(" · Current: {route}"))
                 .unwrap_or_default();
+            let counts = browse.counts;
+            let plural = |count| if count == 1 { "" } else { "s" };
             paint(
                 &format!(
-                    "{} models · {} providers{current}",
-                    browse.counts.models, browse.counts.providers
+                    "{} model{} · {} provider{}{current}",
+                    counts.models,
+                    plural(counts.models),
+                    counts.providers,
+                    plural(counts.providers)
                 ),
                 layout.count,
-                Style::default().dim(),
+                count_style,
                 buffer,
             );
         }
@@ -197,30 +262,23 @@ fn draw_frame(
         let mut list_view = *view;
         list_view.filter = "";
         list_view.banner = Some(&message);
-        list::draw(&list_view, layout.list, buffer);
+        list::draw(&list_view, layout.list, buffer, views);
     } else {
-        list::draw(view, layout.list, buffer);
+        list::draw(view, layout.list, buffer, views);
     }
     details::draw_summary(view, &layout, buffer, views);
-    let (first_hint, second_hint) = view
-        .hints
-        .split_once('\n')
-        .map_or((view.hints, None), |(first, second)| (first, Some(second)));
+    let (first_hint, second_hint) = footer(view, labels.is_some(), layout.footer.width);
+    let footer_style = style(views, t::PICKER_FOOTER, Style::default().dim());
     paint(
-        first_hint,
+        &first_hint,
         Rect::new(layout.footer.x, layout.footer.y, layout.footer.width, 1),
-        Style::default(),
+        footer_style,
         buffer,
     );
-    let effort = if let Some(second) = second_hint {
-        second.to_owned()
-    } else {
-        format!("{} · F2/Ctrl+E details", view.effort)
-    };
     paint(
-        &effort,
+        &second_hint,
         Rect::new(layout.footer.x, layout.footer.y + 1, layout.footer.width, 1),
-        Style::default(),
+        footer_style,
         buffer,
     );
     if let Some(v) = views {
@@ -228,16 +286,88 @@ fn draw_frame(
     }
 }
 
-fn border_set(views: &ViewStyles) -> ratatui::symbols::border::Set<'_> {
-    ratatui::symbols::border::Set {
-        top_left: views.border_symbol("┌"),
-        top_right: views.border_symbol("┐"),
-        bottom_left: views.border_symbol("└"),
-        bottom_right: views.border_symbol("┘"),
-        vertical_left: views.border_symbol("│"),
-        vertical_right: views.border_symbol("│"),
-        horizontal_top: views.border_symbol("─"),
-        horizontal_bottom: views.border_symbol("─"),
+fn browse_layout(view: &PickerView<'_>, area: Rect) -> PickerLayout {
+    let mut layout = PickerLayout::new(area);
+    if layout.mode == PickerMode::Compact
+        && !view.rows.is_empty()
+        && let Some(banner) = view.banner.filter(|text| !text.is_empty())
+    {
+        let banner_height = u16::try_from(word_wrapped(banner, layout.list.width).len())
+            .unwrap_or(u16::MAX)
+            .min(layout.list.height.saturating_sub(2))
+            .min(3);
+        layout.list.height -= banner_height;
+        layout.details = Rect::new(
+            layout.list.x,
+            layout.list.bottom(),
+            layout.list.width,
+            banner_height,
+        );
+    }
+    layout
+}
+
+fn footer(view: &PickerView<'_>, provider: bool, width: u16) -> (String, String) {
+    let (first, second) = view
+        .hints
+        .split_once('\n')
+        .map_or((view.hints, None), |(first, second)| (first, Some(second)));
+    // The live model picker supplies a dynamic effort value and the complete key list.
+    // Keep the actions needed to switch, inspect and leave visible in a split pane.
+    if !provider
+        && width < 78
+        && let Some(second) = second
+    {
+        if let Some(talaria_core::models::RowKey::Provider { expanded, .. }) = view
+            .selected
+            .and_then(|i| view.rows.get(i))
+            .and_then(|row| row.key.as_ref())
+        {
+            let action = if *expanded { "fold" } else { "expand" };
+            return (
+                format!("Enter {action} · ↑↓ move · Esc"),
+                "Tab view · Type to search · F2 details".into(),
+            );
+        }
+        let actions = if width >= 54 && first.contains("Shift+← fold") {
+            "Enter switch · Shift+↑↓ group · Shift+← fold · Esc"
+        } else if width >= 54 {
+            "Enter switch · Shift+↑↓ group · ←→ effort · Esc"
+        } else {
+            "Enter switch · Shift+↑↓ group · Esc"
+        };
+        let options = if width >= 54 {
+            format!("{} · Tab view · Ctrl+F star · F2 details", view.effort)
+        } else {
+            "Tab view · Ctrl+F star · F2 details".to_owned()
+        };
+        if second.starts_with(view.effort) && !view.effort.is_empty() {
+            return (actions.into(), options);
+        }
+    }
+    (
+        first.into(),
+        second.map_or_else(
+            || match (provider, view.effort.is_empty()) {
+                (true, _) => "F2/Ctrl+E details · Esc close".to_owned(),
+                (_, true) => "F2/Ctrl+E details".to_owned(),
+                _ => format!("{} · F2/Ctrl+E details", view.effort),
+            },
+            str::to_owned,
+        ),
+    )
+}
+
+fn style(views: Option<&ViewStyles>, token: Token, fallback: Style) -> Style {
+    views.map_or(fallback, |views| views.style(token, fallback))
+}
+
+fn selection(views: Option<&ViewStyles>) -> Style {
+    let selected = style(views, t::PICKER_ROW_SELECTED, Style::default().reversed());
+    if views.is_some_and(|views| !views.color()) {
+        selected.reversed()
+    } else {
+        selected
     }
 }
 

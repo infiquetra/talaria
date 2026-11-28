@@ -36,6 +36,7 @@ fn app_polls_each_tick_and_after_stop_ack_then_redraws_the_settled_row() {
     let empty = PollBatch {
         lines: vec![],
         offset: 42,
+        verdict: None,
         controls: Default::default(),
         runner_alive: None,
     };
@@ -107,6 +108,7 @@ fn app_polls_each_tick_and_after_stop_ack_then_redraws_the_settled_row() {
                     },
                 }],
                 offset: 99,
+                verdict: None,
                 controls: Default::default(),
                 runner_alive: None,
             }),

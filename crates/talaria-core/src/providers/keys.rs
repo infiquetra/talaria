@@ -156,7 +156,7 @@ pub(crate) fn checked(
 }
 pub(crate) fn saved(
     state: &mut ProvidersState,
-    result: Result<ModelOptionProvider, Failure>,
+    result: Result<Option<ModelOptionProvider>, Failure>,
     effects: &mut Vec<ProvidersEffect>,
 ) {
     let row = match state.busy.take() {
@@ -182,16 +182,20 @@ pub(crate) fn saved(
             {
                 key.is_set = true;
             }
-            if let Some(options) = &mut state.options {
-                if let Some(p) = options
-                    .providers
-                    .iter_mut()
-                    .find(|p| p.slug == provider.slug)
-                {
-                    *p = provider
-                } else {
-                    options.providers.push(provider)
+            if let Some(provider) = provider {
+                if let Some(options) = &mut state.options {
+                    if let Some(p) = options
+                        .providers
+                        .iter_mut()
+                        .find(|p| p.slug == provider.slug)
+                    {
+                        *p = provider
+                    } else {
+                        options.providers.push(provider)
+                    }
                 }
+            } else {
+                load(state, 1, effects);
             }
             state.card = None;
             effects.push(ProvidersEffect::ForgetSecret);

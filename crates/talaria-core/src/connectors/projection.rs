@@ -67,13 +67,23 @@ pub(super) fn view(state: &ConnectorsState, now: Instant) -> ConnectorsView {
         return result;
     }
     if state.tab == ConnectorsTab::Connectors && !state.consented {
+        let identity = match state.identity {
+            NousIdentity::SignedIn => "This profile is signed in to Nous.",
+            NousIdentity::SignedOut => {
+                "This profile has no active Nous sign-in. Continuing may create a free guest identity."
+            }
+            NousIdentity::Guest => "This profile uses a Nous guest identity.",
+            NousIdentity::Unknown => {
+                "The Nous identity for this profile could not be determined. Continuing may create a free guest identity."
+            }
+        };
         result.screen = Screen::Consent {
             text: sanitize(&format!(
-                "Connectors run through Nous Research's hosted tool gateway. If profile {} has no Nous sign-in, Hermes creates a free guest identity for it when you continue.",
+                "Connectors run through Nous Research's hosted tool gateway. Profile {}: {identity}",
                 state.profile
             )),
         };
-        result.footer = footer(&[("enter", "continue"), ("esc", "back")]);
+        result.footer = footer(&[("enter", "continue"), ("tab", "messaging"), ("esc", "back")]);
         return result;
     }
     if state.tab == ConnectorsTab::Connectors

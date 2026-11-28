@@ -9,26 +9,43 @@ use ratatui::{
 };
 pub use talaria_core::doctor::DoctorKey;
 use talaria_core::doctor::{
-    DoctorView, RestartState, check_name, confirmation_lines, outcome_fix, outcome_text,
+    DoctorView, RestartState, Severity, check_name, confirmation_lines, outcome_fix, outcome_text,
     severity_text,
 };
 
+use crate::theme::surfaces::{ViewStyles, tokens as t};
+
 const FOOTER: &str = "For provider keys, tools and dependencies, run hermes doctor.";
-const HINT: &str = "↑↓ select · Enter details · r check again · R restart gateway · Esc close";
+const HINT: &str =
+    "Keyboard only · ↑↓ select · Enter details · r check again · R restart gateway · Esc close";
 
 /// Draw a doctor report and its current restart state.
 pub fn draw_doctor(view: &DoctorView, restart: &RestartState, area: Rect, buf: &mut Buffer) {
+    draw_doctor_with_theme(view, restart, area, buf, &ViewStyles::default());
+}
+
+/// Draw the diagnostics with the active list and dialog styles.
+pub fn draw_doctor_with_theme(
+    view: &DoctorView,
+    restart: &RestartState,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let mut lines: Vec<Line<'static>> = Vec::new();
     if let Some(report) = &view.report {
         let (ok, warnings, failures) = report.counts();
-        lines.push(Line::raw(format!(
-            "Doctor: {ok} ok, {warnings} {}, {failures} {}",
-            plural(warnings, "warning"),
-            plural(failures, "failure")
-        )));
+        lines.push(Line::styled(
+            format!(
+                "Doctor: {ok} ok, {warnings} {}, {failures} {}",
+                plural(warnings, "warning"),
+                plural(failures, "failure")
+            ),
+            views.style(t::LIST_HEADER, Style::default()),
+        ));
         for (index, check) in report.checks.iter().enumerate() {
             let prefix = if area.width < 40 {
                 format!("{:<6}", severity_text(check.severity))
@@ -40,9 +57,19 @@ pub fn draw_doctor(view: &DoctorView, restart: &RestartState, area: Rect, buf: &
                 )
             };
             let style = if index == view.selected {
-                Style::default().add_modifier(Modifier::REVERSED)
+                views.style(
+                    t::LIST_SELECTED,
+                    Style::default().add_modifier(Modifier::REVERSED),
+                )
             } else {
-                Style::default()
+                let token = match check.severity {
+                    Severity::Skip => t::LIST_DISABLED,
+                    Severity::Info => t::LIST_ROW,
+                    Severity::Ok => t::LIST_SUCCESS,
+                    Severity::Warn => t::LIST_WARNING,
+                    Severity::Fail => t::LIST_ERROR,
+                };
+                views.style(token, Style::default())
             };
             push_wrapped(&mut lines, &prefix, &check.summary, area.width, style);
             if let Some(fix) = &check.fix {
@@ -51,13 +78,19 @@ pub fn draw_doctor(view: &DoctorView, restart: &RestartState, area: Rect, buf: &
                     "      ",
                     &format!("Fix: {fix}"),
                     area.width,
-                    Style::default(),
+                    views.style(t::LIST_MUTED, Style::default()),
                     if area.width < 40 { 6 } else { 22 },
                 );
             }
             if view.expanded.contains(&check.id) {
                 for detail in &check.details {
-                    push_wrapped(&mut lines, "        ", detail, area.width, Style::default());
+                    push_wrapped(
+                        &mut lines,
+                        "        ",
+                        detail,
+                        area.width,
+                        views.style(t::LIST_MUTED, Style::default()),
+                    );
                 }
             }
         }
@@ -93,24 +126,20 @@ pub fn draw_doctor(view: &DoctorView, restart: &RestartState, area: Rect, buf: &
                     push_wrapped(&mut status, "", &line, area.width, Style::default());
                 }
             }
-            let selected = Style::default().add_modifier(Modifier::REVERSED);
+            let selected = views.style(
+                t::DIALOG_BUTTON_FOCUSED,
+                Style::default().add_modifier(Modifier::REVERSED),
+            );
+            let button = views.style(t::DIALOG_BUTTON, Style::default());
             status.push(Line::from(vec![
                 Span::styled(
                     "[ Cancel ]",
-                    if *restart_selected {
-                        Style::default()
-                    } else {
-                        selected
-                    },
+                    if *restart_selected { button } else { selected },
                 ),
                 Span::raw("  "),
                 Span::styled(
                     "[ Restart ]",
-                    if *restart_selected {
-                        selected
-                    } else {
-                        Style::default()
-                    },
+                    if *restart_selected { selected } else { button },
                 ),
             ]));
         }
@@ -170,15 +199,18 @@ pub fn draw_doctor(view: &DoctorView, restart: &RestartState, area: Rect, buf: &
         buf,
     );
     let skip = footer.len().saturating_sub(usize::from(footer_height));
-    Paragraph::new(footer.into_iter().skip(skip).collect::<Vec<_>>()).render(
-        Rect::new(
-            area.x,
-            area.bottom() - footer_height,
-            area.width,
-            footer_height,
-        ),
-        buf,
-    );
+    Paragraph::new(footer.into_iter().skip(skip).collect::<Vec<_>>())
+        .style(views.style(t::LIST_MUTED, Style::default()))
+        .render(
+            Rect::new(
+                area.x,
+                area.bottom() - footer_height,
+                area.width,
+                footer_height,
+            ),
+            buf,
+        );
+    views.finish(area, buf, t::LIST_BACKGROUND, true);
 }
 
 fn plural(count: usize, word: &'static str) -> String {

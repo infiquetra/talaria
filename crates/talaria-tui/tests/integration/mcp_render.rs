@@ -17,7 +17,7 @@ fn blank_view() -> McpView {
         card: None,
         pending_line: None,
         notice: None,
-        footer: "enter details · esc close".into(),
+        footer: "Enter details · Esc close".into(),
         secret_focus: None,
     }
 }
@@ -46,11 +46,23 @@ fn screen(view: &McpView, width: u16, height: u16) -> Vec<String> {
 }
 
 #[test]
+fn servers_footer_keeps_escape_when_other_actions_do_not_fit() {
+    let state = talaria_core::mcp::McpState::default();
+    let view = talaria_core::mcp::view(&state, std::time::Instant::now());
+    for (width, height) in [(100, 36), (80, 24), (40, 16)] {
+        let rows = screen(&view, width, height);
+        let footer = &rows[usize::from(height - 1)];
+        assert!(footer.ends_with("Esc close"), "{width}: {footer}");
+        assert!(footer.starts_with("Enter details"), "{width}: {footer}");
+    }
+}
+
+#[test]
 fn tabs_snapshots() {
     for (width, height) in [(120, 40), (80, 24)] {
         for placeholder in [
             "Loading…",
-            "No MCP servers in profile fixture yet. ctrl+n adds one; tab opens Hermes's catalogue.",
+            "No MCP servers in profile fixture yet. Ctrl+N adds one; Tab opens Hermes's catalogue.",
             "Could not load servers.",
         ] {
             let mut view = blank_view();
@@ -73,20 +85,20 @@ fn tabs_snapshots() {
 #[test]
 fn cards_snapshots() {
     for (title, footer) in [
-        ("example", "c copy command · esc back"),
+        ("example", "c copy command · Esc back"),
         (
             "Add an MCP server",
-            "tab next field · ←→ choose · ctrl+s save · esc discard",
+            "Tab next field · ←→ choose · Ctrl+S save · Esc discard",
         ),
-        ("Install example?", "enter install · esc cancel"),
+        ("Install example?", "Enter install · Esc cancel"),
         ("Remove example?", "y remove · n cancel"),
         ("Apply changes?", "y apply · n cancel"),
-        ("API key for example", "enter save · esc cancel"),
+        ("API key for example", "Enter save · Esc cancel"),
         (
             "Sign in to example",
-            "o open link · c copy link · p paste the browser's address · esc cancel",
+            "o open link · c copy link · p paste the browser's address · Esc cancel",
         ),
-        ("Paste the browser's address", "enter send · esc back"),
+        ("Paste the browser's address", "Enter send · Esc back"),
     ] {
         let mut view = blank_view();
         view.card = Some(CardView {
@@ -113,7 +125,7 @@ fn layout_matches_specification() {
     }];
     view.selected = Some(0);
     view.pending_line = Some(
-        "Saved for new sessions; this session still uses the old servers · ctrl+y apply".into(),
+        "Saved for new sessions; this session still uses the old servers · Ctrl+Y apply".into(),
     );
     view.notice = Some("deepwiki works: 3 tools, 0 prompts, 0 resources.".into());
     let rows = screen(&view, 120, 40);
@@ -127,7 +139,7 @@ fn layout_matches_specification() {
         )
     );
     assert_eq!(rows[1], "─".repeat(120));
-    assert_eq!(rows[2], "type to filter");
+    assert_eq!(rows[2], "Keyboard only · type to filter");
     assert!(rows[3].starts_with("› deepwiki"));
     assert!(rows[3].contains("remote"));
     assert_eq!(rows[37], view.pending_line.unwrap());
@@ -137,7 +149,7 @@ fn layout_matches_specification() {
     catalogue.tab = McpTab::Catalogue;
     catalogue.filter = "deep".into();
     catalogue.status_line = Some("66 servers in Hermes's catalogue".into());
-    catalogue.footer = "enter install · tab servers · ctrl+r reload · esc close".into();
+    catalogue.footer = "Enter install · Tab servers · Ctrl+R reload · Esc close".into();
     let rows = screen(&catalogue, 120, 40);
     let tabs = "Servers  [Catalogue]";
     assert_eq!(
@@ -148,7 +160,7 @@ fn layout_matches_specification() {
         )
     );
     assert_eq!(rows[1], "─".repeat(120));
-    assert_eq!(rows[2], "filter: deep");
+    assert_eq!(rows[2], "Keyboard only · filter: deep");
     assert_eq!(rows[36], "66 servers in Hermes's catalogue");
     assert_eq!(rows[37], "");
     assert_eq!(rows[38], "");

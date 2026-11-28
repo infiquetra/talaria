@@ -4,6 +4,8 @@
 //! `subagent.*` notifications into the trees, and reports visible changes.
 //! Drawing stays in `talaria-tui`.
 
+mod effort;
+pub(crate) use effort::EffortSource;
 pub mod hub;
 
 pub use hub::{

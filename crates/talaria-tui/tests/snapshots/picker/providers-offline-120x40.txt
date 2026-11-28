@@ -1,15 +1,15 @@
-┌Providers · profile fixture───────────────────────────────────────────────────────────────────────────────────────────┐
+┌ Keyboard only · Providers · profile fixture ─────────────────────────────────────────────────────────────────────────┐
 │> type to filter                                                                                                      │
-│[All] Keys Accounts Endpoints                                                                                         │
+│View   [All]   Keys   Accounts   Endpoints                                                                            │
 │3 providers                                                                                                           │
 │Configured                                                            │Details                                        │
-│> Example provider 00                                     listed ready│Offline · cached rows                          │
-│Needs setup                                                           │Provider: Example provider 00                  │
-│  Example provider 01                                        key saved│Status: listed ready                           │
-│  Example provider 02                                      needs setup│Catalogue authentication; reachability unknown │
-│Endpoints                                                             │Methods: API key, account sign-in              │
-│  + Add an endpoint                                                   │F2/Ctrl+E full details                         │
-│  Example endpoint                                           key saved│                                               │
+│> Example provider 00                                     listed ready│Example provider 00                            │
+│Needs setup                                                           │Offline · cached rows                          │
+│  Example provider 01                                        key saved│Provider: Example provider 00                  │
+│  Example provider 02                                      needs setup│Status: listed ready                           │
+│Endpoints                                                             │Catalogue authentication; reachability unknown │
+│  + Add an endpoint                                                   │Methods: API key, account sign-in              │
+│  Example endpoint                                           key saved│F2/Ctrl+E full details                         │
 │                                                                      │                                               │
 │                                                                      │                                               │
 │                                                                      │                                               │
@@ -34,7 +34,7 @@
 │                                                                      │                                               │
 │                                                                      │                                               │
 │                                                                      │                                               │
-│Rows 1–8 of 8                                                         │                                               │
+│                                                                      │                                               │
 │Enter set up · Esc close · F2/Ctrl+E details                                                                          │
 │Tab view · Ctrl+R reload · Ctrl+U clear                                                                               │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

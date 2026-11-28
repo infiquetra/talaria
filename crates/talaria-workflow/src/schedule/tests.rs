@@ -31,6 +31,7 @@ fn request(n: u32) -> AgentRequest {
         phase: None,
         prompt: "test".into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("m".into()),
         provider: Some("alpha".into()),
@@ -146,6 +147,7 @@ impl Context {
                 workflow_path: vec![],
                 launch: l.clone(),
                 request_id: request_id(dir.run_id(), &key, attempt),
+                report_baseline: None,
             })
             .await
             .unwrap();
@@ -723,6 +725,7 @@ async fn bind(c: &Context, q: &AgentRequest, l: &ResolvedLaunch, session: &str) 
             workflow_path: vec![],
             launch: l.clone(),
             request_id: request_id(dir.run_id(), &key, 0),
+            report_baseline: None,
         })
         .await
         .unwrap();

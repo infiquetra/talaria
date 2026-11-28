@@ -6,6 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsStr,
     io::Read,
     path::Path,
     process::{Command, Stdio},
@@ -73,7 +74,9 @@ fn calls(records: &[RecordLine]) -> Vec<Call<'_>> {
                     call.ended_badly = match outcome {
                         CallOutcome::Completed { cut_short, .. } => cut_short.is_some(),
                         CallOutcome::Skipped => false,
-                        CallOutcome::Failed { .. } | CallOutcome::Stopped { .. } => true,
+                        CallOutcome::Failed { .. }
+                        | CallOutcome::FailedWithReport { .. }
+                        | CallOutcome::Stopped { .. } => true,
                     };
                 }
             }
@@ -177,39 +180,30 @@ pub(crate) fn leftover_folders(
     (found, problems)
 }
 
-/// The read-only status command. Repository configuration in an agent's folder can name
-/// programs (`core.fsmonitor`), so both options that could run one are switched off, submodules are
-/// not entered, and the command takes no optional locks.
-fn status_command(folder: &Path) -> Command {
-    let mut command = Command::new("git");
+/// The read-only status command. The shared worktree policy switches off every repository-named
+/// program, submodules are not entered, and the command takes no optional locks.
+fn status_command(folder: &Path) -> Result<Command, String> {
+    let args = [
+        "status",
+        "--porcelain",
+        "--no-renames",
+        "--untracked-files=normal",
+        "--ignore-submodules=all",
+    ]
+    .map(OsStr::new);
+    let mut command = crate::worktree::safe_git_command(folder, &args)?;
     command
-        .args([
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "core.untrackedCache=false",
-        ])
-        .arg("-C")
-        .arg(folder)
-        .args([
-            "status",
-            "--porcelain",
-            "--no-renames",
-            "--untracked-files=normal",
-            "--ignore-submodules=all",
-        ])
-        .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    command
+    Ok(command)
 }
 
 fn changed_files(folder: &Path) -> Option<usize> {
     if !folder.is_dir() {
         return None;
     }
-    let mut child = status_command(folder).spawn().ok()?;
+    let mut child = status_command(folder).ok()?.spawn().ok()?;
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut text = String::new();
@@ -310,6 +304,7 @@ mod tests {
                     cwd: Some(cwd.to_string_lossy().into_owned()),
                 },
                 request_id: "r".into(),
+                report_baseline: None,
             },
         }
     }
@@ -351,22 +346,35 @@ mod tests {
 
     #[test]
     fn the_status_command_switches_off_programs_a_repository_can_name() {
-        let command = status_command(Path::new("/work"));
+        let temp = tempfile::tempdir().unwrap();
+        git(temp.path(), &["init", "-q"]);
+        let command = status_command(temp.path()).unwrap();
         let args: Vec<&OsStr> = command.get_args().collect();
-        let want = [
-            "-c",
+        for setting in [
             "core.fsmonitor=false",
-            "-c",
             "core.untrackedCache=false",
-            "-C",
-            "/work",
-            "status",
-            "--porcelain",
-            "--no-renames",
-            "--untracked-files=normal",
-            "--ignore-submodules=all",
-        ];
-        assert_eq!(args, want.map(OsStr::new));
+            if cfg!(windows) {
+                "core.hooksPath=NUL"
+            } else {
+                "core.hooksPath=/dev/null"
+            },
+            "commit.gpgSign=false",
+        ] {
+            assert!(args.contains(&OsStr::new(setting)), "{args:?}");
+        }
+        assert!(
+            args.ends_with(
+                [
+                    "status",
+                    "--porcelain",
+                    "--no-renames",
+                    "--untracked-files=normal",
+                    "--ignore-submodules=all",
+                ]
+                .map(OsStr::new)
+                .as_slice()
+            )
+        );
         let locks = command
             .get_envs()
             .find(|(name, _)| *name == OsStr::new("GIT_OPTIONAL_LOCKS"));

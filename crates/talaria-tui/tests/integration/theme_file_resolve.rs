@@ -28,7 +28,7 @@ fn file(base: Base) -> ThemeFile {
 }
 
 #[test]
-fn no_file_calls_the_unchanged_resolver_for_real_skins_and_all_depths() {
+fn automatic_appearance_styles_the_panes_and_preserves_the_resolved_hermes_skin() {
     let skins = ["default", "ares"].map(|name| {
         let bytes = std::fs::read_to_string(format!(
             "{}/tests/data/skins/{name}.json",
@@ -50,7 +50,12 @@ fn no_file_calls_the_unchanged_resolver_for_real_skins_and_all_depths() {
             input.depth.0 = depth;
             let expected = theme::resolve(&input);
             let actual = theme::resolve_with_theme_file(&input, None);
-            assert_eq!(format!("{:?}", actual.theme), format!("{expected:?}"));
+            assert_eq!(actual.theme.report, expected.report);
+            assert_eq!(actual.theme.color, expected.color);
+            assert_eq!(actual.theme.composer.marker, expected.composer.marker);
+            assert_eq!(actual.theme.reasoning, expected.reasoning);
+            assert!(actual.theme.views.active());
+            assert_eq!(actual.elements.len(), catalogue().len());
             assert!(actual.report.is_none());
         }
     }
@@ -60,7 +65,7 @@ fn no_file_calls_the_unchanged_resolver_for_real_skins_and_all_depths() {
 fn all_bases_resolve_every_catalogue_token_and_nine_sources() {
     for base in [Base::Terminal, Base::Dark, Base::Light] {
         let result = theme::resolve_with_theme_file(&inputs(None), Some(&file(base)));
-        assert_eq!(result.elements.len(), 323);
+        assert_eq!(result.elements.len(), catalogue().len());
         let report = result.report.unwrap();
         assert_eq!(report.base, base.as_str());
         assert_eq!(report.file, "Fixture");

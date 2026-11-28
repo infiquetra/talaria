@@ -33,9 +33,18 @@ fn fixture(config: &str) -> (TempDir, ThemeFileSession) {
     (dir, session)
 }
 
+fn reopen(dir: &std::path::Path, profile: &str) -> ThemeFileSession {
+    let path = dir.join("config.toml");
+    ThemeFileSession::new(
+        path.clone(),
+        talaria_app::config::load_file(&path).config.theme,
+        profile,
+    )
+}
+
 #[test]
 fn selection_order() {
-    let (_dir, mut session) =
+    let (dir, mut session) =
         fixture("[theme]\nfile='global'\n[theme.profiles.fixture]\nfile='profile'\n");
     assert_eq!(session.selected_id(), Some("profile"));
     assert!(session.startup().is_empty());
@@ -43,26 +52,81 @@ fn selection_order() {
     let (lines, change) = session.command("use session");
     assert_eq!(change, AppearanceChange::Changed, "{lines:?}");
     assert_eq!(session.selected_id(), Some("session"));
-    assert!(session.set_profile("default"));
-    assert_eq!(session.selected_id(), Some("session"));
-    session.command("use");
-    assert_eq!(session.active_id(), Some("global"));
+    let mut restarted = reopen(dir.path(), "fixture");
+    assert!(restarted.startup().is_empty());
+    assert_eq!(restarted.active_id(), Some("session"));
+    assert!(restarted.set_profile("default"));
+    assert!(restarted.startup().is_empty());
+    assert_eq!(restarted.active_id(), Some("global"));
+    restarted.command("use paper");
+    assert!(restarted.set_profile("fixture"));
+    assert!(restarted.startup().is_empty());
+    assert_eq!(restarted.active_id(), Some("session"));
+    restarted.command("use");
+    assert!(restarted.startup().is_empty());
+    assert_eq!(restarted.active_id(), Some("profile"));
+    assert!(restarted.set_profile("default"));
+    assert!(restarted.startup().is_empty());
+    assert_eq!(restarted.active_id(), Some("paper"));
     let (_dir, empty) = fixture("");
     assert_eq!(empty.selected_id(), None);
 }
 
 #[test]
-fn use_without_id_clears_the_session_choice() {
-    let (_dir, mut session) = fixture("[theme]\nfile='global'\n");
+fn use_without_id_clears_the_saved_choice() {
+    let (dir, mut session) = fixture("[theme]\nfile='global'\n");
     session.startup();
     session.command("use session");
     assert_eq!(session.active_id(), Some("session"));
     session.command("use");
     assert_eq!(session.active_id(), Some("global"));
+    let mut restarted = reopen(dir.path(), "fixture");
+    assert!(restarted.startup().is_empty());
+    assert_eq!(restarted.active_id(), Some("global"));
     let (_dir, mut session) = fixture("");
     session.command("use session");
     session.command("use");
     assert_eq!(session.active_id(), None);
+}
+
+#[test]
+fn invalid_configured_theme_keeps_the_session_selection() {
+    let (dir, mut session) = fixture("[theme]\nfile='global'\n");
+    session.startup();
+    session.command("use session");
+    fs::write(dir.path().join("themes/global.toml"), "schema=999\n").unwrap();
+
+    let (lines, change) = session.command("use");
+    assert_eq!(change, AppearanceChange::Unchanged);
+    assert!(lines[0].contains("themes/global.toml"));
+    assert_eq!(session.saved_choice(), Some("session"));
+    assert_eq!(session.active_id(), Some("session"));
+    assert_eq!(session.command("reload").1, AppearanceChange::Unchanged);
+}
+
+#[test]
+fn a_missing_saved_file_falls_back_to_config() {
+    let (dir, mut session) = fixture("[theme]\nfile='global'\n");
+    assert_eq!(session.command("use session").1, AppearanceChange::Changed);
+    fs::remove_file(dir.path().join("themes/session.toml")).unwrap();
+    let mut restarted = reopen(dir.path(), "fixture");
+    let notices = restarted.startup();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("themes/session.toml"));
+    assert_eq!(restarted.active_id(), Some("global"));
+}
+
+#[test]
+fn failed_save_keeps_the_active_and_saved_choices() {
+    let (dir, mut session) = fixture("[theme]\nfile='global'\n");
+    assert!(session.startup().is_empty());
+    let path = dir.path().join("theme-selection.json");
+    fs::write(&path, "broken preferences").unwrap();
+    let (lines, change) = session.command("use session");
+    assert_eq!(change, AppearanceChange::Unchanged);
+    assert!(lines[0].contains("could not save"));
+    assert_eq!(session.active_id(), Some("global"));
+    assert_eq!(fs::read_to_string(path).unwrap(), "broken preferences");
 }
 
 #[test]
@@ -174,6 +238,34 @@ fn file_commands_route_to_effects() {
             "{command}"
         );
     }
+}
+
+#[test]
+fn theme_picker_does_not_commit_the_report_but_report_is_explicit() {
+    let mut state = AppState::new("fixture");
+    let effects = update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/theme".into())),
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::ThemeReport))
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Choice(_)))
+    );
+    let effects = update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/theme report".into())),
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::ThemeReport))
+    );
 }
 
 #[test]
@@ -343,7 +435,7 @@ fn application_loop_applies_theme_files_and_reports_reload_results() {
             fs::write(dir.path().join("themes/session.toml"), "schema=1\nname='changed'\nextends='light'\n").unwrap();
             tx.send(UserAction::Submit("/theme reload".into())).unwrap();
             observed(&mut receiver, |event| matches!(event, Observation::Appearance(Some(name)) if name == "changed")).await;
-            tx.send(UserAction::Submit("/theme".into())).unwrap();
+            tx.send(UserAction::Submit("/theme report".into())).unwrap();
             observed(&mut receiver, |event| matches!(event, Observation::Lines(lines) if lines.contains("session") && lines.contains("light") && lines.contains("Sources"))).await;
             fs::write(dir.path().join("themes/session.toml"), "schema=1\n[roles.text]\nbold='bad'\n").unwrap();
             tx.send(UserAction::Submit("/theme reload".into())).unwrap();

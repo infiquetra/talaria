@@ -372,7 +372,7 @@ fn validate_path(path: &str) -> Result<(), RestError> {
     }
     Ok(())
 }
-fn map_reply(
+pub(crate) fn map_reply(
     method: Method,
     path: &str,
     status: u16,

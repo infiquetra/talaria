@@ -432,9 +432,12 @@ pub(crate) fn is_choice(
 ) -> bool {
     value == choice
         || item.is_some_and(|item| {
-            value
-                .as_str()
-                .filter(|text| *text != item.value)
+            let word = value.as_str().or_else(|| {
+                value
+                    .as_bool()
+                    .map(|flag| if flag { "true" } else { "false" })
+            });
+            word.filter(|text| *text != item.value)
                 .and_then(|text| reads_as(spec?, text))
                 .is_some_and(|read| std::ptr::eq(read, item))
         })

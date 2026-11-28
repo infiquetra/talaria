@@ -1,5 +1,6 @@
 //! Labels in a draft and the payloads that belong to them.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::Range;
 
@@ -344,8 +345,7 @@ impl ChipStore {
             .find_map(|(_, range)| (range.start == byte).then_some(range))
     }
 
-    /// Expand live labels. Image labels stay in the text.
-    pub fn expand(&self, draft: &str) -> Result<Expanded, ExpandError> {
+    fn check_missing_paste(&self, draft: &str) -> Result<(), ExpandError> {
         if let Some((_, label)) = self
             .missing_pastes
             .iter()
@@ -356,6 +356,41 @@ impl ChipStore {
                 label: label.clone(),
             });
         }
+        Ok(())
+    }
+
+    /// Expand collapsed text for routes that take text alone.
+    pub fn expand_pastes<'a>(&self, draft: &'a str) -> Result<Cow<'a, str>, ExpandError> {
+        if !draft.contains("[Pasted text #") {
+            return Ok(Cow::Borrowed(draft));
+        }
+        self.check_missing_paste(draft)?;
+        let mut pastes = self
+            .live(draft)
+            .into_iter()
+            .filter_map(|(chip, range)| match &chip.kind {
+                ChipKind::Paste { text, .. } => Some((text, range)),
+                _ => None,
+            })
+            .peekable();
+        if pastes.peek().is_none() {
+            return Ok(Cow::Borrowed(draft));
+        }
+
+        let mut text = String::with_capacity(draft.len());
+        let mut end = 0;
+        for (paste, range) in pastes {
+            text.push_str(&draft[end..range.start]);
+            text.push_str(paste);
+            end = range.end;
+        }
+        text.push_str(&draft[end..]);
+        Ok(Cow::Owned(text))
+    }
+
+    /// Expand live labels. Image labels stay in the text.
+    pub fn expand(&self, draft: &str) -> Result<Expanded, ExpandError> {
+        self.check_missing_paste(draft)?;
         let live = self.live(draft);
         let image_count = live
             .iter()

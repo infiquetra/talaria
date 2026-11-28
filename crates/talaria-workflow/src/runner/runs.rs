@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::{
     journal::{JournalError, JournalReader, Manifest, RecordLine},
-    tokens::CacheTracker,
+    tokens::{CacheTracker, recover_stored_cache},
 };
 
 pub fn configuration_dir() -> PathBuf {
@@ -136,6 +136,22 @@ pub struct RunAttention {
     /// is the script's word, not Talaria's outcome.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script_status: Option<String>,
+    /// Agents with a turn stopped by a Hermes guardrail in their current attempt.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub guardrail_halts: Vec<GuardrailHalt>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recovered_reports: Vec<ReportLink>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GuardrailHalt {
+    pub label: String,
+    pub reason: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ReportLink {
+    pub label: String,
+    pub key: String,
+    pub path: String,
 }
 impl RunAttention {
     /// Count what the run folder's `outcome.json` and journal say. A missing or unreadable
@@ -185,6 +201,29 @@ impl RunAttention {
             .filter(|phase| !started.contains(phase.title.as_str()))
             .map(|phase| phase.title.clone())
             .collect();
+        let agents = super::agents::agents(records);
+        let recovered_reports = agents
+            .iter()
+            .filter_map(|agent| {
+                let file = match &agent.outcome {
+                    Some(crate::journal::CallOutcome::FailedWithReport { path, .. }) => {
+                        path.clone()
+                    }
+                    Some(crate::journal::CallOutcome::Failed { .. }) => {
+                        super::evidence::associated(path, agent.seq)
+                            .ok()??
+                            .report
+                            .path
+                    }
+                    _ => return None,
+                };
+                Some(ReportLink {
+                    label: agent.label.clone(),
+                    key: agent.key.clone(),
+                    path: file,
+                })
+            })
+            .collect();
         Self {
             failed_agents: count(list("failed_agents").len()),
             cut_short_agents: count(list("cut_short_agents").len()),
@@ -198,6 +237,19 @@ impl RunAttention {
             phases_not_started: count(not_started.len()),
             phases_not_started_names: not_started,
             script_status: outcome["result"]["status"].as_str().map(str::to_owned),
+            recovered_reports,
+            guardrail_halts: agents
+                .into_iter()
+                .filter_map(|agent| {
+                    agent.guardrail_halt.map(|warning| GuardrailHalt {
+                        label: agent.label,
+                        reason: warning
+                            .split_once(": ")
+                            .map_or(warning.as_str(), |(summary, _)| summary)
+                            .into(),
+                    })
+                })
+                .collect(),
         }
     }
 }
@@ -309,7 +361,7 @@ impl Fold {
     pub fn records(records: &[RecordLine]) -> Result<Self, serde_json::Error> {
         let mut folded = Self::default();
         let mut keys = BTreeSet::new();
-        let mut finished = BTreeMap::new();
+        let mut finished = BTreeSet::new();
         let mut parked = BTreeSet::new();
         let mut money = BTreeMap::new();
         let mut unknown_money = false;
@@ -353,16 +405,13 @@ impl Fold {
                 }
                 "call_intent" => {
                     parked.remove(key);
+                    finished.remove(key);
                 }
                 "call_finished" => {
                     parked.remove(key);
-                    finished.insert(
-                        key.to_owned(),
-                        matches!(
-                            record["outcome"]["kind"].as_str(),
-                            Some("completed" | "skipped")
-                        ),
-                    );
+                    if record["retry"] != true {
+                        finished.insert(key.to_owned());
+                    }
                 }
                 "turn_settled" => {
                     parked.remove(key);
@@ -408,12 +457,7 @@ impl Fold {
                 _ => {}
             }
         }
-        folded.finished = finished
-            .values()
-            .filter(|v| **v)
-            .count()
-            .try_into()
-            .unwrap_or(u32::MAX);
+        folded.finished = u32::try_from(finished.len()).unwrap_or(u32::MAX);
         folded.total = keys.len().try_into().unwrap_or(u32::MAX);
         folded.parked = parked.len().try_into().unwrap_or(u32::MAX);
         if settled && !unknown_money {
@@ -445,7 +489,7 @@ fn unreadable(path: &Path, id: &str, warning: String) -> RunSummary {
         attention: RunAttention::default(),
     }
 }
-fn summarize(path: &Path, id: &str) -> RunSummary {
+fn summarize(path: &Path, id: &str, read_local_cache: bool) -> RunSummary {
     let bytes = match fs::read(path.join("manifest.json")) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -464,7 +508,7 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
             "corrupt manifest.json: unsupported manifest version".into(),
         );
     }
-    let records = match JournalReader::read_from(&path.join("journal.jsonl"), 0) {
+    let mut records = match JournalReader::read_from(&path.join("journal.jsonl"), 0) {
         Ok((records, _)) => records,
         Err(JournalError::Corrupt { line, reason }) => {
             return unreadable(
@@ -478,6 +522,9 @@ fn summarize(path: &Path, id: &str) -> RunSummary {
         }
         Err(e) => return unreadable(path, id, format!("corrupt journal.jsonl at line 1: {e}")),
     };
+    if read_local_cache {
+        recover_stored_cache(&mut records);
+    }
     let fold = match Fold::records(&records) {
         Ok(fold) => fold,
         Err(e) => return unreadable(path, id, format!("corrupt journal.jsonl at line 1: {e}")),
@@ -528,9 +575,15 @@ pub fn summarize_run(path: &Path) -> RunSummary {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    summarize(path, &id)
+    summarize(path, &id, true)
 }
 pub fn discover_runs(runs_dir: &Path) -> Vec<RunSummary> {
+    discover_runs_with_local_cache(runs_dir, true)
+}
+pub(crate) fn discover_runs_with_local_cache(
+    runs_dir: &Path,
+    read_local_cache: bool,
+) -> Vec<RunSummary> {
     let entries = match fs::read_dir(runs_dir) {
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
@@ -541,7 +594,7 @@ pub fn discover_runs(runs_dir: &Path) -> Vec<RunSummary> {
         let Some(id) = name.to_str() else { continue };
         let path = entry.path();
         if is_run_folder(&path) {
-            runs.push(summarize(&path, id));
+            runs.push(summarize(&path, id, read_local_cache));
         }
     }
     runs.sort_by(|a, b| {
@@ -574,7 +627,8 @@ pub fn discover_runs_since(runs_dir: &Path, since_ms: i64) -> Vec<RunSummary> {
         if changed_ms.is_some_and(|ms| ms < cutoff) || !is_run_folder(&path) {
             continue;
         }
-        let summary = summarize(&path, id);
+        // This path runs on a timer to detect starts and finishes.
+        let summary = summarize(&path, id, false);
         if summary.started_at_ms >= since_ms {
             runs.push(summary);
         }
@@ -673,6 +727,8 @@ mod attention_tests {
                 phases_not_started: 2,
                 phases_not_started_names: vec!["Build".into(), "Check".into()],
                 script_status: Some("partial".into()),
+                guardrail_halts: vec![],
+                recovered_reports: vec![],
             }
         );
         // A list row carries the names beside the count.

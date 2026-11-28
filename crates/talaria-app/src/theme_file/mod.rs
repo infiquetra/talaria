@@ -4,8 +4,10 @@ mod builtin;
 mod catalogue;
 mod load;
 mod parse;
+pub(crate) mod selection;
 pub use builtin::{BUILTIN_THEMES, builtin, builtin_description};
 pub use catalogue::{CatalogueEntry, PALETTE_SLOTS, ROLES, area_background, catalogue};
+pub(crate) use load::load_selection;
 pub use load::{list_themes, load, reserved_id, valid_id};
 pub use parse::parse;
 

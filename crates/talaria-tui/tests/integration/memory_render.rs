@@ -407,7 +407,7 @@ fn draws_every_screen() {
     let too_small = render(&current, 59, 16);
     assert_text(
         &too_small,
-        "Make the terminal at least 60 columns wide and 16 rows tall to show memory settings.",
+        "Memory needs at least 60 columns and 16 rows. Keyboard only. Esc closes.",
     );
     assert!(!too_small.contains("MEMORY PROVIDER"));
 }

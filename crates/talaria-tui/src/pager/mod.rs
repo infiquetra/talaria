@@ -35,8 +35,8 @@ const TOO_SMALL: &str = "Window too small for the transcript. q closes.";
 const FULL_HINT: &str =
     "/ search · n N next/prev · { } prompts · g G top/bottom · t details · q close";
 
-/// The key hints, at 60 columns and more.
-const SHORT_HINT: &str = "/ search · n N · { } · g G · t · q close";
+/// Short forms drop whole actions so the close key stays readable beside the cell count.
+const SHORT_HINT: &str = "/ search · t details · q close";
 
 /// The banner shown while Hermes waits for an answer.
 const WAITING_BANNER: &str =
@@ -85,6 +85,20 @@ pub struct PagerContext<'a> {
     pub connection: ConnectionBanner,
     /// Older summarized history was left out of the resume.
     pub history_truncated: bool,
+}
+
+impl PagerContext<'_> {
+    /// Metadata and heartbeat events can request a refresh without adding any output.
+    fn output_extent(&self) -> (usize, usize, bool) {
+        let tail = self.cells.last();
+        let bytes = match tail {
+            Some(Cell::Assistant(cell)) => cell.text.len(),
+            Some(Cell::Reasoning(cell)) => cell.text.len(),
+            Some(Cell::Tool(cell)) => cell.result.as_ref().map_or(0, String::len),
+            _ => 0,
+        };
+        (self.cells.len(), bytes, tail.is_some_and(Cell::is_final))
+    }
 }
 
 /// A transcript command after the application has mapped the key.
@@ -188,6 +202,7 @@ pub struct Pager {
     epoch: u64,
     /// Whether new output arrived while the view was not following.
     new_output: bool,
+    observed_extent: (usize, usize, bool),
     /// A short note that replaces the key hints in the footer.
     notice: Option<String>,
     /// The search prompt, while it is open.
@@ -220,6 +235,7 @@ impl Pager {
             details: Details::Expanded,
             epoch: ctx.source_epoch,
             new_output: false,
+            observed_extent: ctx.output_extent(),
             notice: None,
             typing: None,
             confirmed: None,
@@ -401,24 +417,27 @@ impl Pager {
 
     /// The session's cells changed.
     pub fn content_changed(&mut self, ctx: &PagerContext<'_>, index: &mut SearchIndex) {
+        let extent = ctx.output_extent();
         if ctx.source_epoch != self.epoch {
             self.epoch = ctx.source_epoch;
+            self.new_output = false;
             self.doc.clear();
             self.cell_index = self.cell_index.min(ctx.cells.len().saturating_sub(1));
             self.notice = Some("transcript reloaded from Hermes".to_string());
-        } else if !self.follow {
+        } else if !self.follow && extent != self.observed_extent {
             self.new_output = true;
         }
+        self.observed_extent = extent;
         self.rerun_search(ctx, index);
     }
 
     /// The terminal size changed. The top cell stays.
     pub fn resize(&mut self, cols: u16, rows: u16) {
-        if (self.cols, self.rows) != (cols, rows) {
+        if self.cols != cols {
             self.cols = cols;
-            self.rows = rows;
             self.doc.clear();
         }
+        self.rows = rows;
     }
 
     /// Forget rendered cells after the application changes the renderer's theme or options.
@@ -565,15 +584,11 @@ impl Pager {
             .and_then(|index| self.matches.get(index))
             .copied();
         let matches = &self.matches;
-        let entries = ctx
-            .cells
-            .iter()
-            .map(TranscriptEntry::Cell)
-            .collect::<Vec<_>>();
+        let entries = ctx.cells.iter().map(TranscriptEntry::Cell);
         let mut cached: Option<CachedCellHits> = None;
         render::draw_rows(
             &mut self.doc,
-            &entries,
+            entries,
             area,
             buf,
             render,
@@ -590,9 +605,11 @@ impl Pager {
                     let first = matches.partition_point(|item| item.cell_index < cell);
                     let last = matches.partition_point(|item| item.cell_index <= cell);
                     let user_hits = match &ctx.cells[cell] {
-                        Cell::User(user) if query.is_some() => {
-                            user_match_positions(&user.text, lines, &matches[first..last])
-                        }
+                        Cell::User(user) if query.is_some() => user_match_positions(
+                            user.transcript_text(),
+                            lines,
+                            &matches[first..last],
+                        ),
                         _ => None,
                     };
                     if let Some(found) = current.filter(|found| found.cell_index == cell) {
@@ -677,7 +694,7 @@ impl Pager {
         let right = sanitize(&right_raw);
         let right_width = right.width();
         let avail = usize::from(area.width).saturating_sub(right_width + 1);
-        let left_raw = self.left_part(ctx);
+        let left_raw = self.left_part(avail);
         let left_clean = sanitize(&left_raw);
         let left = if avail < 2 {
             String::new()
@@ -726,7 +743,7 @@ impl Pager {
     }
 
     /// The left part of the footer.
-    fn left_part(&self, _ctx: &PagerContext<'_>) -> String {
+    fn left_part(&self, available: usize) -> String {
         if let Some(notice) = &self.notice {
             return notice.clone();
         }
@@ -734,24 +751,36 @@ impl Pager {
             return format!("/{}\u{258f}", typing.query);
         }
         if let Some(query) = &self.confirmed {
-            if self.matches.is_empty() {
-                return format!("no match for \"{}\" · Esc clears", query.text);
-            }
-            return format!(
-                "\"{}\" {} of {} · n N · Esc clears",
-                query.text,
-                self.current.map_or(0, |index| index + 1),
-                self.matches.len()
-            );
+            let count = if self.matches.is_empty() {
+                "no match".to_owned()
+            } else {
+                format!(
+                    "{} of {}",
+                    self.current.map_or(0, |index| index + 1),
+                    self.matches.len()
+                )
+            };
+            let hints = if !self.matches.is_empty() && available >= count.width() + 32 {
+                " · n next · N prev · Esc clears"
+            } else if !self.matches.is_empty() && available >= count.width() + 23 {
+                " · n/N hits · Esc clears"
+            } else {
+                " · Esc clears"
+            };
+            let room = available.saturating_sub(count.width() + hints.width() + 3);
+            return if room >= 2 {
+                format!("\"{}\" {count}{hints}", fit(&query.text, room))
+            } else if count.width() + hints.width() <= available {
+                format!("{count}{hints}")
+            } else {
+                count
+            };
         }
-        let cols = usize::from(self.cols);
-        if cols >= 100 {
-            FULL_HINT.to_string()
-        } else if cols >= 60 {
-            SHORT_HINT.to_string()
-        } else {
-            String::new()
-        }
+        [FULL_HINT, SHORT_HINT, "/ search · q close", "q close"]
+            .into_iter()
+            .find(|hint| hint.width() <= available)
+            .unwrap_or_default()
+            .to_owned()
     }
 
     /// The right part of the footer.
@@ -771,6 +800,13 @@ impl Pager {
         }
         if ctx.cells.is_empty() {
             return "cell 0/0".to_string();
+        }
+        if self.confirmed.is_some() && self.cols < 80 {
+            return if self.new_output {
+                "↓ new · End".to_owned()
+            } else {
+                String::new()
+            };
         }
         let mut text = format!("cell {}/{}", self.cell_index + 1, ctx.cells.len());
         if self.follow {
@@ -922,6 +958,7 @@ impl Pager {
             return;
         };
         let own = self.internal_render(render);
+        let query = self.active_query();
         let lines = self.doc.cell_lines(
             cell,
             found.cell_index,
@@ -938,11 +975,11 @@ impl Pager {
             .partition_point(|item| item.cell_index <= found.cell_index);
         let user_hits = match cell {
             Cell::User(user) => {
-                user_match_positions(&user.text, &lines, &self.matches[first..last])
+                user_match_positions(user.transcript_text(), &lines, &self.matches[first..last])
             }
             _ => None,
         };
-        let hits = rendered_hits(&lines, self.active_query().as_ref());
+        let hits = rendered_hits(&lines, query.as_ref());
         let in_cell = last - first;
         let mut ordinal = found.ordinal_in_cell;
         let mut target = 0;

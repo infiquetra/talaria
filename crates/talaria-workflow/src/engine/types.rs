@@ -97,6 +97,8 @@ pub struct AgentRequest {
     pub phase: Option<String>,
     pub prompt: String,
     pub schema: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_file: Option<Box<str>>,
     pub tier: Option<String>,
     pub model: Option<String>,
     pub provider: Option<String>,
@@ -181,6 +183,15 @@ impl CutShort {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecoveredReport {
+    /// The worktree-relative path the script declared.
+    pub path: String,
+    /// Content address of the original file in the run's blob store.
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum AgentOutcome {
     Completed(Value),
     /// The agent's reply, kept, from a turn Hermes stopped at its step cap. The script gets the
@@ -191,6 +202,12 @@ pub enum AgentOutcome {
     },
     Failed {
         reason: String,
+    },
+    /// A failed turn with a schema-validated report kept from its worktree.
+    FailedWithReport {
+        reason: String,
+        value: Value,
+        report: RecoveredReport,
     },
     Skipped,
     /// Ended because the run's budget ran out; the call rejects with `BudgetExhaustedError`.

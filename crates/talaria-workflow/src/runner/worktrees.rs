@@ -63,7 +63,7 @@ fn provider(run_dir: &Path) -> Result<GitWorktrees, String> {
 /// only costs the labels it would have given.
 fn agent_labels(run_dir: &Path) -> BTreeMap<String, String> {
     let mut labels = BTreeMap::new();
-    let Ok(bytes) = fs::read(run_dir.join("journal.jsonl")) else {
+    let Ok(bytes) = crate::journal::read_journal_bytes(&run_dir.join("journal.jsonl"), 0) else {
         return labels;
     };
     for line in bytes.split(|&b| b == b'\n') {
@@ -247,6 +247,16 @@ mod tests {
 
     fn done() -> Fixture {
         fixture(&[started(), finished("completed")])
+    }
+
+    #[test]
+    fn oversized_journal_is_not_read_for_worktree_labels() {
+        let fixture = fixture(&[started(), intent()]);
+        File::create(fixture.run.join("journal.jsonl"))
+            .unwrap()
+            .set_len(64 * 1024 * 1024 + 1)
+            .unwrap();
+        assert!(agent_labels(&fixture.run).is_empty());
     }
 
     impl Fixture {

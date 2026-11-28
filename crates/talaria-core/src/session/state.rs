@@ -185,6 +185,7 @@ pub struct SessionState {
 pub(crate) struct Submission {
     pub(crate) id: String,
     pub(crate) text: String,
+    pub(crate) expanded_paste: Option<std::sync::Arc<str>>,
     pub(crate) attachments: Vec<crate::attachments::Attachment>,
     pub(crate) placed: bool,
 }
@@ -449,9 +450,18 @@ impl SessionState {
     }
 
     pub(crate) fn user(&mut self, text: String) {
+        self.user_with_paste(text, None);
+    }
+
+    pub(crate) fn user_with_paste(
+        &mut self,
+        text: String,
+        expanded_paste: Option<std::sync::Arc<str>>,
+    ) {
         self.cells.push(Cell::User(UserCell {
             id: self.next_id(),
             text,
+            expanded_paste,
         }));
     }
 

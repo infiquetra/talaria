@@ -40,7 +40,10 @@ card. Hermes does not enforce the schema. Workspaces can be removed on completio
 files left in them are not durable results. Card bodies and comments are shared across
 profiles on the machine and must contain nothing secret.
 
-Open `/kanban [board]` inside Talaria. Use `h`/`l` for columns, `j`/`k` for cards,
+Open `/kanban [board]` inside Talaria. On narrow windows the board lists the
+counts in off-screen columns. Columns with spare rows show each card's title,
+assignee and age, and the board previews the selected card's latest result or
+description when space permits. Use `h`/`l` for columns, `j`/`k` for cards,
 Enter for detail, `m` for moves, `c` for a comment, `d` to nudge the dispatcher, `b`
 to choose a board, `r` to refresh and `/` to filter title or assignee. Esc clears the
 filter or closes detail before closing the overlay. Done moves require completion

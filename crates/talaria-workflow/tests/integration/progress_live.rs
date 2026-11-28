@@ -582,6 +582,9 @@ fn waiting_badge_follows_approval_lifecycle() {
 
 fn effect_fields(effect: &ProgressEffect) -> (String, i64, String) {
     match effect {
+        ProgressEffect::LoadEvidence { agent, .. } => {
+            (agent.clone().unwrap_or_default(), 0, "evidence".into())
+        }
         ProgressEffect::CheckStopped {
             session_id,
             admission_id,

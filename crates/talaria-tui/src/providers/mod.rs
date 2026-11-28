@@ -70,7 +70,7 @@ fn draw_providers_inner(
         }
         return;
     }
-    let mut outer = Block::bordered().title(safe(&view.title));
+    let mut outer = Block::bordered().title(format!("Keyboard only · {}", safe(&view.title)));
     if let Some(v) = views {
         outer = outer
             .border_set(border_set(v))
@@ -260,6 +260,7 @@ fn draw_browse(view: &ProvidersView, area: Rect, buf: &mut Buffer, views: Option
     } else {
         &view.footer
     };
+    let title = format!("Keyboard only · {}", view.title);
     let picker = PickerView {
         browse: Some(BrowseView {
             scope: ListScope::All,
@@ -269,7 +270,7 @@ fn draw_browse(view: &ProvidersView, area: Rect, buf: &mut Buffer, views: Option
             details_scroll: browse.map_or(0, |browse| browse.details_scroll),
             current: None,
         }),
-        title: &view.title,
+        title: &title,
         filter: &view.filter,
         effort: "",
         hints,

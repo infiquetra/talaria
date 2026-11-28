@@ -2,6 +2,11 @@
 
 mod git;
 mod provenance;
+mod report;
+
+pub(crate) use git::safe_command as safe_git_command;
+pub use report::read_report_file;
+pub(crate) use report::{read_report_bytes, validate_report_option};
 
 pub use git::{
     CleanupAction, CleanupEntry, GitWorktrees, IgnoredEntry, IgnoredKind, SAVED_SUFFIX, SavedWork,

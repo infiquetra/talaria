@@ -228,6 +228,10 @@ fn open_load_browse_edit_review_apply_flow() {
             readonly.view().detail.contains(label),
             "incorrect ownership label for {key}"
         );
+        assert_eq!(
+            readonly.view().detail.contains("this session's model"),
+            key == "model"
+        );
         assert!(action(&mut readonly, SettingsAction::Edit).is_empty());
         assert_eq!(readonly.view().screen, Screen::Browsing);
     }
@@ -644,27 +648,23 @@ fn ch_key(state: &mut SettingsState, key: char) {
 }
 
 #[test]
-fn chooser_shows_an_unlisted_current_value() {
-    let mut state = chooser(
-        choice_field("updates.pre_update_backup", FieldKind::String, None),
-        json!({"updates": {"pre_update_backup": false}}),
-        json!({"updates": {"pre_update_backup": "quick"}}),
-    );
-    assert_eq!(
-        choice_names(&state),
-        [
-            "quick (default)",
-            "full",
-            "off",
-            "false (current, not in the list)"
-        ]
-    );
-    assert_eq!(selected_choice(&state), "false (current, not in the list)");
-    enter(&mut state);
-    assert_eq!(state.view().screen, Screen::Browsing);
-    assert_eq!(marker(&state, "updates.pre_update_backup"), "");
-    let row = state.view().rows[0].value.clone();
-    assert!(row.contains("(not in the list)"), "{row}");
+fn backup_boolean_values_select_their_effective_mode_without_editing() {
+    for (flag, mode) in [(false, "off"), (true, "full")] {
+        let mut state = chooser(
+            choice_field("updates.pre_update_backup", FieldKind::String, None),
+            json!({"updates": {"pre_update_backup": flag}}),
+            json!({"updates": {"pre_update_backup": "quick"}}),
+        );
+        assert_eq!(choice_names(&state).len(), 3);
+        assert_eq!(
+            selected_choice(&state),
+            format!("{mode} (current, saved as {flag})")
+        );
+        enter(&mut state);
+        assert_eq!(state.view().screen, Screen::Browsing);
+        assert_eq!(marker(&state, "updates.pre_update_backup"), "");
+        assert_eq!(state.view().rows[0].value, mode);
+    }
 }
 
 #[test]
@@ -886,7 +886,10 @@ fn runtime_list_shows_builtins_then_merges_the_answer() {
     assert_eq!(names[10], "Loading the list…");
     assert_eq!(selected_choice(&state), "slate (current) (default)");
     let footer = state.view().footer;
-    assert!(footer.ends_with("· Ctrl+R reload list"), "{footer}");
+    assert!(
+        footer.ends_with("· Ctrl+R reload list · Esc cancel"),
+        "{footer}"
+    );
 
     loaded(
         &mut state,
@@ -1835,7 +1838,10 @@ fn the_reload_hint_names_the_bound_key_or_none() {
         "Could not load the list (no reply within 15 s). Showing built-in names. F5 retries."
     );
     let footer = state.view().footer;
-    assert!(footer.ends_with("· F5 reload list"), "{footer}");
+    assert!(
+        footer.ends_with("· F5 reload list · Esc cancel"),
+        "{footer}"
+    );
     assert!(!footer.contains("Ctrl+R"), "{footer}");
     // With the reload action unbound, no key is named at all.
     state.set_reload_key(None);
@@ -1866,7 +1872,10 @@ fn the_reload_hint_names_the_bound_key_or_none() {
     }));
     action(&mut state, SettingsAction::Edit);
     let footer = state.view().footer;
-    assert!(footer.ends_with("· F5 reload list"), "{footer}");
+    assert!(
+        footer.ends_with("· F5 reload list · Esc cancel"),
+        "{footer}"
+    );
 }
 
 #[test]
@@ -1988,7 +1997,12 @@ fn toolset_and_skill_keys_tick_names_from_the_fetched_lists() {
     assert_eq!(names[0], "[x] hermes-cli");
     assert_eq!(names.last().unwrap(), "Loading the list…");
     assert!(names.iter().any(|name| name == "Own entries…"), "{names:?}");
-    assert!(state.view().footer.ends_with("· Ctrl+R reload list"));
+    assert!(
+        state
+            .view()
+            .footer
+            .ends_with("· Ctrl+R reload list · Esc cancel")
+    );
     loaded(
         &mut state,
         "toolsets",

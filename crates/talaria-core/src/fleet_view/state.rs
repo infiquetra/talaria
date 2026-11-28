@@ -1291,8 +1291,7 @@ fn answer_start(state: &mut FleetViewState) -> Vec<FleetViewEffect> {
 }
 
 fn answer_key(state: &mut FleetViewState, input: FleetViewInput) -> Vec<FleetViewEffect> {
-    // Every key but Ctrl+C belongs to the card; the app forwards it there.
-    if input == FleetViewInput::CtrlC {
+    if matches!(input, FleetViewInput::Escape | FleetViewInput::CtrlC) {
         state.focus = Focus::List;
     }
     Vec::new()

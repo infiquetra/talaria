@@ -27,6 +27,7 @@ pub fn request(prompt: &str) -> AgentRequest {
         phase: None,
         prompt: prompt.into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("scripted-model".into()),
         provider: Some("scripted".into()),

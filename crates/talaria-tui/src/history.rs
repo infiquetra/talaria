@@ -14,6 +14,78 @@ use unicode_segmentation::UnicodeSegmentation;
 /// Turns one cell into lines for the given width.
 pub trait CellLines {
     fn lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>>;
+
+    /// Continue a cell after its earlier rows have moved into terminal scrollback.
+    fn continuation_lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
+        self.lines(cell, width)
+    }
+}
+
+/// The role gutter used by the inline conversation and the workspace transcript.
+pub(crate) enum Speaker {
+    User,
+    Assistant,
+}
+
+impl Speaker {
+    pub(crate) fn body_width(width: u16) -> u16 {
+        width.saturating_sub(Self::gutter(width)).max(1)
+    }
+
+    fn gutter(width: u16) -> u16 {
+        match width {
+            68.. => 9,
+            42..=67 => 1,
+            12..=41 => 3,
+            _ => 0,
+        }
+    }
+
+    pub(crate) fn lines(
+        self,
+        mut body: Vec<Line<'static>>,
+        width: u16,
+        label: Style,
+        continuation: bool,
+    ) -> Vec<Line<'static>> {
+        let gutter = Self::gutter(width);
+        if gutter == 0 {
+            return body;
+        }
+        // On a split terminal give a named heading its own row and return the columns to
+        // the message. Streaming continuations start immediately below the preceding text.
+        if gutter == 1 {
+            for row in &mut body {
+                if !row.spans.is_empty() {
+                    row.spans.insert(0, Span::raw(" "));
+                }
+            }
+            if !continuation && !body.is_empty() {
+                let name = match self {
+                    Self::User => " You",
+                    Self::Assistant => " Hermes",
+                };
+                body.insert(0, Line::styled(name, label.add_modifier(Modifier::BOLD)));
+            }
+            return body;
+        }
+        let tag = match (self, gutter) {
+            (Self::User, 9) => " You     ",
+            (Self::Assistant, 9) => " Hermes  ",
+            (Self::User, _) => " › ",
+            (Self::Assistant, _) => " • ",
+        };
+        let indent = " ".repeat(usize::from(gutter));
+        for (index, row) in body.iter_mut().enumerate() {
+            if index == 0 && !continuation {
+                row.spans
+                    .insert(0, Span::styled(tag, label.add_modifier(Modifier::BOLD)));
+            } else if !row.spans.is_empty() {
+                row.spans.insert(0, Span::raw(indent.clone()));
+            }
+        }
+        body
+    }
 }
 
 /// One plain rendering per cell variant.

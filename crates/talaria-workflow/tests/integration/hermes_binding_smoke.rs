@@ -34,6 +34,7 @@ fn request() -> AgentRequest {
         phase: None,
         prompt: "Reply".into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("probe".into()),
         provider: Some("custom".into()),

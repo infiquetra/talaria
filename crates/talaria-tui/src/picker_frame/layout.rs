@@ -29,7 +29,7 @@ impl PickerLayout {
             PickerMode::SizeMessage
         } else if area.width < 60 || area.height < 16 {
             PickerMode::Compact
-        } else if area.width >= 112 && area.height >= 28 {
+        } else if area.width >= 112 && area.height >= 24 {
             PickerMode::Side
         } else {
             PickerMode::Below
@@ -66,9 +66,16 @@ impl PickerLayout {
                 ),
             )
         } else {
+            let details_height = if area.height >= 22 { 7 } else { 4 };
+            let list_height = body_height - details_height;
             (
-                Rect::new(content.x, body_y, content.width, body_height - 7),
-                Rect::new(content.x, body_y + body_height - 7, content.width, 7),
+                Rect::new(content.x, body_y, content.width, list_height),
+                Rect::new(
+                    content.x,
+                    body_y + list_height,
+                    content.width,
+                    details_height,
+                ),
             )
         };
         Self {

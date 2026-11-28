@@ -33,6 +33,8 @@ fn name_and_path_resolution() {
     }
     fs::write(workflows.join("review.js"), "named workflow").unwrap();
     fs::write(script.join("both.js"), "from script folder").unwrap();
+    fs::create_dir(script.join("nested")).unwrap();
+    fs::write(script.join("nested/child.js"), "nested script").unwrap();
     fs::write(cwd.join("both.js"), "from cwd").unwrap();
     fs::write(cwd.join("only-cwd.js"), "from cwd").unwrap();
     fs::write(temp.path().join("outside.js"), "outside").unwrap();
@@ -61,6 +63,43 @@ fn name_and_path_resolution() {
             .unwrap(),
         "from script folder"
     );
+    let confined = FilesystemResolver::new(workflows.clone(), script.clone()).with_cwd(cwd.clone());
+    assert_eq!(
+        confined
+            .resolve(&WorkflowRef::ScriptPath("nested/child.js".into()))
+            .unwrap(),
+        "nested script"
+    );
+    for path in [
+        "../outside.js".to_owned(),
+        temp.path()
+            .join("outside.js")
+            .to_string_lossy()
+            .into_owned(),
+    ] {
+        assert!(matches!(
+            confined.resolve(&WorkflowRef::ScriptPath(path)),
+            Err(ResolveError::NotFound)
+        ));
+    }
+    let oversized = script.join("oversized.js");
+    fs::File::create(&oversized)
+        .unwrap()
+        .set_len(1024 * 1024 + 1)
+        .unwrap();
+    assert!(matches!(
+        confined.resolve(&WorkflowRef::ScriptPath("oversized.js".into())),
+        Err(ResolveError::Unreadable(_))
+    ));
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(temp.path().join("outside.js"), script.join("linked.js"))
+            .unwrap();
+        assert!(matches!(
+            confined.resolve(&WorkflowRef::ScriptPath("linked.js".into())),
+            Err(ResolveError::NotFound)
+        ));
+    }
     let output = Command::new(std::env::current_exe().unwrap())
         .args([
             "runner_resolver::name_and_path_resolution",

@@ -74,6 +74,7 @@ pub struct KanbanBoardState {
     pub mode: BoardMode,
     pub detail_id: Option<String>,
     pub detail_fields: Vec<String>,
+    detail_scroll: usize,
     labels: BTreeMap<String, String>,
     now_ms: u64,
     fetching: bool,
@@ -101,6 +102,7 @@ impl KanbanBoardState {
             mode: BoardMode::Browse,
             detail_id: None,
             detail_fields: vec![],
+            detail_scroll: 0,
             labels: BTreeMap::new(),
             now_ms: 0,
             fetching: false,
@@ -162,6 +164,28 @@ pub enum BoardKey {
     Enter,
     Esc,
     Backspace,
+    SelectColumn(usize),
+    SelectCard(String),
+    ScrollDetail {
+        motion: DetailMotion,
+        viewport: DetailViewport,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailMotion {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DetailViewport {
+    pub page_rows: usize,
+    pub max_offset: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BoardMode {
@@ -268,6 +292,39 @@ impl KanbanBoardState {
             .filter(|c| self.column_for(c) == *key)
             .nth(self.row)
     }
+    pub fn detail_scroll(&self) -> usize {
+        self.detail_scroll
+    }
+
+    /// The board list is the active surface and accepts pointer selection.
+    pub fn browsing_grid(&self) -> bool {
+        self.mode == BoardMode::Browse
+            && self.detail_id.is_none()
+            && !self.loading
+            && self.error.is_none()
+    }
+
+    fn scroll_detail(&mut self, motion: DetailMotion, viewport: DetailViewport) {
+        if self.detail_id.is_none() || self.mode != BoardMode::Browse || viewport.page_rows == 0 {
+            return;
+        }
+        let at = self.detail_scroll.min(viewport.max_offset);
+        self.detail_scroll = match motion {
+            DetailMotion::Up => at.saturating_sub(1),
+            DetailMotion::Down => at.saturating_add(1),
+            DetailMotion::PageUp => at.saturating_sub(viewport.page_rows),
+            DetailMotion::PageDown => at.saturating_add(viewport.page_rows),
+            DetailMotion::Home => 0,
+            DetailMotion::End => viewport.max_offset,
+        }
+        .min(viewport.max_offset);
+    }
+
+    fn clear_detail(&mut self) -> Option<String> {
+        self.detail_fields.clear();
+        self.detail_scroll = 0;
+        self.detail_id.take()
+    }
     fn column_keys(&self) -> Vec<String> {
         let mut keys = self
             .workflow
@@ -347,14 +404,7 @@ impl KanbanBoardState {
                     .collect(),
             })
             .collect();
-        let tail = if self.parked {
-            "tail parked".into()
-        } else if self.live {
-            format!("live:{}", self.cursor)
-        } else {
-            "connecting...".into()
-        };
-        let mut status = vec![tail];
+        let mut status = Vec::new();
         if self.workflow.is_none() && !self.loading {
             status.push("columns unavailable; board is read-only".into());
         }
@@ -371,7 +421,9 @@ impl KanbanBoardState {
             live: if self.parked {
                 "parked".into()
             } else if self.live {
-                self.cursor.to_string()
+                "live".into()
+            } else if self.connecting {
+                "connecting".into()
             } else {
                 "off".into()
             },
@@ -411,9 +463,7 @@ impl KanbanBoardState {
                 .enumerate()
                 .map(|(i, s)| format!("{} {}  {s}", if i == *selected { ">" } else { " " }, i + 1))
                 .collect(),
-            BoardMode::Confirm { prompt, .. } => {
-                vec![prompt.clone(), "Enter confirms, Esc cancels".into()]
-            }
+            BoardMode::Confirm { prompt, .. } => vec![prompt.clone()],
             BoardMode::Evidence { text } => vec![format!("Completion evidence: {text}")],
             BoardMode::Comment { text } => vec![format!("Comment: {text}")],
             BoardMode::Filter => vec![format!("Filter: {}", self.filter)],
@@ -539,8 +589,7 @@ pub fn update(state: &mut KanbanBoardState, input: KanbanInput) -> Vec<KanbanEff
                 .as_ref()
                 .is_some_and(|id| state.card(id).is_none())
             {
-                state.detail_id = None;
-                state.detail_fields.clear();
+                state.clear_detail();
             }
             if !state.live && !state.parked && !state.connecting {
                 state.connecting = true;
@@ -552,10 +601,12 @@ pub fn update(state: &mut KanbanBoardState, input: KanbanInput) -> Vec<KanbanEff
             state.labels = labels;
         }
         KanbanInput::Detail { card, fields } => {
+            if state.detail_id.as_deref() == Some(&card.id) {
+                state.detail_fields = fields;
+            }
             if let Some(old) = state.cards.iter_mut().find(|c| c.id == card.id) {
                 *old = card;
             }
-            state.detail_fields = fields;
         }
         KanbanInput::Boards(slugs) => state.mode = BoardMode::Boards { slugs, selected: 0 },
         KanbanInput::Tail {
@@ -611,6 +662,26 @@ pub fn update(state: &mut KanbanBoardState, input: KanbanInput) -> Vec<KanbanEff
         KanbanInput::Notice(notice) => state.notice = Some(notice),
         KanbanInput::Mutated => return state.refresh(false),
         KanbanInput::Key(key) => {
+            match &key {
+                BoardKey::SelectColumn(column) => {
+                    if state.browsing_grid() && *column < state.column_keys().len() {
+                        state.column = *column;
+                        state.row = 0;
+                    }
+                    return vec![];
+                }
+                BoardKey::SelectCard(id) => {
+                    if state.browsing_grid() {
+                        state.follow(id);
+                    }
+                    return vec![];
+                }
+                _ => {}
+            }
+            if let BoardKey::ScrollDetail { motion, viewport } = key {
+                state.scroll_detail(motion, viewport);
+                return vec![];
+            }
             state.notice = None;
             let mode = state.mode.clone();
             match mode {
@@ -706,6 +777,9 @@ pub fn update(state: &mut KanbanBoardState, input: KanbanInput) -> Vec<KanbanEff
                             text.pop();
                         }
                         BoardKey::Char(c) => text.push(c),
+                        BoardKey::ScrollDetail { .. }
+                        | BoardKey::SelectCard(_)
+                        | BoardKey::SelectColumn(_) => {}
                         BoardKey::Enter => {
                             state.mode = BoardMode::Browse;
                             if text.trim().is_empty() {
@@ -752,8 +826,12 @@ pub fn update(state: &mut KanbanBoardState, input: KanbanInput) -> Vec<KanbanEff
                         state.filter.pop();
                     }
                     BoardKey::Char(c) => state.filter.push(c),
+                    BoardKey::ScrollDetail { .. }
+                    | BoardKey::SelectCard(_)
+                    | BoardKey::SelectColumn(_) => {}
                 },
                 BoardMode::Browse => match key {
+                    BoardKey::Char('h' | 'j' | 'k' | 'l') if state.detail_id.is_some() => {}
                     BoardKey::Char('h') => {
                         state.column = state.column.saturating_sub(1);
                         state.row = 0;
@@ -768,6 +846,9 @@ pub fn update(state: &mut KanbanBoardState, input: KanbanInput) -> Vec<KanbanEff
                     BoardKey::Enter => {
                         if let Some(card) = state.selected() {
                             let id = card.id.clone();
+                            if state.detail_id.as_deref() != Some(&id) {
+                                state.clear_detail();
+                            }
                             state.detail_id = Some(id.clone());
                             return vec![KanbanEffect::Detail(id)];
                         }
@@ -801,8 +882,8 @@ pub fn update(state: &mut KanbanBoardState, input: KanbanInput) -> Vec<KanbanEff
                     }
                     BoardKey::Char('/') => state.mode = BoardMode::Filter,
                     BoardKey::Esc => {
-                        if state.detail_id.take().is_some() {
-                            state.detail_fields.clear();
+                        if let Some(id) = state.clear_detail() {
+                            state.follow(&id);
                         } else if !state.filter.is_empty() {
                             state.filter.clear();
                         } else {

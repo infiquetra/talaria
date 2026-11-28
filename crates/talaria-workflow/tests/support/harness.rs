@@ -286,6 +286,7 @@ pub fn request() -> AgentRequest {
         phase: Some("phase".into()),
         prompt: "review".into(),
         schema: None,
+        report_file: None,
         tier: None,
         model: Some("fixture-model".into()),
         provider: None,
@@ -778,6 +779,7 @@ pub fn parked_records(dir: &RunDir) -> Vec<talaria_workflow::journal::Record> {
             workflow_path: vec![],
             launch: launch(),
             request_id: "fixture-request".into(),
+            report_baseline: None,
         },
         Record::SessionBound {
             key: k.clone(),

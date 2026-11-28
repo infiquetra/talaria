@@ -78,7 +78,7 @@ fn moves_clamp_at_both_ends() {
 fn upward_move_stops_following_and_marks_new_output() {
     let texts: Vec<String> = (0..80).map(|n| format!("line {n}")).collect();
     let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-    let (mut pager, cells, mut index) = open_on(&refs, 80, 24);
+    let (mut pager, mut cells, mut index) = open_on(&refs, 80, 24);
     let ctx = context(&cells);
     let _ = pager.handle_action(PagerAction::Top, &ctx, &mut index);
     let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 24));
@@ -89,6 +89,11 @@ fn upward_move_stops_following_and_marks_new_output() {
     assert!(!footer.contains("new output"), "{footer}");
     assert!(!footer.contains("following"), "{footer}");
 
+    pager.content_changed(&ctx, &mut index);
+    pager.draw(buf.area, &mut buf, &ctx, &plain);
+    assert!(!support::row_text(&buf, 23).contains("new output"));
+    cells.push(user(1000, "newly arrived"));
+    let ctx = context(&cells);
     pager.content_changed(&ctx, &mut index);
     pager.draw(buf.area, &mut buf, &ctx, &plain);
     let marked = support::row_text(&buf, 23);

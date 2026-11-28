@@ -3,6 +3,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    style::Style,
     text::{Line, Span},
     widgets::{Clear, Paragraph, Widget, Wrap},
 };
@@ -12,6 +13,7 @@ use talaria_core::memory::{EditOp, MemoryView, RowView, Section};
 use crate::{
     history::sanitize,
     keys::{Key, KeyCode, KeyKind, KeyMap},
+    theme::surfaces::{ViewStyles, tokens as t},
 };
 
 fn clean(text: &str) -> String {
@@ -100,13 +102,17 @@ fn rows(
 
 /// Draw the memory overlay.
 pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
+    draw_memory_with_theme(view, area, buf, &ViewStyles::default());
+}
+
+/// Draw the memory overlay with the active view styles.
+pub fn draw_memory_with_theme(view: &MemoryView, area: Rect, buf: &mut Buffer, views: &ViewStyles) {
     Clear.render(area, buf);
+    views.finish(area, buf, t::LIST_BACKGROUND, true);
     if area.width < 60 || area.height < 16 {
-        Paragraph::new(
-            "Make the terminal at least 60 columns wide and 16 rows tall to show memory settings.",
-        )
-        .wrap(Wrap { trim: true })
-        .render(area, buf);
+        Paragraph::new("Memory needs at least 60 columns and 16 rows. Keyboard only. Esc closes.")
+            .wrap(Wrap { trim: true })
+            .render(area, buf);
         return;
     }
     let mut lines = Vec::new();
@@ -168,7 +174,7 @@ pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
             lines.push(clean(banner));
         }
     } else {
-        lines.push(clean(&view.title));
+        lines.push(format!("Keyboard only · {}", clean(&view.title)));
         if let Some(banner) = &view.banner {
             lines.push(clean(banner));
         }
@@ -241,7 +247,20 @@ pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
             })
             .sum::<usize>()
     });
-    let text: Vec<Line<'static>> = lines.into_iter().map(Line::from).collect();
+    let text: Vec<Line<'static>> = lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let token = if selected == Some(index) {
+                t::LIST_SELECTED
+            } else if index == 0 {
+                t::LIST_HEADER
+            } else {
+                t::LIST_ROW
+            };
+            Line::styled(line, views.style(token, Style::default()))
+        })
+        .collect();
     let body = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
     Paragraph::new(text)
         .wrap(Wrap { trim: true })
@@ -252,7 +271,7 @@ pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
         && y < usize::from(body.height)
         && x < usize::from(area.width)
     {
-        crate::editor::draw(
+        crate::editor::draw_with_theme(
             &value,
             cursor,
             Rect::new(
@@ -262,9 +281,12 @@ pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
                 1,
             ),
             buf,
+            views,
         );
     }
-    Paragraph::new(footer(view)).render(Rect::new(area.x, area.bottom() - 1, area.width, 1), buf);
+    Paragraph::new(footer(view))
+        .style(views.style(t::LIST_MUTED, Style::default()))
+        .render(Rect::new(area.x, area.bottom() - 1, area.width, 1), buf);
 }
 
 fn footer(view: &MemoryView) -> String {

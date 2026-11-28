@@ -1,1 +1,2 @@
 Capabilities needs at least 40 by 10.
+Keyboard only · Esc closes

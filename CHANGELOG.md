@@ -10,6 +10,13 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-11-28
+
+Talaria 0.9.2 brings the workflow recovery changes from the two prereleases
+together with terminal usability, theme and input handling fixes.
+
+See the [release notes](https://github.com/infiquetra/talaria/blob/v0.9.2/docs/release-notes/v0.9.2.md).
+
 ### Added
 
 - `talaria doctor`, a one-time notice at session start and the start of `talaria workflow run` now
@@ -73,6 +80,9 @@ with the usual caveat that a `0.x` line may break anything between releases.
 - `talaria workflow check` warns when a script sets `maxTurns`, and reports which phases its trial
   run reached instead of listing every declared phase.
 - A run's manifest records the commit of the Talaria build that wrote it.
+- The appearance picker can preview and save a choice per profile. Talaria
+  ships 15 built-in themes, including Homebrew, Catppuccin and Solarized.
+- Contextual keyboard help shows the actions available in the current view or prompt.
 
 ### Changed
 
@@ -131,6 +141,14 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ### Fixed
 
+- Terminal menus clear the cells behind them, long rows wrap, and narrow views
+  keep the active model or explain what went out of view. Search and page
+  navigation work consistently across the slash menu.
+- Interrupting a turn from an overlay preserves the active field. Answering a
+  prompt or interrupting a turn stays scoped to the session that owns it.
+- Pasted credential paths are kept out of attachments. Workflow file readers
+  reject oversized or unexpected inputs, and worktree recovery avoids running
+  repository-provided Git hooks or filters.
 - Resuming a stopped workflow run now runs again the agents whose turn the stop interrupted.
   Before, the resume marked them failed and they ran only on a second resume. This is also the
   recovery after a Hermes gateway restart ends a foreground run.
@@ -851,7 +869,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/infiquetra/talaria/releases/tag/v0.9.2
 [0.9.1]: https://github.com/infiquetra/talaria/releases/tag/v0.9.1
 [0.9.0]: https://github.com/infiquetra/talaria/releases/tag/v0.9.0
 [0.8.1]: https://github.com/infiquetra/talaria/releases/tag/v0.8.1

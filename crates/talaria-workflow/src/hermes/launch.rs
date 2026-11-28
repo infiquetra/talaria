@@ -29,6 +29,7 @@ impl ExplicitLaunch {
         provider: String,
         effort: Option<Effort>,
     ) -> Result<ResolvedLaunch, String> {
+        crate::worktree::validate_report_option(request)?;
         let toolsets = request
             .toolsets
             .clone()

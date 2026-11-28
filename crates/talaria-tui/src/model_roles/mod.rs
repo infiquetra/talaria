@@ -15,6 +15,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::history::{grapheme_width, sanitize};
 use crate::keys::{Key, KeyCode, KeyContext, KeyKind, KeyMap};
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// The marker that cuts a long value at the column edge.
 const ELLIPSIS: &str = "...";
@@ -161,7 +162,7 @@ fn window(total: usize, selected: Option<usize>, height: usize) -> Vec<Slot> {
 
 /// Paint a scrolling list of rows into `area`. The selected row is reversed in the pane that
 /// has focus and bold in the other; a dimmed row is dimmed.
-fn paint_rows(rows: &[RowView], focused: bool, area: Rect, buf: &mut Buffer) {
+fn paint_rows(rows: &[RowView], focused: bool, area: Rect, buf: &mut Buffer, views: &ViewStyles) {
     let marked = rows.iter().any(|row| row.marker.is_some());
     let selected = rows.iter().position(|row| row.selected);
     let slots = window(rows.len(), selected, usize::from(area.height));
@@ -189,14 +190,23 @@ fn paint_rows(rows: &[RowView], focused: bool, area: Rect, buf: &mut Buffer) {
                         Modifier::BOLD
                     });
                 }
-                paint(&text, area.x, y, area.width, style, buf);
+                let token = match (row.selected, focused, row.dimmed) {
+                    (true, true, _) => t::LIST_SELECTED,
+                    (true, false, _) => t::LIST_HEADER,
+                    (_, _, true) => t::LIST_DISABLED,
+                    _ => t::LIST_ROW,
+                };
+                paint(&text, area.x, y, area.width, views.style(token, style), buf);
             }
             Slot::Above(count) => paint(
                 &format!("\u{2191} {count} more"),
                 area.x,
                 y,
                 area.width,
-                Style::default().add_modifier(Modifier::DIM),
+                views.style(
+                    t::LIST_SCROLLBAR,
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
                 buf,
             ),
             Slot::Below(count) => paint(
@@ -204,7 +214,10 @@ fn paint_rows(rows: &[RowView], focused: bool, area: Rect, buf: &mut Buffer) {
                 area.x,
                 y,
                 area.width,
-                Style::default().add_modifier(Modifier::DIM),
+                views.style(
+                    t::LIST_SCROLLBAR,
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
                 buf,
             ),
         }

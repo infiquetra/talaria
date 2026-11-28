@@ -2,6 +2,26 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-24 — Use the same workflow selection across terminal widths
+
+Wide windows show the run, phases and agents as connected cards. Narrow windows
+show an outline backed by the same node identities. A wheel event, a click and a
+keystroke each select from the same visible projection. Shrinking a desktop diagram
+would hide labels. Revisit the layout when real runs expose relationships the journal
+does not currently record.
+
+## 2026-11-24 — Show recorded workflow relationships and capture the mouse only on request
+
+The workflow view draws containment from the run journal. An operator can follow a
+phase to an agent and open its transcript. Drawing execution dependencies between
+siblings would require an authoritative record of those dependencies.
+
+The transcript and workflow overlays accept wheel events when the operator enables
+`/layout mouse` or the startup setting. Enabling mouse reporting across the whole
+client would interfere with ordinary text selection and native scrollback in chat.
+Revisit the graph when the runner records scheduling dependencies, and extend mouse
+reporting to another view when it has an interaction to handle.
+
 ## 2026-11-23 — A stopped workflow agent is parked for the operator
 
 **Decision.** When an agent's turn ends interrupted or cancelled and the stop was not part of

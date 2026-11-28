@@ -58,6 +58,7 @@ pub enum ConfigureInput {
     Tick,
     LinkLost,
     LinkBack,
+    Interrupt,
     Quit,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -282,7 +283,15 @@ impl ConfigureState {
                     model: self.model.as_ref().map(|value| value.1.clone()),
                 })]
             }
-            ConfigureInput::GatherFailed(error) => self.fail(&error),
+            ConfigureInput::GatherFailed(error) if self.phase == Phase::Gathering => {
+                self.fail(&error)
+            }
+            ConfigureInput::Created(snapshot)
+                if self.phase == Phase::Cancelled && self.session_id.is_none() =>
+            {
+                self.remember_session(*snapshot);
+                self.detach()
+            }
             ConfigureInput::Created(snapshot) if self.phase == Phase::Starting => {
                 let tools = snapshot.info.tools.clone();
                 let yolo = snapshot.info.yolo;
@@ -381,6 +390,14 @@ impl ConfigureState {
                 effects
             }
             ConfigureInput::Key(key) => self.key(key, now),
+            ConfigureInput::Interrupt
+                if self.running() || matches!(self.phase, Phase::Gathering | Phase::Starting) =>
+            {
+                self.phase = Phase::Cancelled;
+                self.deadline = None;
+                self.message = "Cancelled. Nothing was changed.".into();
+                self.stop_effects()
+            }
             ConfigureInput::StepDone { index, result }
                 if self.phase == Phase::Applying
                     && index == self.step_index
@@ -450,7 +467,9 @@ impl ConfigureState {
                     .map(|started| now.saturating_duration_since(started).as_secs())
                     .unwrap_or(0);
                 push(
-                    format!("Asking the configuration agent… {seconds}s · esc cancels"),
+                    format!(
+                        "Asking the configuration agent… {seconds}s · Ctrl+C interrupts · Esc closes"
+                    ),
                     None,
                 );
             }
@@ -1093,10 +1112,8 @@ impl ConfigureState {
         }
         if key == ConfigureKey::Esc {
             if self.running() {
-                let effects = self.stop_effects();
-                self.phase = Phase::Cancelled;
-                self.deadline = None;
-                self.message = "Cancelled. Nothing was changed.".into();
+                let mut effects = self.stop_effects();
+                effects.extend(self.close());
                 return effects;
             }
             if self.phase == Phase::Review && self.selected.iter().any(|selected| *selected) {

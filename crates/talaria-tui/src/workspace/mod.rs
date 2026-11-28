@@ -5,7 +5,7 @@ pub mod panel;
 use crate::{
     checklist::{ChecklistSection, ChecklistStyle, PANEL_MAX_ROWS, SHORT_TERMINAL_ROWS},
     history::CellLines,
-    live::{LiveSection, LiveView, max_live_height},
+    live::{ConversationStart, LiveSection, LiveView, max_live_height},
     pager::{Details, TranscriptBody, TranscriptEntry},
     theme::surfaces::{ViewStyles, tokens as t},
 };
@@ -232,21 +232,35 @@ impl Workspace {
             .fold(0u16, |height, row| height.saturating_add(row.height));
         let menu_rows = u16::from(view.menu.visible && !view.menu.transient);
         let areas = geometry(area, footer_rows, menu_rows, view.panel);
-        self.transcript.draw_with_theme(
-            view.entries,
-            view.details,
-            areas.transcript,
-            buffer,
-            other,
-            views,
-        );
-        if views.active() && view.entries.is_empty() && !areas.transcript.is_empty() {
-            buffer.set_stringn(
-                areas.transcript.x,
-                areas.transcript.y,
-                "No messages yet.",
-                usize::from(areas.transcript.width),
-                views.style(t::WORKSPACE_EMPTY, ratatui::style::Style::default()),
+        let body = areas.transcript;
+        let occupied = if view.entries.is_empty() {
+            self.transcript.clear();
+            0
+        } else {
+            self.transcript
+                .draw_with_theme(view.entries, view.details, body, buffer, other, views)
+        };
+        let available = body.height.saturating_sub(occupied);
+        if available > 0
+            && view.entries.iter().all(
+                |entry| matches!(entry, TranscriptEntry::Cell(cell) if cell.is_advisory_notice()),
+            )
+        {
+            // Center below startup notices and outside any floating work panel.
+            let visible_width = areas
+                .panel
+                .map_or(body.width, |panel| panel.x.saturating_sub(body.x));
+            let width = visible_width.min(66);
+            let opening = ConversationStart::from_views(views);
+            let height = opening.height(width).min(available);
+            opening.render(
+                Rect::new(
+                    body.x + visible_width.saturating_sub(width) / 2,
+                    body.y + occupied + (available - height) / 3,
+                    width,
+                    height,
+                ),
+                buffer,
             );
         }
         if let Some(area) = areas.panel {

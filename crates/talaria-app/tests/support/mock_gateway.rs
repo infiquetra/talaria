@@ -6227,7 +6227,11 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
                 let Some(count) = request else { return };
                 let line = String::from_utf8_lossy(&first[..count]);
                 let target = line.split_whitespace().nth(1).unwrap_or("");
-                if target.starts_with("/api/config") || target.starts_with("/api/model") {
+                if target.starts_with("/api/config")
+                    || target.starts_with("/api/model")
+                    || target.starts_with("/api/plugins/kanban/board?")
+                    || target == "/api/plugins/kanban/workflow"
+                {
                     if let Some(address) = origin.strip_prefix("http://")
                         && let Ok(mut rest) = TcpStream::connect(address).await
                     {

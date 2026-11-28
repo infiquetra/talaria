@@ -393,7 +393,7 @@ mod additional {
         for i in 0..8 {
             env_row(&mut state, i, &format!("VAR_{i}"), false, now);
         }
-        assert!(text(&state, now).contains("Up to 8 variables here; add more later with ctrl+k."));
+        assert!(text(&state, now).contains("Up to 8 variables here; add more later with Ctrl+K."));
         assert!(
             !view(&state, now)
                 .card

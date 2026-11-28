@@ -7,7 +7,7 @@ use talaria_app::appearance::{
     theme_set_line,
 };
 use talaria_app::config::parse;
-use talaria_app::theme_file::ColorValue;
+use talaria_app::theme_file::{BUILTIN_THEMES, ColorValue, builtin};
 use talaria_core::appearance::{
     AppearanceChange, ColorDepth, ColorMap, DepthSource, Motion, MotionSource, Polarity,
     PolaritySource, Rgb, Skin, TerminalColors, ThemeReport,
@@ -40,12 +40,18 @@ fn accent(file: &talaria_app::theme_file::ThemeFile) -> Option<&ColorValue> {
 
 #[test]
 fn builtins_select_without_a_file_on_disk() {
-    for id in ["terminal", "ember", "paper"] {
+    for id in BUILTIN_THEMES {
         let (dir, mut session) = fixture("");
         assert!(!dir.path().join(format!("themes/{id}.toml")).exists());
         let (lines, change) = session.command(&format!("use {id}"));
         assert_eq!(change, AppearanceChange::Changed, "{id}: {lines:?}");
-        assert_eq!(lines, [format!("Theme file: themes/{id}.toml.")]);
+        assert_eq!(
+            lines,
+            [
+                format!("Theme file: themes/{id}.toml."),
+                "Theme choice saved for this profile.".to_owned(),
+            ]
+        );
         assert_eq!(session.active_id(), Some(id));
         let file = session
             .file()
@@ -61,9 +67,9 @@ fn builtins_select_without_a_file_on_disk() {
             }
             "terminal" => {
                 assert_eq!(file.name.as_deref(), Some("Terminal"));
-                assert_eq!(accent(file), Some(&ColorValue::Ansi(6)));
+                assert!(file.follow_hermes_skin);
             }
-            _ => unreachable!(),
+            _ => assert_eq!(Some(file), builtin(id).as_ref(), "{id}"),
         }
 
         let (dir, mut session) = fixture(&format!("[theme]\nfile = '{id}'\n"));
@@ -81,6 +87,37 @@ fn builtins_select_without_a_file_on_disk() {
             "{id} config did not select a theme"
         );
     }
+}
+
+#[test]
+fn an_existing_custom_theme_takes_precedence_over_a_curated_theme() {
+    let (dir, mut session) = fixture("[theme]\nfile = 'dracula'\n");
+    let path = dir.path().join("themes/dracula.toml");
+    fs::write(&path, "schema = 1\nname = 'Local Dracula'\n").unwrap();
+
+    assert!(session.startup().is_empty());
+    assert_eq!(session.active_id(), Some("dracula"));
+    assert_eq!(
+        session.file().unwrap().name.as_deref(),
+        Some("Local Dracula")
+    );
+
+    fs::write(&path, "schema = 999\n").unwrap();
+    let (lines, change) = session.command("use dracula");
+    assert_eq!(change, AppearanceChange::Unchanged);
+    assert!(
+        lines[0].contains("themes/dracula.toml: schema"),
+        "{lines:?}"
+    );
+    assert_eq!(
+        session.file().unwrap().name.as_deref(),
+        Some("Local Dracula")
+    );
+
+    fs::remove_file(&path).unwrap();
+    let (lines, change) = session.command("reload");
+    assert_eq!(change, AppearanceChange::Changed, "{lines:?}");
+    assert_eq!(session.file().unwrap().name.as_deref(), Some("Dracula"));
 }
 
 #[test]
@@ -197,7 +234,7 @@ fn light_dark_and_auto_behave_as_before() {
 
 #[test]
 fn selection_never_writes_config_toml() {
-    for id in ["terminal", "ember", "paper"] {
+    for id in BUILTIN_THEMES {
         let (dir, mut session) = fixture("");
         let path = dir.path().join("config.toml");
         let before = fs::read(&path).unwrap();

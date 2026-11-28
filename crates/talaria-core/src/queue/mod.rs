@@ -478,7 +478,7 @@ impl QueueState {
     }
 
     /// True while a plan or a row call is outstanding.
-    pub(crate) fn busy(&self) -> bool {
+    pub fn busy(&self) -> bool {
         self.plan.is_some() || self.in_flight.is_some()
     }
 

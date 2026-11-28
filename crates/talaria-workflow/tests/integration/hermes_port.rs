@@ -152,6 +152,65 @@ async fn wait_settled_polls_then_reads_result() {
 }
 
 #[tokio::test]
+async fn a_first_failed_receipt_without_a_result_recovers_its_exact_cache_split() {
+    let mut created = common::read_json("wire/create_ok.json");
+    created["info"]["source"] = json!("tool");
+    let mut failed = common::read_json("wire/receipt_terminal.json");
+    failed["outcome"] = json!("failed");
+    failed.as_object_mut().unwrap().remove("result");
+    let mut next_failed = failed.clone();
+    next_failed["admission_id"] = json!("admission-2");
+    let mut next_started = common::read_json("wire/submit_ok.json");
+    next_started["admission_id"] = json!("admission-2");
+    let wire = Arc::new(
+        ScriptedWire::from_value(
+            &common::data(""),
+            json!({"steps":[
+                {"expect":"runtime.describe","reply":"describe_ok.json"},
+                {"expect":"session.create","reply":created},
+                {"expect":"prompt.submit","reply":"submit_ok.json"},
+                {"expect":"prompt.receipt","reply":failed},
+                {"expect":"session.stats","reply":{"total_tokens":10,"prompt_tokens":8,
+                    "output_tokens":2,"cache_read_tokens":6}},
+                {"expect":"prompt.submit","reply":next_started},
+                {"expect":"prompt.receipt","reply":next_failed}
+            ]}),
+        )
+        .unwrap(),
+    );
+    let (port, _feed) = HermesPort::with_wires(cfg(), wire.clone(), "fixture")
+        .await
+        .unwrap();
+    port.create_session(session()).await.unwrap();
+    for (submission, expected) in [("sub-1", json!(6)), ("sub-2", json!(null))] {
+        let started = port
+            .submit(talaria_workflow::hermes::SubmitTurn {
+                profile: "fixture".into(),
+                session_id: "session".into(),
+                submission_id: submission.into(),
+                text: "hello".into(),
+            })
+            .await
+            .unwrap();
+        let receipt = port
+            .receipt("fixture".into(), "session".into(), started.admission_id)
+            .await
+            .unwrap();
+        let usage = receipt.usage.unwrap();
+        assert_eq!(usage["session_cache_read_tokens"], expected);
+        assert_eq!(usage["total_tokens"], 10);
+        assert!(usage["session_cost"].is_null());
+    }
+    assert_eq!(
+        wire.outbound()
+            .iter()
+            .filter(|frame| frame.method == "session.stats")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn wait_settled_returns_unknown_untouched() {
     let wire = scripted("unknown_after_restart");
     let (port, _feed) = HermesPort::with_wires(cfg(), wire.clone(), "fixture")

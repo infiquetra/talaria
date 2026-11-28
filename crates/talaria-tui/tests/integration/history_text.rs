@@ -466,7 +466,7 @@ fn wrap_lines_borrows_unsplit_ascii_spans_and_plain_text_reuses_width() {
     assert_eq!(section.height(12), 4);
     assert_eq!(
         render_section_rows(&section, 12, 4),
-        vec!["alpha beta g", "amma delta", "second    li", "ne"]
+        vec!["alpha beta", "gamma delta", "second", "line"]
     );
     assert_eq!(section.height(40), 2);
     assert_eq!(
@@ -479,6 +479,7 @@ fn user_cell(text: &str) -> Cell {
     Cell::User(talaria_core::session::UserCell {
         id: talaria_core::session::CellId::new(1),
         text: text.to_owned(),
+        expanded_paste: None,
     })
 }
 

@@ -8,6 +8,7 @@ use ratatui::{
 use talaria_core::configure::{ConfigureKey, ConfigureView};
 
 use crate::history::{sanitize, wrap_lines};
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// Resolve a detail scroll key against the wrapped height of the selected item.
 pub fn detail_scroll_target(view: &ConfigureView, key: &ConfigureKey, area: Rect) -> Option<usize> {
@@ -37,17 +38,32 @@ pub fn detail_scroll_target(view: &ConfigureView, key: &ConfigureKey, area: Rect
 
 /// Draw a configuration assistant snapshot, keeping the selected row visible.
 pub fn draw_configure(view: &ConfigureView, area: Rect, buf: &mut Buffer) {
+    draw_configure_with_theme(view, area, buf, &ViewStyles::default());
+}
+
+/// Draw the configuration assistant with the appearance shared by the other overlays.
+pub fn draw_configure_with_theme(
+    view: &ConfigureView,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     Clear.render(area, buf);
+    views.finish(area, buf, t::LIST_BACKGROUND, true);
     let title = Rect::new(area.x, area.y, area.width, 1);
-    Paragraph::new(sanitize(&view.title).into_owned()).render(title, buf);
+    Paragraph::new(sanitize(&view.title).into_owned())
+        .style(views.style(t::LIST_HEADER, Style::default()))
+        .render(title, buf);
     if area.height < 2 {
         return;
     }
     let footer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
-    Paragraph::new(sanitize(&view.footer).into_owned()).render(footer, buf);
+    Paragraph::new(sanitize(&view.footer).into_owned())
+        .style(views.style(t::LIST_MUTED, Style::default()))
+        .render(footer, buf);
     let confirmation = view
         .confirmation
         .as_deref()
@@ -80,9 +96,12 @@ pub fn draw_configure(view: &ConfigureView, area: Rect, buf: &mut Buffer) {
             continue;
         }
         let style = if line.row.is_some() && line.row == view.selected_row {
-            Style::default().add_modifier(Modifier::REVERSED)
+            views.style(
+                t::LIST_SELECTED,
+                Style::default().add_modifier(Modifier::REVERSED),
+            )
         } else {
-            Style::default()
+            views.style(t::LIST_ROW, Style::default())
         };
         let wrapped = wrap_lines(
             vec![Line::styled(sanitize(&line.text).into_owned(), style)],
@@ -114,6 +133,8 @@ pub fn draw_configure(view: &ConfigureView, area: Rect, buf: &mut Buffer) {
             area.width,
             1,
         );
-        Paragraph::new(text.clone()).render(rect, buf);
+        Paragraph::new(text.clone())
+            .style(views.style(t::DIALOG_WARNING, Style::default()))
+            .render(rect, buf);
     }
 }

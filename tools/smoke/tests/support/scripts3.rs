@@ -441,7 +441,8 @@ fn fleet_view_rules(shapes: &Shapes) -> Vec<RuleBuilder> {
     vec![
         RuleBuilder::run("^/fleet$").repeat().append(opened),
         RuleBuilder::send_text("^zzz-no-match$").append(filtered),
-        RuleBuilder::send_keys("^ctrl\\+c$").append(closed),
+        RuleBuilder::send_keys("^esc$").append(opened),
+        RuleBuilder::send_keys("^esc$").append(closed),
     ]
 }
 
@@ -458,6 +459,10 @@ fn open_rules(shape: OpenInPane) -> Vec<RuleBuilder> {
     vec![
         RuleBuilder::send_text("^/$"),
         RuleBuilder::send_text("^o$").append(notice),
+        RuleBuilder::send_keys("^esc$").append(include_str!(
+            "../fixtures/screens/phase3/fleet-view-here.screen.txt"
+        )),
+        RuleBuilder::send_keys("^esc$").append("minimax-m3.1-flash\n"),
     ]
 }
 
@@ -569,8 +574,8 @@ fn needs_you_rules(shape: NeedsYou) -> Vec<RuleBuilder> {
         }
         _ => rules.push(poll),
     }
-    let live_peek = format!("{peek}── peek ──\nOpening…\nctrl+c close\n");
-    let live_card = format!("{card}ctrl+c close\n");
+    let live_peek = format!("{peek}── peek ──\nOpening…\nesc close peek\n");
+    let live_card = format!("{}esc close peek\n", card.replace("Esc back to list\n", ""));
     let peek_rule = if shape == NeedsYou::AsyncPeek {
         RuleBuilder::send_keys("^alt\\+a$")
             .append(&live_peek)
@@ -579,12 +584,9 @@ fn needs_you_rules(shape: NeedsYou) -> Vec<RuleBuilder> {
         RuleBuilder::send_keys("^alt\\+a$").append(peek)
     };
     let card_rule = if shape == NeedsYou::AsyncCard {
-        RuleBuilder::send_text("^a$").append(&live_card).then(
-            StageBuilder::new()
-                .after_polls(8)
-                .wipe()
-                .append(&format!("{card}ctrl+c back to list\n")),
-        )
+        RuleBuilder::send_text("^a$")
+            .append(&live_card)
+            .then(StageBuilder::new().after_polls(8).wipe().append(card))
     } else {
         RuleBuilder::send_text("^a$").append(card)
     };

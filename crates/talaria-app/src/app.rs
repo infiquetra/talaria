@@ -98,7 +98,7 @@ use talaria_core::appearance::{
     ThemeReport,
 };
 
-use crate::appearance::{self, AppearanceService, AppearanceView, theme_lines};
+use crate::appearance::{self, AppearanceService, AppearanceView, ThemeFileWork, theme_lines};
 
 /// Presentation-only attachment data for the terminal adapter.
 #[derive(Clone, Default)]
@@ -310,6 +310,8 @@ pub enum UserAction {
     },
     OpenModels,
     ModelPicker(PickerKey),
+    ModelFilterPaste(String),
+    SelectModelRow(talaria_core::models::RowKey),
     ModelConfirm(ConfirmKey),
     /// The composer sent this text.
     Submit(String),
@@ -603,6 +605,9 @@ pub trait Screen: ComposerDeadline + StatusHost {
         true
     }
     fn menu_bar(&self) -> bool {
+        false
+    }
+    fn mouse_navigation(&self) -> bool {
         false
     }
     /// Startup form of reasoning on the main screen; `/thinking` changes the view alone.
@@ -973,6 +978,8 @@ pub struct AppState {
     pub skin_preview: Option<choice::SkinPreview>,
     /// The catalogue store for this connection.
     pub commands: CommandsState,
+    /// Catalogue collisions already shown for a profile and stored session.
+    command_collisions: BTreeSet<(RowKey, String)>,
     /// Commands Talaria runs itself.
     pub local: LocalCommandTable,
     /// The session picker's state, while the overlay is open.
@@ -1315,6 +1322,7 @@ impl AppState {
             hivecode_file: None,
             hivecode_saves: 0,
             commands: CommandsState::default(),
+            command_collisions: BTreeSet::new(),
             local: LocalCommandTable::builtin(),
             picker: None,
             picker_profiles: Vec::new(),
@@ -1921,6 +1929,7 @@ pub enum AppMessage {
     HivecodeDone {
         session: SessionId,
         original_text: String,
+        restore_text: Option<String>,
         outcome: Result<Value, talaria_core::commands::ErrorView>,
     },
     HivecodeNotice {
@@ -2495,8 +2504,10 @@ pub enum AppEffect {
     Appearance,
     /// Print the `/theme` report.
     ThemeReport,
-    /// Load a theme file away from the application reducer.
+    /// Load or save a theme choice away from the application reducer.
     ThemeFileCommand(String),
+    /// Read the theme preferences for a profile just opened.
+    RefreshThemeProfile,
     /// Start the next queued file command after adopting the preceding result.
     ContinueThemeFiles,
     /// Run `/skin`, with its name argument if any.
@@ -3363,6 +3374,7 @@ fn connectors_command(
 fn connectors_read_key(effect: &talaria_core::connectors::ConnectorsEffect) -> Option<String> {
     use talaria_core::connectors::ConnectorsEffect as E;
     Some(match effect {
+        E::LoadIdentity => "identity".into(),
         E::ListConnectors => "list".into(),
         E::LoadCatalog => "catalog".into(),
         E::LoadAccounts => "accounts".into(),
@@ -4425,12 +4437,22 @@ fn update_message(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::HivecodeDone {
             session,
             original_text,
+            restore_text,
             outcome,
         } => {
             if is_foreground(state, session.as_str()) {
-                let actions = state
-                    .hivecode
-                    .on_command_outcome(&session, &original_text, outcome);
+                let mut actions =
+                    state
+                        .hivecode
+                        .on_command_outcome(&session, &original_text, outcome);
+                if let Some(expanded) = restore_text
+                    && let Some(crate::hivecode::Action::RestoreComposer(draft)) =
+                        actions.iter_mut().find(|action| {
+                            matches!(action, crate::hivecode::Action::RestoreComposer(_))
+                        })
+                {
+                    *draft = expanded;
+                }
                 if actions.iter().any(|action| matches!(action, crate::hivecode::Action::Notice(text) if *text == talaria_core::hivecode::notice::offer(&state.profile))) {
                     state.hivecode.record_shown(&session);
                 }
@@ -5298,36 +5320,35 @@ fn capabilities_input(state: &mut AppState, input: CapInput) -> Vec<AppEffect> {
     for effect in produced {
         match effect {
             CapEffect::Notice(text) => {
-                if !state
-                    .capabilities
-                    .as_ref()
-                    .is_some_and(CapabilitiesState::is_open)
-                {
-                    if state.opened.is_some() {
-                        let success = [
-                            "Turned ",
-                            "Installed ",
-                            "Removed ",
-                            "Plugin ",
-                            "Installing ",
-                            "Hermes is installing ",
-                        ]
-                        .iter()
-                        .any(|prefix| text.starts_with(prefix));
-                        effects.extend(reduce(
-                            state,
-                            Event::Notice {
-                                kind: if success {
-                                    NoticeKind::System
-                                } else {
-                                    NoticeKind::Error
-                                },
-                                text,
+                let success = [
+                    "Turned ",
+                    "Installed ",
+                    "Removed ",
+                    "Plugin ",
+                    "Installing ",
+                    "Hermes is installing ",
+                ]
+                .iter()
+                .any(|prefix| text.starts_with(prefix));
+                if state.opened.is_some() {
+                    effects.extend(reduce(
+                        state,
+                        Event::Notice {
+                            kind: if success {
+                                NoticeKind::Diagnostic
+                            } else {
+                                NoticeKind::Error
                             },
-                        ));
-                    } else {
-                        effects.push(notice_lines(&text));
-                    }
+                            text,
+                        },
+                    ));
+                } else if !success
+                    || !state
+                        .capabilities
+                        .as_ref()
+                        .is_some_and(CapabilitiesState::is_open)
+                {
+                    effects.push(notice_lines(&text));
                 }
             }
             CapEffect::Dispose => {
@@ -5481,12 +5502,10 @@ mod capabilities_wiring_tests {
         assert!(state.capabilities.is_none());
     }
 
-    #[test]
-    fn hidden_write_keeps_its_profile_and_reports_before_disposal() {
+    fn skill_change(state: &mut AppState) -> u64 {
         use talaria_core::capabilities::{CapData, KeyAction, Provenance, SkillRow};
-        let mut state = AppState::new("capability-hidden-write");
         state.profile = "fixture".into();
-        let effects = capabilities_command(&mut state, "skills");
+        let effects = capabilities_command(state, "skills");
         let load_generation = effects
             .iter()
             .find_map(|effect| match effect {
@@ -5503,7 +5522,7 @@ mod capabilities_wiring_tests {
             })
             .expect("opening Skills schedules its load");
         capabilities_input(
-            &mut state,
+            state,
             CapInput::Loaded {
                 tab: CapTab::Skills,
                 generation: load_generation,
@@ -5517,8 +5536,8 @@ mod capabilities_wiring_tests {
                 }])),
             },
         );
-        let effects = capabilities_input(&mut state, CapInput::Key(KeyAction::Toggle));
-        let op_id = effects
+        let effects = capabilities_input(state, CapInput::Key(KeyAction::Toggle));
+        effects
             .iter()
             .find_map(|effect| match effect {
                 AppEffect::Capabilities {
@@ -5527,7 +5546,83 @@ mod capabilities_wiring_tests {
                 } => Some(*op_id),
                 _ => None,
             })
-            .expect("Space schedules the selected skill toggle");
+            .expect("Space schedules the selected skill toggle")
+    }
+
+    #[test]
+    fn refusal_remains_in_the_session_after_the_overlay_closes() {
+        use talaria_core::capabilities::KeyAction;
+        let snapshot =
+            serde_json::from_str(include_str!("../tests/data/open_approval.json")).unwrap();
+        let mut state = AppState::new("capability-refusal");
+        state.opened = Some(OpenedSession::from_snapshot(snapshot));
+        let op_id = skill_change(&mut state);
+        capabilities_input(
+            &mut state,
+            CapInput::WriteDone {
+                op_id,
+                result: Err(CapError::Connect),
+            },
+        );
+        let view = state.view().capabilities.unwrap();
+        let message = view.message.join("\n");
+        assert!(message.contains("could not reach the gateway"));
+        capabilities_input(&mut state, CapInput::Key(KeyAction::Cancel));
+        assert!(state.view().capabilities.is_none());
+        assert!(
+            state
+                .view()
+                .state
+                .unwrap()
+                .cells()
+                .iter()
+                .any(|cell| matches!(cell, Cell::Notice(notice) if notice.text == message))
+        );
+    }
+
+    #[test]
+    fn success_banner_is_recorded_in_the_session_while_the_overlay_is_open() {
+        use talaria_core::capabilities::{CapData, KeyAction, Provenance, SkillRow};
+        let snapshot =
+            serde_json::from_str(include_str!("../tests/data/open_approval.json")).unwrap();
+        let mut state = AppState::new("capability-success");
+        state.opened = Some(OpenedSession::from_snapshot(snapshot));
+        let op_id = skill_change(&mut state);
+        capabilities_input(
+            &mut state,
+            CapInput::WriteDone {
+                op_id,
+                result: Ok(Default::default()),
+            },
+        );
+        capabilities_input(
+            &mut state,
+            CapInput::ReadBack {
+                op_id,
+                result: Ok(CapData::Skills(vec![SkillRow {
+                    name: "fixture-skill".into(),
+                    description: String::new(),
+                    category: None,
+                    enabled: false,
+                    usage: 0,
+                    provenance: Provenance::Bundled,
+                }])),
+            },
+        );
+        let view = state.view();
+        let message = view.capabilities.unwrap().message.join("\n");
+        assert!(message.starts_with("Turned off"));
+        assert!(view.state.unwrap().cells().iter().any(
+            |cell| matches!(cell, Cell::Notice(notice) if notice.kind == NoticeKind::Diagnostic && notice.text == message)
+        ));
+        capabilities_input(&mut state, CapInput::Key(KeyAction::Cancel));
+        assert!(state.view().capabilities.is_none());
+    }
+
+    #[test]
+    fn hidden_write_keeps_its_profile_and_reports_before_disposal() {
+        let mut state = AppState::new("capability-hidden-write");
+        let op_id = skill_change(&mut state);
         capabilities_input(&mut state, CapInput::Close);
         assert!(state.view().capabilities.is_none());
         let generation = state.capabilities_generation;
@@ -5903,11 +5998,8 @@ mod connectors_wiring_tests {
             state.view().connectors.unwrap().screen,
             ConnectorScreen::Consent { .. }
         ));
-        assert!(
-            !effects
-                .iter()
-                .any(|effect| matches!(effect, AppEffect::Connectors { .. }))
-        );
+        assert!(effects.iter().any(|effect| matches!(effect,
+            AppEffect::Connectors { effects, .. } if effects == &[E::LoadIdentity])));
         assert!(!state.connectors_consent.granted("fixture"));
         let effects = connectors_input(&mut state, I::Key(K::Open));
         assert!(state.connectors_consent.granted("fixture"));
@@ -6331,7 +6423,8 @@ fn local_effect(
             };
             return vec![notice_lines(notice), AppEffect::CopyReply { text }];
         }
-        let raw = if raw.is_empty() { "1" } else { raw };
+        let latest = raw.is_empty();
+        let raw = if latest { "1" } else { raw };
         let digits = raw.strip_prefix('+').unwrap_or(raw);
         if digits.is_empty()
             || !digits.bytes().all(|byte| byte.is_ascii_digit())
@@ -6346,6 +6439,9 @@ fn local_effect(
             return vec![notice_lines(&format!("No reply {raw} to copy."))];
         };
         let Ok(text) = talaria_core::session::assistant_reply(opened.state.cells(), n) else {
+            if latest {
+                return vec![notice_lines("No finished assistant reply to copy yet.")];
+            }
             return vec![notice_lines(&format!("No reply {raw} to copy."))];
         };
         let count = text.chars().count();
@@ -6371,6 +6467,17 @@ fn local_effect(
             }
             Ok(talaria_core::layout::LayoutAction::Menu) => {
                 user_action(state, UserAction::FocusMenu)
+            }
+            Ok(talaria_core::layout::LayoutAction::Mouse) => {
+                state.layout.mouse = !state.layout.mouse;
+                vec![
+                    notice_lines(if state.layout.mouse {
+                        "Mouse navigation on for questions, transcripts, workflows, Settings, model and session lists, and Kanban."
+                    } else {
+                        "Mouse navigation off."
+                    }),
+                    AppEffect::Redraw,
+                ]
             }
             Err(notice) => vec![AppEffect::CommitLines(vec![notice])],
         };
@@ -7274,6 +7381,8 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             )
         }
         UserAction::ModelPicker(key) => models_input(state, ModelsInput::Picker(key)),
+        UserAction::ModelFilterPaste(text) => models_input(state, ModelsInput::PasteFilter(text)),
+        UserAction::SelectModelRow(key) => models_input(state, ModelsInput::SelectRow(key)),
         UserAction::ModelConfirm(key) => models_input(state, ModelsInput::Confirm(key)),
         UserAction::Fleet(input) => fleet_input(state, input),
         UserAction::FleetOpen => open_fleet_view(state),
@@ -7516,7 +7625,16 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             }
             MaskedTarget::Live(target) => vec![AppEffect::AnswerMasked { target, value }],
         },
-        UserAction::Notice(text) => vec![notice_lines(&text)],
+        UserAction::Notice(text) => {
+            let notice = notice_lines(&text);
+            if let Some(board) = &mut state.kanban {
+                talaria_core::kanban::update(
+                    board,
+                    talaria_core::kanban::KanbanInput::Notice(text),
+                );
+            }
+            vec![notice]
+        }
         UserAction::Queue(intent) => queue_intent(state, intent),
         UserAction::Palette(input) => palette_input(state, input),
         UserAction::Choice(key) => choice::key(state, key),
@@ -7710,9 +7828,7 @@ fn foreground_key(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         return user_action(state, action);
     }
     match action {
-        UserAction::Interrupt | UserAction::InterruptKey => {
-            palette_input(state, PaletteInput::Close)
-        }
+        UserAction::InterruptKey => palette_input(state, PaletteInput::Escape),
         UserAction::Submit(text) => palette_enter(state, text),
         other => user_action(state, other),
     }
@@ -7761,6 +7877,7 @@ fn palette(state: &mut AppState, input: PaletteInput) -> (Vec<AppEffect>, Vec<Pa
 fn load_draft(state: &mut AppState, text: String) -> Vec<AppEffect> {
     state.draft.clone_from(&text);
     let caret = text.len();
+    state.caret = caret;
     let (mut effects, _) = palette(
         state,
         PaletteInput::DraftChanged {
@@ -7824,6 +7941,8 @@ fn palette_enter(state: &mut AppState, text: String) -> Vec<AppEffect> {
 
 /// Apply one catalogue store input and turn its effects into executor effects.
 fn commands_input(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect> {
+    let accepted_catalog = matches!(&input, CommandsInput::CatalogArrived { request_id, .. }
+        if state.commands.in_flight == Some(*request_id));
     let mut effects = Vec::new();
     for effect in state_update(&mut state.commands, input) {
         match effect {
@@ -7842,7 +7961,52 @@ fn commands_input(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect> 
             }
         }
     }
+    if accepted_catalog {
+        effects.extend(command_collision_notices(state));
+    }
     effects
+}
+
+fn command_collision_notices(state: &mut AppState) -> Vec<AppEffect> {
+    let (Some(opened), Some(catalog)) = (&state.opened, &state.commands.catalog) else {
+        return Vec::new();
+    };
+    if state.session_gone
+        || state.commands.bound_session.as_deref() != Some(&opened.session_id)
+        || state.opened_profile.as_ref() != Some(&state.profile)
+    {
+        return Vec::new();
+    }
+    let session = RowKey {
+        profile: state.profile.clone(),
+        session_id: opened.stored_session_id.clone(),
+    };
+    let notices: Vec<_> = catalog
+        .skill_collisions()
+        .map(|(command, skill)| {
+            format!(
+                "Hermes: The built-in /{command} and the {skill} skill share a command name. \
+                 Use /skill {skill} to run the skill."
+            )
+        })
+        .filter(|text| {
+            state
+                .command_collisions
+                .insert((session.clone(), text.clone()))
+        })
+        .collect();
+    notices
+        .into_iter()
+        .flat_map(|text| {
+            reduce(
+                state,
+                Event::Notice {
+                    kind: NoticeKind::Warning,
+                    text,
+                },
+            )
+        })
+        .collect()
 }
 
 /// The catalogue store follows the connection only once the session service exists.
@@ -8666,8 +8830,8 @@ fn picker_input(state: &mut AppState, input: PickerInput) -> Vec<AppEffect> {
             PickerEffect::Close => {
                 closed = true;
                 state.picker = None;
-                if let Some(notice) = picker.notice().map(str::to_owned) {
-                    effects.push(AppEffect::CommitLines(vec![notice]));
+                if let Some(notice) = picker.closing_notice() {
+                    effects.push(AppEffect::CommitLines(vec![notice.to_owned()]));
                 }
                 effects.push(AppEffect::CloseSide);
             }
@@ -8758,7 +8922,7 @@ fn switched(
                 Some(install) => {
                     if let Some(target) = target {
                         if state.appearance.set_file_profile(&target.profile) {
-                            effects.push(AppEffect::ThemeFileCommand("reload".into()));
+                            effects.push(AppEffect::RefreshThemeProfile);
                         }
                         if state.profile != target.profile {
                             forget_profile_views(state);
@@ -9544,6 +9708,10 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
     }
     match slash_line(&text) {
         Slash::Btw(argument) => {
+            let argument = match state.attachments.expand_pastes(&argument) {
+                Ok(argument) => argument,
+                Err(notice) => return vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
+            };
             return match btw_command(&argument, state.now_ms) {
                 event @ Event::SideAsked { .. } => side_request(state, text, event),
                 event => local_notice(state, event, SIDE_USAGE, text),
@@ -9569,7 +9737,13 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
                 None => vec![notice_lines(&notice)],
             };
         }
-        Slash::Command(line) => return run_command(state, line),
+        Slash::Command(line) => {
+            let command = match state.attachments.expand_pastes(&line) {
+                Ok(command) => command.into_owned(),
+                Err(notice) => return vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
+            };
+            return run_command(state, command);
+        }
         Slash::Nothing => return Vec::new(),
         Slash::NotSlash => {}
     }
@@ -9585,9 +9759,14 @@ fn submit_line(state: &mut AppState, text: String) -> Vec<AppEffect> {
         }
         hivecode_note_conversation(state, &session);
         let session_model = session_model(state);
+        let request = match state.attachments.expand_pastes(&text) {
+            Ok(request) => request,
+            Err(notice) => return vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
+        };
         if let Some(actions) = state.hivecode.intercept_submit_with_model(
             &session,
             &text,
+            &request,
             session_model
                 .as_ref()
                 .map(|(model, provider)| (model.as_str(), provider.as_str())),
@@ -9637,7 +9816,7 @@ fn queue_line(state: &mut AppState, command: QueueCommand) -> Vec<AppEffect> {
 }
 
 /// Apply one queue intent to the open session; its calls go to the queue service (#232).
-fn queue_intent(state: &mut AppState, intent: QueueIntent) -> Vec<AppEffect> {
+fn queue_intent(state: &mut AppState, mut intent: QueueIntent) -> Vec<AppEffect> {
     let draft = match &intent {
         QueueIntent::SendDraftNow(text) | QueueIntent::SteerText(text) => Some(text.clone()),
         _ => None,
@@ -9649,6 +9828,17 @@ fn queue_intent(state: &mut AppState, intent: QueueIntent) -> Vec<AppEffect> {
     let Some(opened) = state.opened.as_mut() else {
         return Vec::new();
     };
+    if !opened.state.queue.busy()
+        && let QueueIntent::SendDraftNow(text)
+        | QueueIntent::SteerText(text)
+        | QueueIntent::SaveEdit(text) = &mut intent
+    {
+        match state.attachments.expand_pastes(text) {
+            Ok(std::borrow::Cow::Owned(expanded)) => *text = expanded,
+            Ok(std::borrow::Cow::Borrowed(_)) => {}
+            Err(notice) => return vec![notice_lines(&notice)],
+        }
+    }
     let produced = update_queue(&mut opened.state, intent, &mut ids);
     let accepted = produced
         .iter()
@@ -9815,20 +10005,27 @@ fn send_expanded(state: &mut AppState, payload: SubmittedAttachments) -> Vec<App
     effects
 }
 
-/// `/theme` with its argument: the report and the selector, or a background override for this
-/// session.
+/// `/theme` with its argument: the report and selector, or a theme preference command.
 fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     if argument.is_empty() {
-        return vec![
-            AppEffect::ThemeReport,
-            AppEffect::Choice(choice::ChoiceWork::ListThemes),
-        ];
+        return vec![AppEffect::Choice(choice::ChoiceWork::ListThemes)];
     }
-    if matches!(argument.split_whitespace().next(), Some("use" | "reload")) {
+    if argument == "report" {
+        return vec![AppEffect::ThemeReport];
+    }
+    let background = matches!(argument, "light" | "dark" | "auto");
+    if matches!(argument.split_whitespace().next(), Some("use" | "reload"))
+        || (background && (state.appearance.theme_files().is_some() || state.home.is_some()))
+    {
         return vec![AppEffect::ThemeFileCommand(argument.to_owned())];
     }
     let (lines, change) = state.appearance.theme_command(argument);
     let mut effects = vec![notice_lines(&lines.join("\n"))];
+    if background {
+        effects.push(notice_lines(
+            "The background choice could not be saved because the home directory is unknown.",
+        ));
+    }
     if change != AppearanceChange::Unchanged {
         effects.push(AppEffect::Appearance);
     }
@@ -10890,18 +11087,21 @@ fn opened_session(
             }
             hivecode_note_conversation(state, &session);
             let session_model = session_model(state);
+            let held_payload = state
+                .held_attachments
+                .front()
+                .filter(|payload| payload.expanded.display == text);
+            let request =
+                held_payload.map_or(text.as_str(), |payload| payload.expanded.text.as_str());
             if let Some(actions) = state.hivecode.intercept_submit_with_model(
                 &session,
                 &text,
+                request,
                 session_model
                     .as_ref()
                     .map(|(model, provider)| (model.as_str(), provider.as_str())),
             ) {
-                if state
-                    .held_attachments
-                    .front()
-                    .is_some_and(|payload| payload.expanded.display == text)
-                {
+                if held_payload.is_some() {
                     state.held_attachments.pop_front();
                 }
                 effects.extend(apply_hivecode(state, actions, false));
@@ -11819,6 +12019,96 @@ mod attachment_tests {
             line(&effects).as_deref(),
             Some("/talaria-workflows review the parser\nSession model: picked-model on provider-a")
         );
+    }
+
+    #[test]
+    fn a_held_workflow_routes_the_paste_after_its_composer_is_cleared() {
+        let mut state = AppState::new("cold-start");
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
+        let paste = "error α\n\tfirst detail\nsecond detail\nthird detail\nlast detail";
+        let label = state.attachments.chips.collapse_paste(paste);
+        let draft = format!("Review this: {label}");
+        let _ = submit(&mut state, draft.clone());
+        assert_eq!(
+            state.attachments.chips.expand_pastes(&draft).unwrap(),
+            draft
+        );
+
+        let session = opened().opened.take().unwrap();
+        let effects = opened_session(&mut state, session, None);
+        let (session, original_text, restore_text, command_line) = effects
+            .into_iter()
+            .find_map(|effect| match effect {
+                AppEffect::Hivecode {
+                    action:
+                        crate::hivecode::Action::RunCommand {
+                            session,
+                            original_text,
+                            restore_text,
+                            command_line,
+                        },
+                    ..
+                } => Some((session, original_text, restore_text, command_line)),
+                _ => None,
+            })
+            .expect("workflow command");
+        assert_eq!(original_text, draft);
+        assert_eq!(
+            command_line,
+            format!("/talaria-workflows Review this: {paste}")
+        );
+
+        let effects = update(
+            &mut state,
+            AppMessage::HivecodeDone {
+                session,
+                original_text,
+                restore_text,
+                outcome: Err(talaria_core::commands::ErrorView::NotConnected),
+            },
+        );
+        let restored = format!("Review this: {paste}");
+        assert!(effects.iter().any(|effect| matches!(effect,
+            AppEffect::LoadDraft(draft) if draft == &restored
+        )));
+    }
+
+    #[test]
+    fn a_workflow_followup_expands_the_paste_in_the_model_text() {
+        let mut state = opened();
+        state.hivecode = crate::hivecode::HivecodeService::new(true);
+        let session = SessionId::new("session");
+        let epoch = skill_epoch(state.opened.as_ref().unwrap());
+        state.hivecode.skill_sent(&session, epoch);
+        let paste = "error α\n\tfirst detail\nsecond detail\nthird detail\nlast detail";
+        let label = state.attachments.chips.collapse_paste(paste);
+        let draft = format!("Review this: {label}");
+
+        let effects = submit(&mut state, draft);
+        assert!(effects.iter().any(|effect| matches!(effect,
+            AppEffect::Send(Effect::SendPrompt { text, .. }) if text.contains(paste) && !text.contains(&label)
+        )));
+    }
+
+    #[test]
+    fn queue_shortcuts_expand_paste_before_sending_and_clear_the_visible_draft() {
+        for steer in [false, true] {
+            let mut state = opened();
+            let paste = "error α\n\tfirst detail\nsecond detail\nthird detail\nlast detail";
+            let draft = state.attachments.chips.collapse_paste(paste);
+            let intent = if steer {
+                QueueIntent::SteerText(draft.clone())
+            } else {
+                QueueIntent::SendDraftNow(draft.clone())
+            };
+            let effects = queue_intent(&mut state, intent);
+            assert!(effects.iter().any(|effect| matches!(effect,
+                AppEffect::Send(Effect::SendPrompt { text, .. }) if text == paste
+            )));
+            assert!(effects.iter().any(|effect| matches!(effect,
+                AppEffect::ClearSubmittedDraft(text) if text == &draft
+            )));
+        }
     }
 
     fn image(state: &mut AppState, path: &str) -> String {
@@ -13984,9 +14274,12 @@ fn apply<S: Screen>(
             }
             AppEffect::WorkflowDiscover => {
                 let sender = executor.sender.clone();
+                let read_local_cache = !state.remote_gateway;
                 tokio::spawn(async move {
-                    if let Ok(picker) =
-                        tokio::task::spawn_blocking(crate::workflow_progress::load_picker).await
+                    if let Ok(picker) = tokio::task::spawn_blocking(move || {
+                        crate::workflow_progress::load_picker(read_local_cache)
+                    })
+                    .await
                     {
                         let _ = sender.send(AppMessage::WorkflowDiscovered(picker));
                     }
@@ -13994,9 +14287,10 @@ fn apply<S: Screen>(
             }
             AppEffect::WorkflowOpen(path) => {
                 let sender = executor.sender.clone();
+                let read_local_cache = !state.remote_gateway;
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || {
-                        crate::workflow_progress::open_run(path)
+                        crate::workflow_progress::open_run(path, read_local_cache)
                     })
                     .await
                     .unwrap_or_else(|_| Err("workflow view task failed".into()));
@@ -14709,6 +15003,7 @@ fn apply<S: Screen>(
                 crate::hivecode::Action::RunCommand {
                     session,
                     original_text,
+                    restore_text,
                     command_line,
                 } => {
                     let runner = state.command_service.as_ref().map(|s| s.runner(None));
@@ -14722,6 +15017,7 @@ fn apply<S: Screen>(
                         AppMessage::HivecodeDone {
                             session,
                             original_text,
+                            restore_text,
                             outcome,
                         }
                     });
@@ -15380,7 +15676,10 @@ fn apply<S: Screen>(
             AppEffect::ThemeReport => {
                 if let Some(report) = screen.theme_report() {
                     let mut lines = theme_lines(&report);
-                    lines.push("  Built-in themes: terminal, ember, paper".to_owned());
+                    lines.push(format!(
+                        "  Built-in themes: {}",
+                        crate::theme_file::BUILTIN_THEMES.join(", ")
+                    ));
                     if let Some(file) = screen.theme_file_report() {
                         lines.extend(appearance::theme_file_lines(&file));
                     }
@@ -15391,6 +15690,9 @@ fn apply<S: Screen>(
             }
             AppEffect::ThemeFileCommand(argument) => {
                 run_theme_file_command(state, executor, argument)
+            }
+            AppEffect::RefreshThemeProfile => {
+                refresh_theme_profile(state, executor);
             }
             AppEffect::ContinueThemeFiles => start_next_theme_file_command(state, executor),
             AppEffect::Choice(work) => {
@@ -15626,7 +15928,7 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
     }
     state.profile = profile_name;
     if state.appearance.set_file_profile(&state.profile) {
-        run_theme_file_command(state, executor, "reload".into());
+        refresh_theme_profile(state, executor);
     }
     state.link = Some(link);
     state.background_service = service
@@ -15728,25 +16030,71 @@ fn run_theme_file_command(state: &mut AppState, executor: &Executor, argument: S
                 &state.profile,
             ));
     }
-    state.appearance.queue_file_command(argument);
+    state
+        .appearance
+        .queue_file_work(ThemeFileWork::Command(argument));
+    start_next_theme_file_command(state, executor);
+}
+
+fn refresh_theme_profile(state: &mut AppState, executor: &Executor) {
+    state
+        .appearance
+        .queue_file_work(ThemeFileWork::ProfileChanged);
     start_next_theme_file_command(state, executor);
 }
 
 fn start_next_theme_file_command(state: &mut AppState, executor: &Executor) {
-    let Some((generation, mut files, argument)) = state.appearance.begin_file_request() else {
+    let Some((generation, mut files, work)) = state.appearance.begin_file_request() else {
         return;
     };
+    let startup = state.appearance.startup_polarity();
     executor.send_later(async move {
         let result = tokio::task::spawn_blocking(move || {
-            let (lines, _) = files.command(&argument);
+            let lines = files.run_work(work, startup);
             (Box::new(files), lines)
         })
         .await
         .map_err(|_| {
-            "The theme file could not be loaded; the last good theme is unchanged.".to_owned()
+            "The theme choice could not be applied; the last good theme is unchanged.".to_owned()
         });
         AppMessage::ThemeFileDone { generation, result }
     });
+}
+
+/// Finish choices already confirmed before the terminal closed, including queued writes.
+async fn flush_theme_file_commands(
+    state: &mut AppState,
+    messages: &mut mpsc::UnboundedReceiver<AppMessage>,
+    executor: &Executor,
+    stderr: &mut String,
+) {
+    let finished = tokio::time::timeout(QUIT_WAIT, async {
+        while state.appearance.file_loading() {
+            let Some(message) = messages.recv().await else {
+                break;
+            };
+            if matches!(message, AppMessage::ThemeFileDone { .. }) {
+                for effect in update(state, message) {
+                    match effect {
+                        AppEffect::CommitLines(lines) => {
+                            for line in lines {
+                                stderr.push_str(&line);
+                                stderr.push('\n');
+                            }
+                        }
+                        AppEffect::ContinueThemeFiles => {
+                            start_next_theme_file_command(state, executor);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    })
+    .await;
+    if finished.is_err() {
+        stderr.push_str("Some theme choices could not be confirmed saved before exit.\n");
+    }
 }
 
 fn start_provider_service(state: &mut AppState, executor: &Executor) {
@@ -16817,7 +17165,8 @@ async fn run_inner<S: Screen>(
         state.appearance = AppearanceService::new(colors, polarity);
     }
     if let Some(files) = screen.startup_theme_files() {
-        let selected = files.file().is_some();
+        let startup = state.appearance.polarity();
+        let selected = files.file().is_some() || files.polarity(startup) != startup;
         state.appearance.set_theme_files(files);
         if selected {
             screen.appearance_changed(&state.appearance.view());
@@ -16862,6 +17211,7 @@ async fn run_inner<S: Screen>(
         state.pane_size.1,
     );
     state.layout.reasoning = screen.reasoning_display();
+    state.layout.mouse = screen.mouse_navigation();
     sync_models(&mut state, screen);
     sync_picker(&state, screen);
     draw_current_view(&state, screen);
@@ -16879,6 +17229,19 @@ async fn run_inner<S: Screen>(
 
     let (sender, mut messages) = mpsc::unbounded_channel();
     let executor = Executor::new(sender);
+    let effort_source = if setup.remote_gateway {
+        match remote_audio.as_ref() {
+            Some(hermes_client::audio_api::AudioRelay::Remote { config, store }) => {
+                Some(crate::subagents::EffortSource::Remote {
+                    config: config.clone(),
+                    store: store.clone(),
+                })
+            }
+            _ => None,
+        }
+    } else {
+        Some(crate::subagents::EffortSource::Local(setup.home.clone()))
+    };
     state.client_voice_worker = Some(Arc::new(crate::voice::relay::ClientAudio::new(
         setup.home.clone(),
         remote_audio,
@@ -16887,10 +17250,10 @@ async fn run_inner<S: Screen>(
         executor.sender.clone(),
     )));
     state.sender = Some(executor.sender.clone());
-    state.subagents = Some(crate::subagents::SubagentHub::new(
-        screen.subagents_config(),
-        executor.sender.clone(),
-    ));
+    state.subagents = Some(
+        crate::subagents::SubagentHub::new(screen.subagents_config(), executor.sender.clone())
+            .with_effort_source(effort_source),
+    );
     // The first frame is drawn; the fleet link starts in the background.
     state.fleet_enabled = setup.fleet.is_some();
     if let Some(cfg) = setup.fleet.take() {
@@ -17225,6 +17588,7 @@ async fn run_inner<S: Screen>(
             .stderr
             .push_str("Some model choices could not be saved before exit.\n");
     }
+    flush_theme_file_commands(&mut state, &mut messages, &executor, &mut outcome.stderr).await;
     drive_status(screen, hermes_client::is_suspicious_key).await;
     screen.restore();
     for warning in state.voice.take_warnings() {
@@ -19010,11 +19374,14 @@ mod settings_reload_key_tests {
                 .settings
                 .view()
                 .footer
-                .ends_with("· Ctrl+R reload list")
+                .ends_with("· Ctrl+R reload list · Esc cancel")
         );
         sync_models(&mut state, &mut ReloadOnF5);
         let footer = state.settings.view().footer;
-        assert!(footer.ends_with("· F5 reload list"), "{footer}");
+        assert!(
+            footer.ends_with("· F5 reload list · Esc cancel"),
+            "{footer}"
+        );
     }
 }
 
@@ -19221,6 +19588,13 @@ fn workflow_polled(
                 run.clone(),
                 talaria_workflow::progress::live::ProgressInput::Journal(batch.lines),
             );
+            if let Some(verdict) = batch.verdict {
+                effects.extend(workflow_input(
+                    state,
+                    run.clone(),
+                    talaria_workflow::progress::live::ProgressInput::Verdict(verdict),
+                ));
+            }
             effects.extend(workflow_input(
                 state,
                 run.clone(),
@@ -20038,6 +20412,7 @@ mod hivecode_visibility_tests {
             AppMessage::HivecodeDone {
                 session: SessionId::new("session"),
                 original_text: typed.into(),
+                restore_text: None,
                 outcome: Ok(reply),
             },
         )
@@ -20797,6 +21172,7 @@ mod hivecode_visibility_tests {
             AppMessage::HivecodeDone {
                 session: SessionId::new("session"),
                 original_text: typed.into(),
+                restore_text: None,
                 outcome: Ok(reply),
             },
         )
@@ -21542,6 +21918,7 @@ mod hivecode_visibility_tests {
             AppMessage::HivecodeDone {
                 session: SessionId::new("runtime-1"),
                 original_text: "fix the parser".into(),
+                restore_text: None,
                 outcome: Ok(reply),
             },
         );
@@ -21742,6 +22119,7 @@ mod hivecode_visibility_tests {
             AppMessage::HivecodeDone {
                 session: SessionId::new("session"),
                 original_text: "fix it".into(),
+                restore_text: None,
                 outcome: Ok(reply),
             },
         );

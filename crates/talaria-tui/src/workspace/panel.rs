@@ -136,6 +136,9 @@ pub struct WorkContents<'a> {
     pub waiting: &'a [WaitingRequest],
     /// The focused session's children.
     pub agents: &'a talaria_core::subagents::SubagentTree,
+    pub agent_clock: crate::subagents::AgentClock,
+    /// Next visible child activity change, measured when the panel lays out its rows.
+    pub agent_wake_ms: std::cell::Cell<Option<u64>>,
     /// The parent session's model. A child never inherits it.
     pub parent_model: Option<&'a str>,
     /// How many recent completions the agents section may spell out.
@@ -153,6 +156,7 @@ pub struct WorkContents<'a> {
 pub fn content_lines(work: &WorkContents<'_>, width: u16, height: u16) -> Vec<String> {
     use crate::{checklist::cut_to_width, history::sanitize};
     use talaria_core::{checklist::TodoStatus, subagents::RowState};
+    work.agent_wake_ms.set(None);
     if width == 0 || height == 0 {
         return Vec::new();
     }
@@ -258,6 +262,7 @@ pub fn content_lines(work: &WorkContents<'_>, width: u16, height: u16) -> Vec<St
     waiting.sort_by_key(|item| item.seq);
     let rows = work.agents.rows_in_order();
     let counts = work.agents.counts();
+    let mut wakes = vec![None; waiting.len()];
     let mut agent_items: Vec<Vec<String>> = waiting
         .iter()
         .map(|item| {
@@ -274,18 +279,23 @@ pub fn content_lines(work: &WorkContents<'_>, width: u16, height: u16) -> Vec<St
             .map(|r| work.agents.row(r.index))
             .filter(|r| r.state == status)
         {
-            let label = if status == RowState::Running {
-                "running"
-            } else {
-                "queued"
-            };
+            let signal = work.agent_clock.signal(row);
+            wakes.push(signal.wake_ms);
             agent_items.push(vec![
-                format!("> {} / {label}", literal(&row.goal)),
+                format!(
+                    "{} {}  {}",
+                    signal.glyph,
+                    signal.label,
+                    crate::subagents::compact_goal(&row.goal)
+                ),
                 format!(
                     "  model: {}",
                     literal(row.model.as_deref().unwrap_or("unknown"))
                 ),
-                "  effort: unknown".into(),
+                format!(
+                    "  effort: {}",
+                    literal(row.effort.as_deref().unwrap_or("unknown"))
+                ),
             ]);
         }
     }
@@ -295,7 +305,11 @@ pub fn content_lines(work: &WorkContents<'_>, width: u16, height: u16) -> Vec<St
         .recent_completion_count()
         .saturating_sub(recent.len());
     for row in recent {
-        agent_items.push(vec![format!("✓ {}", literal(&row.goal))]);
+        agent_items.push(vec![format!(
+            "{} {}",
+            row.state.glyph(),
+            literal(&row.goal)
+        )]);
     }
     if !agent_items.is_empty() || omitted_recent > 0 {
         groups.push((
@@ -354,13 +368,37 @@ pub fn content_lines(work: &WorkContents<'_>, width: u16, height: u16) -> Vec<St
                 break;
             }
             out.extend(item.iter().cloned());
+            if title.starts_with("Agents /")
+                && let Some(Some(wait)) = wakes.get(at)
+            {
+                work.agent_wake_ms.set(Some(
+                    work.agent_wake_ms.get().map_or(*wait, |old| old.min(*wait)),
+                ));
+            }
         }
         if !accounted && *omitted > 0 && out.len() + reserve < budget {
             out.push(format!("+{omitted} more"));
         }
     }
-    if spaced && !work.agents.rows_in_order().is_empty() && out.len() < budget {
+    if spaced && !rows.is_empty() && out.len() < budget {
         out.push("Alt+S details / Alt+A next".into());
+    }
+    if work.goal.is_none()
+        && work.needs_you == 0
+        && work.turn == crate::status::TurnState::Idle
+        && groups.is_empty()
+        && out.len() + 5 <= budget
+    {
+        out.extend(
+            [
+                "",
+                "No active tasks or agents",
+                "",
+                "/workflows  Browse runs",
+                "/kanban     Open board",
+            ]
+            .map(str::to_owned),
+        );
     }
     out.into_iter().take(budget).map(fit).collect()
 }
@@ -390,14 +428,22 @@ pub fn draw_work_with_theme(
             views.style(t::WORKSPACE_DIVIDER, Style::default()),
         );
     }
-    let width = area.width.saturating_sub(1);
+    let inset = if area.width >= 20 { 2 } else { 1 };
+    let width = area.width.saturating_sub(inset);
     for (y, line) in content_lines(work, width, area.height).iter().enumerate() {
-        buffer.set_line(
-            area.x + 1,
-            area.y + y as u16,
-            &work_line(line, work, views),
-            width,
-        );
+        let row = area.y + y as u16;
+        buffer.set_line(area.x + inset, row, &work_line(line, work, views), width);
+        if y == 0 || line.starts_with(['▸', '▾']) || line.starts_with("Agents /") {
+            let used = ratatui::text::Line::raw(line.as_str()).width() as u16;
+            for x in (area.x + inset + used + 1).min(area.right())..area.right().saturating_sub(1) {
+                buffer.set_string(
+                    x,
+                    row,
+                    views.divider_symbol("─"),
+                    views.style(t::WORK_DIVIDER, Style::default().dim()),
+                );
+            }
+        }
     }
     views.finish(area, buffer, t::WORK_BACKGROUND, true);
 }
@@ -436,6 +482,22 @@ fn work_line(
         return Line::from(vec![span("Verdict: ", t::WORK_LABEL), span(value, token)]);
     }
     let trimmed = line.trim_start();
+    if let Some((state, name)) = line.split_once("  ")
+        && let Some(glyph) = state.chars().next()
+    {
+        let token = match glyph {
+            '◐' | '◓' | '◑' | '◒' => Some(t::WORK_AGENT_RUNNING),
+            '○' | '◌' => Some(t::WORK_AGENT_QUEUED),
+            _ => None,
+        };
+        if let Some(token) = token {
+            return Line::from(vec![
+                span(state, token),
+                span("  ", token),
+                span(name, t::WORK_AGENT_NAME),
+            ]);
+        }
+    }
     for (mark, token) in [
         ("[ ]", t::WORK_TASK_PENDING),
         ("[>]", t::WORK_TASK_RUNNING),
@@ -462,6 +524,8 @@ fn work_line(
         ("! ", t::WORK_AGENT_WAITING),
         ("> ", t::WORK_AGENT_RUNNING),
         ("✓ ", t::WORK_AGENT_DONE),
+        ("✗ ", t::WORK_AGENT_FAILED),
+        ("■ ", t::WORK_AGENT_UNKNOWN),
     ] {
         if let Some(text) = line.strip_prefix(prefix) {
             let token = if text.ends_with(" / queued") {
@@ -498,7 +562,7 @@ fn work_line(
         t::WORK_SECTION
     } else if line.starts_with('+') {
         t::WORK_OVERFLOW
-    } else if line.starts_with("Alt+") {
+    } else if line.starts_with("Alt+") || line.starts_with('/') {
         t::WORK_HELP
     } else if line.starts_with("parked:") || line.starts_with("paused:") {
         t::WORK_GOAL

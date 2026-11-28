@@ -20,15 +20,17 @@ use super::{
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentEntry {
     pub key: String,
+    pub attempt: u32,
     pub label: String,
     /// The latest record's kind, for example `call_finished` or `call_attention`.
     pub last: &'static str,
     /// The kept outcome when the latest record is a finish.
     pub outcome: Option<CallOutcome>,
     /// The journal line of that finish, which a value kept in a blob needs.
-    seq: u64,
+    pub(super) seq: u64,
     /// Whether a restart request can be granted for it, read from its latest record.
     restartable: bool,
+    pub(crate) guardrail_halt: Option<String>,
 }
 impl AgentEntry {
     /// The agent's state in one word: `completed`, `failed`, `skipped`, `stopped`, `parked`
@@ -65,6 +67,8 @@ impl AgentEntry {
                 self.label,
                 self.state()
             )
+        } else if self.last == "call_report_restart_requested" {
+            format!("a restart is already queued for agent {}", self.label)
         } else if self.last == "call_attention" {
             format!(
                 "agent {} is parked: answer it with talaria workflow resolve; the rerun answer runs it again",
@@ -88,7 +92,9 @@ fn restartable(last: &Record) -> bool {
     match last {
         Record::CallFinished { outcome, .. } => matches!(
             outcome,
-            CallOutcome::Failed { .. } | CallOutcome::Stopped { .. }
+            CallOutcome::Failed { .. }
+                | CallOutcome::FailedWithReport { .. }
+                | CallOutcome::Stopped { .. }
         ),
         Record::TurnSettled { outcome, .. } => stopped_outcome(outcome),
         Record::CallResolved { .. } => true,
@@ -101,7 +107,7 @@ pub fn agents(records: &[RecordLine]) -> Vec<AgentEntry> {
     let mut order: Vec<String> = Vec::new();
     let mut entries: BTreeMap<String, AgentEntry> = BTreeMap::new();
     for line in records {
-        let Some((key, _)) = line.record.identity() else {
+        let Some((key, attempt)) = line.record.identity() else {
             continue;
         };
         if !entries.contains_key(key) {
@@ -109,16 +115,39 @@ pub fn agents(records: &[RecordLine]) -> Vec<AgentEntry> {
         }
         let entry = entries.entry(key.to_owned()).or_insert_with(|| AgentEntry {
             key: key.to_owned(),
+            attempt,
             label: String::new(),
             last: "",
             outcome: None,
             seq: 0,
             restartable: false,
+            guardrail_halt: None,
         });
+        if attempt > entry.attempt {
+            entry.attempt = attempt;
+            entry.guardrail_halt = None;
+        }
+        if attempt == entry.attempt
+            && let Record::TurnSettled {
+                result_meta,
+                final_text,
+                ..
+            } = &line.record
+            && let Some(warning) =
+                crate::progress::guardrail_halt(result_meta, final_text.as_deref())
+        {
+            entry.guardrail_halt = Some(warning);
+        }
         if let Record::CallIntent { label, .. } = &line.record {
             entry.label = label.clone();
         }
         entry.last = line.record.kind();
+        if matches!(line.record, Record::CallReportRestartRequested { .. }) {
+            // The operator has authorized a retry. The kept report still belongs to this
+            // attempt until that retry starts.
+            entry.restartable = false;
+            continue;
+        }
         entry.seq = line.seq;
         entry.restartable = restartable(&line.record);
         entry.outcome = match &line.record {
@@ -157,7 +186,11 @@ pub enum AgentError {
 }
 
 /// The agent a name picks: its key, or a label only one agent has.
-fn pick<'a>(run: &str, all: &'a [AgentEntry], name: &str) -> Result<&'a AgentEntry, AgentError> {
+pub(super) fn pick<'a>(
+    run: &str,
+    all: &'a [AgentEntry],
+    name: &str,
+) -> Result<&'a AgentEntry, AgentError> {
     if let Some(entry) = all.iter().find(|e| e.key == name) {
         return Ok(entry);
     }
@@ -281,6 +314,12 @@ pub struct AgentResult {
     /// The mark of an agent Hermes stopped at its step cap whose reply was kept.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cut_short: Option<String>,
+    /// A Hermes guardrail stopped a turn before the agent's eventual result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guardrail_halt: Option<String>,
+    /// Provenance of a recovered report, whose value is available even when the worker failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovered_report: Option<crate::engine::RecoveredReport>,
 }
 
 /// The kept value of one agent of a run, by label or key.
@@ -295,6 +334,8 @@ pub fn agent_result(runs_dir: &Path, target: &str, name: &str) -> Result<AgentRe
         value: None,
         reason: None,
         cut_short: None,
+        guardrail_halt: entry.guardrail_halt.clone(),
+        recovered_report: None,
     };
     if let Some(outcome) = &entry.outcome {
         match crate::journal::stored_outcome(&dir, outcome, entry.seq)? {
@@ -306,8 +347,26 @@ pub fn agent_result(runs_dir: &Path, target: &str, name: &str) -> Result<AgentRe
             AgentOutcome::Failed { reason }
             | AgentOutcome::Stopped { reason }
             | AgentOutcome::Abort { reason } => result.reason = Some(reason),
+            AgentOutcome::FailedWithReport {
+                reason,
+                value,
+                report,
+            } => {
+                result.reason = Some(reason);
+                result.value = Some(value);
+                result.recovered_report = Some(report);
+            }
             AgentOutcome::Skipped => {}
         }
+    }
+    if result.state == "failed"
+        && result.value.is_none()
+        && let Some(saved) = super::evidence::associated(&dir, entry.seq)?
+        && saved.key == entry.key
+        && saved.attempt == entry.attempt
+    {
+        result.value = Some(super::evidence::read_value(&dir, &saved.report, entry.seq)?);
+        result.recovered_report = Some(saved.report);
     }
     Ok(result)
 }
@@ -349,6 +408,55 @@ mod tests {
             turns: 1,
             outcome,
         }
+    }
+
+    #[test]
+    fn guardrail_warning_survives_a_successful_correction() {
+        let id = key(0);
+        let mut halt = settled(
+            id.clone(),
+            "completed",
+            json!({"turn_exit_reason":"guardrail_halt"}),
+        );
+        if let Record::TurnSettled { final_text, .. } = &mut halt {
+            *final_text = Some("I stopped retrying without making progress.".into());
+        }
+        let records = vec![
+            line(1, halt),
+            line(2, settled(id.clone(), "completed", json!({}))),
+            line(
+                3,
+                finished(
+                    id.clone(),
+                    CallOutcome::Completed {
+                        value: Some(json!({"ok":true})),
+                        value_ref: None,
+                        cut_short: None,
+                    },
+                ),
+            ),
+        ];
+        let warning = agents(&records)[0].guardrail_halt.clone().unwrap();
+        assert!(warning.contains("I stopped retrying"));
+        let mut progress = crate::progress::RunProgress::empty("test".into());
+        // Progress creates its row from a call record; the journal's call intent normally does so.
+        progress.apply(&line(
+            1,
+            finished(
+                id.clone(),
+                CallOutcome::Completed {
+                    value: Some(json!(null)),
+                    value_ref: None,
+                    cut_short: None,
+                },
+            ),
+        ));
+        for (index, record) in records.into_iter().enumerate() {
+            progress.apply(&line(index as u64 + 2, record.record));
+        }
+        let agent = progress.agent(&id).unwrap();
+        assert_eq!(agent.state, crate::progress::AgentState::Done);
+        assert_eq!(agent.guardrail_halt.as_deref(), Some(warning.as_str()));
     }
 
     #[test]
@@ -498,6 +606,7 @@ mod tests {
                 cwd: None,
             },
             request_id: format!("request-{n}"),
+            report_baseline: None,
         };
         let records = [
             Record::RunStarted {

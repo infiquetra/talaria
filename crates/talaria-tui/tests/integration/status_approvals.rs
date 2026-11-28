@@ -81,11 +81,11 @@ fn segment_position_priority_and_snapshot() {
         " minimax-m3.1-flash │ approvals: off (this session) │ ctx 34%"
     );
 
-    // At 40 columns the context and the model go.
+    // At 40 columns the approvals mode is still visible beside the abbreviated model.
     let (rows, _) = shown(&inputs, 40);
     assert_eq!(
         row_with(&rows, "approvals:"),
-        " approvals: off (this session)"
+        " minima… │ approvals: off (this session)"
     );
 
     // The approvals cell carries the warning tone's style.

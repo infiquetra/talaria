@@ -22,8 +22,8 @@ const MAX_SELECTABLE: usize = 8;
 const NAME_CAP: usize = 28;
 /// Below this width the tag is dropped.
 const TAG_MIN_WIDTH: u16 = 80;
-/// Below this width the description is dropped as well.
-const DESCRIPTION_MIN_WIDTH: u16 = 50;
+/// Space for a description beside its command on a compact row.
+const COMPACT_DESCRIPTION: usize = 12;
 /// At or above this width the footer shows the key hints.
 const HINT_MIN_WIDTH: u16 = 60;
 /// Tag of a row the connection refused.
@@ -68,18 +68,21 @@ fn render_palette_inner(
     let list_lines = usize::from(lines) - 1;
     let window = window(&state.rows, state.selected, list_lines);
     let name_column = name_column(&state.rows, area.width);
+    let style = |token, fallback| views.map_or(fallback, |v| v.inline(token, fallback));
     for (offset, index) in window.take(list_lines).enumerate() {
         let y = area.y + u16::try_from(offset).unwrap_or(0);
         let row = &state.rows[index];
-        draw_row(buf, area, y, row, name_column, views);
         if index == state.selected && row.kind == RowKind::Command {
+            let reverse = Style::new().add_modifier(Modifier::REVERSED);
             buf.set_style(
                 Rect::new(area.x, y, area.width, 1),
-                Style::new().add_modifier(Modifier::REVERSED),
+                views.map_or(reverse, |v| v.inline_selection(t::LIST_SELECTED, reverse)),
             );
         }
+        draw_row(buf, area, y, row, name_column, views);
     }
-    draw_footer(buf, area, area.y + lines - 1, state);
+    let footer_style = style(t::LIST_MUTED, Style::new().add_modifier(Modifier::DIM));
+    draw_footer(buf, area, area.y + lines - 1, state, footer_style);
     if let Some(views) = views {
         views.finish(area, buf, t::LIST_ROW, false);
     }
@@ -100,9 +103,13 @@ fn palette_height(state: &PaletteState, terminal_rows: u16) -> u16 {
     if !state.open || state.rows.is_empty() {
         return 0;
     }
-    let cap = (terminal_rows / 3).max(3);
-    let list_lines = window(&state.rows, state.selected, usize::from(cap) - 1).len();
-    u16::try_from(list_lines + 1).unwrap_or(cap).min(cap)
+    let list_lines = window(&state.rows, state.selected, page_rows(terminal_rows)).len();
+    u16::try_from(list_lines + 1).unwrap_or(u16::MAX)
+}
+
+/// Number of list rows above the footer at the current terminal height.
+pub fn page_rows(terminal_rows: u16) -> usize {
+    usize::from((terminal_rows / 3).max(3) - 1)
 }
 
 /// The run of rows to draw: at most [`MAX_SELECTABLE`] selectable rows and `max_lines` lines.
@@ -145,9 +152,13 @@ fn name_column(rows: &[PaletteRow], width: u16) -> usize {
         .map(|row| cell_width(&clean(&row.name)))
         .max()
         .unwrap_or(0);
-    longest
-        .min(NAME_CAP)
-        .min(usize::from(width).saturating_sub(2))
+    let width = usize::from(width);
+    let room = if (32..50).contains(&width) {
+        width - COMPACT_DESCRIPTION - 4
+    } else {
+        width.saturating_sub(2)
+    };
+    longest.min(NAME_CAP).min(room)
 }
 
 fn draw_row(
@@ -158,17 +169,21 @@ fn draw_row(
     name_column: usize,
     views: Option<&ViewStyles>,
 ) {
+    let style = |token, fallback| views.map_or(fallback, |v| v.inline(token, fallback));
     let width = usize::from(area.width);
     let text_width = width.saturating_sub(2);
     let x = area.x.saturating_add(2);
     match row.kind {
         RowKind::Header => {
-            let style = Style::new().add_modifier(Modifier::BOLD | Modifier::DIM);
+            let style = style(
+                t::LIST_HEADER,
+                Style::new().add_modifier(Modifier::BOLD | Modifier::DIM),
+            );
             let text = fit(&clean(&row.name), text_width);
             buf.set_stringn(x, y, &text, text_width, style);
         }
         RowKind::Hint | RowKind::Status => {
-            let style = Style::new().add_modifier(Modifier::DIM);
+            let style = style(t::LIST_MUTED, Style::new().add_modifier(Modifier::DIM));
             let text = fit(&clean(&row.name), text_width);
             buf.set_stringn(x, y, &text, text_width, style);
         }
@@ -200,33 +215,32 @@ fn draw_command(
         None
     };
     let tag_start = tag.map(|(text, _)| width.saturating_sub(1 + cell_width(text)));
-    if area.width >= DESCRIPTION_MIN_WIDTH {
-        let description_start = 2 + name_column + 2;
-        let end = tag_start.map_or(width, |start| start.saturating_sub(2));
-        let room = end.saturating_sub(description_start);
-        if room > 0 {
-            let text = fit(&clean(&row.description), room);
-            let x = area.x + u16::try_from(description_start).unwrap_or(0);
-            buf.set_stringn(x, y, &text, room, Style::new());
-        }
+    let description_start = 2 + name_column + 2;
+    let end = tag_start.map_or(width, |start| start.saturating_sub(2));
+    let room = end.saturating_sub(description_start);
+    let description = clean(&row.description);
+    if room >= 8 || (!description.is_empty() && description.width() <= room) {
+        let text = fit(&description, room);
+        let x = area.x + u16::try_from(description_start).unwrap_or(0);
+        buf.set_stringn(x, y, &text, room, Style::new());
+    }
+    if row.refused {
+        let fallback = Style::new().add_modifier(Modifier::DIM);
+        let style = views.map_or(fallback, |v| v.inline(t::LIST_DISABLED, fallback));
+        buf.set_style(Rect::new(area.x, y, area.width, 1), style);
     }
     if let (Some((text, style)), Some(start)) = (tag, tag_start) {
         let x = area.x + u16::try_from(start).unwrap_or(0);
         buf.set_stringn(x, y, text, width - start, style);
-    }
-    if row.refused {
-        buf.set_style(
-            Rect::new(area.x, y, area.width, 1),
-            Style::new().add_modifier(Modifier::DIM),
-        );
     }
 }
 
 /// The tag text and style of a command row. An argument item has no source and no tag.
 fn tag_for<'a>(row: &'a PaletteRow, views: Option<&ViewStyles>) -> Option<(&'a str, Style)> {
     let dim = Style::new().add_modifier(Modifier::DIM);
+    let style = |token| views.map_or(dim, |v| v.inline(token, dim));
     if row.refused {
-        return Some((REFUSED_TAG, dim));
+        return Some((REFUSED_TAG, style(t::BADGE_DISABLED)));
     }
     match row.source.as_ref()? {
         CommandSource::Talaria => Some((
@@ -235,13 +249,12 @@ fn tag_for<'a>(row: &'a PaletteRow, views: Option<&ViewStyles>) -> Option<(&'a s
                 v.inline(t::PALETTE_ORIGIN, crate::theme::legacy::palette_origin())
             }),
         )),
-        other => Some((other.tag(), dim)),
+        other => Some((other.tag(), style(t::LIST_MUTED))),
     }
 }
 
-fn draw_footer(buf: &mut Buffer, area: Rect, y: u16, state: &PaletteState) {
+fn draw_footer(buf: &mut Buffer, area: Rect, y: u16, state: &PaletteState, dim: Style) {
     let width = usize::from(area.width);
-    let dim = Style::new().add_modifier(Modifier::DIM);
     if let Some(text) = &state.footer {
         buf.set_stringn(area.x, y, fit(&clean(text), width), width, dim);
         return;
@@ -252,7 +265,14 @@ fn draw_footer(buf: &mut Buffer, area: Rect, y: u16, state: &PaletteState) {
         .filter(|row| row.kind == RowKind::Command)
         .count();
     if area.width < HINT_MIN_WIDTH {
-        buf.set_stringn(area.x, y, format!("{shown}/{}", state.total), width, dim);
+        let count = format!("{shown}/{}", state.total);
+        let hint = "Esc close";
+        let text = if count.width() + hint.width() + 3 <= width {
+            format!("{hint} · {count}")
+        } else {
+            fit(hint, width)
+        };
+        buf.set_stringn(area.x, y, text, width, dim);
         return;
     }
     let count = format!("{shown} of {}", state.total);

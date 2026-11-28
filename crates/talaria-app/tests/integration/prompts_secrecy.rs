@@ -175,6 +175,7 @@ fn expect_editing(outcome: KeyOutcome, observed: &mut Observed) {
             intent,
             interrupt_requested,
             notice,
+            ..
         } => {
             assert!(intent.is_none(), "editing the field produced an intent");
             assert!(!interrupt_requested, "editing the field asked to interrupt");
@@ -283,6 +284,7 @@ async fn exercise(entry: Entry) {
         intent: Some(intent),
         interrupt_requested,
         notice,
+        ..
     } = outcome
     else {
         panic!("Enter on a masked card should produce an intent");

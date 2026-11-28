@@ -2,6 +2,86 @@
 
 > Future work with priority, rough effort, and worth-it-when triggers.
 
+## 2026-11-25
+
+### Terminal interface feedback validated on November 25
+
+All nine items were implemented and checked in the local release build. The project
+check passed 5,646 tests with 83.70% line coverage. The previously recorded
+status-command shutdown warning recurred. The numbers in parentheses refer to the
+original observations.
+[Terminal test](../handoff/2026-11-25-tui-test/README.md) ·
+[Usability review](../handoff/2026-11-25-tui-usability/README.md)
+
+| Order | Completed change | Verification |
+| --- | --- | --- |
+| 1 | Slash command search and paging (1, 2, 4) | After connecting to Hermes, `/j` showed `/journey` and `/p5js` once each. Home, End, Page Up and Page Down moved the selection. The name collision hint appears when entering the affected `/plan` command. |
+| 2 | Clean menu bar and dropdowns (9) | Switched to the menu layout over a populated transcript, opened a dropdown and closed it. The first frame and subsequent menu paints cleared the underlying cells. |
+| 3 | Kanban keyboard and mouse controls (10) | Ctrl+Z suspended Talaria from the board and the shell's `fg` resumed it. Ctrl+C reaches the interrupt action in board, filter and comment focus. The close hint responds to a click. The stream status uses words. |
+| 4 | Readable capability errors and model-switch confirmations | Refusals survive unbound keys and remain in session history after closing the overlay. Input and rendering tests cover both sides of the 250-millisecond confirmation guard, including when the instructions appear. |
+| 5 | Quiet theme and session pickers (5, 6) | `/theme` opens the picker. `/theme report` prints the full diagnostic. The 100-session limit appears inside `/resume` and disappears when the picker closes. |
+| 6 | Readable compact layouts (11, 12, 17) | At 40×16 the chat status showed the abbreviated active model and approvals, slash matches kept descriptions, and the review size warning showed how to exit. Rendering tests cover word wrapping and exit hints in the other affected views. |
+| 7 | Plain-language session names, settings and account notices (13–16) | The subagents view used a renamed conversation's title. Backup settings recognized saved booleans, and settings help named the gateway when a restart might be required. Empty `/copy` explained that there was no finished reply. Connector consent reflected the signed-in profile. Tests cover guest, signed-out and unknown states. |
+| 8 | Discoverable keyboard help and mouse support | F3 opened help and Escape restored a composer draft containing `?`. A terminal regression test also opened help on a selected multiple-choice answer, returned to that answer and submitted it. Clicking New on the scheduled jobs screen opened the form. Keyboard-only views identify their input method. |
+| 9 | OpenRouter credential setup and removal | Hermes 0.23.4 rejected `openrouter` in `model.save_key`. In a disposable profile, a saved test key survived reopening and a refused replacement. After confirmed removal, the environment file had no OpenRouter entry and reopening Providers showed “no key”. |
+
+**Behaviors to preserve and questions still open**
+
+- **OpenRouter in the default profile.** The operator saw “Hermes does not know
+  the provider openrouter” after pasting a key on step 1 of Providers. This is
+  the error from the key-saving operation described in item 9. The disposable
+  profile check covered saving, reopening, a refused replacement and removal.
+  The pictured form says “Saved to profile” before confirmation. The updated
+  form says “Destination” and identifies the profile and environment variable.
+  The outcome of the pictured attempt in the default profile is unverified.
+- **Slash drafts and thinking display (3, 8).** Esc clears a lone slash and preserves
+  a longer draft. The bare `/thinking` command toggles the display by design. Both have
+  regression tests. The command hint now describes the toggle.
+  [Slash draft test](../../crates/talaria-core/tests/integration/commands_palette.rs) ·
+  [Thinking command test](../../crates/talaria-core/tests/integration/commands_local_layout.rs)
+- **Workflow picker (7).** The installed build displayed saved runs in the normal
+  folder. With an explicitly empty runs folder it displayed “no runs yet”, instructions
+  for starting a run and an Esc hint. The earlier blank frame lacks a reproduction.
+- **Interrupt and focus.** Ctrl+C interrupts the turn while an overlay keeps its
+  selection or text field. Ctrl+T on a prompt card preserves card focus.
+- **Timed notices.** Hermes warnings and errors already reach the transcript when
+  their text changes. Talaria retains keyed notices separately and keeps up to 50
+  changes to session status. The capabilities overlay now also records refusals in session
+  history. [Capabilities dismissal and refusal tests](../../crates/talaria-core/src/capabilities/state.rs) ·
+  [Session reducer](../../crates/talaria-core/src/session/reducer.rs)
+- **Accessibility.** Reduced motion already has tests for a stationary workflow glyph
+  and the activity line. Retain that acceptance check for future motion. Print mode
+  handles a single prompt. Screen-reader behavior in an interactive conversation still
+  needs an assistive-technology session before defining a defect or choosing a linear
+  interaction mode.
+
+The afternoon review also changed how a command collision reaches the transcript,
+which Kanban keys respond to a click, and what stays visible on narrow screens.
+[Accepted recommendations and regression coverage](../handoff/2026-11-25-tui-recommendations-accepted/README.md)
+
+## 2026-11-24
+
+### Make the ordinary theme report short enough to read in chat — closed November 25
+
+Opening `/theme` now shows the picker. Use `/theme report` for the detailed source and
+contrast report. See item 5 in the November 25 table above.
+
+### Identify bundled themes correctly in the selection confirmation
+
+With an empty user themes folder, `/theme use homebrew` reports
+`Theme file: themes/homebrew.toml.` The bundled theme lives inside the executable.
+The confirmation in `ThemeFileSession::command` formats the same path for bundled and
+user files. When revisiting the wording, check a bundled selection and a user file
+overriding a bundled identifier.
+
+### Investigate the status-command shutdown test's leak warning
+
+Both November 24 coverage runs passed their assertions, including all 5,600 tests
+in the final run. The test runner
+marked `status_command::shutdown_kills_a_command_in_flight` as `LEAK`. Its assertions
+passed. Check which child still held a test output pipe open when the runner finished
+the test. The theme review did not establish whether this affects an interactive session.
+
 ## 2026-11-04
 
 ### ~~Bind the completed picker surfaces to the theme catalogue~~ — CLOSED 2026-11-05

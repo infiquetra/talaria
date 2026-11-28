@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zeroize::Zeroize;
 
-use crate::rest::{RestClient, RestError};
+use crate::rest::{Method, RequestOpts, RestClient, RestError, map_reply};
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct EnvVarWire {
@@ -232,6 +232,54 @@ async fn post<T: serde::de::DeserializeOwned>(
 
 pub async fn load_env(client: &RestClient) -> Result<BTreeMap<String, EnvVarWire>, RestError> {
     decode(client.get_json("/api/env").await?)
+}
+/// OpenRouter is a built-in route outside Hermes's model.save_key provider registry.
+/// The native HTTP ticket binds this write to the selected profile.
+pub async fn save_openrouter_key(client: &RestClient, key: &str) -> Result<(), RestError> {
+    const NAME: &str = "OPENROUTER_API_KEY";
+    let body = SecretBody(serde_json::json!({"key": NAME, "value": key, "provider_setup": true}));
+    let reply = client.put_json("/api/env", &body.0).await?;
+    if reply["ok"] == true && reply["key"] == NAME {
+        Ok(())
+    } else {
+        Err(RestError::BadBody(
+            "unconfirmed OpenRouter key write".into(),
+        ))
+    }
+}
+
+/// Remove the selected profile's OpenRouter environment key and its Hermes-managed mirrors.
+/// Returns false only for Hermes's explicit key-absent response.
+pub async fn remove_openrouter_key(client: &RestClient) -> Result<bool, RestError> {
+    const NAME: &str = "OPENROUTER_API_KEY";
+    const PATH: &str = "/api/env";
+    let body = serde_json::to_vec(&serde_json::json!({"key": NAME}))
+        .map_err(|_| RestError::BadBody("invalid request JSON".into()))?;
+    let (status, bytes, ticket) = client
+        .exchange(Method::Delete, PATH, Some(body), RequestOpts::default())
+        .await?;
+    if status == 404
+        && serde_json::from_slice::<Value>(&bytes)
+            .is_ok_and(|reply| reply["detail"] == "OPENROUTER_API_KEY not found in .env")
+    {
+        return Ok(false);
+    }
+    let bytes = map_reply(
+        Method::Delete,
+        PATH,
+        status,
+        bytes,
+        ticket.as_ref().map(crate::Ticket::expose),
+    )?;
+    let reply: Value =
+        serde_json::from_slice(&bytes).map_err(|_| RestError::BadBody("invalid JSON".into()))?;
+    if reply["ok"] == true && reply["found"] == true && reply["key"] == NAME {
+        Ok(true)
+    } else {
+        Err(RestError::BadBody(
+            "unconfirmed OpenRouter key removal".into(),
+        ))
+    }
 }
 pub async fn check_key(
     client: &RestClient,

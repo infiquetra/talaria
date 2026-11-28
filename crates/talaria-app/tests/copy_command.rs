@@ -52,6 +52,15 @@ fn has_copy_reply(effects: &[AppEffect], expected: Option<&str>) -> bool {
 #[test]
 fn copy_emits_clipboard_text_and_a_notice() {
     let mut state = opened_state("s");
+    let empty = update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/copy".into())),
+    );
+    assert!(has_notice(
+        &empty,
+        "No finished assistant reply to copy yet."
+    ));
+    assert!(!has_copy_reply(&empty, None));
     state
         .opened
         .as_mut()

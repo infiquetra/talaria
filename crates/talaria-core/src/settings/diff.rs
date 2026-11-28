@@ -123,6 +123,12 @@ pub(crate) fn format_value(key: &str, value: Option<&Value>) -> String {
     if is_secret_key(key) || contains_secret_key(value) {
         return "•••••••• (r reveals once)".into();
     }
+    if key == "updates.pre_update_backup"
+        && let Some(spec) = super::choice_spec(key)
+        && let Some(mode) = super::values::reads_as(spec, &super::values::option_text(value))
+    {
+        return mode.value.to_owned();
+    }
     if let Value::Array(items) = value {
         return format!(
             "[{}]",

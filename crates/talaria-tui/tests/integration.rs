@@ -13,6 +13,12 @@ mod pager_support;
 #[path = "status_support/mod.rs"]
 mod status_support;
 mod support;
+#[path = "integration/theme_readability.rs"]
+mod theme_readability;
+#[path = "support/theme_scenarios.rs"]
+mod theme_scenarios;
+#[path = "support/theme_tabs.rs"]
+mod theme_tabs;
 #[path = "support/view_colours.rs"]
 mod view_colours_support;
 

@@ -157,6 +157,14 @@ pub enum SettingsKey {
     Char(char),
     Edit(EditKey),
     Paste(String),
+    Select(SettingsTarget),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettingsTarget {
+    Category(String),
+    Field(String),
+    Link(String),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsAction {
@@ -221,17 +229,26 @@ pub struct SettingsView {
     pub cursor: usize,
     pub banner: Vec<String>,
     pub detail: String,
+    /// Structured help for the selected field in the browsing inspector.
+    pub field_help: Option<FieldHelp>,
     pub footer: String,
     pub review_rows: Vec<ReviewRow>,
     pub review_scroll: usize,
     pub conflict_rows: Vec<Conflict>,
     pub filter: String,
+    pub filter_cursor: Option<usize>,
     pub editor: Option<SettingsEditorView>,
     pub choices: Vec<SettingsChoice>,
     pub choice_cursor: usize,
     pub choice_filter: String,
     pub links: Vec<String>,
     pub help: Vec<(String, String)>,
+}
+#[derive(Clone)]
+pub struct FieldHelp {
+    pub description: String,
+    pub default_value: String,
+    pub note: String,
 }
 #[derive(Clone, Default)]
 pub struct SettingsRow {
@@ -401,6 +418,7 @@ private_debug!(
     self,
     match self {
         Self::Action(_) => "Action",
+        Self::Select(_) => "Select",
         Self::Char(_) => "Char",
         Self::Edit(_) => "Edit",
         Self::Paste(_) => "Paste",
@@ -529,6 +547,7 @@ impl SettingsState {
                 {
                     return Vec::new();
                 }
+                snapshot.schema.complete_help();
                 if self.reloading {
                     if let Some(old) = &self.snapshot {
                         let (_, outside) =
@@ -737,6 +756,41 @@ impl SettingsState {
             self.fields().len()
         };
         self.cursor = self.cursor.min(len.saturating_sub(1));
+    }
+
+    fn select(&mut self, target: SettingsTarget) {
+        if self.screen != Screen::Browsing || self.filter_focus {
+            return;
+        }
+        match target {
+            SettingsTarget::Category(name) if self.filter.is_empty() => {
+                let Some(snapshot) = &self.snapshot else {
+                    return;
+                };
+                let categories = snapshot.schema.categories();
+                let index = categories
+                    .iter()
+                    .position(|category| category == &name)
+                    .or_else(|| {
+                        (name == "More" && !self.links.is_empty()).then_some(categories.len())
+                    });
+                if let Some(index) = index.filter(|index| *index != self.category) {
+                    self.category = index;
+                    self.cursor = 0;
+                }
+            }
+            SettingsTarget::Field(key) if !self.more() => {
+                if let Some(index) = self.fields().iter().position(|field| field.key == key) {
+                    self.cursor = index;
+                }
+            }
+            SettingsTarget::Link(label) if self.more() => {
+                if let Some(index) = self.links.iter().position(|link| link.label == label) {
+                    self.cursor = index;
+                }
+            }
+            _ => {}
+        }
     }
     fn kind(&self, field: &FieldView) -> ValueKind {
         let Some(snapshot) = &self.snapshot else {
@@ -981,6 +1035,10 @@ impl SettingsState {
     }
     fn key(&mut self, key: SettingsKey) -> Vec<SettingsEffect> {
         if self.busy() {
+            return Vec::new();
+        }
+        if let SettingsKey::Select(target) = key {
+            self.select(target);
             return Vec::new();
         }
         if matches!(key, SettingsKey::Action(SettingsAction::Reload))
@@ -1922,6 +1980,7 @@ impl SettingsState {
             review_scroll: self.review_scroll,
             banner: self.banner.clone(),
             filter: self.filter.clone(),
+            filter_cursor: self.filter_focus.then_some(self.filter_caret),
             ..SettingsView::default()
         };
         // What the number editor allows, shown first so a narrow screen still has it.
@@ -2009,6 +2068,13 @@ impl SettingsState {
                             .collect::<Vec<_>>()
                             .join(", ")
                     ));
+                }
+                if self.screen == Screen::Browsing && self.reveal.is_none() {
+                    view.field_help = Some(FieldHelp {
+                        description: field.description.clone(),
+                        default_value: default,
+                        note: reason,
+                    });
                 }
             }
         }
@@ -2154,9 +2220,9 @@ impl SettingsState {
                             .selected()
                             .is_some_and(|field| self.kind(&field) == ValueKind::Many)
                         {
-                            "Space tick · Enter keep ticks · ↑↓ move · type to filter · Esc cancel"
+                            "Space tick · Enter keep ticks · ↑↓ move · type to filter"
                         } else {
-                            "type to filter · ↑↓ move · PgUp PgDn page · Enter choose · Esc cancel"
+                            "type to filter · ↑↓ move · PgUp PgDn page · Enter choose"
                         },
                     );
                     if self.open_list().is_some()
@@ -2164,6 +2230,7 @@ impl SettingsState {
                     {
                         footer.push_str(&format!(" · {key} reload list"));
                     }
+                    footer.push_str(" · Esc cancel");
                     footer
                 }
                 _ => "Enter edit · / filter · a review · ? help · Esc close".into(),

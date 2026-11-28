@@ -14,23 +14,6 @@ pub const SAVED_SUFFIX: &str = "-saved";
 const NEUTRAL_NAME: &str = "Talaria workflow";
 const NEUTRAL_EMAIL: &str = "talaria-workflow@localhost.invalid";
 
-/// Options for every command here, beyond those `run` always sets: no hook runs (a reference
-/// update would run `reference-transaction`) and no signing program is started.
-fn hardened<'a>(args: &[&'a OsStr]) -> Vec<&'a OsStr> {
-    let mut all: Vec<&OsStr> = vec![
-        "-c".as_ref(),
-        if cfg!(windows) {
-            "core.hooksPath=NUL".as_ref()
-        } else {
-            "core.hooksPath=/dev/null".as_ref()
-        },
-        "-c".as_ref(),
-        "commit.gpgSign=false".as_ref(),
-    ];
-    all.extend_from_slice(args);
-    all
-}
-
 /// The folder every command runs in, and environment every command gets (empty outside tests).
 struct Folder<'a> {
     path: &'a Path,
@@ -40,7 +23,7 @@ struct Folder<'a> {
 fn git_text(folder: &Folder, args: &[&OsStr], env: &[(&str, &OsStr)]) -> Result<String, String> {
     let mut all = folder.env.to_vec();
     all.extend_from_slice(env);
-    let output = run_with(folder.path, &hardened(args), &all)?;
+    let output = run_with(folder.path, args, &all)?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
@@ -181,84 +164,6 @@ fn unreadable_paths(stderr: &str) -> Vec<String> {
     found
 }
 
-/// Configuration that switches off every filter driver the repository's own configuration
-/// (local, worktree or an included file) sets any key of, clean, process and required alike,
-/// as `GIT_CONFIG_COUNT` entries added after any
-/// the caller's environment already has. Filters from the user's global or system
-/// configuration, such as Git LFS, still run: they are the user's own programs, and without
-/// them every file they manage would be saved in its raw form. A repository filter is not run,
-/// so a file it manages is saved as it is in the folder.
-fn filter_overrides(folder: &Folder) -> Result<Vec<(String, OsString)>, String> {
-    let mut all = folder.env.to_vec();
-    all.push(("LC_ALL", OsStr::new("C")));
-    let output = run_with(
-        folder.path,
-        &hardened(&[
-            "config".as_ref(),
-            "--show-scope".as_ref(),
-            "-z".as_ref(),
-            "--get-regexp".as_ref(),
-            // Any setting names a driver: one that sets only `required` still stops the save.
-            r"^filter\.".as_ref(),
-        ]),
-        &all,
-    )?;
-    // Exit status 1 means no such setting.
-    if !output.status.success() && output.status.code() != Some(1) {
-        return Err(format!(
-            "cannot read the repository's filter settings: {}",
-            reason(&output)
-        ));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let fields: Vec<&str> = text.split('\0').collect();
-    let mut drivers: Vec<String> = Vec::new();
-    for pair in fields.chunks(2) {
-        let [scope, entry] = pair else { continue };
-        if matches!(*scope, "global" | "system" | "command") {
-            continue;
-        }
-        let key = entry.split('\n').next().unwrap_or_default();
-        let Some(driver) = key
-            .strip_prefix("filter.")
-            .and_then(|rest| rest.rsplit_once('.'))
-            .map(|(driver, _)| driver.to_owned())
-        else {
-            continue;
-        };
-        if !drivers.contains(&driver) {
-            drivers.push(driver);
-        }
-    }
-    let from = folder
-        .env
-        .iter()
-        .find(|(name, _)| *name == "GIT_CONFIG_COUNT")
-        .map(|(_, value)| value.to_os_string())
-        .or_else(|| std::env::var_os("GIT_CONFIG_COUNT"))
-        .and_then(|value| value.to_str().and_then(|v| v.trim().parse::<usize>().ok()))
-        .unwrap_or(0);
-    let mut env = Vec::new();
-    let mut number = from;
-    for driver in &drivers {
-        for (variable, value) in [("clean", ""), ("process", ""), ("required", "false")] {
-            env.push((
-                format!("GIT_CONFIG_KEY_{number}"),
-                OsString::from(format!("filter.{driver}.{variable}")),
-            ));
-            env.push((format!("GIT_CONFIG_VALUE_{number}"), OsString::from(value)));
-            number += 1;
-        }
-    }
-    if number > from {
-        env.push((
-            "GIT_CONFIG_COUNT".into(),
-            OsString::from(number.to_string()),
-        ));
-    }
-    Ok(env)
-}
-
 /// Save `folder`'s uncommitted changes, tracked and untracked (ignored files stay out), as a
 /// commit on a new branch named `branch` (or `branch-2`, `branch-3` and so on when that name is
 /// taken by other work). The branch is `None` when there is nothing to save. When a branch of
@@ -304,26 +209,24 @@ fn save_in(folder: &Folder, branch: &str, message: &str) -> Result<SavedWork, St
         ],
         &[],
     )?);
-    let overrides = filter_overrides(folder)?;
     let mut skipped = Vec::new();
     let tree = (|| {
-        // Every command on the temporary index gets the overrides: writing an index can
-        // re-read a racily clean file through its filter, so write-tree needs them too.
-        let mut env = vec![("GIT_INDEX_FILE", index.as_os_str())];
-        env.extend(overrides.iter().map(|(k, v)| (k.as_str(), v.as_os_str())));
+        // Every command on the temporary index goes through the shared repository hardening:
+        // writing an index can re-read a racily clean file through its filter.
+        let env = vec![("GIT_INDEX_FILE", index.as_os_str())];
         git_text(folder, &["read-tree".as_ref(), head.as_ref()], &env)?;
         let mut add_env = folder.env.to_vec();
         add_env.extend_from_slice(&env);
         add_env.push(("LC_ALL", OsStr::new("C")));
         let added = run_with(
             folder.path,
-            &hardened(&[
+            &[
                 "add".as_ref(),
                 "--all".as_ref(),
                 "--ignore-errors".as_ref(),
                 "--".as_ref(),
                 ":/".as_ref(),
-            ]),
+            ],
             &add_env,
         )?;
         // With --ignore-errors git indexes everything it can read and exits 1 when it could
@@ -470,6 +373,17 @@ mod tests {
     fn git(dir: &Path, args: &[&str]) -> String {
         let args: Vec<&OsStr> = args.iter().map(|a| OsStr::new(*a)).collect();
         text(dir, &args).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+    }
+
+    fn raw_git(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
     }
 
     /// A repository with a local identity, one commit, an ignore rule and a linked worktree.
@@ -760,7 +674,10 @@ mod tests {
             "QUIET"
         );
         // The repository's settings are as the agent left them.
-        assert_eq!(git(&repo, &["config", "filter.agentfilter.clean"]), program);
+        assert_eq!(
+            raw_git(&repo, &["config", "filter.agentfilter.clean"]),
+            program
+        );
     }
 
     #[test]

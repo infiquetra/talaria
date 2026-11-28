@@ -408,6 +408,7 @@ async fn write_finished(writer: &JournalWriter) {
         writer,
         Record::CallIntent {
             key: KEY_FINISHED.into(),
+            report_baseline: None,
             attempt: 0,
             call_id: CallId {
                 digest: "b".repeat(64),
@@ -499,6 +500,7 @@ async fn write_running(
         writer,
         Record::CallIntent {
             key: KEY_RUNNING.into(),
+            report_baseline: None,
             attempt: 0,
             call_id: CallId {
                 digest: "c".repeat(64),

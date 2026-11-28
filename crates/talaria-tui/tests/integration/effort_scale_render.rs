@@ -62,54 +62,39 @@ fn column(row: &str, word: &str) -> usize {
     row[..at].chars().count()
 }
 
-const LABELS_GAP_2: &str = "  none  minimal  low  medium  high  xhigh  max  ultra";
-const LABELS_GAP_5: &str =
-    "  none     minimal     low     medium     high     xhigh     max     ultra";
-const HINT: &str = " \u{2190}/\u{2192} adjust \u{b7} Tab Hivecode \u{b7} Ctrl+G new sessions \u{b7} Enter apply \u{b7} Esc cancel";
+const HINT: &str = "  ←/→ adjust   Enter apply   Esc cancel";
 
 #[test]
-fn the_scale_at_80_columns() {
-    let (rows, _) = draw(&section(&moved()), 80);
-    // The scale runs from column 2 to 52; xhigh's centre is column 38.
-    let rule = format!(
-        "  {}\u{25b2}{}    Hivecode off",
-        "\u{2500}".repeat(36),
-        "\u{2500}".repeat(14)
-    );
-    assert_eq!(
-        rows,
-        [
-            " Effort \u{b7} model-a".to_owned(),
-            format!("  Faster{}Smarter", " ".repeat(38)),
-            rule,
-            format!("{LABELS_GAP_2}    Tab to toggle"),
-            "  Extended thinking for complex work  (current: high)".to_owned(),
-            "  Also save for new sessions on work: off".to_owned(),
-            HINT.to_owned(),
-        ]
-    );
-    assert_eq!(column(&rows[2], "\u{25b2}"), column(&rows[3], "xhigh") + 2);
-}
-
-#[test]
-fn the_scale_at_120_columns() {
-    let (rows, _) = draw(&section(&moved()), 120);
-    assert_eq!(rows[3], format!("{LABELS_GAP_5}    Tab to toggle"));
-    assert_eq!(column(&rows[2], "\u{25b2}"), column(&rows[3], "xhigh") + 2);
-    assert_eq!(column(&rows[2], "Hivecode off"), column(&rows[3], "Tab"));
-    assert_eq!(
-        rows[1].chars().count(),
-        LABELS_GAP_5.chars().count(),
-        "Smarter ends where the scale ends"
-    );
-    assert_eq!(rows[6], HINT);
+fn full_scale_groups_the_controls_and_names_the_preview_and_applied_levels() {
+    for width in [80, 120] {
+        let (rows, _) = draw(&section(&moved()), width);
+        assert_eq!(
+            rows[0],
+            " Effort   Preview: xhigh   Current: high · model-a"
+        );
+        assert!(rows[1].starts_with("  Faster") && rows[1].ends_with("More reasoning"));
+        assert_eq!(rows[1].chars().count(), rows[3].chars().count());
+        assert_eq!(
+            rows[3],
+            "  none     minimal     low     medium     high     xhigh     max     ultra"
+        );
+        assert_eq!(rows[4], "  Extended thinking for complex work");
+        assert_eq!(
+            rows[5],
+            "  Tab Hivecode off    Ctrl+G Save for new sessions off (work)"
+        );
+        assert_eq!(rows[6], HINT);
+    }
+    let (rows, _) = draw(&section(&scale()), 80);
+    assert!(rows[0].contains("Current: high"));
+    assert!(!rows[0].contains("Preview"));
 }
 
 #[test]
 fn the_marker_sits_over_every_level() {
     let mut scale = scale();
     scale.update(ScaleKey::Lowest);
-    for _ in 0..8 {
+    for index in 0..8 {
         let (rows, _) = draw(&section(&scale), 80);
         let word = scale.selected().as_wire();
         let labels = &rows[3];
@@ -118,7 +103,9 @@ fn the_marker_sits_over_every_level() {
         let at = format!(" {word} ");
         let start = column(&format!("{labels} "), &at) + 1;
         let centre = start + word.len() / 2;
-        assert_eq!(column(&rows[2], "\u{25b2}"), centre, "{word}");
+        assert_eq!(column(&rows[2], "◆"), centre, "{word}");
+        assert_eq!(rows[2].matches('●').count(), index);
+        assert_eq!(rows[2].matches('○').count(), 7 - index);
         scale.update(ScaleKey::Higher);
     }
 }
@@ -129,31 +116,27 @@ fn staged_switches_show_in_the_panel() {
     scale.update(ScaleKey::ToggleHivecode);
     scale.update(ScaleKey::ToggleSave);
     let (rows, _) = draw(&section(&scale), 80);
-    assert!(
-        rows[2].ends_with("    Hivecode on (now off)"),
-        "{:?}",
-        rows[2]
+    assert_eq!(
+        rows[5],
+        "  Tab Hivecode on (was off)    Ctrl+G Save for new sessions on (work)"
     );
-    assert_eq!(rows[5], "  Also save for new sessions on work: on");
+    let short = drawn(&section(&scale), 40, 4);
+    assert!(
+        short
+            .iter()
+            .any(|row| row.contains("Tab Hivecode on  Ctrl+G Save on")),
+        "{short:?}"
+    );
 }
 
 #[test]
-fn narrow_widths_move_hivecode_to_its_own_row_and_then_compact_the_scale() {
-    let (rows, _) = draw(&section(&moved()), 70);
-    assert_eq!(
-        rows[3],
-        "  none    minimal    low    medium    high    xhigh    max    ultra"
-    );
-    assert!(
-        rows.contains(&"  Hivecode off \u{b7} Tab to toggle".to_owned()),
-        "{rows:#?}"
-    );
+fn narrow_widths_stack_controls_and_compact_the_scale() {
     let (rows, _) = draw(&section(&moved()), 40);
-    assert_eq!(rows[1], "  \u{25c0} xhigh \u{25b6}   6 of 8");
-    assert!(rows.iter().all(|row| !row.contains('\u{2500}')));
+    assert_eq!(rows[1], "  ◀ xhigh ▶   6 of 8");
+    assert!(rows.iter().any(|row| row == "  Tab Hivecode off"));
     assert!(
-        rows.contains(&"  Hivecode off \u{b7} Tab to toggle".to_owned()),
-        "{rows:#?}"
+        rows.iter()
+            .any(|row| row.starts_with("  Ctrl+G Save for new sessions off"))
     );
     for width in [40u16, 53, 54, 70, 78, 79, 80, 120] {
         let (rows, _) = draw(&section(&moved()), width);
@@ -174,8 +157,8 @@ fn narrow_widths_move_hivecode_to_its_own_row_and_then_compact_the_scale() {
 #[test]
 fn without_colour_the_marker_and_bold_label_carry_the_selection() {
     let (rows, buffer) = draw(&section(&moved()), 80);
-    let marker = u16::try_from(column(&rows[2], "\u{25b2}")).unwrap();
-    assert_eq!(buffer[(marker, 2)].symbol(), "\u{25b2}");
+    let marker = u16::try_from(column(&rows[2], "◆")).unwrap();
+    assert_eq!(buffer[(marker, 2)].symbol(), "◆");
     let start = u16::try_from(column(&rows[3], "xhigh")).unwrap();
     for x in start..start + 5 {
         assert!(buffer[(x, 3)].modifier.contains(Modifier::BOLD), "{x}");
@@ -201,6 +184,12 @@ fn a_note_takes_its_own_row() {
         rows.contains(&"  Hermes sends medium on this route.".to_owned()),
         "{rows:#?}"
     );
+    let short = drawn(&section(&scale), 50, 4);
+    assert!(
+        short
+            .iter()
+            .any(|row| row.contains("Hermes sends medium on this route."))
+    );
 }
 
 #[test]
@@ -223,8 +212,11 @@ fn the_hints_use_the_keys_the_user_bound() {
     let section = EffortScaleSection::new(&moved(), scale_key_labels(&map), TALL);
     let (rows, _) = draw(&section, 120);
     let hint = rows.last().expect("hint row");
-    assert!(hint.starts_with(" Alt+H/Alt+L adjust"), "{hint:?}");
-    assert!(hint.contains("Alt+G new sessions"), "{hint:?}");
+    assert!(hint.starts_with("  Alt+H/Alt+L adjust"), "{hint:?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Alt+G Save for new sessions"))
+    );
 }
 
 #[test]
@@ -245,12 +237,13 @@ fn names_hermes_reported_cannot_carry_control_characters_into_the_panel() {
         "a control character reached the panel: {rows:#?}"
     );
     assert!(
-        rows.iter().any(|row| row.contains("Effort \u{b7} model-a")),
+        rows.iter()
+            .any(|row| row.contains("Current: max · model-a")),
         "{rows:#?}"
     );
     assert!(
         rows.iter()
-            .any(|row| row.contains("Also save for new sessions on work")),
+            .any(|row| row.contains("Save for new sessions off (work")),
         "{rows:#?}"
     );
 }
@@ -328,66 +321,67 @@ fn a_short_terminal_keeps_the_composer_the_working_row_and_the_enter_and_esc_hin
         );
         assert!(
             rows.iter()
-                .any(|row| row.contains("xhigh") || row.contains('\u{25b2}')),
+                .any(|row| row.contains("xhigh") || row.contains('◆')),
             "{size}: the scale or its compact form stays: {rows:#?}"
         );
     }
 }
 
 #[test]
-fn rows_go_in_order_save_note_detail_then_the_ends_row() {
-    let width = 80;
-    let rows_at = |terminal_rows: u16| {
-        let section = EffortScaleSection::new(
-            &moved(),
-            scale_key_labels(&KeyMap::defaults()),
-            terminal_rows,
-        );
-        drawn(&section, width, section.height(width))
-    };
-    // Seven rows at 21 and more: everything.
-    let full = rows_at(21);
-    assert_eq!(full.len(), 7, "{full:#?}");
-    // Six: the save line goes first.
-    let six = rows_at(18);
-    assert!(!six.iter().any(|row| row.contains("Also save")), "{six:#?}");
+fn a_clipped_selector_reflows_around_the_selection_and_the_exit_keys() {
+    let section = section(&moved());
+    for (height, expected) in [
+        (1, vec!["  ◀ xhigh ▶   6 of 8"]),
+        (2, vec!["  ◀ xhigh ▶   6 of 8", HINT]),
+        (
+            3,
+            vec![
+                " Effort   Preview: xhigh   Current: high · model-a",
+                "  ◀ xhigh ▶   6 of 8",
+                HINT,
+            ],
+        ),
+    ] {
+        assert_eq!(drawn(&section, 80, height), expected);
+    }
+    let five = drawn(&section, 80, 5);
+    assert!(five.iter().any(|row| row.contains('◆')));
     assert!(
-        six.iter().any(|row| row.contains("Extended thinking")),
-        "{six:#?}"
-    );
-    // Five: then the detail (this level has no note).
-    let five = rows_at(15);
-    assert!(
-        !five.iter().any(|row| row.contains("Extended thinking")),
-        "{five:#?}"
-    );
-    assert!(five.iter().any(|row| row.contains("Smarter")), "{five:#?}");
-    // Four: then the "Faster … Smarter" row; the hint row still names every key.
-    let four = rows_at(12);
-    assert!(!four.iter().any(|row| row.contains("Smarter")), "{four:#?}");
-    assert_eq!(four.last().map(String::as_str), Some(HINT), "{four:#?}");
-    // Three: the compact scale, with one hint row.
-    let three = rows_at(9);
-    assert_eq!(
-        three,
-        [
-            " Effort \u{b7} model-a".to_owned(),
-            "  \u{25c0} xhigh \u{25b6}   6 of 8".to_owned(),
-            " Enter apply \u{b7} Esc cancel".to_owned(),
-        ]
+        five.iter().any(
+            |row| row.contains("Tab Hivecode off") && row.contains("Save for new sessions off")
+        )
     );
 }
 
 #[test]
-fn a_cut_selector_keeps_its_bottom_rows() {
-    let section = EffortScaleSection::new(&moved(), scale_key_labels(&KeyMap::defaults()), 6);
-    // The status bar took most of an 8-row terminal: two rows are left for the selector.
-    let rows = drawn(&section, 80, 2);
-    assert_eq!(
-        rows,
-        [
-            "  \u{25c0} xhigh \u{25b6}   6 of 8".to_owned(),
-            " Enter apply \u{b7} Esc cancel".to_owned(),
-        ]
-    );
+fn custom_theme_colours_reach_both_halves_of_the_scale_and_the_keys() {
+    use crate::view_colours_support as support;
+    use ratatui::style::Color;
+    use talaria_app::theme_file::{ColorValue, StyleFields, builtin};
+    let mut file = builtin("homebrew").unwrap();
+    for (token, rgb) in [
+        ("effort.track", (181, 195, 221)),
+        ("effort.selected", (242, 188, 145)),
+    ] {
+        file.elements.insert(
+            token.to_owned(),
+            StyleFields {
+                fg: Some(ColorValue::Rgb(rgb.0, rgb.1, rgb.2)),
+                ..Default::default()
+            },
+        );
+    }
+    let theme = support::resolve(Some(&file));
+    let (_, buf) = draw(&section(&moved()).with_theme(theme.theme.views), 80);
+    for (text, token) in [
+        ("━", "effort.track"),
+        ("◆", "effort.selected"),
+        ("xhigh", "effort.selected"),
+        ("○", "list.muted"),
+        ("Tab", "dialog.key"),
+    ] {
+        let cell = support::at_text(&buf, text);
+        assert_eq!(Some(cell.fg), theme.elements[token].fg, "{text}");
+        assert_eq!(cell.bg, Color::Reset);
+    }
 }

@@ -8,6 +8,7 @@ use ratatui::style::Modifier;
 use talaria_tui::composer::Composer;
 use talaria_tui::keys::KeyMap;
 use talaria_tui::live::LiveSection;
+use talaria_tui::theme::BorderPreset;
 
 use composer_support::{Rig, rows, style_at, symbol_at};
 
@@ -49,6 +50,70 @@ fn drafts_at_60_columns() {
     assert!(drawn[1].starts_with("│ > "));
     assert!(drawn[2].starts_with("│   "));
     assert!(style_at(&section, 60, height, 7, 2).contains(Modifier::REVERSED));
+}
+
+#[test]
+fn chat_frame_names_the_destination_and_keeps_whole_shortcuts_at_narrow_widths() {
+    let mut rig = Rig::new();
+    for (width, focused) in [(80, true), (24, true), (80, false)] {
+        let section = rig
+            .composer
+            .section(width, 10)
+            .in_conversation("Conversation 会話", focused);
+        let drawn = rows(&section, width, section.height(width));
+        assert!(drawn[0].contains("Conversation 会"));
+        assert!(drawn[0].starts_with('╭') && drawn[0].ends_with('╮'));
+        assert_eq!(drawn[2].contains("Enter send"), focused);
+        assert_eq!(
+            drawn[2].contains("Ctrl+O transcript"),
+            focused && width == 80
+        );
+        assert_eq!(drawn[2].contains("/ commands"), focused && width == 80);
+        assert!(drawn[2].starts_with('╰') && drawn[2].ends_with('╯'));
+        assert!(drawn[1].contains("› Type a message"));
+        assert!(drawn[1].starts_with('│') && drawn[1].ends_with('│'));
+        assert_eq!(
+            style_at(&section, width, section.height(width), 4, 1).contains(Modifier::REVERSED),
+            focused,
+        );
+    }
+}
+
+#[test]
+fn chat_frame_follows_the_border_preset() {
+    let mut rig = Rig::new();
+    rig.composer.set_keyboard_enhancement(false);
+    rig.composer.load("first\nsecond".to_owned());
+    for (preset, edges) in [
+        (BorderPreset::Single, ['┌', '┐', '│', '│', '└', '┘']),
+        (BorderPreset::Double, ['╔', '╗', '║', '║', '╚', '╝']),
+        (BorderPreset::Ascii, ['+', '+', '|', '|', '+', '+']),
+        (BorderPreset::None, [' '; 6]),
+    ] {
+        let section = rig
+            .composer
+            .section(80, 10)
+            .with_border_preset(preset)
+            .in_conversation("Draft destination", true);
+        assert_eq!(section.height(80), 4);
+        let drawn = rows(&section, 80, 4);
+        assert!(drawn[0].contains("Draft destination"));
+        assert!(drawn[1].contains("first"));
+        assert!(drawn[2].contains("second"));
+        assert!(drawn[3].contains("Alt+Enter newline"));
+        for (row, left, right) in [
+            (0, edges[0], edges[1]),
+            (1, edges[2], edges[3]),
+            (2, edges[2], edges[3]),
+            (3, edges[4], edges[5]),
+        ] {
+            assert_eq!(symbol_at(&section, 80, 4, 0, row), left.to_string());
+            assert_eq!(symbol_at(&section, 80, 4, 79, row), right.to_string());
+        }
+        if preset == BorderPreset::Ascii {
+            assert!(drawn[1].contains("> first"));
+        }
+    }
 }
 
 #[test]

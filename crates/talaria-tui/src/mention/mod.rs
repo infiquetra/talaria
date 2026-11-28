@@ -10,17 +10,29 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::history::sanitize;
 use crate::live::LiveSection;
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// One draw of a [`MentionView`].
 pub struct MentionSection<'a> {
     view: &'a MentionView,
+    views: ViewStyles,
 }
 
 impl<'a> MentionSection<'a> {
     /// Draw `view`.
     #[must_use]
     pub fn new(view: &'a MentionView) -> Self {
-        Self { view }
+        Self {
+            view,
+            views: ViewStyles::default(),
+        }
+    }
+
+    /// Apply the appearance of the current composer.
+    #[must_use]
+    pub fn with_theme(mut self, views: ViewStyles) -> Self {
+        self.views = views;
+        self
     }
 }
 
@@ -53,16 +65,17 @@ impl LiveSection for MentionSection<'_> {
             .min(self.view.rows.len().saturating_sub(count));
         let mut y = area.y;
         for (index, (display, meta)) in self.view.rows.iter().enumerate().skip(first).take(count) {
-            let style = if Some(index) == selected {
-                Style::default().add_modifier(Modifier::REVERSED)
+            let is_selected = Some(index) == selected;
+            let style = if is_selected {
+                self.views.inline_selection(
+                    t::COMPOSER_COMPLETION_SELECTED,
+                    Style::default().add_modifier(Modifier::REVERSED),
+                )
             } else {
-                Style::default()
+                self.views
+                    .inline(t::COMPOSER_COMPLETION_TEXT, Style::default())
             };
-            let prefix = if Some(index) == selected {
-                "› "
-            } else {
-                "  "
-            };
+            let prefix = if is_selected { "› " } else { "  " };
             let label = format!("{prefix}{}", sanitize(display));
             let meta = sanitize(meta);
             let line = if area.width >= 40 && !meta.is_empty() {
@@ -70,10 +83,18 @@ impl LiveSection for MentionSection<'_> {
                 let meta_width = UnicodeWidthStr::width(meta.as_str());
                 let label = fit(&label, width.saturating_sub(meta_width + 1));
                 let gap = width.saturating_sub(UnicodeWidthStr::width(label.as_str()) + meta_width);
+                let metadata = if is_selected && self.views.active() {
+                    style
+                } else {
+                    self.views.inline(
+                        t::COMPOSER_COMPLETION_DESCRIPTION,
+                        style.add_modifier(Modifier::DIM),
+                    )
+                };
                 Line::from(vec![
                     Span::styled(label, style),
                     Span::styled(" ".repeat(gap), style),
-                    Span::styled(meta, style.add_modifier(Modifier::DIM)),
+                    Span::styled(meta, metadata),
                 ])
             } else {
                 Line::styled(fit(&label, width), style)
@@ -87,7 +108,11 @@ impl LiveSection for MentionSection<'_> {
             buf.set_line(
                 area.x,
                 y,
-                &Line::from(fit(&sanitize(status), width)),
+                &Line::styled(
+                    fit(&sanitize(status), width),
+                    self.views
+                        .inline(t::COMPOSER_COMPLETION_DESCRIPTION, Style::default()),
+                ),
                 area.width,
             );
             y += 1;
@@ -96,7 +121,11 @@ impl LiveSection for MentionSection<'_> {
             buf.set_line(
                 area.x,
                 y,
-                &Line::from(fit(&sanitize(self.view.footer), width)),
+                &Line::styled(
+                    fit(&sanitize(self.view.footer), width),
+                    self.views
+                        .inline(t::COMPOSER_COMPLETION_DESCRIPTION, Style::default()),
+                ),
                 area.width,
             );
         }

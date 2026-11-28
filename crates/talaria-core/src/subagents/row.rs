@@ -78,6 +78,8 @@ pub struct SubagentRow {
     pub delegation_id: Option<String>,
     pub child_session_id: Option<String>,
     pub model: Option<String>,
+    /// Reasoning setting resolved for this child by Hermes.
+    pub effort: Option<String>,
     pub task_index: i64,
     pub task_count: i64,
     pub state: RowState,
@@ -159,6 +161,7 @@ impl SubagentRow {
             delegation_id: None,
             child_session_id: None,
             model: None,
+            effort: None,
             task_index: 0,
             task_count: 1,
             state,
@@ -220,8 +223,7 @@ impl SubagentRow {
         }
         merge_string(&mut self.parent_id, &p.parent_id);
         merge_string(&mut self.delegation_id, &p.delegation_id);
-        merge_string(&mut self.child_session_id, &p.child_session_id);
-        merge_string(&mut self.model, &p.model);
+        self.merge_child_identity(&p.child_session_id, &p.model);
         if p.depth.is_some() {
             self.depth = p.depth;
         }
@@ -316,8 +318,10 @@ impl SubagentRow {
         }
         merge_string(&mut self.parent_id, &p.parent_id);
         merge_string(&mut self.delegation_id, &p.delegation_id);
-        merge_string(&mut self.model, &p.model);
-        merge_string(&mut self.last_tool, &p.last_tool);
+        self.merge_child_identity(&p.child_session_id, &p.model);
+        if !matches!((p.tool_count, self.tool_count), (Some(new), Some(old)) if new < old) {
+            merge_string(&mut self.last_tool, &p.last_tool);
+        }
         if p.depth.is_some() {
             self.depth = p.depth;
         }
@@ -330,6 +334,23 @@ impl SubagentRow {
             && let Some(tool) = self.last_tool.clone()
         {
             self.push_activity(ActivityKind::Tool, tool, false);
+        }
+    }
+
+    fn merge_child_identity(&mut self, child_session_id: &Option<String>, model: &Option<String>) {
+        if let Some(id) = child_session_id.as_ref().filter(|id| !id.is_empty())
+            && self.child_session_id.as_ref() != Some(id)
+        {
+            if self.child_session_id.is_some() {
+                self.model = None;
+            }
+            self.child_session_id = Some(id.clone());
+            self.effort = None;
+        }
+        // Progress callbacks repeat the model selected before the child was constructed.
+        // Its own stored model and effort, once available, belong to the resolved route.
+        if self.effort.is_none() {
+            merge_string(&mut self.model, model);
         }
     }
 }

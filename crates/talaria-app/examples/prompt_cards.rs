@@ -220,7 +220,7 @@ async fn run(scenario: String, log: String) -> DemoResult<()> {
                         Some(_) => continue,
                         None => return Err(io::Error::other("terminal input closed").into()),
                     };
-                    if let KeyOutcome::Consumed { intent, interrupt_requested, notice } = outcome {
+                    if let KeyOutcome::Consumed { intent, interrupt_requested, notice, .. } = outcome {
                         if let Some(notice) = notice { output.line(&format!("notice: {notice}"))?; }
                         let mut effects = Vec::new();
                         if let Some(intent) = intent {

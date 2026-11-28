@@ -36,6 +36,16 @@ pub enum ConnectorsTab {
     Messaging,
 }
 
+/// Profile-local Nous identity, when Hermes can distinguish it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NousIdentity {
+    SignedIn,
+    SignedOut,
+    Guest,
+    #[default]
+    Unknown,
+}
+
 /// How the overlay was opened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectorsOpen {
@@ -211,6 +221,8 @@ pub struct ConnectorsState {
     profile: String,
     tab: ConnectorsTab,
     consented: bool,
+    identity: NousIdentity,
+    identity_requested: bool,
     connectors: Vec<ConnectorRow>,
     accounts: Vec<AccountRow>,
     platforms: Vec<PlatformRow>,
@@ -318,6 +330,8 @@ impl ConnectorsState {
             profile: String::new(),
             tab: ConnectorsTab::Connectors,
             consented: false,
+            identity: NousIdentity::Unknown,
+            identity_requested: false,
             connectors: Vec::new(),
             accounts: Vec::new(),
             platforms: Vec::new(),
@@ -402,6 +416,7 @@ pub enum ConnectorsInput {
         consented: bool,
     },
     Key(ConnectorsKey),
+    IdentityReply(NousIdentity),
     /// A viewport-relative review position computed by the presentation layer.
     ReviewScroll(usize),
     Paste(String),
@@ -463,6 +478,10 @@ impl std::fmt::Debug for ConnectorsInput {
                 .field("consented", consented)
                 .finish(),
             Self::Key(key) => formatter.debug_tuple("Key").field(key).finish(),
+            Self::IdentityReply(identity) => formatter
+                .debug_tuple("IdentityReply")
+                .field(identity)
+                .finish(),
             Self::ReviewScroll(offset) => {
                 formatter.debug_tuple("ReviewScroll").field(offset).finish()
             }
@@ -529,6 +548,7 @@ impl std::fmt::Debug for ConnectorsInput {
 #[derive(Clone, PartialEq, Eq)]
 pub enum ConnectorsEffect {
     GrantConsent,
+    LoadIdentity,
     ListConnectors,
     LoadCatalog,
     LoadAccounts,
@@ -598,6 +618,7 @@ pub enum ConnectorsEffect {
 impl std::fmt::Debug for ConnectorsEffect {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::LoadIdentity => formatter.write_str("LoadIdentity"),
             Self::GrantConsent => formatter.write_str("GrantConsent"),
             Self::ListConnectors => formatter.write_str("ListConnectors"),
             Self::LoadCatalog => formatter.write_str("LoadCatalog"),

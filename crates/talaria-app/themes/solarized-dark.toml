@@ -1,0 +1,18 @@
+schema = 1
+name = "Solarized Dark"
+extends = "dark"
+follow_hermes_skin = false
+
+[palette]
+background = "#002b36"
+surface = "#073642"
+foreground = "#93a1a1"
+muted = "#91a0a2"
+disabled = "#91a0a2"
+border = "#6b828b"
+primary = "#52a5e0"
+accent = "#2eb0a6"
+success = "#95ab00"
+warning = "#c99800"
+error = "#e9807e"
+attention = "#e37eaf"

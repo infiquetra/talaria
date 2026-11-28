@@ -42,6 +42,82 @@ fn scale_drawn(screen: &str) -> bool {
 }
 
 #[test]
+fn question_pane_accepts_the_clicked_answer_and_restores_the_composer() {
+    let home = temp_home();
+    std::fs::write(
+        home.path().join(".talaria/config.toml"),
+        "[fleet]\nenabled = false\n[ui]\nmouse = true\n",
+    )
+    .unwrap();
+    let gateway = StandaloneGateway::start(home.path());
+    let id = format!("local-5ee5a149{}", "0".repeat(56));
+    let mut snapshot = mock_gateway::recorded_resume_snapshot();
+    snapshot["session_id"] = json!(id);
+    snapshot["stored_session_id"] = json!(id);
+    snapshot["prompts"] = json!([]);
+    snapshot["running"] = json!(false);
+    let generation = snapshot["execution_generation"].as_i64().unwrap_or(1);
+    gateway.set_resume_snapshot(snapshot);
+
+    let mut terminal = Launch::new(home.path())
+        .args(&["--resume", &id, "--profile", "fixture"])
+        .size(12, 60)
+        .answer_queries()
+        .spawn();
+    let limit = Duration::from_secs(5);
+    assert!(
+        gateway.wait_request("session.resume", 0, limit).is_some(),
+        "{}",
+        terminal.screen_text()
+    );
+    assert!(
+        terminal.wait_for_text("Type a message", limit),
+        "{}",
+        terminal.screen_text()
+    );
+    gateway.block_on(gateway.clarify_request(
+        "choose",
+        generation,
+        "Which colour?",
+        &["Red", "Blue"],
+        false,
+    ));
+    assert!(terminal.wait_for_text("Question · Choose one", limit));
+    let screen = terminal.screen_text();
+    assert!(
+        screen.contains("Which colour?") && !screen.contains("Type a message"),
+        "{screen}"
+    );
+    let blue_row = screen
+        .lines()
+        .position(|line| line.contains("2. Blue"))
+        .expect("Blue is visible")
+        + 1;
+    // Ignore input for a quarter second after a new card appears, as in a real session.
+    std::thread::sleep(Duration::from_millis(260));
+    terminal.type_keys(&format!("\x1b[<0;6;{blue_row}M\x1b[<0;6;{blue_row}m"));
+    assert!(
+        terminal.wait_for_text("› 2. Blue", limit),
+        "{}",
+        terminal.screen_text()
+    );
+    terminal.type_keys("\x1bOR"); // F3 opens help for the selected choice.
+    assert!(terminal.wait_for_text("Prompt card keys", limit));
+    assert!(terminal.screen_text().contains("Enter or 1–9 choose"));
+    terminal.type_keys("\x1b");
+    assert!(terminal.wait_for_text("› 2. Blue", limit));
+    assert!(gateway.requests("clarify.respond").is_empty());
+    terminal.type_keys("\r");
+    let answer = gateway
+        .wait_request("clarify.respond", 0, limit)
+        .expect("answer");
+    assert_eq!(answer.params["answer"], "Blue");
+    gateway.block_on(gateway.clarify_settled("choose", generation));
+    assert!(terminal.wait_for_text("Type a message", limit));
+    assert!(!terminal.screen_text().contains("Question · Choose one"));
+}
+
+#[test]
 fn the_effort_scale_opened_under_an_approval_card_is_not_drawn_and_closes_on_the_next_key() {
     let home = temp_home();
     let gateway = StandaloneGateway::start(home.path());

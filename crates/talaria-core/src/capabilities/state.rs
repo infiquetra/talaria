@@ -205,6 +205,11 @@ impl CapabilitiesState {
         self.message_persistent = false;
         effects.push(CapEffect::Notice(text));
     }
+    fn dismiss_message(&mut self) {
+        if !self.message_persistent {
+            self.message.clear();
+        }
+    }
     fn busy(&mut self, effects: &mut Vec<CapEffect>) -> bool {
         if self.write.is_some() {
             self.notice(self.text(CapText::Busy), effects);
@@ -243,6 +248,9 @@ impl CapabilitiesState {
         });
     }
     fn visit(&mut self, tab: CapTab, effects: &mut Vec<CapEffect>) {
+        if self.tab != tab {
+            self.dismiss_message();
+        }
         self.tab = tab;
         self.detail_focus = false;
         self.detail.clear();
@@ -290,8 +298,8 @@ impl CapabilitiesState {
         let mut effects = Vec::new();
         match input {
             CapInput::DismissMessage => {
-                if self.dialog.is_none() && !self.message_persistent {
-                    self.message.clear();
+                if self.dialog.is_none() {
+                    self.dismiss_message();
                 }
             }
             CapInput::Open(tab) => {
@@ -357,7 +365,9 @@ impl CapabilitiesState {
                             slot.failure = None;
                         }
                         Err(error) => {
-                            slot.failure = Some(error_text(&error, tab, &self.profile, "", false))
+                            let text = error_text(&error, tab, &self.profile, "", false);
+                            slot.failure = Some(text.clone());
+                            effects.push(CapEffect::Notice(text));
                         }
                     }
                     self.restore_selection(name);
@@ -774,6 +784,9 @@ impl CapabilitiesState {
                 }
                 if allowed {
                     self.dialog = Some(Dialog::Skill(item));
+                } else {
+                    self.message_persistent = false;
+                    effects.push(CapEffect::Notice(self.message.join("\n")));
                 }
             }
             Err(e) => {
@@ -842,6 +855,7 @@ impl CapabilitiesState {
                         a.name = item.name.clone();
                         self.message = vec![self.formatted(CapText::InstallingSkill, &a)];
                         self.message_persistent = true;
+                        effects.push(CapEffect::Notice(self.message.join("\n")));
                         let install_key = item.install_key.clone();
                         self.begin(
                             WriteKind::InstallSkill(item),
@@ -878,6 +892,10 @@ impl CapabilitiesState {
             }
             return;
         }
+        if key == KeyAction::Cancel {
+            self.message.clear();
+            self.message_persistent = false;
+        }
         if self.input.is_some() {
             match key {
                 KeyAction::Enter => self.submit(effects),
@@ -892,9 +910,6 @@ impl CapabilitiesState {
                 _ => {}
             }
             return;
-        }
-        if !self.message_persistent {
-            self.message.clear();
         }
         let slot = &self.slots[index(self.tab)];
         if !self.catalog
@@ -939,6 +954,7 @@ impl CapabilitiesState {
                 if self.catalog {
                     self.fetch_catalog(effects);
                 } else {
+                    self.dismiss_message();
                     self.load(self.tab, effects);
                 }
             }
@@ -993,6 +1009,7 @@ impl CapabilitiesState {
                     self.page.saturating_sub(1).max(1)
                 };
                 if next != self.page {
+                    self.dismiss_message();
                     self.page = next;
                     self.load(CapTab::Hub, effects);
                 }
@@ -1017,6 +1034,7 @@ impl CapabilitiesState {
                 if input.text.is_empty() {
                     self.input = Some(input);
                 } else {
+                    self.dismiss_message();
                     self.query = Some(input.text);
                     self.load(CapTab::Hub, effects);
                 }
@@ -1048,6 +1066,7 @@ impl CapabilitiesState {
         }
     }
     fn fetch_catalog(&mut self, effects: &mut Vec<CapEffect>) {
+        self.dismiss_message();
         self.catalog_generation += 1;
         effects.push(CapEffect::FetchCatalog {
             profile: self.profile.clone(),
@@ -1748,14 +1767,6 @@ impl CapabilitiesState {
         }
         .into();
         let mut message = self.message.clone();
-        if message.is_empty()
-            && let Some(write) = &self.write
-            && let WriteKind::InstallSkill(item) = &write.kind
-            && !write.reading
-        {
-            args.name = item.name.clone();
-            message.push(self.formatted(CapText::InstallingSkill, &args));
-        }
         if message.is_empty() && rows.len() == 1 && rows[0].is_header {
             message = vec![rows[0].label.clone()];
         }
@@ -2013,7 +2024,17 @@ mod tests {
                 "Hermes refused this request: $HERMES_HOME/rejected".into()
             )]
         );
-        state.update(CapInput::DismissMessage, 4);
+        state.update(CapInput::Key(KeyAction::Down), 4);
+        assert_eq!(
+            state.view().message,
+            ["Hermes refused this request: $HERMES_HOME/rejected"]
+        );
+        state.update(CapInput::Key(KeyAction::Filter), 5);
+        assert!(state.view().input.is_some());
+        assert!(!state.view().message.is_empty());
+        state.update(CapInput::Key(KeyAction::Cancel), 6);
+        assert!(state.is_open());
+        assert!(state.view().input.is_none());
         assert!(state.view().message.is_empty());
     }
 
@@ -2057,11 +2078,14 @@ mod tests {
         let confirmation = state.view().message;
         state.update(CapInput::DismissMessage, 4);
         assert_eq!(state.view().message, confirmation);
-        state.update(CapInput::Key(KeyAction::Confirm), 5);
+        let effects = state.update(CapInput::Key(KeyAction::Confirm), 5);
         let progress = state.view().message;
         assert!(progress[0].starts_with("Installing guide..."));
+        assert!(effects.contains(&CapEffect::Notice(progress.join("\n"))));
         state.update(CapInput::DismissMessage, 6);
         state.update(CapInput::Key(KeyAction::Down), 7);
         assert_eq!(state.view().message, progress);
+        state.update(CapInput::Key(KeyAction::Cancel), 8);
+        assert!(state.view().message.is_empty());
     }
 }

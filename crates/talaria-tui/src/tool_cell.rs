@@ -44,6 +44,8 @@ pub struct ToolTheme {
     pub title: Style,
     /// What the call acted on.
     pub subject: Style,
+    /// Optional emphasis for operators in a shell tool's command.
+    pub shell_operator: Option<Style>,
     /// Duration, progress, counts and hints.
     pub meta: Style,
     /// Ordinary output.
@@ -288,8 +290,10 @@ fn fixed(text: &str, style: Style, width: usize) -> Line<'static> {
 /// Everything one render shares.
 struct Ctx<'a> {
     theme: &'a ToolTheme,
+    shell_operator: Option<Style>,
     width: usize,
     hint: Option<String>,
+    conversation: bool,
 }
 
 impl Ctx<'_> {
@@ -323,6 +327,7 @@ struct Header<'a> {
     tail: Vec<String>,
     separator: usize,
     dim: bool,
+    conversation: bool,
 }
 
 impl Header<'_> {
@@ -330,9 +335,14 @@ impl Header<'_> {
         self.mark.is_some() || self.label.is_some() || self.stat.is_some() || !self.tail.is_empty()
     }
 
-    fn spans(&self) -> Vec<Span<'static>> {
+    fn spans(&self, shell_operator: Option<Style>) -> Vec<Span<'static>> {
         let theme = self.theme;
-        let mut spans = vec![Span::styled(GLYPH, self.glyph)];
+        let mut spans = if self.conversation {
+            let (mark, style) = self.mark.unwrap_or(('·', self.glyph));
+            vec![Span::styled(mark.to_string(), style)]
+        } else {
+            vec![Span::styled(GLYPH, self.glyph)]
+        };
         let has_title = !self.title.is_empty();
         if has_title {
             spans.push(Span::raw(" "));
@@ -340,15 +350,24 @@ impl Header<'_> {
             if let Some(subject) = &self.subject {
                 if self.edit {
                     spans.push(Span::raw(" "));
-                    spans.push(Span::styled(subject.clone(), theme.subject));
                 } else {
                     spans.push(Span::styled("(", theme.subject));
+                }
+                if let Some(operator) = shell_operator {
+                    spans.extend(shell_command_spans(subject, theme.subject, operator));
+                } else {
                     spans.push(Span::styled(subject.clone(), theme.subject));
+                }
+                if !self.edit {
                     spans.push(Span::styled(")", theme.subject));
                 }
             }
         }
-        if self.has_segment() {
+        if (!self.conversation && self.has_segment())
+            || self.label.is_some()
+            || self.stat.is_some()
+            || !self.tail.is_empty()
+        {
             spans.push(Span::raw(if has_title {
                 spaces(self.separator)
             } else {
@@ -362,7 +381,9 @@ impl Header<'_> {
                 first = false;
                 spans.push(Span::styled(text, style));
             };
-            if let Some((mark, style)) = self.mark {
+            if !self.conversation
+                && let Some((mark, style)) = self.mark
+            {
                 item(&mut spans, mark.to_string(), style);
             }
             if let Some((label, style)) = &self.label {
@@ -384,16 +405,18 @@ impl Header<'_> {
     }
 
     fn width(&self) -> usize {
-        self.spans()
+        self.spans(None)
             .iter()
             .map(|span| text_width(&span.content))
             .sum()
     }
 
     /// Cut pieces in the order of the layout rules until the row fits `width`.
-    fn fit(mut self, width: usize) -> Vec<Span<'static>> {
+    fn fit(mut self, width: usize, shell_operator: Option<Style>) -> Vec<Span<'static>> {
         if width < 3 {
-            return vec![Span::styled(GLYPH, self.glyph)];
+            let mut spans = self.spans(None);
+            spans.truncate(1);
+            return spans;
         }
         if self.width() > width {
             self.separator = 1;
@@ -436,8 +459,53 @@ impl Header<'_> {
                 cut_force(&self.title, target)
             };
         }
-        self.spans()
+        self.spans(shell_operator)
     }
+}
+
+/// Colour shell control characters without treating quoted or escaped arguments as operators.
+fn shell_command_spans(command: &str, plain: Style, operator: Style) -> Vec<Span<'static>> {
+    let operator = plain.patch(operator);
+    let mut spans = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut word_start = true;
+    let mut start = 0;
+    let mut current = plain;
+    for (offset, cluster) in command.grapheme_indices(true) {
+        let ch = cluster.chars().next().expect("nonempty grapheme");
+        if ch == '#' && word_start && quote.is_none() && !escaped {
+            if offset > start {
+                spans.push(Span::styled(command[start..offset].to_owned(), current));
+            }
+            start = offset;
+            current = plain;
+            break;
+        }
+        let control = quote.is_none() && !escaped && matches!(ch, '|' | '&' | ';' | '<' | '>');
+        let style = if control { operator } else { plain };
+        if style != current {
+            if offset > start {
+                spans.push(Span::styled(command[start..offset].to_owned(), current));
+            }
+            start = offset;
+            current = style;
+        }
+        word_start = quote.is_none() && !escaped && (ch.is_whitespace() || control);
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' && quote != Some('\'') {
+            escaped = true;
+        } else if quote == Some(ch) {
+            quote = None;
+        } else if quote.is_none() && matches!(ch, '\'' | '"' | '`') {
+            quote = Some(ch);
+        }
+    }
+    if start < command.len() {
+        spans.push(Span::styled(command[start..].to_owned(), current));
+    }
+    spans
 }
 
 fn is_shell(cell: &ToolCell) -> bool {
@@ -463,10 +531,11 @@ fn stat_text(view: &ToolView) -> Option<String> {
 /// The first row's pieces, with the strings clipped to `clip_to` columns when given.
 fn header<'a>(
     view: &ToolView,
-    theme: &'a ToolTheme,
+    ctx: &Ctx<'a>,
     elapsed: Option<Duration>,
     clip_to: Option<usize>,
 ) -> Header<'a> {
+    let theme = ctx.theme;
     let limit = |text: &str| match clip_to {
         Some(max) => clip(&clean(text), max),
         None => clean(text),
@@ -540,6 +609,7 @@ fn header<'a>(
         tail,
         separator: 2,
         dim,
+        conversation: ctx.conversation,
     }
 }
 
@@ -583,7 +653,7 @@ fn wrap_spans(spans: &[Span<'static>], width: usize, indent: usize) -> Vec<Line<
 
 /// The first row when it must show the whole subject: it wraps instead of being cut.
 fn full_header(view: &ToolView, ctx: &Ctx<'_>, elapsed: Option<Duration>) -> Vec<Line<'static>> {
-    let spans = header(view, ctx.theme, elapsed, None).spans();
+    let spans = header(view, ctx, elapsed, None).spans(ctx.shell_operator);
     wrap_spans(&spans, ctx.width, 2)
 }
 
@@ -878,6 +948,37 @@ fn push_section(
     }
 }
 
+/// A script or message can be a multiline string within a tool's arguments. Use the
+/// original lines for both display and search instead of quoting the string as JSON.
+pub(crate) fn argument_text(args: &Value) -> String {
+    let pretty =
+        |value: &Value| serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+    let Some(fields) = args.as_object().filter(|fields| {
+        fields
+            .values()
+            .filter_map(Value::as_str)
+            .any(|s| s.contains('\n'))
+    }) else {
+        return pretty(args);
+    };
+    let mut out = String::new();
+    for (name, value) in fields {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(name);
+        out.push(':');
+        if let Some(text) = value.as_str() {
+            out.push(if text.contains('\n') { '\n' } else { ' ' });
+            out.push_str(text);
+        } else {
+            out.push(' ');
+            out.push_str(&pretty(value));
+        }
+    }
+    out
+}
+
 fn result_object(cell: &ToolCell) -> Option<Map<String, Value>> {
     match serde_json::from_str::<Value>(cell.result.as_deref()?) {
         Ok(Value::Object(map)) => Some(map),
@@ -914,9 +1015,16 @@ fn full_lines(
     let mut out = full_header(view, ctx, options.elapsed);
     if let Some(args) = &cell.args
         && !args.as_object().is_some_and(Map::is_empty)
-        && let Ok(text) = serde_json::to_string_pretty(args)
     {
-        push_section(&mut out, "Arguments", &text, theme.output, ctx);
+        out.push(fixed("  Arguments", theme.meta, ctx.width));
+        let indent = if ctx.width > 4 { 4 } else { 0 };
+        let prefix = spaces(indent);
+        for row in word_wrapped(&argument_text(args), (ctx.width - indent) as u16) {
+            out.push(Line::from(vec![
+                Span::raw(prefix.clone()),
+                Span::styled(row, theme.output),
+            ]));
+        }
     }
     let output = view
         .output
@@ -956,16 +1064,32 @@ fn full_lines(
 /// Rows for one tool cell. Issue 221.
 #[must_use]
 pub fn tool_lines(cell: &ToolCell, options: &ToolRenderOptions) -> Vec<Line<'static>> {
-    let width = usize::from(options.width.max(1));
+    tool_lines_with_layout(cell, options, false)
+}
+
+fn tool_lines_with_layout(
+    cell: &ToolCell,
+    options: &ToolRenderOptions,
+    conversation: bool,
+) -> Vec<Line<'static>> {
+    let indent = usize::from(conversation && options.width >= 12);
+    let width = usize::from(options.width).saturating_sub(indent).max(1);
     let view = tool_view(cell);
     let ctx = Ctx {
         theme: &options.theme,
+        shell_operator: if cell.name == "terminal" {
+            options.theme.shell_operator
+        } else {
+            None
+        },
         width,
         hint: options.expand_hint.clone(),
+        conversation,
     };
     let mut lines = match options.detail {
         Detail::Compact => {
-            let spans = header(&view, &options.theme, options.elapsed, Some(width)).fit(width);
+            let spans =
+                header(&view, &ctx, options.elapsed, Some(width)).fit(width, ctx.shell_operator);
             let mut lines = vec![Line::from(spans)];
             lines.extend(compact_body(cell, &view, options, &ctx));
             lines
@@ -974,6 +1098,9 @@ pub fn tool_lines(cell: &ToolCell, options: &ToolRenderOptions) -> Vec<Line<'sta
     };
     for line in &mut lines {
         clamp_line(line, width);
+        if indent > 0 && !line.spans.is_empty() {
+            line.spans.insert(0, Span::raw(" "));
+        }
         if !options.color {
             plain_line(line);
         }
@@ -986,6 +1113,7 @@ pub struct ToolCellLines {
     inner: Box<dyn CellLines>,
     options: ToolRenderOptions,
     elapsed: HashMap<CellId, Duration>,
+    conversation: bool,
 }
 
 impl ToolCellLines {
@@ -996,7 +1124,14 @@ impl ToolCellLines {
             inner,
             options,
             elapsed: HashMap::new(),
+            conversation: false,
         }
+    }
+
+    /// Use the chat gutter and lead the row with the tool's outcome.
+    pub fn in_conversation(mut self) -> Self {
+        self.conversation = true;
+        self
     }
 
     /// Copy elapsed times of running cells.
@@ -1027,7 +1162,7 @@ impl CellLines for ToolCellLines {
             expand_hint: self.options.expand_hint.clone(),
             elapsed: self.elapsed.get(&tool.id).copied(),
         };
-        tool_lines(tool, &options)
+        tool_lines_with_layout(tool, &options, self.conversation)
     }
 }
 

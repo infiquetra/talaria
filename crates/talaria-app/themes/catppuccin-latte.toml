@@ -1,0 +1,18 @@
+schema = 1
+name = "Catppuccin Latte"
+extends = "light"
+follow_hermes_skin = false
+
+[palette]
+background = "#eff1f5"
+surface = "#e6e9ef"
+foreground = "#4c4f69"
+muted = "#5c5f77"
+disabled = "#606376"
+border = "#7d8095"
+primary = "#812eee"
+accent = "#0b56eb"
+success = "#2e731f"
+warning = "#8c5912"
+error = "#c30e36"
+attention = "#ae2f01"

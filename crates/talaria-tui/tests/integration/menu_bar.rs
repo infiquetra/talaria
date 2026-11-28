@@ -1,4 +1,8 @@
-use ratatui::{buffer::Buffer, layout::Rect, style::Modifier};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Modifier, Style},
+};
 use talaria_core::layout::PanelVisibility;
 use talaria_tui::{
     history::PlainCellLines,
@@ -158,4 +162,21 @@ fn focus_is_not_colour_only() {
             "color {color}: other headings stay unmarked"
         );
     }
+}
+
+#[test]
+fn overlapping_dropdown_removes_inherited_styles_and_straddling_glyphs() {
+    let mut state = MenuState::shown();
+    state.dropdown_open = true;
+    let area = Rect::new(0, 0, 100, 8);
+    let mut buffer = Buffer::empty(area);
+    let style = Style::new().add_modifier(Modifier::UNDERLINED);
+    buffer.set_string(0, 0, "x".repeat(90), style);
+    buffer.set_string(0, 1, "xxxxxxxxx界xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", style);
+    state.draw(area, &mut buffer);
+    assert_heading(&buffer);
+    assert_eq!(buffer[(9, 1)].symbol(), " ");
+    assert_eq!(buffer[(10, 1)].symbol(), " ");
+    assert!(!buffer[(14, 1)].modifier.contains(Modifier::UNDERLINED));
+    assert!(buffer[(40, 1)].modifier.contains(Modifier::UNDERLINED));
 }

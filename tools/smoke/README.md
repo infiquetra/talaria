@@ -136,7 +136,7 @@ you or is still working), the tab is at least 100 columns by 24 rows, and the pr
 | `attach` | `talaria attach <8 hex>` resumes the session; an unknown reference exits 1 |
 | `startup`, `plain-answer` | the first suite's checks |
 | `local-commands` | `/tasks`, `/agents frobnicate`, `/processes` and `/bg` without a prompt |
-| `fleet-view` | `/fleet` marks this session `(here)`, filters to nothing, closes with Ctrl+C |
+| `fleet-view` | `/fleet` marks this session `(here)`, filters to nothing, then Escape clears the filter and closes the view |
 | `open-in-pane` | `o` opens the first session in a new Herdr pane |
 | `quit` | `/quit` exits 0 and the answer stays in the pane |
 | `needs-you` | an approval that waited while Talaria was closed is announced, then denied from the fleet view |

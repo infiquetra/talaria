@@ -45,7 +45,7 @@ impl RunJournal {
                 Err(std::fs::TryLockError::Error(e)) => return Err(e.into()),
             }
             let path = input.path().join("journal.jsonl");
-            let bytes = fs::read(&path)?;
+            let bytes = reader::read_bytes(&path, 0)?;
             let (records, offset, warnings) = reader::parse(&bytes, true)?;
             let mut index = Index::default();
             for record in records {
@@ -203,7 +203,7 @@ impl RunJournal {
                 Record::CallFinished {
                     outcome: CallOutcome::Completed { .. } | CallOutcome::Skipped,
                     ..
-                }
+                } | Record::CallReportRestartRequested { .. }
             ) || matches!(&last.record, Record::TurnSettled { outcome, .. } if outcome == "completed")
             {
                 continue;
@@ -219,6 +219,16 @@ impl RunJournal {
             }
             let attempt = history.attempt();
             match &last.record {
+                Record::CallFinished {
+                    outcome: CallOutcome::FailedWithReport { .. },
+                    ..
+                } => {
+                    self.append_inner(Record::CallReportRestartRequested {
+                        key: key.clone(),
+                        attempt,
+                    })
+                    .await?;
+                }
                 Record::CallAttention { episode, .. } => {
                     self.append_inner(Record::CallResolved {
                         key: key.clone(),
@@ -375,6 +385,17 @@ impl RunJournal {
             observer(&record).await;
         }
         Ok(seq)
+    }
+    pub(crate) fn kept_report(
+        &self,
+        call: &CallId,
+    ) -> Result<Option<(String, CallOutcome, u64)>, JournalError> {
+        Ok(self
+            .index
+            .lock()
+            .map_err(io_error)?
+            .kept_report(call)
+            .map(|(key, outcome, seq)| (key.to_owned(), outcome.clone(), seq)))
     }
     pub(crate) fn history(&self, key: &str) -> Result<CallHistory, JournalError> {
         self.check()?;
@@ -866,5 +887,38 @@ mod tests {
         journal.check().unwrap();
         drop(journal);
         RunJournal::open(dir, SOURCE).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn opening_a_run_uses_the_bounded_journal_reader() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = RunDir::create(
+            temp.path(),
+            NewManifest {
+                workflow_name: "journal".into(),
+                args: None,
+                started_at_ms: 0,
+                seed: 1,
+                profile: "fixture".into(),
+                on_unknown: OnUnknown::Wait,
+                talaria_version: "test".into(),
+                build: Default::default(),
+                hermes: serde_json::json!({}),
+                roster: serde_json::json!({}),
+                approval_policy: serde_json::json!({}),
+            },
+            SOURCE,
+        )
+        .unwrap();
+        File::create(dir.path().join("journal.jsonl"))
+            .unwrap()
+            .set_len(reader::MAX_JOURNAL_BYTES + 1)
+            .unwrap();
+
+        let result = RunJournal::open(dir, SOURCE).await;
+        assert!(matches!(
+            result,
+            Err(JournalError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData
+        ));
     }
 }

@@ -63,6 +63,7 @@ pub(crate) async fn request(
     request_limited(base, path, method, bearer, body, root, Limits::json()).await
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct Limits<'a> {
     pub max_body: usize,
     pub deadline: std::time::Duration,

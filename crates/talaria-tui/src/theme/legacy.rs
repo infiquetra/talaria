@@ -94,6 +94,7 @@ pub(crate) fn status_palette() -> StatusPalette {
     StatusPalette {
         border: None,
         accent: Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        model: None,
         styles: [
             Style::new(),
             Style::new().add_modifier(Modifier::DIM),
@@ -110,6 +111,8 @@ pub(crate) fn subagent_style() -> SubagentStyle {
     SubagentStyle {
         header: Style::new().bold(),
         hint: Style::new().dim(),
+        model: Style::new(),
+        task: Style::new(),
         running: Style::new().fg(Color::Cyan),
         queued: Style::new().dim(),
         completed: Style::new().fg(Color::Green),
@@ -131,6 +134,7 @@ pub(crate) fn tool_theme() -> ToolTheme {
         glyph_muted: dim,
         title: bold,
         subject: Style::default(),
+        shell_operator: None,
         meta: dim,
         output: Style::default(),
         error: red,
@@ -406,6 +410,8 @@ impl crate::theme::surfaces::ViewStyles {
         let mut palette = subagent_style();
         palette.header = self.inline(tokens::AGENTS_HEADER, palette.header);
         palette.hint = self.inline(tokens::AGENTS_HELP, palette.hint);
+        palette.model = self.inline(tokens::EFFORT_MODEL, palette.model);
+        palette.task = self.inline(tokens::WORK_AGENT_NAME, palette.task);
         palette.running = self.inline(tokens::AGENTS_RUNNING, palette.running);
         palette.queued = self.inline(tokens::AGENTS_QUEUED, palette.queued);
         palette.completed = self.inline(tokens::AGENTS_DONE, palette.completed);
@@ -424,6 +430,9 @@ impl crate::theme::surfaces::ViewStyles {
     }
     pub fn rewind_theme(&self, legacy_color: bool) -> crate::rewind::RewindTheme {
         let palette = rewind_theme(legacy_color);
+        if !legacy_color {
+            return palette;
+        }
         crate::rewind::RewindTheme {
             selected: self.style(tokens::REWIND_SELECTED, palette.selected),
             dim: self.style(tokens::REWIND_METADATA, palette.dim),

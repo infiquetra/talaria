@@ -287,18 +287,23 @@ ones asked for; `also_run_again` lists the other failed agents so this is not a 
 returned to the script, read from the journal: the pretty JSON value in text mode, or with
 `--json` one `agent_result` object with `run_id`, `label`, `key`, `state`, and `value`, or
 `reason` when the agent did not complete, and `cut_short` for a reply kept at Hermes's step
-cap. It exits 0 when a value was printed and 1 when the agent has none (failed, skipped,
-stopped, parked, or unfinished). A `completed_with_failures` result already lists each failed
+cap. It exits 0 when a value was printed and 1 when the agent has none. A worker with a
+validated saved report returns its value alongside `state: "failed"`, the reason and
+`recovered_report`. A `completed_with_failures` result lists each failed
 agent's `label` and `reason` in `failed_agents`, also from `workflow result --json`.
 
-`talaria workflow result <run-id>` without `--agent` prints the run's own stored result, read
-from the run folder only: exactly what a resume of the finished run prints when it replays it,
-the `run_started` line and the same `run_finished` object with `--json` and the same text
-otherwise, with the same exit codes (0 completed, 5 completed with failures, 4 budget
-exhausted). A run that failed or was aborted prints the end its runner printed, with exit 1 or
-3. It never opens an execution or contacts the gateway, and it leaves a pending restart request
-for the next resume, so use it, not `resume`, to read a result. A run that has not finished
-(running, parked, interrupted) is reported on standard error, naming its status, with exit 1.
+`talaria workflow result --json <run-id>` writes one `run_finished` JSON document to
+standard output. Parse the whole document even on exit 5 (completed with failures).
+Exit 0 means completed, 4 means the budget ran out, 1 means failed and 3 means aborted.
+Reading a result leaves pending restart requests for the next resume. An unfinished run
+is reported on standard error with exit 1.
+
+Follow `recovered_reports` to read a worker’s saved findings. The `guardrail_halts`
+list names workers that stopped making progress during an attempt, including workers
+that subsequently returned a usable result. For an older failed worker, use
+`talaria workflow recover-report <run-id> --agent <label-or-key> --file <relative-path>`
+to validate a specific file in its isolated worktree against the schema from that run.
+The report stays readable after that worktree is removed.
 
 ## Shared controls and confirmed stopping
 
@@ -371,8 +376,10 @@ The JSON array always includes `run_id`, `name`, `profile`, `started_at_ms`, `st
 `cache_unknown_turns`, `money_spent_usd`, `run_dir`, and `warning` (including null). Token spend
 comes from settled usage. `tokens_spent` leaves out cache reads, which `cache_read_tokens` gives
 on their own; `cache_unknown_turns` counts settled turns whose cache reads Hermes did not report,
-which are counted in full inside `tokens_spent` (every turn of a run journaled before cache
-reads were kept apart). `cache_read_tokens` is null when no turn reported tokens. See
+which are counted in full inside `tokens_spent`. The counted total is an upper bound while
+any split remains unknown. For a closed, single-turn local workflow session, Talaria can
+recover missing cache reads when its stored identities and token totals match the journal.
+`cache_read_tokens` is null when no turn reported tokens. See
 [Staffing and budgets](staffing.md#spend-and-budgets). Money sums each
 attempt's last settled session cost; any missing or unknown settled cost makes the total
 unknown. File-only discovery never reprices tokens.

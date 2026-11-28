@@ -80,9 +80,9 @@ use talaria_tui::keys::{
 };
 use talaria_tui::launch_dialog::{DialogAction, DialogDefaults, DialogMode, LaunchDialog};
 use talaria_tui::live::{LiveSection, LiveView, PlainTextSection, max_live_height};
+use talaria_tui::markdown::MarkdownOptions;
 use talaria_tui::markdown::cells::MarkdownCellLines;
 use talaria_tui::markdown::section::MarkdownTailSection;
-use talaria_tui::markdown::{MarkdownOptions, MarkdownTheme};
 use talaria_tui::mention::MentionSection;
 use talaria_tui::model_picker::ModelConfirmSection;
 use talaria_tui::pager::{
@@ -99,11 +99,11 @@ use talaria_tui::prompts::{
     KeyOutcome, LiveMaskedTarget as ShownTarget, MaskedTarget as ShownMasked, MaskedView,
     PromptIntent, PromptStack,
 };
-use talaria_tui::queue::{composer_title, handle_selection_key, render_preview};
+use talaria_tui::queue::{composer_title, handle_selection_key, render_preview_with_theme};
 use talaria_tui::reply_commit::{ReplyCommits, after_committed};
 use talaria_tui::review_view::draw_review_themed;
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
-use talaria_tui::session_picker::{PickerTheme, SessionPickerView};
+use talaria_tui::session_picker::SessionPickerView;
 use talaria_tui::side::{SideTasksSection, shell_mode_title};
 use talaria_tui::status::{
     ApprovalsSegment, CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay,
@@ -196,6 +196,7 @@ enum Overlay {
     Connectors,
     /// The configuration assistant.
     Configure,
+    FocusHelp,
 }
 
 fn background_theme(current: &Theme) -> BackgroundTheme {
@@ -371,8 +372,8 @@ pub struct TuiScreen {
     terminal: InlineTerminal<Stdout>,
     composer: Composer,
     prompts: PromptStack,
+    question_rows: Option<talaria_tui::prompts::QuestionRows>,
     configure_prompts: PromptStack,
-    configure_cancel_at: Option<Instant>,
     status: Option<StatusCommandService>,
     external: ExternalDisplay,
     inputs: StatusInputs,
@@ -392,6 +393,7 @@ pub struct TuiScreen {
     /// When the Workflow line's spinner or seconds next change, while a running run's line is
     /// on screen.
     workflow_wake: Option<Instant>,
+    subagent_wake: Option<Instant>,
     tool_theme: ToolTheme,
     /// The settings and start-up decisions the theme is resolved from.
     look: Look,
@@ -421,6 +423,7 @@ pub struct TuiScreen {
     picker: Option<ModelOverlay>,
     profiles: ProfilesRenderer,
     overlay: Overlay,
+    focus_help: Option<String>,
     mcp_view: Option<talaria_core::mcp::McpView>,
     mcp_wiring: crate::mcp_wiring::McpWiring,
     connectors_wiring: crate::connectors_wiring::ConnectorsWiring,
@@ -441,6 +444,7 @@ pub struct TuiScreen {
     launch_seen: u64,
     confirmation: Option<Confirmation>,
     confirmation_focused: Option<Instant>,
+    confirmation_wake: Option<Instant>,
     /// The rewind overlay holds the alternate screen. Issue #233.
     rewind_open: bool,
     /// The list rows last reported to the loop, so paging moves by what is visible.
@@ -588,8 +592,11 @@ fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
             KeyCode::Enter if !key.mods.shift => Some(PickerKey::Enter),
             KeyCode::Esc if !key.mods.shift => Some(PickerKey::Escape),
             KeyCode::Backspace if !key.mods.shift => Some(PickerKey::Backspace),
-            KeyCode::Up if !key.mods.shift => Some(PickerKey::Up),
-            KeyCode::Down if !key.mods.shift => Some(PickerKey::Down),
+            KeyCode::Up if key.mods.shift => Some(PickerKey::PreviousGroup),
+            KeyCode::Down if key.mods.shift => Some(PickerKey::NextGroup),
+            KeyCode::Left if key.mods.shift => Some(PickerKey::FoldProvider),
+            KeyCode::Up => Some(PickerKey::Up),
+            KeyCode::Down => Some(PickerKey::Down),
             KeyCode::PageUp if !key.mods.shift => Some(PickerKey::PageUp),
             KeyCode::PageDown if !key.mods.shift => Some(PickerKey::PageDown),
             KeyCode::Home if !key.mods.shift => Some(PickerKey::Home),
@@ -599,7 +606,6 @@ fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
     }
     if key.mods.ctrl && !key.mods.alt && !key.mods.shift && !key.mods.super_key && !key.mods.other {
         return match key.code {
-            KeyCode::Char('c') => Some(PickerKey::Close),
             KeyCode::Char('u') => Some(PickerKey::ClearFilter),
             _ => None,
         };
@@ -608,7 +614,7 @@ fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
 }
 
 /// The open `/theme` or `/skin` selector's key: the completion list's bindings and the arrows
-/// move it, Enter applies, Esc or Ctrl+C cancels, and typed characters filter it.
+/// move it, Enter applies, Esc cancels, and typed characters filter it.
 fn choice_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::commands::ChoiceKey> {
     use talaria_core::commands::ChoiceKey;
     if key.kind == KeyKind::Release {
@@ -621,9 +627,6 @@ fn choice_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::commands::Choic
         Some(CompletionAction::Accept) | None => {}
     }
     let mods = key.mods;
-    if mods.ctrl && !mods.alt && !mods.super_key && matches!(key.code, KeyCode::Char('c' | 'C')) {
-        return Some(ChoiceKey::Cancel);
-    }
     if mods.ctrl || mods.alt || mods.super_key || mods.other {
         return None;
     }
@@ -646,7 +649,7 @@ fn choice_hands_to_composer(keymap: &KeyMap, key: Key) -> bool {
 
 /// The open `/effort` scale's key: the `/model` picker's effort keys move it and its scope key
 /// stages saving for new sessions, so a rebinding applies to both. Tab stages Hivecode,
-/// Home and End jump to the ends, Enter applies and Esc or Ctrl+C cancels.
+/// Home and End jump to the ends, Enter applies and Esc cancels.
 fn scale_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::models::ScaleKey> {
     use talaria_core::models::ScaleKey;
     if key.kind == KeyKind::Release {
@@ -659,9 +662,6 @@ fn scale_key(keymap: &KeyMap, key: Key) -> Option<talaria_core::models::ScaleKey
         _ => {}
     }
     let mods = key.mods;
-    if mods.ctrl && !mods.alt && !mods.super_key && matches!(key.code, KeyCode::Char('c' | 'C')) {
-        return Some(ScaleKey::Cancel);
-    }
     if mods.ctrl || mods.alt || mods.super_key || mods.other || mods.shift {
         return None;
     }
@@ -793,7 +793,7 @@ fn is_escape(key: &Key) -> bool {
     key.code == KeyCode::Esc && !key.mods.ctrl && !key.mods.alt
 }
 
-/// Whether the key is the Ctrl+C that closes the overlay.
+/// Whether the key is the terminal interrupt chord.
 fn is_ctrl_c(key: &Key) -> bool {
     key.mods.ctrl
         && !key.mods.alt
@@ -920,6 +920,7 @@ fn fleet_card_actions(
         intent,
         interrupt_requested,
         notice,
+        ..
     } = outcome
     else {
         return Vec::new();
@@ -941,17 +942,13 @@ fn fleet_card_actions(
 ///
 /// The mode decides the rules. The list reads the picker's own key context; the export
 /// dialog reads the export context and nothing else; the search line and the rename
-/// editor take a printable key as text and keep their editing keys. Esc and Ctrl+C are
-/// fixed in every mode: they close the overlay and never reach the agent.
+/// editor take a printable key as text and keep their editing keys. Esc goes back one level.
 fn picker_input(keymap: &KeyMap, key: Key, mode: &PickerMode) -> Option<PickerInput> {
     if key.kind == KeyKind::Release {
         return None;
     }
     if is_escape(&key) {
         return Some(PickerInput::Escape);
-    }
-    if is_ctrl_c(&key) {
-        return Some(PickerInput::CtrlC);
     }
     match mode {
         PickerMode::Waiting(_) => None,
@@ -1016,6 +1013,8 @@ fn unix_now() -> f64 {
         .map_or(0.0, |elapsed| elapsed.as_secs_f64())
 }
 
+const CONFIRMATION_GUARD: Duration = Duration::from_millis(250);
+
 fn confirmation_key(key: Key, focused: Option<Instant>, now: Instant) -> Option<ConfirmKey> {
     if key.kind == KeyKind::Release
         || key.mods.ctrl
@@ -1026,7 +1025,7 @@ fn confirmation_key(key: Key, focused: Option<Instant>, now: Instant) -> Option<
     {
         return None;
     }
-    if !focused.is_some_and(|at| now.saturating_duration_since(at) >= Duration::from_millis(250)) {
+    if !focused.is_some_and(|at| now >= at + CONFIRMATION_GUARD) {
         return None;
     }
     match key.code {
@@ -1073,12 +1072,8 @@ impl Look {
 fn tool_cells(theme: &Theme, keymap: &KeyMap) -> ToolCellLines {
     ToolCellLines::new(
         Box::new(MarkdownCellLines::new_with_theme(
-            true,
-            if theme.views.active() {
-                theme.markdown.clone()
-            } else {
-                MarkdownTheme::default()
-            },
+            theme.color,
+            theme.markdown.clone(),
             theme.views.clone(),
         )),
         ToolRenderOptions {
@@ -1092,6 +1087,7 @@ fn tool_cells(theme: &Theme, keymap: &KeyMap) -> ToolCellLines {
             elapsed: None,
         },
     )
+    .in_conversation()
 }
 
 /// Committed cells drawn with the theme each one started under.
@@ -1124,6 +1120,16 @@ impl<'a> CapturedCells<'a> {
 
 impl CellLines for CapturedCells<'_> {
     fn lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
+        self.cell_lines(cell, width, false)
+    }
+
+    fn continuation_lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
+        self.cell_lines(cell, width, true)
+    }
+}
+
+impl CapturedCells<'_> {
+    fn cell_lines(&self, cell: &Cell, width: u16, continuation: bool) -> Vec<Line<'static>> {
         if matches!(cell, Cell::Tool(_)) {
             return self.tools.lines(cell, width);
         }
@@ -1149,11 +1155,15 @@ impl CellLines for CapturedCells<'_> {
                 .and_then(|(clock, now)| clock.took(reasoning.id, now));
             return reasoning_summary_lines(reasoning, theme, took, self.transcript_key, width);
         }
-        ThemedCells {
+        let renderer = ThemedCells {
             theme,
             transcript_key: self.transcript_key,
+        };
+        if continuation {
+            renderer.continuation_lines(cell, width)
+        } else {
+            renderer.lines(cell, width)
         }
-        .lines(cell, width)
     }
 }
 
@@ -1727,9 +1737,15 @@ impl TuiScreen {
             .into_iter()
             .collect()
     }
-    fn confirmation_takes_keys(&self) -> bool {
+    fn confirmation_takes_keys(&self, view: &View<'_>) -> bool {
         self.overlay == Overlay::Live
             && self.confirmation.is_some()
+            && !Self::menu_takes_keys(view)
+            && view.layout.panel != talaria_core::layout::PanelVisibility::OverlayOpen
+            && !view.pager_open
+            && view.rewind.is_none()
+            && self.search.is_none()
+            && !self.selector_takes_keys(view)
             && self.prompts.section().is_none()
             && self.composer.is_empty()
     }
@@ -1773,11 +1789,79 @@ impl TuiScreen {
             && view.layout.panel != talaria_core::layout::PanelVisibility::OverlayOpen
             && !self.selector_takes_keys(view)
             && self.search.is_none()
-            && self.prompts.section().is_none()
-            && !self.confirmation_takes_keys()
+            && (self.prompts.section().is_none() || !self.composer.is_empty())
+            && !self.confirmation_takes_keys(view)
             && !queue_takes_keys(view)
             && !view.palette.open
             && !self.mention_list_open()
+    }
+
+    fn focus_help_text(&self, view: &View<'_>) -> Option<String> {
+        if self.overlay != Overlay::Live
+            || Self::menu_takes_keys(view)
+            || view.layout.panel == talaria_core::layout::PanelVisibility::OverlayOpen
+            || self.search.is_some()
+            || self.selector_takes_keys(view)
+            || view.rewind.is_some()
+            || view.palette.open
+            || self.mention_list_open()
+        {
+            return None;
+        }
+        let mut text = String::new();
+        let key = |text: &mut String, action, description| {
+            if let Some(label) = self.keymap.label(action) {
+                text.push_str(&format!("{label} {description}\n"));
+            }
+        };
+        let queue = queue_view(view);
+        let title = if self.composer.is_empty()
+            && let Some(help) = self.prompts.focus_help()
+        {
+            text.push_str(help);
+            "Prompt card"
+        } else if self.confirmation_takes_keys(view) {
+            text.push_str("Esc returns to the confirmation card. When its keys appear, Enter or y switches models and Esc or n keeps the current model.");
+            "Model confirmation"
+        } else if queue.as_ref().is_some_and(|queue| queue.editing.is_some()) {
+            key(&mut text, Action::Submit, "save edit");
+            key(&mut text, Action::QueueLeave, "cancel edit");
+            "Editing a queued message"
+        } else if queue.as_ref().is_some_and(|queue| queue.selected.is_some()) {
+            text.push_str("Up / Down select a message\n");
+            key(&mut text, Action::QueueEdit, "edit");
+            key(&mut text, Action::QueueRemove, "remove");
+            key(&mut text, Action::QueueSteer, "steer");
+            key(&mut text, Action::QueueSendNow, "send now");
+            key(&mut text, Action::QueueMoveUp, "move earlier");
+            key(&mut text, Action::QueueMoveDown, "move later");
+            key(&mut text, Action::QueueLeave, "return to the composer");
+            "Message queue"
+        } else if let Some(mode @ (VimMode::Normal | VimMode::Visual | VimMode::VisualLine)) =
+            self.composer.vim_mode()
+        {
+            text.push_str(if mode == VimMode::Normal {
+                "h j k l move\ni insert text\nv select characters\nV select lines"
+            } else {
+                "h j k l extend selection\ny copy\nd delete\nEsc return to normal mode"
+            });
+            if mode == VimMode::Normal {
+                "Vim normal mode"
+            } else {
+                "Vim selection"
+            }
+        } else {
+            key(&mut text, Action::Submit, "submit");
+            key(&mut text, Action::Newline, "new line");
+            key(&mut text, Action::Interrupt, "interrupt with two presses");
+            key(&mut text, Action::HistorySearch, "search history");
+            key(&mut text, Action::TranscriptOpen, "open transcript");
+            text.push_str(
+                "Ctrl+C interrupts immediately.\n/resume opens sessions. /model opens models.",
+            );
+            "Composer"
+        };
+        Some(format!("{title} keys\n\n{text}"))
     }
 
     /// The key that goes back from a workflow agent's session is live: the session was opened
@@ -1801,8 +1885,8 @@ impl TuiScreen {
         }
     }
 
-    fn sync_confirmation_focus(&mut self, now: Instant) {
-        if self.confirmation_takes_keys() {
+    fn sync_confirmation_focus(&mut self, view: &View<'_>, now: Instant) {
+        if self.confirmation_takes_keys(view) {
             self.confirmation_focused.get_or_insert(now);
         } else {
             self.confirmation_focused = None;
@@ -1848,14 +1932,10 @@ impl TuiScreen {
         let input = |input: FleetViewInput| vec![UserAction::Fleet(input)];
         match fleet.focus() {
             FleetFocus::Answer => {
-                // Ctrl+C goes back to the list; every other key, Esc included, is the card's.
-                if is_ctrl_c(&key) {
-                    return input(FleetViewInput::CtrlC);
+                if is_escape(&key) {
+                    return input(FleetViewInput::Escape);
                 }
                 if let Some(mapping) = view.acp_peek {
-                    if is_escape(&key) {
-                        return input(FleetViewInput::CtrlC);
-                    }
                     let Some(need) = mapping.needs.first() else {
                         return input(FleetViewInput::AnswerFocusEnded);
                     };
@@ -1909,9 +1989,6 @@ impl TuiScreen {
                 if is_escape(&key) {
                     return input(FleetViewInput::Escape);
                 }
-                if is_ctrl_c(&key) {
-                    return input(FleetViewInput::CtrlC);
-                }
                 if let Some(character) = typed_character(&key) {
                     return input(FleetViewInput::Text(character));
                 }
@@ -1928,9 +2005,6 @@ impl TuiScreen {
             FleetFocus::List | FleetFocus::ConfirmStop => {
                 if is_escape(&key) {
                     return input(FleetViewInput::Escape);
-                }
-                if is_ctrl_c(&key) {
-                    return input(FleetViewInput::CtrlC);
                 }
                 match self
                     .keymap
@@ -1952,7 +2026,7 @@ impl TuiScreen {
     }
 
     /// One key for the open review, by its focus: the commit editor takes text, every other
-    /// focus goes through the key map's review context. Esc and Ctrl+C are fixed.
+    /// focus goes through the key map's review context.
     fn review_key(&self, key: Key, review: &ReviewView<'_>) -> Vec<UserAction> {
         if key.kind == KeyKind::Release {
             return Vec::new();
@@ -1960,9 +2034,6 @@ impl TuiScreen {
         let send = |key: ReviewKey| vec![UserAction::Review(key)];
         if is_escape(&key) {
             return send(ReviewKey::Esc);
-        }
-        if is_ctrl_c(&key) {
-            return send(ReviewKey::CtrlC);
         }
         if *review.focus == ReviewFocus::Commit {
             match self.keymap.resolve_in(&key, KeyContext::CommitMessage) {
@@ -2101,10 +2172,10 @@ impl TuiScreen {
         }
     }
 
-    fn draw_picker(&mut self) {
+    fn draw_picker(&mut self, mouse: bool) {
         if let Some(picker) = &self.picker {
             let view = picker.view();
-            let _ = self.terminal.draw_overlay(|area, buf| {
+            let _ = self.terminal.draw_navigation_overlay(mouse, |area, buf| {
                 talaria_tui::picker_frame::draw_picker_frame_with_theme(
                     &view,
                     area,
@@ -2143,30 +2214,19 @@ impl TuiScreen {
     /// The session picker's overlay: open it and draw it, or close it.
     fn sync_session_picker(&mut self, picker: Option<&PickerState>) {
         match picker {
-            Some(state) => {
+            Some(_) => {
                 self.open_overlay(Overlay::Sessions);
-                self.draw_session_picker(state);
             }
             None => self.close_overlay(Overlay::Sessions),
         }
     }
 
     /// The picker's own frame, over the whole screen.
-    fn draw_session_picker(&mut self, state: &PickerState) {
-        use talaria_tui::theme::surfaces::tokens as t;
-        let mut theme = PickerTheme::default();
+    fn draw_session_picker(&mut self, state: &PickerState, mouse: bool) {
         let styles = &self.theme.views;
-        theme.header = styles.style(t::LIST_HEADER, theme.header);
-        theme.group = styles.style(t::LIST_HEADER, theme.group);
-        theme.marker = styles.style(t::LIST_SELECTED, theme.marker);
-        theme.dim = styles.style(t::LIST_MUTED, theme.dim);
-        theme.notice = styles.style(t::LIST_EMPTY, theme.notice);
-        theme.footer = styles.style(t::LIST_MUTED, theme.footer);
-        theme.chosen = styles.style(t::LIST_SELECTED, theme.chosen);
         let now = unix_now();
-        let _ = self.terminal.draw_overlay(|area, buf| {
-            SessionPickerView::draw(state, area, buf, now, &theme);
-            styles.finish(area, buf, t::LIST_BACKGROUND, true);
+        let _ = self.terminal.draw_navigation_overlay(mouse, |area, buf| {
+            SessionPickerView::draw_with_theme(state, area, buf, now, styles);
         });
     }
 
@@ -2202,6 +2262,7 @@ impl TuiScreen {
         }
         panel.set_keymap(&self.keymap);
         panel.set_style(subagent_style(&self.theme));
+        panel.set_motion(self.theme.motion);
         panel.set_spawning(hub.spawning(), hub.gateway_active());
         panel.tick(view.now_ms);
         if hub.pause_confirmation_pending() && !self.agents_pause_pending {
@@ -2226,17 +2287,28 @@ impl TuiScreen {
         let Some(tree) = hub.tree(panel.key()) else {
             return;
         };
-        let title = view
-            .fleet_snapshot
-            .and_then(|snapshot| {
-                snapshot
-                    .rows
-                    .iter()
-                    .find(|row| &row.key == panel.key())
-                    .map(|row| row.title.as_str())
-            })
-            .filter(|title| !title.is_empty())
-            .unwrap_or(&panel.key().session_id);
+        let foreground = view.session_id == Some(panel.key().session_id.as_str())
+            && view.profile == panel.key().profile;
+        let title =
+            view.fleet_snapshot
+                .and_then(|snapshot| {
+                    snapshot
+                        .rows
+                        .iter()
+                        .find(|row| &row.key == panel.key())
+                        .map(|row| row.title.as_str())
+                })
+                .filter(|title| !title.trim().is_empty() && *title != panel.key().session_id)
+                .or_else(|| {
+                    foreground.then_some(view.title).flatten().filter(|title| {
+                        !title.trim().is_empty() && *title != panel.key().session_id
+                    })
+                })
+                .unwrap_or(if foreground {
+                    "Current session"
+                } else {
+                    "Untitled session"
+                });
         let header = PanelHeader {
             title: title.to_owned(),
             spawning: hub.spawning(),
@@ -2350,9 +2422,7 @@ impl TuiScreen {
         }
         self.color = theme.color;
         self.checklist_style = checklist_style(&theme);
-        self.rewind_theme = theme
-            .views
-            .rewind_theme(std::env::var_os("NO_COLOR").is_none());
+        self.rewind_theme = theme.views.rewind_theme(theme.color);
         self.composer.set_style(theme.composer);
         self.palette = theme.status;
         self.cells = tool_cells(&theme, &self.keymap);
@@ -2403,6 +2473,7 @@ impl TuiScreen {
             intent,
             interrupt_requested,
             notice,
+            ..
         } = outcome
         else {
             return Vec::new();
@@ -2424,10 +2495,14 @@ impl TuiScreen {
         actions
     }
 
-    fn prompt_actions(outcome: KeyOutcome) -> Option<Vec<UserAction>> {
+    fn prompt_actions(
+        outcome: KeyOutcome,
+        foreground_session: Option<&str>,
+    ) -> Option<Vec<UserAction>> {
         let KeyOutcome::Consumed {
             intent,
             interrupt_requested,
+            interrupt_session,
             notice,
         } = outcome
         else {
@@ -2459,7 +2534,19 @@ impl TuiScreen {
             None => {}
         }
         if interrupt_requested {
-            actions.push(UserAction::Interrupt);
+            match (interrupt_session.as_deref(), foreground_session) {
+                (Some(target), Some(foreground)) if target == foreground => {
+                    actions.push(UserAction::Interrupt);
+                }
+                (Some(_), _) => actions.push(UserAction::Notice(
+                    "Talaria declined the request but did not stop its background session. Open that session to stop its turn."
+                        .into(),
+                )),
+                (None, _) => actions.push(UserAction::Notice(
+                    "Talaria declined the request but could not identify which session to stop."
+                        .into(),
+                )),
+            }
         }
         if let Some(notice) = notice {
             actions.push(UserAction::Notice(notice));
@@ -2649,6 +2736,64 @@ impl TuiScreen {
         prefix
     }
 
+    /// Handle the session-wide chords before an overlay can consume them as editing keys.
+    fn overlay_control(&mut self, key: Key, view: &View<'_>) -> Option<Vec<UserAction>> {
+        let interrupt = is_ctrl_c(&key);
+        let suspend = key.mods.ctrl
+            && !key.mods.alt
+            && !key.mods.super_key
+            && !key.mods.other
+            && matches!(key.code, KeyCode::Char('z' | 'Z'));
+        if !interrupt && !suspend {
+            return None;
+        }
+        // An overlay may already own input in the current batch, before its first draw.
+        let overlay = self.overlay != Overlay::Live
+            || view.kanban.is_some()
+            || view.workflow_picker.is_some()
+            || view.workflow_progress.is_some()
+            || view.configure.is_some()
+            || view.connectors.is_some()
+            || view.memory.is_some()
+            || view.capabilities.is_some()
+            || view.settings.is_some()
+            || view.doctor.is_some()
+            || view.model_roles.is_some()
+            || view.processes_open
+            || view.review.is_some()
+            || view.fleet.is_some()
+            || view.rewind.is_some()
+            || view.pager_open
+            || Self::menu_takes_keys(view)
+            || view.layout.panel == talaria_core::layout::PanelVisibility::OverlayOpen
+            || self.selector_takes_keys(view)
+            || self.search.is_some()
+            || self.confirmation_takes_keys(view)
+            || view.palette.open
+            || self.mention_list_open();
+        if !overlay {
+            return None;
+        }
+        let mut actions = Vec::new();
+        if key.kind == KeyKind::Press && !self.terminal.is_released() {
+            if view.settings.is_some() {
+                actions.push(UserAction::Settings(
+                    talaria_core::settings::SettingsInput::HideReveal,
+                ));
+            }
+            if interrupt {
+                if !view.turn_running() && view.configure.is_some() {
+                    actions.push(UserAction::Configure(Box::new(ConfigureInput::Interrupt)));
+                } else {
+                    actions.push(UserAction::Interrupt);
+                }
+            } else {
+                actions.extend(self.start_suspend());
+            }
+        }
+        Some(actions)
+    }
+
     fn terminal_input_actions(
         &mut self,
         event: crossterm::event::Event,
@@ -2657,20 +2802,64 @@ impl TuiScreen {
         prefix: &mut Vec<UserAction>,
     ) -> Vec<UserAction> {
         use crossterm::event::Event;
-        if let Some(board) = view.kanban
-            && !self.terminal.is_released()
+        if let Event::Key(raw) = &event
+            && let Some(actions) = self.overlay_control(Key::from(*raw), view)
         {
-            use talaria_core::kanban::{BoardKey, BoardMode};
+            return actions;
+        }
+        if self.overlay == Overlay::FocusHelp {
             match &event {
                 Event::Key(raw) => {
                     let key = Key::from(*raw);
-                    if key.kind == KeyKind::Release
-                        || key.mods.ctrl
-                        || key.mods.alt
-                        || key.mods.super_key
-                        || key.mods.other
+                    if key.kind == KeyKind::Press
+                        && (is_escape(&key)
+                            || self.keymap.resolve(&key, KeyContext::Composer)
+                                == Some(Action::FocusHelp))
                     {
+                        self.focus_help = None;
+                        self.close_overlay(Overlay::FocusHelp);
+                    }
+                    return Vec::new();
+                }
+                Event::Resize(_, _) => {}
+                _ => return Vec::new(),
+            }
+        }
+        if let Event::Mouse(mouse) = event {
+            return self.pointer_input(mouse, view, now);
+        }
+        if let Some(board) = view.kanban
+            && !self.terminal.is_released()
+        {
+            use talaria_core::kanban::{BoardKey, BoardMode, DetailMotion};
+            match &event {
+                Event::Key(raw) => {
+                    let key = Key::from(*raw);
+                    if key.kind == KeyKind::Release {
+                        return Vec::new();
+                    }
+                    if key.mods.ctrl || key.mods.alt || key.mods.super_key || key.mods.other {
                         return vec![];
+                    }
+                    let detail_motion = match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => Some(DetailMotion::Up),
+                        KeyCode::Down | KeyCode::Char('j') => Some(DetailMotion::Down),
+                        KeyCode::PageUp => Some(DetailMotion::PageUp),
+                        KeyCode::PageDown => Some(DetailMotion::PageDown),
+                        KeyCode::Home => Some(DetailMotion::Home),
+                        KeyCode::End => Some(DetailMotion::End),
+                        _ => None,
+                    };
+                    if let Some(motion) = detail_motion
+                        && let Some(viewport) = talaria_tui::kanban_view::detail_viewport(
+                            board,
+                            self.terminal.screen_area(),
+                        )
+                    {
+                        return vec![UserAction::Kanban(BoardKey::ScrollDetail {
+                            motion,
+                            viewport,
+                        })];
                     }
                     let text_mode = matches!(
                         board.mode,
@@ -2720,12 +2909,6 @@ impl TuiScreen {
                     let key = Key::from(*raw);
                     if key.kind == KeyKind::Release {
                         return Vec::new();
-                    }
-                    if is_ctrl_c(&key) {
-                        return vec![UserAction::Interrupt];
-                    }
-                    if key.mods.ctrl && key.code == KeyCode::Char('z') {
-                        return self.start_suspend();
                     }
                     let question = self
                         .cron
@@ -2790,27 +2973,6 @@ impl TuiScreen {
                 if key.kind == KeyKind::Release {
                     return Vec::new();
                 }
-                if is_ctrl_c(&key)
-                    && (view.configure.is_some() || self.configure_cancel_at.is_some())
-                {
-                    if key.kind == KeyKind::Repeat {
-                        return Vec::new();
-                    }
-                    if self.configure_cancel_at.is_some_and(|pressed| {
-                        now.saturating_duration_since(pressed) < Duration::from_secs(2)
-                    }) {
-                        self.configure_cancel_at = None;
-                        return vec![
-                            UserAction::Configure(Box::new(ConfigureInput::Quit)),
-                            UserAction::Quit,
-                        ];
-                    }
-                    if view.configure.is_some() {
-                        self.configure_cancel_at = Some(now);
-                        return vec![UserAction::Configure(Box::new(ConfigureInput::Quit))];
-                    }
-                }
-                self.configure_cancel_at = None;
                 if self.mcp_view.is_none()
                     && view.profiles.is_none()
                     && view.doctor.is_none()
@@ -2891,13 +3053,14 @@ impl TuiScreen {
                         .collect();
                 }
                 if let Some(capabilities) = &view.capabilities {
-                    let input = talaria_tui::capabilities::route_capabilities(
+                    return talaria_tui::capabilities::route_capabilities(
                         capabilities,
                         &self.keymap,
                         &Key::from(raw),
                     )
-                    .unwrap_or(talaria_core::capabilities::CapInput::DismissMessage);
-                    return vec![UserAction::Capabilities(Box::new(input))];
+                    .map(|input| UserAction::Capabilities(Box::new(input)))
+                    .into_iter()
+                    .collect();
                 }
                 if let Some(mcp) = &self.mcp_view {
                     return self
@@ -2947,19 +3110,6 @@ impl TuiScreen {
                     if key.kind == KeyKind::Release {
                         return Vec::new();
                     }
-                    if key.mods.ctrl && key.code == KeyCode::Char('z') {
-                        let mut actions = vec![UserAction::Settings(
-                            talaria_core::settings::SettingsInput::HideReveal,
-                        )];
-                        actions.extend(self.start_suspend());
-                        return actions;
-                    }
-                    if is_ctrl_c(&key) {
-                        return vec![
-                            UserAction::Settings(talaria_core::settings::SettingsInput::HideReveal),
-                            UserAction::Interrupt,
-                        ];
-                    }
                     let input = talaria_tui::settings::route_settings(settings, &self.keymap, &key)
                         .map_or(talaria_core::settings::SettingsInput::HideReveal, |key| {
                             talaria_tui::settings::review_scroll_target(
@@ -2987,12 +3137,6 @@ impl TuiScreen {
                     let key = Key::from(raw);
                     if key.kind == KeyKind::Release {
                         return Vec::new();
-                    }
-                    if key.mods.ctrl && key.code == KeyCode::Char('z') {
-                        return self.start_suspend();
-                    }
-                    if is_ctrl_c(&key) {
-                        return vec![UserAction::Interrupt];
                     }
                     return talaria_tui::model_roles::route_model_roles(roles, &self.keymap, &key)
                         .map(|key| {
@@ -3038,15 +3182,20 @@ impl TuiScreen {
                         Key::from(raw),
                         progress,
                     )
-                    .map(UserAction::Workflow)
+                    .map(|key| {
+                        UserAction::Workflow(talaria_tui::workflow_view::WorkflowView::route_key(
+                            progress,
+                            self.terminal.screen_area(),
+                            key,
+                        ))
+                    })
                     .into_iter()
                     .collect();
                 }
                 if self.overlay == Overlay::Agents {
                     return self.agents_key(Key::from(raw), view);
                 }
-                // The session picker's overlay owns every key while it is open: nothing
-                // reaches the composer, the prompt cards or the running turn.
+                // Session search and rename own text input while the picker is open.
                 if self.overlay == Overlay::Sessions {
                     let Some(picker) = view.picker else {
                         return Vec::new();
@@ -3151,6 +3300,14 @@ impl TuiScreen {
                     }
                     return actions;
                 }
+                if key.kind == KeyKind::Press
+                    && action == Some(Action::FocusHelp)
+                    && let Some(help) = self.focus_help_text(view)
+                {
+                    self.focus_help = Some(help);
+                    self.open_overlay(Overlay::FocusHelp);
+                    return Vec::new();
+                }
                 if action == Some(Action::FleetViewOpen) {
                     return vec![UserAction::FleetOpen];
                 }
@@ -3174,7 +3331,7 @@ impl TuiScreen {
                     focus == talaria_tui::comfort_route::Focus::Composer
                         && self.overlay == Overlay::Live
                         && view.rewind.is_none()
-                        && !self.confirmation_takes_keys()
+                        && !self.confirmation_takes_keys(view)
                         && !view.palette.open
                         && !queue_takes_keys(view),
                     matches!(
@@ -3269,16 +3426,18 @@ impl TuiScreen {
                 if self.keymap.resolve(&key, KeyContext::Composer) == Some(Action::ToggleTasks) {
                     return vec![UserAction::ToggleTasks];
                 }
-                if let Some(mut actions) = Self::prompt_actions(self.prompts.handle_key(key, now)) {
+                if let Some(mut actions) =
+                    Self::prompt_actions(self.prompts.handle_key(key, now), view.session_id)
+                {
                     Self::close_palette(&mut actions);
                     return actions;
                 }
-                self.sync_confirmation_focus(now);
+                self.sync_confirmation_focus(view, now);
                 let control_c = key.mods.ctrl
                     && !key.mods.alt
                     && !key.mods.super_key
                     && matches!(key.code, KeyCode::Char('c' | 'C'));
-                if self.confirmation_takes_keys() && !control_c {
+                if self.confirmation_takes_keys(view) && !control_c {
                     return confirmation_key(key, self.confirmation_focused, now)
                         .map(UserAction::ModelConfirm)
                         .into_iter()
@@ -3313,6 +3472,32 @@ impl TuiScreen {
                 {
                     return self.composer_key(key, view, now);
                 }
+                if view.palette.open
+                    && focus == talaria_tui::comfort_route::Focus::Composer
+                    && key.kind != KeyKind::Release
+                    && !key.mods.ctrl
+                    && !key.mods.alt
+                    && !key.mods.shift
+                    && !key.mods.super_key
+                    && !key.mods.other
+                {
+                    let input = match key.code {
+                        KeyCode::PageDown => Some(PaletteInput::PageDown(
+                            talaria_tui::palette::page_rows(self.rows),
+                        )),
+                        KeyCode::PageUp => Some(PaletteInput::PageUp(
+                            talaria_tui::palette::page_rows(self.rows),
+                        )),
+                        KeyCode::Home => Some(PaletteInput::Home),
+                        KeyCode::End => Some(PaletteInput::End),
+                        _ => None,
+                    };
+                    if let Some(input) = input {
+                        let mut actions = flush_draft_actions(&mut self.composer, now);
+                        actions.push(UserAction::Palette(input));
+                        return actions;
+                    }
+                }
                 // An open completion list takes its four keys before the composer does.
                 if view.palette.open
                     && focus == talaria_tui::comfort_route::Focus::Composer
@@ -3323,7 +3508,7 @@ impl TuiScreen {
                         CompletionAction::Next => PaletteInput::Next,
                         CompletionAction::Prev => PaletteInput::Prev,
                         CompletionAction::Accept => PaletteInput::Accept,
-                        CompletionAction::Close => PaletteInput::Close,
+                        CompletionAction::Close => PaletteInput::Escape,
                     };
                     let mut actions = flush_draft_actions(&mut self.composer, now);
                     actions.push(UserAction::Palette(input));
@@ -3422,7 +3607,6 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(mut text) => {
-                self.configure_cancel_at = None;
                 if self.mcp_view.is_none()
                     && view.profiles.is_none()
                     && view.doctor.is_none()
@@ -3591,20 +3775,41 @@ impl TuiScreen {
                         })
                         .collect();
                 }
-                if view.pager_open || view.rewind.is_some() || self.overlay == Overlay::Models {
+                if view.pager_open {
+                    self.apply_transcript(view);
+                    if let Some(transcript) = self.transcript.as_mut()
+                        && transcript.pager.is_typing_search()
+                    {
+                        transcript.pager.handle_search_input(
+                            SearchInput::Paste(text),
+                            &transcript_context(view),
+                            &mut transcript.index,
+                        );
+                    }
                     return Vec::new();
+                }
+                if view.rewind.is_some() {
+                    return Vec::new();
+                }
+                if self.overlay == Overlay::Models {
+                    return self
+                        .confirmation
+                        .is_none()
+                        .then_some(UserAction::ModelFilterPaste(text))
+                        .into_iter()
+                        .collect();
                 }
                 if let Some(search) = &mut self.search {
                     search.handle_paste(&text);
                     return Vec::new();
                 }
                 if let Some(mut actions) =
-                    Self::prompt_actions(self.prompts.handle_paste(&text, now))
+                    Self::prompt_actions(self.prompts.handle_paste(&text, now), view.session_id)
                 {
                     Self::close_palette(&mut actions);
                     return actions;
                 }
-                if self.confirmation_takes_keys() {
+                if self.confirmation_takes_keys(view) {
                     return Vec::new();
                 }
                 paste_actions(&mut self.composer, &text, now)
@@ -3734,11 +3939,7 @@ fn transcript_tool_renderer(
                 markdown: MarkdownOptions {
                     width: width.saturating_sub(2).max(8),
                     color,
-                    theme: if theme.views.active() {
-                        theme.markdown.clone()
-                    } else {
-                        MarkdownTheme::default()
-                    },
+                    theme: theme.markdown.clone(),
                     ..MarkdownOptions::default()
                 },
                 theme: theme.views.pager_theme(),
@@ -3758,9 +3959,209 @@ fn transcript_tool_renderer(
             elapsed: None,
         },
     )
+    .in_conversation()
 }
 
 impl TuiScreen {
+    fn pointer_input(
+        &mut self,
+        mouse: crossterm::event::MouseEvent,
+        view: &View<'_>,
+        now: Instant,
+    ) -> Vec<UserAction> {
+        use crossterm::event::MouseEventKind;
+        use talaria_workflow::progress::live::ProgressKey;
+        if !view.layout.mouse || self.terminal.is_released() {
+            return Vec::new();
+        }
+        let area = self.terminal.screen_area();
+        if let Some(rows) = &self.question_rows
+            && rows.contains(mouse.column, mouse.row)
+            && !self.transcript_overlay_open
+            && !view.layout.menu_focused
+            && matches!(self.overlay, Overlay::Live | Overlay::Configure)
+        {
+            let stack = if self.overlay == Overlay::Configure {
+                &mut self.configure_prompts
+            } else {
+                &mut self.prompts
+            };
+            if mouse.kind == MouseEventKind::Down(crossterm::event::MouseButton::Left) {
+                stack.point_to_choice(rows, mouse.column, mouse.row, now);
+            } else if matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            ) && stack.shows_prompt(rows.key())
+            {
+                let code = if mouse.kind == MouseEventKind::ScrollUp {
+                    KeyCode::Up
+                } else {
+                    KeyCode::Down
+                };
+                let _ = stack.handle_key(
+                    Key {
+                        code,
+                        mods: Default::default(),
+                        kind: KeyKind::Press,
+                    },
+                    now,
+                );
+            }
+            return Vec::new();
+        }
+        if self.overlay == Overlay::Settings
+            && let Some(settings) = &view.settings
+        {
+            use talaria_tui::settings::{PointerMotion, pointer_key};
+            let motion = match mouse.kind {
+                MouseEventKind::Down(crossterm::event::MouseButton::Left) => PointerMotion::Select,
+                MouseEventKind::ScrollUp => PointerMotion::Up,
+                MouseEventKind::ScrollDown => PointerMotion::Down,
+                _ => return Vec::new(),
+            };
+            return pointer_key(settings, area, mouse.column, mouse.row, motion)
+                .map(talaria_core::settings::SettingsInput::Key)
+                .map(UserAction::Settings)
+                .into_iter()
+                .collect();
+        }
+        if self.overlay == Overlay::Kanban
+            && let Some(board) = view.kanban
+        {
+            use talaria_core::kanban::{BoardKey, DetailMotion};
+            use talaria_tui::kanban_view::{KanbanView, detail_viewport};
+            let hit = || KanbanView::hit_test(board, area, mouse.column, mouse.row);
+            let key = match mouse.kind {
+                MouseEventKind::Down(crossterm::event::MouseButton::Left) => hit(),
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    let up = mouse.kind == MouseEventKind::ScrollUp;
+                    if let Some(viewport) = detail_viewport(board, area) {
+                        let motion = if up {
+                            DetailMotion::Up
+                        } else {
+                            DetailMotion::Down
+                        };
+                        Some(BoardKey::ScrollDetail { motion, viewport })
+                    } else {
+                        hit()
+                            .filter(|key| {
+                                matches!(key, BoardKey::SelectColumn(_) | BoardKey::SelectCard(_))
+                            })
+                            .map(|_| BoardKey::Char(if up { 'k' } else { 'j' }))
+                    }
+                }
+                _ => None,
+            };
+            return key.map(UserAction::Kanban).into_iter().collect();
+        }
+        if self.overlay == Overlay::Cron
+            && let Some(cron) = &self.cron
+            && mouse.kind == MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            && talaria_tui::cron::new_action_hit(cron, area, mouse.column, mouse.row)
+        {
+            use talaria_core::cron::{CronAction, CronInput, CronKey};
+            return vec![UserAction::Cron(Box::new(CronInput::Key(CronKey::Action(
+                CronAction::New,
+            ))))];
+        }
+        if self.overlay == Overlay::Sessions
+            && let Some(state) = view.picker
+        {
+            if !matches!(state.mode(), PickerMode::List | PickerMode::Search) {
+                return Vec::new();
+            }
+            let input = match mouse.kind {
+                MouseEventKind::ScrollUp => Some(PickerInput::Action(PickerAction::Up)),
+                MouseEventKind::ScrollDown => Some(PickerInput::Action(PickerAction::Down)),
+                MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                    SessionPickerView::hit_test(state, area, mouse.column, mouse.row)
+                        .cloned()
+                        .map(PickerInput::SelectRow)
+                }
+                _ => None,
+            };
+            return input.map(UserAction::Picker).into_iter().collect();
+        }
+        if self.overlay == Overlay::Models
+            && self.confirmation.is_none()
+            && let Some(picker) = &self.picker
+        {
+            let picker = picker.view();
+            let action = match mouse.kind {
+                MouseEventKind::ScrollUp => Some(UserAction::ModelPicker(PickerKey::Up)),
+                MouseEventKind::ScrollDown => Some(UserAction::ModelPicker(PickerKey::Down)),
+                MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                    talaria_tui::picker_frame::hit_test(&picker, area, mouse.column, mouse.row)
+                        .and_then(|index| picker.rows.get(index)?.key.clone())
+                        .map(UserAction::SelectModelRow)
+                }
+                _ => None,
+            };
+            return action.into_iter().collect();
+        }
+        if self.overlay == Overlay::WorkflowProgress {
+            let progress = view.workflow_progress;
+            if progress.is_some_and(|state| {
+                state.confirmation_text().is_some()
+                    || state.steer_input.is_some()
+                    || state.error.is_some()
+            }) {
+                return Vec::new();
+            }
+            let action = match mouse.kind {
+                MouseEventKind::ScrollUp => Some(ProgressKey::Up),
+                MouseEventKind::ScrollDown => Some(ProgressKey::Down),
+                MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                    progress.and_then(|state| {
+                        talaria_tui::workflow_view::WorkflowView::click(
+                            state,
+                            self.terminal.screen_area(),
+                            mouse.column,
+                            mouse.row,
+                        )
+                    })
+                }
+                _ => None,
+            };
+            return action
+                .map(|key| match progress {
+                    Some(state) => talaria_tui::workflow_view::WorkflowView::route_key(
+                        state,
+                        self.terminal.screen_area(),
+                        key,
+                    ),
+                    None => key,
+                })
+                .map(UserAction::Workflow)
+                .into_iter()
+                .collect();
+        }
+        if self.transcript_overlay_open
+            && view.pager_open
+            && let Some(transcript) = self.transcript.as_mut()
+            && !transcript.pager.is_typing_search()
+        {
+            let action = match mouse.kind {
+                MouseEventKind::ScrollUp => PagerAction::LineUp,
+                MouseEventKind::ScrollDown => PagerAction::LineDown,
+                _ => return Vec::new(),
+            };
+            let renderer = transcript_tool_renderer(
+                transcript.pager.details(),
+                self.terminal.screen_area().width,
+                self.color,
+                &self.theme,
+            );
+            transcript.pager.handle_action_with_renderer(
+                action,
+                &transcript_context(view),
+                &mut transcript.index,
+                &renderer,
+            );
+        }
+        Vec::new()
+    }
+
     /// Whether the key opens the transcript.
     fn opens_transcript(&self, key: &Key) -> bool {
         self.keymap
@@ -3775,8 +4176,8 @@ impl TuiScreen {
             return;
         }
         let actions = std::mem::take(&mut self.transcript_actions);
-        let width = self.terminal.viewport().width;
-        let height = self.terminal.viewport().height;
+        let area = self.terminal.screen_area();
+        let (width, height) = (area.width, area.height);
         for action in actions {
             match action {
                 TranscriptAction::Open => {
@@ -3858,16 +4259,16 @@ impl TuiScreen {
         }
         let _ = self.terminal.open_overlay();
         self.transcript_overlay_open = true;
-        let width = self.terminal.viewport().width;
-        let height = self.terminal.viewport().height;
-        transcript.pager.resize(width, height);
+        let width = self.terminal.screen_area().width;
         let details = transcript.pager.details();
         let renderer = transcript_tool_renderer(details, width, self.color, &self.theme);
-        let _ = self.terminal.draw_overlay(|area, buf| {
-            transcript
-                .pager
-                .draw_with_theme(area, buf, &ctx, &renderer, &self.theme.views)
-        });
+        let _ = self
+            .terminal
+            .draw_navigation_overlay(view.layout.mouse, |area, buf| {
+                transcript
+                    .pager
+                    .draw_with_theme(area, buf, &ctx, &renderer, &self.theme.views)
+            });
     }
 }
 
@@ -3928,10 +4329,15 @@ impl StatusHost for TuiScreen {
             (Some(tick), Some(second)) => Some(tick.min(second)),
             (tick, second) => tick.or(second),
         };
-        match (tick, self.workflow_wake) {
-            (Some(tick), Some(wake)) => Some(tick.min(wake)),
-            (tick, wake) => tick.or(wake),
-        }
+        [
+            tick,
+            self.workflow_wake,
+            self.confirmation_wake,
+            self.subagent_wake,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     fn shutdown(&mut self) -> impl std::future::Future<Output = ()> + Send {
@@ -3953,6 +4359,9 @@ impl Screen for TuiScreen {
     }
     fn menu_bar(&self) -> bool {
         self.config.ui.menu_bar
+    }
+    fn mouse_navigation(&self) -> bool {
+        self.config.ui.mouse
     }
     fn reasoning_display(&self) -> ReasoningDisplay {
         self.config.ui.reasoning
@@ -4232,7 +4641,6 @@ impl Screen for TuiScreen {
             Some(view) => {
                 self.open_overlay(Overlay::Models);
                 self.picker = Some(ModelOverlay::from_view(view));
-                self.draw_picker();
             }
             None => {
                 self.picker = None;
@@ -4245,7 +4653,6 @@ impl Screen for TuiScreen {
             self.confirmation_focused = None;
         }
         self.confirmation = confirmation.cloned();
-        self.sync_confirmation_focus(Instant::now());
     }
 
     fn sync_picker(&mut self, picker: Option<&PickerState>) {
@@ -4347,7 +4754,7 @@ impl Screen for TuiScreen {
         self.sync_agents(view);
         self.sync_prompts(view, now);
         self.sync_configure_prompts(view, now);
-        self.sync_confirmation_focus(now);
+        self.sync_confirmation_focus(view, now);
         // The `/effort` scale opened while a card was up: the card has the keys, so the scale
         // closes as Esc would before the card takes this input.
         let yield_scale = view.effort_scale.is_some() && self.prompts.section().is_some();
@@ -4413,10 +4820,13 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        self.question_rows = None;
         // Overlays return early, so the working row counts as hidden until it is pushed below.
         self.activity.begin_frame();
+        self.subagent_wake = None;
         self.authoring_wake = None;
         self.workflow_wake = None;
+        self.confirmation_wake = None;
         let turn_running = view
             .state
             .is_some_and(|state| matches!(state.turn(), SessionTurn::Running));
@@ -4428,52 +4838,91 @@ impl Screen for TuiScreen {
         } else {
             let _ = self.terminal.leave_workspace();
         }
+        if self.overlay == Overlay::FocusHelp
+            && let Some(help) = &self.focus_help
+        {
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                use ratatui::layout::Rect;
+                use ratatui::widgets::{Paragraph, Widget, Wrap};
+                let body = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
+                Paragraph::new(help.as_str())
+                    .wrap(Wrap { trim: false })
+                    .render(body, buf);
+                Paragraph::new("Esc back").render(
+                    Rect::new(
+                        area.x,
+                        body.bottom(),
+                        area.width,
+                        u16::from(area.height > 0),
+                    ),
+                    buf,
+                );
+                self.theme.views.finish(
+                    area,
+                    buf,
+                    talaria_tui::theme::surfaces::tokens::DIALOG_BACKGROUND,
+                    true,
+                );
+            });
+            return;
+        }
         if let Some(board) = view.kanban {
             self.open_overlay(Overlay::Kanban);
-            let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::kanban_view::KanbanView::draw(board, area, buf)
-            });
+            let _ = self
+                .terminal
+                .draw_navigation_overlay(view.layout.mouse, |area, buf| {
+                    talaria_tui::kanban_view::KanbanView::draw_with_theme(
+                        board,
+                        area,
+                        buf,
+                        &self.theme.views,
+                    )
+                });
             return;
         }
         self.close_overlay(Overlay::Kanban);
         if let Some(picker) = view.workflow_picker {
             self.open_overlay(Overlay::WorkflowProgress);
             let theme = self.theme.views.workflow_theme();
-            let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::workflow_view::WorkflowView::render_picker_themed(
-                    area,
-                    buf,
-                    picker,
-                    &theme,
-                    &self.theme.views,
-                );
-                self.theme.views.finish(
-                    area,
-                    buf,
-                    talaria_tui::theme::surfaces::tokens::LIST_BACKGROUND,
-                    true,
-                )
-            });
+            let _ = self
+                .terminal
+                .draw_navigation_overlay(view.layout.mouse, |area, buf| {
+                    talaria_tui::workflow_view::WorkflowView::render_picker_themed(
+                        area,
+                        buf,
+                        picker,
+                        &theme,
+                        &self.theme.views,
+                    );
+                    self.theme.views.finish(
+                        area,
+                        buf,
+                        talaria_tui::theme::surfaces::tokens::LIST_BACKGROUND,
+                        true,
+                    )
+                });
             return;
         }
         if let Some(progress) = view.workflow_progress {
             self.open_overlay(Overlay::WorkflowProgress);
             let theme = self.theme.views.workflow_theme();
-            let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::workflow_view::WorkflowView::render_themed(
-                    area,
-                    buf,
-                    progress,
-                    &theme,
-                    &self.theme.views,
-                );
-                self.theme.views.finish(
-                    area,
-                    buf,
-                    talaria_tui::theme::surfaces::tokens::LIST_BACKGROUND,
-                    true,
-                )
-            });
+            let _ = self
+                .terminal
+                .draw_navigation_overlay(view.layout.mouse, |area, buf| {
+                    talaria_tui::workflow_view::WorkflowView::render_themed(
+                        area,
+                        buf,
+                        progress,
+                        &theme,
+                        &self.theme.views,
+                    );
+                    self.theme.views.finish(
+                        area,
+                        buf,
+                        talaria_tui::theme::surfaces::tokens::LIST_BACKGROUND,
+                        true,
+                    )
+                });
             return;
         }
         self.close_overlay(Overlay::WorkflowProgress);
@@ -4499,7 +4948,13 @@ impl Screen for TuiScreen {
         if let Some(doctor) = view.doctor {
             self.open_overlay(Overlay::Doctor);
             let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::doctor_view::draw_doctor(doctor, view.doctor_restart, area, buf);
+                talaria_tui::doctor_view::draw_doctor_with_theme(
+                    doctor,
+                    view.doctor_restart,
+                    area,
+                    buf,
+                    &self.theme.views,
+                );
             });
             return;
         }
@@ -4509,11 +4964,22 @@ impl Screen for TuiScreen {
         self.sync_configure_prompts(view, Instant::now());
         if let Some(configure) = &view.configure {
             self.open_overlay(Overlay::Configure);
-            let section = self.configure_prompts.section();
-            let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::configure::draw_configure(configure, area, buf);
+            let section = self
+                .configure_prompts
+                .section()
+                .map(|s| s.with_theme(&self.theme.views));
+            let mouse = view.layout.mouse
+                && configure.phase == ConfigurePhase::Question
+                && section.as_ref().is_some_and(|s| s.is_choice_question());
+            let _ = self.terminal.draw_navigation_overlay(mouse, |area, buf| {
+                talaria_tui::configure::draw_configure_with_theme(
+                    configure,
+                    area,
+                    buf,
+                    &self.theme.views,
+                );
                 if configure.phase == ConfigurePhase::Question
-                    && let Some(section) = section
+                    && let Some(section) = &section
                 {
                     let room = area.height.saturating_sub(2);
                     let height = section.height(area.width).min(room);
@@ -4525,8 +4991,15 @@ impl Screen for TuiScreen {
                     );
                     ratatui::widgets::Widget::render(ratatui::widgets::Clear, card, buf);
                     section.render(card, buf);
+                    self.theme.views.finish(
+                        card,
+                        buf,
+                        talaria_tui::theme::surfaces::tokens::DIALOG_BACKGROUND,
+                        true,
+                    );
                 }
             });
+            self.question_rows = section.and_then(|s| s.take_question_rows());
             return;
         }
         self.close_overlay(Overlay::Configure);
@@ -4583,7 +5056,7 @@ impl Screen for TuiScreen {
             }
             self.open_overlay(Overlay::Memory);
             let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::memory::draw_memory(&memory, area, buf);
+                talaria_tui::memory::draw_memory_with_theme(&memory, area, buf, &self.theme.views);
             });
             return;
         }
@@ -4604,9 +5077,16 @@ impl Screen for TuiScreen {
         if let Some(cron) = self.cron.clone() {
             if self.cron_dirty || self.overlay != Overlay::Cron {
                 self.open_overlay(Overlay::Cron);
-                let _ = self.terminal.draw_overlay(|area, buf| {
-                    talaria_tui::cron::draw_cron_with_theme(&cron, area, buf, &self.theme.views);
-                });
+                let _ = self
+                    .terminal
+                    .draw_navigation_overlay(view.layout.mouse, |area, buf| {
+                        talaria_tui::cron::draw_cron_with_theme(
+                            &cron,
+                            area,
+                            buf,
+                            &self.theme.views,
+                        );
+                    });
                 self.cron_dirty = false;
             }
             return;
@@ -4615,8 +5095,15 @@ impl Screen for TuiScreen {
             let mut settings = settings.clone();
             settings.help = self.keymap.settings_help();
             self.open_overlay(Overlay::Settings);
-            let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::settings::draw_settings(&settings, area, buf);
+            let mouse = view.layout.mouse
+                && talaria_tui::settings::pointer_enabled(&settings, self.terminal.screen_area());
+            let _ = self.terminal.draw_navigation_overlay(mouse, |area, buf| {
+                talaria_tui::settings::draw_settings_with_theme(
+                    &settings,
+                    area,
+                    buf,
+                    &self.theme.views,
+                );
             });
             return;
         }
@@ -4715,7 +5202,7 @@ impl Screen for TuiScreen {
             now,
         );
         self.reasoning = view.layout.reasoning;
-        self.sync_confirmation_focus(now);
+        self.sync_confirmation_focus(view, now);
         if let Some(rewind) = &view.rewind {
             self.transcript_overlay_open = false;
             if !self.rewind_open {
@@ -4744,15 +5231,20 @@ impl Screen for TuiScreen {
         }
         if self.overlay == Overlay::Agents {
             self.draw_agents(view);
+            if !self.terminal.is_released()
+                && let Some(wait) = self.agents.as_ref().and_then(AgentsPanel::wake_after_ms)
+            {
+                self.subagent_wake = Some(now + Duration::from_millis(wait));
+            }
             return;
         }
         if self.overlay == Overlay::Models && self.transcript.is_none() {
-            self.draw_picker();
+            self.draw_picker(view.layout.mouse);
             return;
         }
         if self.overlay == Overlay::Sessions {
             if let Some(state) = view.picker {
-                self.draw_session_picker(state);
+                self.draw_session_picker(state, view.layout.mouse);
             }
             return;
         }
@@ -4827,17 +5319,17 @@ impl Screen for TuiScreen {
                             theme: &theme,
                             transcript_key: transcript_key.as_deref(),
                         };
-                        let lines = match preview(cell, limit) {
-                            Some(trimmed) => {
-                                shortened = true;
-                                cells.lines(&trimmed, width)
-                            }
-                            None => cells.lines(cell, width),
+                        let trimmed = preview(cell, limit);
+                        let cell = if let Some(trimmed) = &trimmed {
+                            shortened = true;
+                            trimmed
+                        } else {
+                            cell
                         };
                         if separated {
-                            after_committed(lines)
+                            after_committed(cells.continuation_lines(cell, width))
                         } else {
-                            lines
+                            cells.lines(cell, width)
                         }
                     })
                     .collect();
@@ -4868,27 +5360,65 @@ impl Screen for TuiScreen {
             theme: &self.tool_theme,
         };
         let connecting = PlainTextSection::new(CONNECTING);
-        let status = StatusSection::new(&self.inputs, self.external.segment(), &self.palette);
-        let prompts = self.prompts.section();
+        let mut conversation_hints = Vec::new();
+        if !turn_running && self.composer_gets_keys(view) {
+            if let Some(key) = self.keymap.label(Action::FocusHelp) {
+                conversation_hints.push(format!("{key} help"));
+            }
+            if self
+                .composer
+                .vim_mode()
+                .is_none_or(|mode| mode == VimMode::Insert)
+            {
+                if let Some(key) = self.keymap.label(Action::Submit) {
+                    conversation_hints.push(format!("{key} submit"));
+                }
+                if let Some(key) = self.keymap.label(Action::Interrupt) {
+                    conversation_hints.push(format!("{key} interrupt"));
+                }
+                let sessions = self
+                    .keymap
+                    .label(Action::SessionPickerOpen)
+                    .unwrap_or_else(|| "/resume".into());
+                conversation_hints.push(format!("{sessions} sessions"));
+                let models = self
+                    .keymap
+                    .model_chords(ModelAction::ModelPicker)
+                    .first()
+                    .map_or_else(|| "/model".into(), |key| key.label());
+                conversation_hints.push(format!("{models} models"));
+            }
+        }
+        let status = StatusSection::new(&self.inputs, self.external.segment(), &self.palette)
+            .in_conversation()
+            .with_conversation_hints(&conversation_hints);
+        let prompts = self
+            .prompts
+            .section()
+            .map(|s| s.with_theme(&self.theme.views));
+        let question = prompts.as_ref().filter(|s| s.is_choice_question());
         let palette =
             PaletteSection::new(view.palette, self.rows).with_theme(self.theme.views.clone());
-        // The selector draws in the palette's place, under a sample of the selected look:
-        // finished scrollback keeps its colours, so the sample is where a preview shows.
-        let choice = view
-            .choice
-            .map(|list| ChoiceSection::new(list, self.rows).with_theme(self.theme.views.clone()));
         let effort_scale = view.effort_scale.map(|scale| {
             EffortScaleSection::new(scale, scale_key_labels(&self.keymap), self.rows)
                 .with_theme(self.theme.views.clone())
         });
+        self.confirmation_wake = self
+            .confirmation_focused
+            .map(|focused| focused + CONFIRMATION_GUARD)
+            .filter(|deadline| now < *deadline);
         let confirmation = if prompts.is_none() {
             self.confirmation.as_ref().map(|card| {
                 let section =
                     ModelConfirmSection::new(card, view.model.unwrap_or("the current model"));
-                if self.composer.is_empty() {
-                    section
-                } else {
+                if !self.composer.is_empty() {
                     section.waiting_on_draft()
+                } else if self.confirmation_focused.is_none() {
+                    section.waiting_on_focus()
+                } else if self.confirmation_wake.is_some() {
+                    section.guarded()
+                } else {
+                    section
                 }
             })
         } else {
@@ -4923,10 +5453,12 @@ impl Screen for TuiScreen {
             .mention
             .as_ref()
             .filter(|_| self.mention_list_open())
-            .map(MentionSection::new);
+            .map(|mention| MentionSection::new(mention).with_theme(self.theme.views.clone()));
         let queue = MarkdownTailSection::new(
             queue_view(view)
-                .map(|queue| render_preview(&queue, width, self.composer.is_empty()))
+                .map(|queue| {
+                    render_preview_with_theme(&queue, width, composer_is_empty, &self.theme.views)
+                })
                 .unwrap_or_default(),
         );
         // Measured before the composer section borrows the composer.
@@ -4936,11 +5468,28 @@ impl Screen for TuiScreen {
             .agent_back_offered(view)
             .then(|| self.keymap.label(Action::WorkflowAgentBack))
             .flatten();
+        let composer_focused = self.composer_gets_keys(view) && view.link == LinkView::Connected;
+        let no_messages = view
+            .state
+            .is_some_and(|state| state.cells().iter().all(Cell::is_advisory_notice));
+        let conversation = if view.hivecode {
+            "Hivecode workflow"
+        } else {
+            view.title
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(if no_messages {
+                    "New conversation"
+                } else {
+                    "Message"
+                })
+        };
         let composer = ThemedComposer {
             section: self
                 .composer
                 .section(width, COMPOSER_ROWS)
-                .with_border_preset(self.composer_border),
+                .with_border_preset(self.composer_border)
+                .in_conversation(conversation, composer_focused),
             views: &self.theme.views,
         };
         let partial_text = view
@@ -4992,20 +5541,27 @@ impl Screen for TuiScreen {
             )
         });
         let subagent_style = subagent_style(&self.theme);
+        let agent_clock = talaria_tui::subagents::AgentClock {
+            now_ms: view.now_ms,
+            motion: self.theme.motion,
+        };
         let subagent_hint = self.keymap.label(Action::AgentsPanel);
         let subagents = view.subagents.and_then(|hub| {
             let key = hub.foreground_key()?;
             let tree = hub.tree(key)?;
-            Some(SubagentDock::new(
-                tree,
-                tree.counts(),
-                None,
-                hub.spawning(),
-                subagent_hint.as_deref(),
-                &subagent_style,
-                hub.cfg().dock_rows,
-                self.rows,
-            ))
+            Some(
+                SubagentDock::new(
+                    tree,
+                    tree.counts(),
+                    None,
+                    hub.spawning(),
+                    subagent_hint.as_deref(),
+                    &subagent_style,
+                    hub.cfg().dock_rows,
+                    self.rows,
+                )
+                .with_clock(agent_clock),
+            )
         });
         let workflow_hint = self.keymap.label(Action::WorkflowView);
         // While a routed turn builds a workflow, the building block takes the dock's place.
@@ -5061,49 +5617,57 @@ impl Screen for TuiScreen {
             },
             views: &self.theme.views,
         };
-        // The sample of the selected look shows only when it fits with every section that takes
-        // its rows before the working row and the composer: the working row itself, the
-        // composer, the voice partial line, the selector, the automation rows and the status
-        // bar. On a short screen the selector's own list still previews, and neither the
-        // composer nor the working row is pushed off.
-        let no_captures = HashMap::new();
-        let sample = choice
-            .as_ref()
-            .filter(|_| self.rows >= SHORT_TERMINAL_ROWS)
-            .map(|choice| {
+        // The list and its transcript sample share the rows left by the composer and status.
+        let choice = view.choice.map(|list| {
+            let available = [
+                Some(&status as &dyn LiveSection),
+                Some(&composer as &dyn LiveSection),
+                activity.as_ref().map(|row| row as &dyn LiveSection),
+                partial.as_ref().map(|line| line as &dyn LiveSection),
+                Some(&automation as &dyn LiveSection),
+            ]
+            .into_iter()
+            .flatten()
+            .fold(max_live_height(self.rows), |rows, section| {
+                rows.saturating_sub(section.height(width))
+            });
+            let mut choice = ChoiceSection::new(list, self.rows)
+                .with_theme(self.theme.views.clone())
+                .within_rows(available);
+            if self.rows >= 24
+                && list.selected().is_some()
+                && let Some(sample_width) = ChoiceSection::sample_width(width)
+            {
                 let cells = CapturedCells {
                     current: &self.theme,
-                    captured: &no_captures,
+                    captured: &HashMap::new(),
                     tools: &self.cells,
                     transcript_key: None,
                     // The sample shows the reasoning colour, which one quiet line would not.
                     reasoning: ReasoningDisplay::Full,
                     reasoning_clock: None,
                 };
-                (
-                    choice,
-                    MarkdownTailSection::new(sample_lines(&cells, width)),
-                )
-            })
-            .filter(|(choice, sample)| {
-                let needed = [
-                    Some(&status as &dyn LiveSection),
-                    Some(*choice as &dyn LiveSection),
-                    Some(&composer as &dyn LiveSection),
-                    activity.as_ref().map(|row| row as &dyn LiveSection),
-                    partial.as_ref().map(|line| line as &dyn LiveSection),
-                    Some(&automation as &dyn LiveSection),
-                    Some(sample as &dyn LiveSection),
-                ]
-                .into_iter()
-                .flatten()
-                .fold(0u32, |rows, section| {
-                    rows + u32::from(section.height(width))
-                });
-                needed <= u32::from(max_live_height(self.rows))
-            })
-            .map(|(_, sample)| sample);
+                choice = choice.with_sample(sample_lines(&cells, sample_width));
+            }
+            choice
+        });
         let workspace_enabled = view.layout.workspace_enabled() || view.layout.menu_transient;
+        let start = (!workspace_enabled
+            && composer_is_empty
+            && composer_focused
+            && !turn_running
+            && view.workflow_run.is_none()
+            && view.workflow_agent.is_none()
+            && no_messages
+            && self.rows >= 16)
+            .then(|| {
+                let start = talaria_tui::live::ConversationStart::new(&self.palette);
+                if self.rows < 22 {
+                    start.compact()
+                } else {
+                    start
+                }
+            });
         let panel_visible = workspace_enabled
             && talaria_tui::workspace::geometry(
                 self.terminal.screen_area(),
@@ -5118,7 +5682,12 @@ impl Screen for TuiScreen {
         } else {
             vec![&tail, &drafting]
         };
-        if let Some(prompts) = &prompts {
+        if let Some(start) = &start {
+            sections.push(start);
+        }
+        if let Some(prompts) = &prompts
+            && question.is_none()
+        {
             sections.push(prompts);
         }
         if let Some(confirmation) = &confirmation {
@@ -5135,6 +5704,9 @@ impl Screen for TuiScreen {
             .as_ref()
             .map(|s| s.section_with_theme(std::time::SystemTime::now(), &self.theme.views));
         if let Some(search) = &search {
+            if let Some(question) = question {
+                sections.push(question);
+            }
             if let Some(side) = &side {
                 sections.push(side);
             }
@@ -5178,14 +5750,16 @@ impl Screen for TuiScreen {
             if let Some(activity) = &activity {
                 sections.push(activity);
             }
-            sections.push(&composer);
+            if !composer_is_empty && let Some(question) = question {
+                sections.push(question);
+            }
+            if question.is_none() || !composer_is_empty {
+                sections.push(&composer);
+            }
             if let Some(partial) = &partial {
                 sections.push(partial);
             }
             if let Some(choice) = &choice {
-                if let Some(sample) = &sample {
-                    sections.push(sample);
-                }
                 sections.push(choice);
             } else if let Some(scale) = &effort_scale {
                 // A question or approval card holds the keys and closes the scale; until it
@@ -5198,7 +5772,22 @@ impl Screen for TuiScreen {
             }
         }
         sections.push(&automation);
+        // Later sections keep their rows on short screens. An empty composer yields to
+        // the question; a draft keeps its input and sits below the question.
+        if let Some(question) = question
+            && composer_is_empty
+            && search.is_none()
+        {
+            sections.push(question);
+        }
         sections.push(&status);
+        let question_mouse = view.layout.mouse
+            && question.is_some()
+            && composer_is_empty
+            && self.search.is_none()
+            && self.transcript.is_none()
+            && !view.layout.menu_focused
+            && view.layout.panel != talaria_core::layout::PanelVisibility::OverlayOpen;
         // The row's clock wakes the screen only while the row is really on screen: not while
         // the transcript pager covers the live region, not while the terminal is handed to
         // another program, and not when a short screen gives the row no rows.
@@ -5257,6 +5846,21 @@ impl Screen for TuiScreen {
         {
             self.workflow_wake = Some(Instant::now() + Duration::from_millis(wait));
         }
+        if let Some(section) = &subagents
+            && self.transcript.is_none()
+            && !self.terminal.is_released()
+            && let Some(index) = sections
+                .iter()
+                .position(|shown| std::ptr::addr_eq(*shown, section))
+        {
+            let rows = LiveView {
+                sections: sections.clone(),
+            }
+            .rows_of(index, width, max_live_height(self.rows));
+            self.subagent_wake = section
+                .wake_after_ms(width, rows)
+                .map(|wait| now + Duration::from_millis(wait));
+        }
         if workspace_enabled {
             let empty_agents = talaria_core::subagents::SubagentTree::new();
             let agents = view
@@ -5300,6 +5904,8 @@ impl Screen for TuiScreen {
                 checklist_expanded: view.checklist_expanded,
                 waiting: &waiting,
                 agents,
+                agent_clock,
+                agent_wake_ms: Default::default(),
                 parent_model: None,
                 recent_limit: 4,
                 voice_phase: None,
@@ -5353,20 +5959,36 @@ impl Screen for TuiScreen {
             let render_workspace = &mut self.workspace_renderer;
             let style = &self.checklist_style;
             let hint = self.keymap.label(Action::ToggleTasks);
-            let _ = self.terminal.draw_workspace(|area, buffer| {
-                render_workspace.draw_with_style_and_theme(
-                    &workspace,
-                    area,
-                    buffer,
-                    &renderer,
-                    style,
-                    hint,
-                    Some(String::from("Ctrl+O transcript, / search")),
-                    &self.theme.views,
-                );
-            });
+            let _ = self
+                .terminal
+                .draw_workspace_with_mouse(question_mouse, |area, buffer| {
+                    render_workspace.draw_with_style_and_theme(
+                        &workspace,
+                        area,
+                        buffer,
+                        &renderer,
+                        style,
+                        hint,
+                        None,
+                        &self.theme.views,
+                    );
+                });
+            if self.transcript.is_none()
+                && !self.terminal.is_released()
+                && let Some(wait) = work.agent_wake_ms.get()
+            {
+                self.subagent_wake = Some(now + Duration::from_millis(wait));
+            }
         } else {
-            let _ = self.terminal.draw_live(&LiveView { sections });
+            let _ = self
+                .terminal
+                .draw_live_with_mouse(&LiveView { sections }, question_mouse);
+        }
+        if question_mouse && let Some(mut rows) = question.and_then(|s| s.take_question_rows()) {
+            if !workspace_enabled {
+                rows.offset_y(self.terminal.viewport().y);
+            }
+            self.question_rows = Some(rows);
         }
         if !self.compact_started {
             self.compact_started = true;
@@ -5552,6 +6174,8 @@ impl Screen for TuiScreen {
 
     fn appearance_changed(&mut self, view: &AppearanceView<'_>) {
         let resolved = self.look.resolve(view);
+        self.terminal
+            .set_inline_theme(resolved.inline_canvas(self.look.terminal), view.previewing);
         self.composer_border = resolved.border;
         self.theme_file_report = resolved.report;
         self.set_theme(resolved.theme, view.previewing);
@@ -6040,7 +6664,7 @@ fn session(
         .map_or_else(Vec::new, ThemeFileSession::startup);
     let guard = TerminalGuard::acquire()?;
     let probe = probe_startup(PROBE_DEADLINE)?;
-    // Light or dark is decided once, from the start-up probe; `/theme` overrides it per session.
+    // Capture terminal detection once. The profile's saved background can override it.
     let look = Look {
         terminal: probe.colors,
         polarity: detect::polarity(None, &settings.env, settings.mode, &probe.colors),
@@ -6049,21 +6673,23 @@ fn session(
     let resolved = look.resolve(&AppearanceView {
         skin: None,
         skipped: &[],
-        polarity: look.polarity,
+        polarity: theme_files
+            .as_ref()
+            .map_or(look.polarity, |files| files.polarity(look.polarity)),
         file: theme_files.as_ref().and_then(ThemeFileSession::file),
         file_id: theme_files.as_ref().and_then(ThemeFileSession::active_id),
         previewing: false,
     });
+    let inline_canvas = resolved.inline_canvas(look.terminal);
     let theme = Arc::new(resolved.theme);
     let size = terminal_size().map_err(TerminalError::Io)?;
-    let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
+    let mut terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
+    terminal.set_inline_theme(inline_canvas, false);
     let (sender, receiver) = mpsc::unbounded_channel();
     let color = theme.color;
     let checklist_style = checklist_style(&theme);
-    let rewind_theme = theme
-        .views
-        .rewind_theme(std::env::var_os("NO_COLOR").is_none());
+    let rewind_theme = theme.views.rewind_theme(color);
     let history_dir = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
@@ -6124,8 +6750,8 @@ fn session(
         terminal,
         composer,
         prompts: PromptStack::new(),
+        question_rows: None,
         configure_prompts: PromptStack::new(),
-        configure_cancel_at: None,
         status,
         external: ExternalDisplay::default(),
         inputs: StatusInputs {
@@ -6140,6 +6766,7 @@ fn session(
         activity: ActivityClock::default(),
         authoring_wake: None,
         workflow_wake: None,
+        subagent_wake: None,
         tool_theme: theme.tool.clone(),
         look,
         startup_theme_files: theme_files,
@@ -6158,6 +6785,7 @@ fn session(
         picker: None,
         profiles: ProfilesRenderer::default(),
         overlay: Overlay::Live,
+        focus_help: None,
         mcp_view: None,
         mcp_wiring: crate::mcp_wiring::McpWiring::default(),
         cron: None,
@@ -6179,6 +6807,7 @@ fn session(
         launch_seen: 0,
         confirmation: None,
         confirmation_focused: None,
+        confirmation_wake: None,
         rewind_open: false,
         rewind_rows: 0,
         rewind_theme,
@@ -6311,10 +6940,41 @@ mod tests {
     use talaria_tui::composer::{Composer, ComposerContext};
     use talaria_tui::keys::{Key, KeyMap};
     use talaria_tui::markdown::{MarkdownOptions, render_markdown};
+    use talaria_tui::prompts::KeyOutcome;
     use talaria_tui::theme::{
         ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors,
         ThemeInputs,
     };
+
+    #[test]
+    fn a_prompt_interrupt_never_falls_through_to_another_session() {
+        let outcome = |session: &str| KeyOutcome::Consumed {
+            intent: None,
+            interrupt_requested: true,
+            interrupt_session: Some(session.into()),
+            notice: None,
+        };
+        let foreign = TuiScreen::prompt_actions(outcome("background"), Some("foreground"))
+            .expect("card consumed the key");
+        assert!(
+            foreign
+                .iter()
+                .all(|action| !matches!(action, UserAction::Interrupt))
+        );
+        assert!(
+            foreign
+                .iter()
+                .any(|action| matches!(action, UserAction::Notice(_)))
+        );
+
+        let foreground = TuiScreen::prompt_actions(outcome("foreground"), Some("foreground"))
+            .expect("card consumed the key");
+        assert!(
+            foreground
+                .iter()
+                .any(|action| matches!(action, UserAction::Interrupt))
+        );
+    }
 
     #[test]
     fn busy_queue_shortcuts_keep_text_and_caret() {
@@ -6651,7 +7311,6 @@ mod tests {
                 KeyModifiers::SHIFT,
                 ChoiceKey::Type('E'),
             ),
-            (KeyCode::Char('c'), KeyModifiers::CONTROL, ChoiceKey::Cancel),
         ] {
             assert_eq!(
                 choice_key(&defaults, key(code, mods)),
@@ -6727,7 +7386,6 @@ mod tests {
             ),
             (KeyCode::Enter, KeyModifiers::NONE, ScaleKey::Apply),
             (KeyCode::Esc, KeyModifiers::NONE, ScaleKey::Cancel),
-            (KeyCode::Char('c'), KeyModifiers::CONTROL, ScaleKey::Cancel),
         ] {
             assert_eq!(
                 scale_key(&defaults, key(code, mods)),
@@ -6781,6 +7439,9 @@ mod tests {
         let chord = |code, mods| Key::from(KeyEvent::new(code, mods));
         for (code, mods, expected) in [
             (KeyCode::Tab, KeyModifiers::NONE, PickerKey::ChipsNext),
+            (KeyCode::Up, KeyModifiers::SHIFT, PickerKey::PreviousGroup),
+            (KeyCode::Down, KeyModifiers::SHIFT, PickerKey::NextGroup),
+            (KeyCode::Left, KeyModifiers::SHIFT, PickerKey::FoldProvider),
             (KeyCode::BackTab, KeyModifiers::SHIFT, PickerKey::ChipsPrev),
             (KeyCode::F(2), KeyModifiers::NONE, PickerKey::Details),
             (
@@ -6822,7 +7483,7 @@ mod tests {
         );
         assert_eq!(
             picker_key(&map, key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            Some(PickerKey::Close)
+            None
         );
         assert_eq!(
             picker_key(&map, key(KeyCode::Char('u'), KeyModifiers::CONTROL)),
@@ -6879,13 +7540,19 @@ mod tests {
     fn confirmation_requires_the_focus_guard_and_only_its_fixed_keys() {
         let now = Instant::now();
         let enter = Key::from(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(confirmation_key(enter, Some(now), now), None);
+        let yes = Key::from(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        let escape = Key::from(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        for key in [enter, yes, escape] {
+            assert_eq!(
+                confirmation_key(key, Some(now), now + Duration::from_millis(249)),
+                None
+            );
+        }
         let ready = now + Duration::from_millis(250);
         assert_eq!(
             confirmation_key(enter, Some(now), ready),
             Some(ConfirmKey::Accept)
         );
-        let escape = Key::from(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(
             confirmation_key(escape, Some(now), ready),
             Some(ConfirmKey::Decline)
@@ -7157,6 +7824,27 @@ mod tests {
     }
 
     #[test]
+    fn conversation_help_has_a_separate_key_from_printable_question_marks() {
+        use talaria_tui::keys::{Action, KeyContext};
+        let map = KeyMap::defaults();
+        let help = Key::from(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE));
+        assert_eq!(
+            map.resolve(&help, KeyContext::Composer),
+            Some(Action::FocusHelp)
+        );
+        let mut composer = Composer::new(map);
+        composer_key_actions(
+            &mut composer,
+            Key::from(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
+            ComposerContext {
+                turn_running: false,
+            },
+            Instant::now(),
+        );
+        assert_eq!(composer.text(), "?");
+    }
+
+    #[test]
     fn bracketed_paste_follows_buffered_raw_keys() {
         use talaria_app::app::UserAction;
         let mut composer = Composer::new(KeyMap::defaults());
@@ -7265,12 +7953,15 @@ mod tests {
             lines.last().map(ToString::to_string).unwrap_or_default()
         };
         assert_eq!(
-            last_row(&KeyMap::defaults()),
-            "     … +7 lines (Ctrl+O to view)"
+            last_row(&KeyMap::defaults()).trim_start(),
+            "… +7 lines (Ctrl+O to view)"
         );
         let entries = BTreeMap::from([("transcript_open".to_string(), vec!["ctrl+t".to_string()])]);
         let (rebound, _) = KeyMap::from_entries(&entries);
-        assert_eq!(last_row(&rebound), "     … +7 lines (Ctrl+T to view)");
+        assert_eq!(
+            last_row(&rebound).trim_start(),
+            "… +7 lines (Ctrl+T to view)"
+        );
     }
 
     /// A reasoning block of `lines` source lines.
@@ -7321,18 +8012,18 @@ mod tests {
         let answered = Cell::Reasoning(reasoning_block(34, true, false));
         assert_eq!(
             rows(ReasoningDisplay::Collapsed, Some("Ctrl+O"), &answered),
-            vec!["∴ thinking (+34 lines, Ctrl+O to view)"]
+            vec!["∴ reasoning (+34 lines, Ctrl+O to view)"]
         );
         let entries = BTreeMap::from([("transcript_open".to_string(), vec!["ctrl+t".to_string()])]);
         let (rebound, _) = KeyMap::from_entries(&entries);
         let label = rebound.label(talaria_tui::keys::Action::TranscriptOpen);
         assert_eq!(
             rows(ReasoningDisplay::Collapsed, label.as_deref(), &answered),
-            vec!["∴ thinking (+34 lines, Ctrl+T to view)"]
+            vec!["∴ reasoning (+34 lines, Ctrl+T to view)"]
         );
         let full = rows(ReasoningDisplay::Full, Some("Ctrl+O"), &answered);
         assert_eq!(full.len(), 35, "the heading and every line, as before");
-        assert_eq!(full[0], "∴ thinking");
+        assert_eq!(full[0], "∴ reasoning");
         assert_eq!(
             in_force.cells(&none, Some("Ctrl+O")).lines(&answered, 100),
             in_force

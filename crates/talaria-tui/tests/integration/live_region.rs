@@ -9,7 +9,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use support::{Alac, ByteSink, Vt, live_view_sections, probe, tagged};
-use talaria_tui::live::{FrameStats, LiveSection, LiveView, PlainTextSection};
+use talaria_tui::live::{ConversationStart, FrameStats, LiveSection, LiveView, PlainTextSection};
+use talaria_tui::status::StatusPalette;
 use talaria_tui::terminal::{InlineTerminal, RestoreLink};
 
 const COLS: u16 = 80;
@@ -20,6 +21,38 @@ const SYNC_OPEN: &[u8] = b"\x1b[?2026h";
 
 /// Closes a synchronized update.
 const SYNC_CLOSE: &[u8] = b"\x1b[?2026l";
+
+#[test]
+fn opening_aligns_the_real_commands_and_uses_a_small_layout_when_space_runs_out() {
+    let start = ConversationStart::new(&StatusPalette::default());
+    let draw = |width, height| {
+        let area = Rect::new(3, 2, width, height);
+        let mut buffer = Buffer::empty(area);
+        start.render(area, &mut buffer);
+        (area.y..area.bottom())
+            .map(|y| {
+                (area.x..area.right())
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(start.height(80), 7);
+    let wide = draw(80, 7);
+    assert!(wide[1].contains("Talaria"));
+    let command_column = |row: &str| row.chars().position(|symbol| symbol == '/');
+    let column = command_column(&wide[3]).unwrap();
+    assert_eq!(command_column(&wide[4]), Some(column));
+    assert_eq!(command_column(&wide[5]), Some(column));
+    assert!(wide[4].contains("/workflows   Browse workflows"));
+
+    for (width, height) in [(35, 3), (80, 2)] {
+        let compact = draw(width, height);
+        assert!(compact[0].contains("Talaria"));
+        assert!(compact[1].contains("/resume"));
+    }
+    assert_eq!(start.height(19), 0);
+}
 
 #[test]
 fn clearing_a_viewport_at_row_zero_never_erases_the_display_from_home() {

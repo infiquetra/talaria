@@ -289,7 +289,7 @@ fn dump_rows_include_launch_duration_and_keep_unknown_cost_explicit() {
     assert!(row.contains("done · 1.2s"), "{row}");
     // These journal lines predate cache reads being kept apart, so the row says they are unknown.
     assert!(
-        row.contains("1.1k tokens (cache reads unknown for 1 turn, counted in full) · $0.10"),
+        row.contains("up to 1.1k tokens (cache reads unknown for 1 turn, counted in full) · $0.10"),
         "{row}"
     );
     let unknown = RunProgress::from_records(&lines::manifest(), &lines::cost_lines("unknown"));
