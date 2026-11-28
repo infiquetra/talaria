@@ -33,6 +33,9 @@ pub struct FleetConfig {
     pub connect_timeout: Duration,
     /// When set, only this profile is read. The application leaves it unset.
     pub only_profile: Option<String>,
+    /// Probe each session first seen at rest for its last turn's outcome. Only a one-shot
+    /// list sets it; it is not read from the configuration file.
+    pub first_sight_outcomes: bool,
 }
 
 impl Default for FleetConfig {
@@ -53,6 +56,7 @@ impl Default for FleetConfig {
             approvals_gap: Duration::from_secs(2),
             connect_timeout: Duration::from_secs(15),
             only_profile: None,
+            first_sight_outcomes: false,
         }
     }
 }
@@ -77,6 +81,7 @@ impl FleetConfig {
             approvals_gap: div20(base.approvals_gap),
             connect_timeout: div20(base.connect_timeout),
             only_profile: base.only_profile,
+            first_sight_outcomes: base.first_sight_outcomes,
         }
     }
 }

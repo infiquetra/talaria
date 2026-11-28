@@ -1219,3 +1219,264 @@ fn canonical_row_order() {
         rank = next;
     }
 }
+
+/// Seconds since 1970, after the `last_active` that [`live`] reports.
+const RESTING_AT: f64 = 1_700_000_100.0;
+
+/// List one resting session, then read it idle: the reply a one-shot list sees first.
+fn rest(reg: &mut FleetRegistry, session: &str, count: u64) -> Vec<FleetEffect> {
+    let _ = update(
+        reg,
+        FleetInput::Roster {
+            profile: "fixture".into(),
+            request: 1,
+            rows: vec![roster(session, false, count)],
+            malformed: 0,
+            at: RESTING_AT,
+        },
+    );
+    update(
+        reg,
+        FleetInput::Liveness {
+            profile: "fixture".into(),
+            request: 2,
+            items: vec![live(session, LiveStatus::Idle, count)],
+            malformed: 0,
+            at: RESTING_AT,
+        },
+    )
+}
+
+#[test]
+fn first_sight_idle_is_probed_only_when_asked() {
+    let mut long_lived = FleetRegistry::new();
+    let effects = rest(&mut long_lived, "s1", 4);
+    assert!(
+        !names(&effects).contains(&"probe"),
+        "a long-lived registry does not probe a session first seen at rest"
+    );
+    let row = long_lived.row(&fixture("s1")).expect("row");
+    assert_eq!((row.state, row.outcome), (RowState::Idle, None));
+
+    let mut one_shot = FleetRegistry::new().with_first_sight_outcomes();
+    let effects = rest(&mut one_shot, "s1", 4);
+    assert_eq!(names(&effects), vec!["probe"]);
+    let row = one_shot.row(&fixture("s1")).expect("row");
+    assert_eq!((row.state, row.outcome), (RowState::Idle, None));
+    let again = update(
+        &mut one_shot,
+        FleetInput::Liveness {
+            profile: "fixture".into(),
+            request: 3,
+            items: vec![live("s1", LiveStatus::Idle, 4)],
+            malformed: 0,
+            at: RESTING_AT + 1.0,
+        },
+    );
+    assert!(
+        !names(&again).contains(&"probe"),
+        "one session is probed once on first sight"
+    );
+
+    let mut empty = FleetRegistry::new().with_first_sight_outcomes();
+    assert!(
+        !names(&rest(&mut empty, "s1", 0)).contains(&"probe"),
+        "a session with no messages has no turn to probe"
+    );
+
+    let mut working = FleetRegistry::new().with_first_sight_outcomes();
+    let _ = update(
+        &mut working,
+        FleetInput::Roster {
+            profile: "fixture".into(),
+            request: 1,
+            rows: vec![roster("s1", true, 4)],
+            malformed: 0,
+            at: RESTING_AT,
+        },
+    );
+    let effects = update(
+        &mut working,
+        FleetInput::Liveness {
+            profile: "fixture".into(),
+            request: 2,
+            items: vec![live("s1", LiveStatus::Working, 4)],
+            malformed: 0,
+            at: RESTING_AT,
+        },
+    );
+    assert!(
+        !names(&effects).contains(&"probe"),
+        "a working session first seen is not probed"
+    );
+}
+
+#[test]
+fn first_sight_probe_sets_the_outcome_without_an_alert() {
+    for (outcome, state) in [
+        (Outcome::Completed, RowState::Done),
+        (Outcome::Failed, RowState::Failed),
+    ] {
+        let mut reg = FleetRegistry::new().with_first_sight_outcomes();
+        let probe = probe_id(&rest(&mut reg, "s1", 4));
+        let since = reg.row(&fixture("s1")).expect("row").state_since;
+        assert_eq!(since, 1_700_000_010.0, "idle since Hermes's last activity");
+        let effects = update(
+            &mut reg,
+            FleetInput::OutcomeProbed {
+                key: fixture("s1"),
+                probe_id: probe,
+                outcome,
+                found_complete: true,
+                at: RESTING_AT + 5.0,
+            },
+        );
+        assert!(
+            names(&effects).is_empty(),
+            "a turn that finished before the listing raises no alert: {:?}",
+            names(&effects)
+        );
+        let row = reg.row(&fixture("s1")).expect("row");
+        assert_eq!((row.state, row.outcome), (state, Some(outcome)));
+        assert_eq!(row.state_since, since, "the finish time stays Hermes's own");
+    }
+
+    let mut reg = FleetRegistry::new().with_first_sight_outcomes();
+    let probe = probe_id(&rest(&mut reg, "s1", 4));
+    let effects = update(
+        &mut reg,
+        FleetInput::OutcomeProbed {
+            key: fixture("s1"),
+            probe_id: probe,
+            outcome: Outcome::Unknown,
+            found_complete: false,
+            at: RESTING_AT + 5.0,
+        },
+    );
+    assert!(names(&effects).is_empty());
+    let row = reg.row(&fixture("s1")).expect("row");
+    assert_eq!(
+        (row.state, row.outcome),
+        (RowState::Idle, None),
+        "a probe that finds no completion leaves the row idle and unknown"
+    );
+}
+
+#[test]
+fn first_sight_probe_follows_a_kept_liveness_item() {
+    for (asked, probes) in [(false, false), (true, true)] {
+        let mut reg = if asked {
+            FleetRegistry::new().with_first_sight_outcomes()
+        } else {
+            FleetRegistry::new()
+        };
+        let _ = update(
+            &mut reg,
+            FleetInput::Liveness {
+                profile: "fixture".into(),
+                request: 1,
+                items: vec![live("s1", LiveStatus::Idle, 4)],
+                malformed: 0,
+                at: RESTING_AT,
+            },
+        );
+        assert!(reg.rows().is_empty());
+        let effects = update(
+            &mut reg,
+            FleetInput::Roster {
+                profile: "fixture".into(),
+                request: 2,
+                rows: vec![roster("s1", false, 4)],
+                malformed: 0,
+                at: RESTING_AT,
+            },
+        );
+        assert_eq!(names(&effects).contains(&"probe"), probes);
+        if probes {
+            let _ = update(
+                &mut reg,
+                FleetInput::OutcomeProbed {
+                    key: fixture("s1"),
+                    probe_id: probe_id(&effects),
+                    outcome: Outcome::Completed,
+                    found_complete: true,
+                    at: RESTING_AT + 5.0,
+                },
+            );
+            let row = reg.row(&fixture("s1")).expect("row");
+            assert_eq!(
+                (row.state, row.outcome),
+                (RowState::Done, Some(Outcome::Completed))
+            );
+        }
+    }
+}
+
+#[test]
+fn first_sight_probe_is_asked_again_after_the_connection_drops() {
+    let mut reg = FleetRegistry::new().with_first_sight_outcomes();
+    let old = probe_id(&rest(&mut reg, "s1", 4));
+    let _ = update(
+        &mut reg,
+        FleetInput::ConnectionLost {
+            at: RESTING_AT + 1.0,
+        },
+    );
+    let _ = update(
+        &mut reg,
+        FleetInput::Roster {
+            profile: "fixture".into(),
+            request: 3,
+            rows: vec![roster("s1", false, 4)],
+            malformed: 0,
+            at: RESTING_AT + 2.0,
+        },
+    );
+    let effects = update(
+        &mut reg,
+        FleetInput::Liveness {
+            profile: "fixture".into(),
+            request: 4,
+            items: vec![live("s1", LiveStatus::Idle, 4)],
+            malformed: 0,
+            at: RESTING_AT + 2.0,
+        },
+    );
+    assert_eq!(
+        names(&effects),
+        vec!["probe"],
+        "the new connection asks again"
+    );
+    let new = probe_id(&effects);
+    assert_ne!(old, new);
+    let _ = update(
+        &mut reg,
+        FleetInput::OutcomeProbed {
+            key: fixture("s1"),
+            probe_id: old,
+            outcome: Outcome::Completed,
+            found_complete: true,
+            at: RESTING_AT + 3.0,
+        },
+    );
+    assert_eq!(
+        reg.row(&fixture("s1")).expect("row").outcome,
+        None,
+        "the old connection's answer is ignored"
+    );
+    let _ = update(
+        &mut reg,
+        FleetInput::OutcomeProbed {
+            key: fixture("s1"),
+            probe_id: new,
+            outcome: Outcome::Completed,
+            found_complete: true,
+            at: RESTING_AT + 3.0,
+        },
+    );
+    let row = reg.row(&fixture("s1")).expect("row");
+    assert_eq!(
+        (row.state, row.outcome),
+        (RowState::Done, Some(Outcome::Completed))
+    );
+}

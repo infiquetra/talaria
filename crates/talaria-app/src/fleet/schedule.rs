@@ -44,6 +44,8 @@ pub(crate) const CLASS_HOT: u8 = 2;
 pub(crate) const CLASS_ROUND: u8 = 3;
 /// Liveness of a cold profile.
 pub(crate) const CLASS_COLD: u8 = 4;
+/// Historical first-sight outcome probes for one-shot listings (after initial rounds).
+pub(crate) const CLASS_FIRST_SIGHT: u8 = 5;
 
 struct Waiting {
     work: Work,

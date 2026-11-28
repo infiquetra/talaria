@@ -25,7 +25,9 @@ use tokio::task::JoinSet;
 
 use super::config::FleetConfig;
 use super::host_dial::{DialReport, HostDial, lock};
-use super::schedule::{CLASS_COLD, CLASS_HOT, CLASS_PROMPT, CLASS_ROUND, Schedule, Work};
+use super::schedule::{
+    CLASS_COLD, CLASS_FIRST_SIGHT, CLASS_HOT, CLASS_PROMPT, CLASS_ROUND, Schedule, Work,
+};
 use crate::side_connection::SideScope;
 
 /// Most diagnostic texts a snapshot carries.
@@ -293,7 +295,11 @@ impl FleetService {
         let scope = HostDial::new(home.clone(), foreground_profile.clone()).scope();
         let hub = Arc::new(Hub {
             state: Mutex::new(Published {
-                registry: FleetRegistry::new(),
+                registry: if cfg.first_sight_outcomes {
+                    FleetRegistry::new().with_first_sight_outcomes()
+                } else {
+                    FleetRegistry::new()
+                },
                 link: FleetLinkState::Connecting,
                 scope: scope.clone(),
                 service_diagnostics: Vec::new(),
@@ -443,6 +449,10 @@ pub async fn list_once_with_herdr(
     cfg: &FleetConfig,
 ) -> Result<FleetSnapshot, FleetListError> {
     let profile = check_fleet_profile(home, cfg).await?;
+    let cfg = FleetConfig {
+        first_sight_outcomes: true,
+        ..cfg.clone()
+    };
     let handle = FleetService::start(home.to_path_buf(), profile, cfg.clone(), |_| {});
     let started = Instant::now();
     let deadline = cfg.connect_timeout + cfg.call_timeout;
@@ -898,7 +908,10 @@ impl FleetTask {
         let Some(gate) = &self.gate else {
             return;
         };
-        if !gate.waiting.is_empty() && now < gate.until {
+        // A one-shot list also waits for the outcome probes of its first round, at most
+        // until the gate's own limit; each probe is bounded by its deadline.
+        let settling = self.cfg.first_sight_outcomes && !self.probes.is_empty();
+        if (!gate.waiting.is_empty() || settling) && now < gate.until {
             return;
         }
         self.gate = None;
@@ -937,8 +950,9 @@ impl FleetTask {
                         },
                     );
                     if self.guard(&key) {
+                        let class = self.probe_class();
                         self.schedule
-                            .trigger(Work::ProbeHead { key, probe_id }, CLASS_PROMPT, now);
+                            .trigger(Work::ProbeHead { key, probe_id }, class, now);
                     } else {
                         self.probed(key, probe_id, Outcome::Unknown, false);
                     }
@@ -996,6 +1010,14 @@ impl FleetTask {
         self.effects(effects);
     }
 
+    fn probe_class(&self) -> u8 {
+        if self.cfg.first_sight_outcomes && self.gate.is_some() {
+            CLASS_FIRST_SIGHT
+        } else {
+            CLASS_PROMPT
+        }
+    }
+
     /// Start every pending read a free slot allows.
     fn pump(&mut self) {
         let (Some(tag), Some(client)) = (self.tag, self.client.clone()) else {
@@ -1006,7 +1028,12 @@ impl FleetTask {
             self.request += 1;
             let request = self.request;
             let (method, params) = self.call_for(&work);
-            let timeout = self.cfg.call_timeout;
+            let timeout = match &work {
+                Work::ProbeHead { .. } | Work::ProbeTail { .. } => {
+                    self.cfg.probe_deadline.min(self.cfg.call_timeout)
+                }
+                _ => self.cfg.call_timeout,
+            };
             let client = client.clone();
             self.calls.spawn(async move {
                 let outcome = client
@@ -1224,6 +1251,7 @@ impl FleetTask {
         match epoch {
             Some(epoch) if latest > 0 && self.guard(&key) => {
                 let from = latest.saturating_sub(PROBE_TAIL);
+                let class = self.probe_class();
                 self.schedule.trigger(
                     Work::ProbeTail {
                         key,
@@ -1231,7 +1259,7 @@ impl FleetTask {
                         epoch,
                         from,
                     },
-                    CLASS_PROMPT,
+                    class,
                     now,
                 );
             }

@@ -248,6 +248,8 @@ enum ProbeReason {
     TurnEnded,
     /// The message count rose between two idle reads. `before` is the count it rose from.
     CountRose { before: Option<u64> },
+    /// A session first seen at rest, asked for its last turn's outcome.
+    FirstSight,
 }
 
 /// One row and what the rules remember about it.
@@ -488,12 +490,23 @@ pub struct FleetRegistry {
     diagnostics: Diagnostics,
     next_probe_id: u64,
     version: u64,
+    /// Probe a session first seen at rest for its last turn's outcome.
+    first_sight_outcomes: bool,
 }
 
 impl FleetRegistry {
     /// An empty registry.
     pub fn new() -> FleetRegistry {
         FleetRegistry::default()
+    }
+
+    /// Probe each session first seen at rest for the outcome of its last turn.
+    ///
+    /// For a one-shot listing only: a long-lived registry would announce turns that
+    /// finished before it attached.
+    pub fn with_first_sight_outcomes(mut self) -> FleetRegistry {
+        self.first_sight_outcomes = true;
+        self
     }
 
     /// Rows in canonical order.
@@ -816,6 +829,30 @@ fn seed_idle_since(entry: &mut RowEntry, first_sight: bool, last_active: Option<
     }
 }
 
+/// Ask a session first seen at rest how its last turn ended.
+fn probe_first_sight(
+    entry: &mut RowEntry,
+    count: u64,
+    next_probe_id: &mut u64,
+    effects: &mut Vec<FleetEffect>,
+) {
+    if count == 0
+        || entry.view.is_some()
+        || entry.row.foreground
+        || entry.latest != Some(LiveStatus::Idle)
+        || entry.probe.is_some()
+        || entry.row.outcome.is_some()
+    {
+        return;
+    }
+    *next_probe_id += 1;
+    entry.probe = Some((*next_probe_id, ProbeReason::FirstSight));
+    effects.push(FleetEffect::ProbeOutcome {
+        key: entry.row.key.clone(),
+        probe_id: *next_probe_id,
+    });
+}
+
 /// Apply one liveness status to an unsubscribed row (section "row state" of the rules).
 #[allow(clippy::too_many_arguments)]
 fn apply_status(
@@ -1115,6 +1152,7 @@ fn on_roster(
     }
     memo.listed_once = true;
     let (no_liveness, no_approvals) = (memo.no_liveness, memo.no_approvals);
+    let first_sight_outcomes = reg.first_sight_outcomes;
     if malformed > 0 && !memo.roster_malformed_noted {
         memo.roster_malformed_noted = true;
         reg.diagnostics.note(
@@ -1196,6 +1234,9 @@ fn on_roster(
                         next_probe_id,
                         effects,
                     );
+                    if first_sight_outcomes {
+                        probe_first_sight(entry, item.message_count, next_probe_id, effects);
+                    }
                     seed_idle_since(entry, true, item.last_active, at);
                 }
             } else if was_unlisted
@@ -1303,6 +1344,7 @@ fn on_liveness(
         .map(|item| (item.session_id.clone(), item.clone()))
         .collect();
     let (listed_once, no_approvals) = (memo.listed_once, memo.no_approvals);
+    let first_sight_outcomes = reg.first_sight_outcomes;
     reg.ensure_profile(profile);
     let clear_stale = matches!(
         reg.profile_status(profile),
@@ -1354,6 +1396,9 @@ fn on_liveness(
                 next_probe_id,
                 effects,
             );
+            if first_sight && first_sight_outcomes {
+                probe_first_sight(entry, item.message_count, next_probe_id, effects);
+            }
             seed_idle_since(entry, first_sight, item.last_active, at);
         });
     }
@@ -1623,7 +1668,8 @@ fn on_probed(
         if entry.view.is_some() {
             return;
         }
-        if matches!(reason, ProbeReason::CountRose { .. }) && !found_complete {
+        let first_sight = matches!(reason, ProbeReason::FirstSight);
+        if (first_sight || matches!(reason, ProbeReason::CountRose { .. })) && !found_complete {
             return;
         }
         if entry.row.foreground {
@@ -1641,7 +1687,13 @@ fn on_probed(
         } else {
             RowState::Done
         };
+        let since = entry.row.state_since;
         set_state(entry, state, at);
+        if first_sight {
+            // The turn finished before anyone was listening: keep Hermes's time, no alert.
+            entry.row.state_since = since;
+            return;
+        }
         effects.push(finish_attention(entry, outcome));
     });
     let idle_unlisted = reg.rows.get(key).is_some_and(|entry| {
@@ -1925,6 +1977,7 @@ fn on_connection_lost(reg: &mut FleetRegistry, dirty: &mut bool) {
             match entry.probe.take() {
                 Some((_, ProbeReason::TurnEnded)) => entry.turn_seen = true,
                 Some((_, ProbeReason::CountRose { before })) => entry.last_live_count = before,
+                Some((_, ProbeReason::FirstSight)) => entry.last_live_count = None,
                 None => {}
             }
         });

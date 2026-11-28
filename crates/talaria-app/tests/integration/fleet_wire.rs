@@ -808,3 +808,147 @@ async fn fleet_link_sends_only_allowed_methods() {
         assert!(!seen.iter().any(|name| name == method), "{method} was sent");
     }
 }
+
+/// One resting session whose last turn completed before any listing attached.
+fn finished_earlier(gateway: &StandaloneGateway) {
+    gateway.set_live_session_ids(["local-3f2a"]);
+    gateway.set_fleet_session("fixture", session("local-3f2a", "idle", 6));
+    gateway.set_fleet_ring(
+        "fixture",
+        "local-3f2a",
+        "e1",
+        vec![delta(1), completion(2, "complete")],
+        1,
+    );
+}
+
+fn one_shot(cfg: FleetConfig) -> FleetConfig {
+    FleetConfig {
+        only_profile: Some("fixture".into()),
+        ..cfg
+    }
+}
+
+#[tokio::test]
+async fn one_shot_reports_the_outcome_of_a_session_that_finished_earlier() {
+    let home = home();
+    let gateway = StandaloneGateway::start(home.path());
+    finished_earlier(&gateway);
+    let snapshot = talaria_app::fleet::list_once(home.path(), &one_shot(FleetConfig::default()))
+        .await
+        .expect("a snapshot");
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|row| row.key.session_id == "local-3f2a")
+        .expect("the finished session is listed");
+    assert_eq!(row.state, RowState::Done, "{row:?}");
+    assert_eq!(
+        row.outcome,
+        Some(talaria_core::fleet::Outcome::Completed),
+        "{row:?}"
+    );
+    assert_eq!(
+        gateway.requests("session.events.since").len(),
+        2,
+        "one probe: the head, then the tail"
+    );
+    assert_eq!(gateway.fleet_non_live_reads(), 0);
+}
+
+#[tokio::test]
+async fn one_shot_does_not_wait_past_the_probe_deadline() {
+    let home = home();
+    let gateway = StandaloneGateway::start(home.path());
+    finished_earlier(&gateway);
+    gateway.set_silent_profile("fixture", "session.events.since", true);
+    let mut cfg = one_shot(FleetConfig::scaled_for_tests());
+    cfg.call_timeout = Duration::from_secs(2);
+    cfg.probe_deadline = Duration::from_millis(150);
+    let bound = Duration::from_millis(1500);
+    let started = Instant::now();
+    let snapshot = talaria_app::fleet::list_once(home.path(), &cfg)
+        .await
+        .expect("a probe with no reply still lists");
+    let elapsed = started.elapsed();
+    assert!(
+        !gateway.requests("session.events.since").is_empty(),
+        "the resting session was probed"
+    );
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|row| row.key.session_id == "local-3f2a")
+        .expect("the session is listed");
+    assert_eq!((row.state, row.outcome), (RowState::Idle, None), "{row:?}");
+    assert!(
+        elapsed < bound,
+        "the listing waited {elapsed:?}, past {bound:?} (probe_deadline {:?}, call_timeout {:?})",
+        cfg.probe_deadline,
+        cfg.call_timeout
+    );
+}
+
+#[tokio::test]
+async fn one_shot_silent_probes_on_one_profile_do_not_starve_another_profile() {
+    let home = home();
+    let gateway = StandaloneGateway::start(home.path());
+    gateway.set_fleet_profiles(vec!["slow".into(), "healthy".into()]);
+    for i in 0..10 {
+        gateway.set_fleet_session("slow", session(&format!("slow-{i}"), "idle", 2));
+    }
+    gateway.set_fleet_session("healthy", session("healthy-work", "running", 1));
+    gateway.set_silent_profile("slow", "session.events.since", true);
+
+    let mut cfg = FleetConfig::scaled_for_tests();
+    cfg.call_timeout = Duration::from_secs(2);
+    cfg.probe_deadline = Duration::from_millis(150);
+    let snapshot = talaria_app::fleet::list_once(home.path(), &cfg)
+        .await
+        .expect("multi-profile one-shot list succeeds");
+    assert!(
+        snapshot
+            .profiles
+            .iter()
+            .any(|(name, status)| name == "healthy"
+                && matches!(status, ProfileStatus::Listed { .. })),
+        "healthy profile must be listed, not starved in loading: {:?}",
+        snapshot.profiles
+    );
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|row| row.key.profile == "healthy" && row.key.session_id == "healthy-work")
+        .expect("healthy profile's running session must appear");
+    assert_eq!(row.state, RowState::Working, "{row:?}");
+}
+
+#[tokio::test]
+async fn long_lived_service_does_not_probe_a_session_first_seen_at_rest() {
+    assert!(
+        !FleetConfig::default().first_sight_outcomes,
+        "only a one-shot list asks for first-sight outcomes"
+    );
+    let home = home();
+    let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());
+    finished_earlier(&gateway);
+    let _ = wait_for(&handle, Duration::from_secs(2), |snapshot| {
+        snapshot
+            .rows
+            .iter()
+            .any(|row| row.key.session_id == "local-3f2a")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let snapshot = handle.snapshot();
+    assert!(
+        gateway.requests("session.events.since").is_empty(),
+        "a long-lived service never probes a resting session it first sees"
+    );
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|row| row.key.session_id == "local-3f2a")
+        .expect("the session is listed");
+    assert_eq!((row.state, row.outcome), (RowState::Idle, None), "{row:?}");
+}
