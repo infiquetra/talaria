@@ -5,8 +5,8 @@ use serde::Serialize;
 use super::segments::StatusInputs;
 use super::{Connection, RunMode, TurnState};
 
-/// The eight fields of the document, in order.
-pub const DOCUMENT_FIELDS: [&str; 8] = [
+/// The nine fields of the document, in order.
+pub const DOCUMENT_FIELDS: [&str; 9] = [
     "version",
     "mode",
     "connection",
@@ -15,12 +15,13 @@ pub const DOCUMENT_FIELDS: [&str; 8] = [
     "pending_prompts",
     "subagents",
     "usage",
+    "working_dir",
 ];
 
 /// The document the command reads on its standard input.
 #[derive(Clone, Debug, Serialize)]
 pub struct StatusDocument {
-    /// Always `1` for this document shape.
+    /// Always `2` for this document shape.
     pub version: u32,
     /// Whether the client is live or replaying.
     pub mode: RunMode,
@@ -36,6 +37,8 @@ pub struct StatusDocument {
     pub subagents: SubagentCounts,
     /// The token counts, when they have been observed.
     pub usage: Option<UsageCounts>,
+    /// The session's working folder, copied unchanged, or null when none is set.
+    pub working_dir: Option<String>,
 }
 
 /// The focused session in the document.
@@ -70,7 +73,7 @@ impl StatusDocument {
     pub fn from_inputs(inputs: &StatusInputs) -> Option<StatusDocument> {
         let session = inputs.session.as_ref()?;
         Some(StatusDocument {
-            version: 1,
+            version: 2,
             mode: inputs.mode,
             connection: inputs.connection,
             session: SessionDocument {
@@ -87,6 +90,7 @@ impl StatusDocument {
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
             }),
+            working_dir: inputs.working_dir.clone(),
         })
     }
 
