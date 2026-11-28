@@ -1020,11 +1020,34 @@ impl SettingsState {
                     }
                 }
             }
-            effects.push(SettingsEffect::Notice(format!(
+            let mut notice = format!(
                 "Settings saved for profile {}: {}.",
                 self.profile,
                 text::limited(&values)
-            )));
+            );
+            // The same effect sentences the banner shows, so the lasting notice keeps them.
+            for (effect, prefix) in [
+                (
+                    ApplyEffect::NeedsRestart,
+                    "Needs a gateway restart to take effect",
+                ),
+                (
+                    ApplyEffect::MayNeedRestart,
+                    "May need a gateway restart to take effect",
+                ),
+                (ApplyEffect::NewSessions, "Applies to new sessions"),
+            ] {
+                let keys: Vec<_> = self
+                    .saved
+                    .keys()
+                    .filter(|key| apply_effect(key).0 == effect)
+                    .cloned()
+                    .collect();
+                if !keys.is_empty() {
+                    notice.push_str(&format!(" {prefix}: {}.", text::limited(&keys)));
+                }
+            }
+            effects.push(SettingsEffect::Notice(notice));
             self.saved.clear();
         }
         if let Some(action) = self.close_action.take() {
