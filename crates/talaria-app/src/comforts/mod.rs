@@ -1,9 +1,8 @@
-//! Foreground comforts: attention mapping, editor, history, suspend, Herdr.
+//! Foreground comforts: attention mapping, editor, history, suspend.
 //!
 //! The application decides; the terminal holder executes. Behavior contract: issue 228.
 
 pub mod editor;
-pub mod herdr;
 pub mod prompt_history;
 pub mod suspend;
 

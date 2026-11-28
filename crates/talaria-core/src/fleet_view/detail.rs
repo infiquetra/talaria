@@ -25,12 +25,6 @@ pub fn row_detail(row: &FleetRow, items_of_row: &[&NeedItem]) -> String {
             Some(Outcome::Failed) => "failed".to_owned(),
             Some(Outcome::Unknown) | None => "finished".to_owned(),
         },
-        RowState::Idle
-            if row.backend() == crate::fleet::FleetBackend::Herdr
-                && row.outcome == Some(Outcome::Unknown) =>
-        {
-            "unknown".to_owned()
-        }
         RowState::Idle => "idle".to_owned(),
     };
     if row.backend == FleetBackend::Acp {
@@ -38,12 +32,6 @@ pub fn row_detail(row: &FleetRow, items_of_row: &[&NeedItem]) -> String {
             " [acp {}]",
             row.agent.as_deref().unwrap_or_default()
         ));
-    } else if row.backend() == crate::fleet::FleetBackend::Herdr {
-        detail.push_str(&format!(" [herdr {}]", row.agent().unwrap_or("agent")));
-        if let Some(location) = row.terminal_location() {
-            detail.push(' ');
-            detail.push_str(location);
-        }
     }
     detail
 }

@@ -278,7 +278,6 @@ impl FleetAttention {
             let backend = match row.map(|row| row.backend) {
                 Some(FleetBackend::Hermes) => "Hermes",
                 Some(FleetBackend::Acp) => "ACP",
-                Some(FleetBackend::Herdr) => "Herdr",
                 None => "Session",
             };
             let label = sanitize_alert_field(&label, 32);

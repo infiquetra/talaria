@@ -152,13 +152,12 @@ pub fn run(args: &[String]) -> u8 {
         None => talaria_app::config::parse(""),
     };
     let mut cfg = loaded.config.fleet;
-    let herdr = loaded.config.herdr.fleet_config();
     cfg.only_profile = parsed.profile.clone();
     runtime.block_on(async move {
         if parsed.watch {
-            watch(&home, cfg, &parsed, offset, herdr).await
+            watch(&home, cfg, &parsed, offset).await
         } else {
-            once(&home, &cfg, &parsed, herdr).await
+            once(&home, &cfg, &parsed).await
         }
     })
 }
@@ -190,13 +189,8 @@ fn list_error(error: &FleetListError, profile: Option<&str>) -> (String, u8) {
     }
 }
 
-async fn once(
-    home: &std::path::Path,
-    cfg: &FleetConfig,
-    args: &FleetArgs,
-    herdr: talaria_app::herdr::HerdrConfig,
-) -> u8 {
-    match list_once_with_herdr(home, cfg, Some(herdr)).await {
+async fn once(home: &std::path::Path, cfg: &FleetConfig, args: &FleetArgs) -> u8 {
+    match list_once_with_herdr(home, cfg).await {
         Ok(snapshot) => {
             let now = now_secs();
             if args.json {
@@ -214,13 +208,7 @@ async fn once(
     }
 }
 
-async fn watch(
-    home: &std::path::Path,
-    cfg: FleetConfig,
-    args: &FleetArgs,
-    offset: i32,
-    herdr: talaria_app::herdr::HerdrConfig,
-) -> u8 {
+async fn watch(home: &std::path::Path, cfg: FleetConfig, args: &FleetArgs, offset: i32) -> u8 {
     let profile = match check_fleet_profile(home, &cfg).await {
         Ok(profile) => profile,
         Err(error) => {
@@ -233,12 +221,6 @@ async fn watch(
     let handle = FleetService::start(home.to_path_buf(), profile, cfg, move |notice| {
         let _ = sender.send(notice);
     });
-    let mut terminals = herdr
-        .enabled
-        .then(|| talaria_app::herdr::HerdrService::with_reporter(herdr, handle.reporter()));
-    if let Some(service) = terminals.as_mut() {
-        let _ = service.poll_once().await;
-    }
     let stop = async {
         match args.for_seconds {
             Some(seconds) => tokio::time::sleep(Duration::from_secs(seconds)).await,
@@ -301,9 +283,6 @@ async fn watch(
             }
         }
     };
-    if let Some(service) = terminals.as_mut() {
-        service.close().await;
-    }
     handle.close().await;
     code
 }
@@ -407,12 +386,6 @@ fn row_detail(row: &FleetRow, queue: &[NeedItem]) -> String {
             Some(Outcome::Interrupted) => "interrupted".to_owned(),
             _ => "finished".to_owned(),
         },
-        RowState::Idle
-            if row.backend() == talaria_core::fleet::FleetBackend::Herdr
-                && row.outcome == Some(Outcome::Unknown) =>
-        {
-            "unknown".to_owned()
-        }
         RowState::Idle => "idle".to_owned(),
     };
     if row.backend() == talaria_core::fleet::FleetBackend::Acp {
@@ -420,12 +393,6 @@ fn row_detail(row: &FleetRow, queue: &[NeedItem]) -> String {
             " [acp {}]",
             shown(row.agent().unwrap_or_default(), DETAIL_CHARS)
         ));
-    } else if row.backend() == talaria_core::fleet::FleetBackend::Herdr {
-        detail.push_str(&format!(" [herdr {}]", row.agent().unwrap_or("agent")));
-        if let Some(location) = row.terminal_location() {
-            detail.push(' ');
-            detail.push_str(location);
-        }
     }
     detail
 }
@@ -577,7 +544,6 @@ fn row_json(row: &FleetRow) -> Value {
         "backend": match row.backend() {
             talaria_core::fleet::FleetBackend::Hermes => "hermes",
             talaria_core::fleet::FleetBackend::Acp => "acp",
-            talaria_core::fleet::FleetBackend::Herdr => "herdr",
         },
         "agent": row.agent(),
         "title": row.title,

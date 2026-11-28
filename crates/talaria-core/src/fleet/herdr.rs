@@ -1,6 +1,5 @@
 //! Pure mapping of live terminal agents into fleet observations.
 
-use super::{ExternalNeed, ExternalSession, FleetBackend, NeedSlot, Outcome, RowKey, RowState};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,77 +74,4 @@ pub fn sanitize_visible(text: &str) -> String {
         .map(|line| crate::text::sanitize(line).into_owned())
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-pub fn project(pane: &HerdrPane, visible: &str, at: f64) -> HerdrProjection {
-    let clean = |value: &str| crate::text::sanitize(value).into_owned();
-    let pane_id = clean(&pane.pane_id);
-    let workspace = clean(&pane.workspace_id);
-    let tab = clean(&pane.tab_id);
-    let agent = clean(&pane.agent);
-    let title = if pane.title.is_empty() {
-        clean(&pane.name)
-    } else {
-        clean(&pane.title)
-    };
-    let visible = sanitize_visible(visible);
-    let (state, outcome) = match pane.status.as_str() {
-        "working" => (RowState::Working, None),
-        "idle" => (RowState::Idle, None),
-        "done" => (RowState::Done, Some(Outcome::Completed)),
-        "blocked" => (RowState::NeedsYou, None),
-        _ => (RowState::Idle, Some(Outcome::Unknown)),
-    };
-    let needs = if state == RowState::NeedsYou {
-        vec![ExternalNeed {
-            slot: NeedSlot::External(pane_id.clone()),
-            text: if visible.is_empty() {
-                "Terminal agent is awaiting input".to_owned()
-            } else {
-                visible.clone()
-            },
-            options: Vec::new(),
-        }]
-    } else {
-        Vec::new()
-    };
-    HerdrProjection {
-        session: ExternalSession {
-            key: RowKey {
-                profile: format!("herdr:{pane_id}"),
-                session_id: pane_id.clone(),
-            },
-            backend: FleetBackend::Herdr,
-            agent,
-            title,
-            model: None,
-            activity: None,
-            state,
-            outcome,
-            used: None,
-            size: None,
-            cost: None,
-            needs,
-            at,
-        },
-        workspace,
-        tab,
-        pane: pane_id,
-        visible,
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct HerdrProjection {
-    pub session: ExternalSession,
-    pub workspace: String,
-    pub tab: String,
-    pub pane: String,
-    pub visible: String,
-}
-
-impl super::FleetRegistry {
-    pub fn observe_herdr(&mut self, projection: HerdrProjection) -> Vec<super::FleetEffect> {
-        super::update(self, super::FleetInput::Herdr(projection))
-    }
 }

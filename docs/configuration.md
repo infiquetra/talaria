@@ -421,18 +421,12 @@ searches saved prompts; Ctrl+Z suspends to the shell until `fg`. History is kept
 keeps a prompt in memory only, and `[history] save = false` stops reading and writing it. A command picked from the slash palette is saved as the line that ran. A blank line or a bare `/` is never saved, a bare `/` already in the file is skipped, and a repeat of the previous prompt is not written to the file again. Notification kinds are `needs_you`, `done` and `failed`; the bell and desktop
 lists choose channels separately, and `done` waits for `done_after_seconds` (0 to 86400).
 `[herdr] report_state` (default true) sends `idle`, `working`, `blocked`, `done` and
-`error` to a Herdr terminal that answered the startup probe, and also sends
-`blocked`, `working` or `idle` through `herdr pane report-agent` when that older
-program is present. `report_state = false` sends neither. A terminal that did not
-answer the probe gets no in-band record.
+`error` as a status record to a terminal that answered the startup probe.
+`report_state = false` sends none. A terminal that did not answer the probe gets no
+record.
 
-Set `[herdr] enabled = true` to add live terminal agents to the enabled fleet. `binary` selects the
-executable, `poll_interval_ms` accepts 50–300000 milliseconds, and `workspace_filter` optionally
-limits discovery to one workspace. `talaria herdr panes [--probe]` lists agents without focusing
-them; `--probe` refreshes each pane with `agent get`. Fleet peek shows sanitized visible terminal
-output, and Enter on a Herdr row focuses its pane. Follow-up prompts use atomic submission;
-blocked approvals use validated keys explicitly submitted by the operator. Unknown agent states
-remain idle with an unknown indicator.
+`talaria herdr panes [--probe]` lists agents without focusing them; `--probe` refreshes each
+pane with `agent get`.
 
 `status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees the default-deny environment described below plus `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark`
 and supplies the default background. `theme.follow_hermes_skin = false` keeps Talaria's colours. `theme.colors` accepts `auto`, `truecolor`, `256`, `16` or `none`.
@@ -905,9 +899,8 @@ real macOS device measurement during release verification.
 
 At recording start, bind the selected queue item, else the selected fleet row,
 else the foreground session. A fleet transcript becomes a draft in that row's
-reply editor and Enter uses its own Hermes, Herdr or Agent Client Protocol (ACP)
-backend. Permission answers always require Enter. Blocked Herdr replies use the
-same `HerdrClient::answer` path as typed replies. A focus change or stale target
+reply editor and Enter uses its own Hermes or Agent Client Protocol (ACP)
+backend. Permission answers always require Enter. A focus change or stale target
 cannot redirect the transcript into another row.
 
 ## Coming from 0.6
@@ -991,10 +984,9 @@ The default block above is authoritative. Invalid values use the documented defa
 ### `herdr`
 
 `[herdr] report_state` (default true) sends `idle`, `working`, `blocked`, `done` and
-`error` to a Herdr terminal that answered the startup probe, and also sends
-`blocked`, `working` or `idle` through `herdr pane report-agent` when that older
-program is present. `report_state = false` sends neither. A terminal that did not
-answer the probe gets no in-band record.
+`error` as a status record to a terminal that answered the startup probe.
+`report_state = false` sends none. A terminal that did not answer the probe gets no
+record.
 
 | Key | Type | Default | Range | Example |
 |---|---|---|---|---|
