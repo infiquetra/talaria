@@ -141,6 +141,7 @@ pub fn key_to_rewind(key: &KeyEvent, screen: RewindScreen) -> Option<RewindKey> 
             .or(esc.then_some(RewindKey::Esc)),
         RewindScreen::Actions => match code {
             KeyCode::Char('c') => Some(RewindKey::C),
+            KeyCode::Char('b') => Some(RewindKey::Branch),
             KeyCode::Char('f') => Some(RewindKey::F),
             KeyCode::Char('d') => Some(RewindKey::D),
             _ => esc.then_some(RewindKey::Esc),

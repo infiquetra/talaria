@@ -30,4 +30,4 @@ pub use text::{
     mutate_refusal_text, no_match_text, python_line_count, read_refusal_text, relative_age,
     restore_refusal_text, restore_summary, session_diff_doc,
 };
-pub use turns::{RewindTurn, is_active_row, lossless_text, rewind_turns};
+pub use turns::{RewindTurn, is_active_row, lossless_text, rewind_turns, through_row_before};

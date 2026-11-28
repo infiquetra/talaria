@@ -65,6 +65,10 @@ impl RewindService {
                 file_path,
                 all,
             } => self.restore(hash, file_path, all).await,
+            // The application opens a fork itself; it never reaches this service.
+            Call::Branch { .. } => {
+                Reply::Failed(CallFailure::NotSent("fork is not a rewind call".into()))
+            }
         };
         RewindInput::Reply { ticket, reply }
     }

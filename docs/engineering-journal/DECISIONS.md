@@ -19,6 +19,26 @@ open.
 down the screen the operator scrolls it to the top first. Revisit when the pager grows a cursor
 inside a cell.
 
+## 2026-11-28 — A rewind-picker fork is a branch through the row before the prompt
+
+**Context.** The rewind picker could cut the session in front (`c`) and restore files (`f`).
+Operators also need to start a new session from before a chosen prompt and keep the one they
+have. Hermes offers three routes to that: `session.branch`, `session.mutate` operation `rewind`,
+and `session.mutate` operation `branch`.
+
+**Decision.** `b` on the actions screen sends `session.mutate` operation `branch` with
+`through_message_id`, the stored row just before the prompt. The domain core computes that id.
+The application opens the child by the path `/branch` already takes, and the parent stays on the
+gateway, detached and not rewound. `session.branch` is not used, and operation `rewind` is
+never sent. The oldest prompt has no earlier row, so its fork starts a new session through
+`AppEffect::ClearSession` unchanged. The prompt waits in `AppState.fork_prefill` until the new
+session opens; there is no second way to create a session. The prompt goes into an empty
+composer, a draft is never overwritten, and attachments are not copied.
+
+**Costs and revisit conditions.** A fork copies the conversation through the chosen row, so a
+long session makes a long child. Revisit when the Hermes release in
+`crates/hermes-contract/PINNED` drops `through_message_id` from operation `branch`.
+
 ## 2026-11-28 — The status record is Talaria's only report to Herdr
 
 **Context.** Talaria reported its state to old Herdr by running `herdr pane report-agent`, and

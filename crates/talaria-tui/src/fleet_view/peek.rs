@@ -106,6 +106,11 @@ fn render(
         };
         put(scratch, &text, header_style, &mut y);
     }
+    if let Panel::Session(panel) = &panel
+        && let Some(counts) = count_line(panel.subagents, panel.background)
+    {
+        put(scratch, &cut(&counts, width, false), theme.dim, &mut y);
+    }
 
     match panel {
         Panel::Opening => {
@@ -268,6 +273,20 @@ fn external_body(
 
 fn width_u16(width: usize) -> u16 {
     u16::try_from(width).unwrap_or(u16::MAX)
+}
+
+/// `3 sub-agents · 2 background`; a zero or unknown part is left out, and `None` when both are.
+fn count_line(subagents: Option<u32>, background: Option<usize>) -> Option<String> {
+    let mut parts = Vec::new();
+    match subagents {
+        Some(1) => parts.push("1 sub-agent".to_owned()),
+        Some(n) if n > 0 => parts.push(format!("{n} sub-agents")),
+        _ => {}
+    }
+    if let Some(m) = background.filter(|m| *m > 0) {
+        parts.push(format!("{m} background"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
 }
 
 /// `<glyph> <title> · <profile> · <model> · <state word> <age>`.

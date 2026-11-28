@@ -15,12 +15,15 @@ use hermes_client::{
 use mock_gateway::{Behavior, MockGateway};
 use serde_json::{Value, json};
 use talaria_app::app::{
-    AppEffect, AppMessage, AppState, RebuildMode, UserAction, rebuild_foreground, update,
+    AppEffect, AppMessage, AppState, ForkPrefill, RebuildMode, UserAction, fork_effects,
+    rebuild_foreground, update,
 };
 use talaria_app::launch::SessionRequest;
 use talaria_app::rewind::{RewindService, failure_from};
 use talaria_app::sessions::{ExecuteOutcome, SessionService};
+use talaria_app::switch::BranchOutcome;
 use talaria_core::commands::LOCAL_COMMANDS;
+use talaria_core::rewind::text::fork_draft_kept;
 use talaria_core::rewind::{Call, CallFailure, CallKind};
 use talaria_core::session::{Cell, Effect, SessionState};
 use talaria_tui::composer::Composer;
@@ -1178,4 +1181,126 @@ async fn rewind_reply_checks_its_profile_and_session_even_with_a_current_ticket(
         },
     );
     assert!(right.iter().any(|effect| matches!(effect, AppEffect::Rewind { owner, call: Call::Mutate { .. }, .. } if *owner == current_owner)));
+}
+
+#[tokio::test]
+async fn fork_sends_branch_with_through_message_id() {
+    let (_mock, mut app) = opened_app(prompts_snapshot()).await;
+    let effects = fork_effects(
+        &mut app,
+        &Call::Branch {
+            through_message_id: Some(4),
+            text: "second".into(),
+            attachments_omitted: false,
+        },
+    );
+    let [AppEffect::BranchSession { request }] = effects.as_slice() else {
+        panic!("expected only a branch request, got {effects:?}");
+    };
+    assert_eq!(request.operation, "branch");
+    assert_ne!(request.operation, "rewind");
+    assert_eq!(request.payload["through_message_id"], json!(4));
+    assert_eq!(
+        app.fork_prefill,
+        Some(ForkPrefill {
+            text: "second".into(),
+            attachments_omitted: false,
+        })
+    );
+
+    update(
+        &mut app,
+        AppMessage::Branched {
+            outcome: BranchOutcome::Refused { text: "no".into() },
+            install: None,
+        },
+    );
+    assert_eq!(app.fork_prefill, None);
+}
+
+#[tokio::test]
+async fn oldest_prompt_starts_a_session_and_prefills() {
+    let (_mock, mut app) = opened_app(prompts_snapshot()).await;
+    let effects = fork_effects(
+        &mut app,
+        &Call::Branch {
+            through_message_id: None,
+            text: "hello".into(),
+            attachments_omitted: false,
+        },
+    );
+    let [AppEffect::ClearSession { skip_detach, .. }] = effects.as_slice() else {
+        panic!("expected only a new-session effect, got {effects:?}");
+    };
+    assert!(!skip_detach);
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::BranchSession { .. }))
+    );
+    assert_eq!(
+        app.fork_prefill
+            .as_ref()
+            .map(|prefill| prefill.text.as_str()),
+        Some("hello")
+    );
+    assert_eq!(
+        fork_draft_kept("second"),
+        "Your draft was kept. The forked prompt was: second"
+    );
+}
+
+#[tokio::test]
+async fn oldest_prompt_fork_blocks_overlapping_clear_and_strips_hivecode_text() {
+    let (_mock, mut app) = opened_app(prompts_snapshot()).await;
+    let routed = "[IMPORTANT: The user has invoked the \"talaria-workflows\" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]\n\n# Fixture workflow guide\n\nThe user has provided the following instruction alongside the skill invocation: fix the parser";
+    let effects = fork_effects(
+        &mut app,
+        &Call::Branch {
+            through_message_id: None,
+            text: routed.into(),
+            attachments_omitted: false,
+        },
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [AppEffect::ClearSession {
+            skip_detach: false,
+            ..
+        }]
+    ));
+    assert_eq!(
+        app.fork_prefill
+            .as_ref()
+            .map(|prefill| prefill.text.as_str()),
+        Some("fix the parser")
+    );
+    assert!(app.switching);
+    assert!(app.session_action);
+
+    let overlap = update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("/clear".into())),
+    );
+    assert!(
+        !overlap
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::ClearSession { .. })),
+        "an overlapping /clear must be refused while oldest-prompt fork is in flight"
+    );
+    assert_eq!(
+        app.fork_prefill
+            .as_ref()
+            .map(|prefill| prefill.text.as_str()),
+        Some("fix the parser"),
+        "the refused /clear must not clear fork_prefill"
+    );
+
+    let _ = update(
+        &mut app,
+        AppMessage::SessionCleared(talaria_app::app::SessionCleared::Skipped),
+    );
+    assert!(!app.switching);
+    assert!(!app.session_action);
+    assert_eq!(app.fork_prefill, None);
 }

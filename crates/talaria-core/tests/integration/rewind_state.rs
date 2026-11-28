@@ -880,6 +880,86 @@ fn actions_depend_on_checkpoints() {
 }
 
 #[test]
+fn fork_key_on_actions_asks_for_a_branch() {
+    let (mut state, lines) = actions_for(vec![user(1, "first"), user(2, "second")], off(), 0);
+    let at = |needle: &str| {
+        lines
+            .iter()
+            .position(|line| line.text.contains(needle))
+            .unwrap_or_else(|| panic!("no line with {needle:?} in {lines:?}"))
+    };
+    let rewind = at("Rewind the conversation to before this prompt");
+    let fork = at("b  Fork a new session from before this prompt");
+    let files = at("Restore files: checkpoints are off");
+    assert!(
+        rewind < fork && fork < files,
+        "the fork line sits after the rewind line and before the files line: {lines:?}"
+    );
+
+    let effects = key(&mut state, RewindKey::Branch);
+    let ticket = expect_only_call(
+        &effects,
+        Call::Branch {
+            through_message_id: Some(1),
+            text: "second".into(),
+            attachments_omitted: false,
+        },
+    );
+    assert_eq!(ticket, 0, "a fork is not an awaited call");
+    assert!(!state.is_open());
+    assert_eq!(state.screen(), RewindScreen::Closed);
+
+    let (mut state, _) = actions_for(vec![user(1, "first"), user(2, "second")], off(), 0);
+    let effects = key(&mut state, RewindKey::F);
+    assert!(
+        !effects.iter().any(|effect| matches!(
+            effect,
+            RewindEffect::Call {
+                call: Call::Branch { .. },
+                ..
+            }
+        )),
+        "f never forks: {effects:?}"
+    );
+    assert!(state.is_open());
+    assert_eq!(state.screen(), RewindScreen::Actions);
+}
+
+#[test]
+fn changed_prompt_keeps_its_through_id() {
+    let messages = vec![
+        user(1, "first"),
+        assistant(2),
+        user(3, "second"),
+        assistant(4),
+    ];
+    let mut state = RewindState::default();
+    to_confirm(
+        &mut state,
+        RewindKey::C,
+        read(2, 1, messages.clone()),
+        off(),
+        0,
+    );
+    let mut grown = messages;
+    grown.push(assistant(5));
+    grown.push(assistant(6));
+    confirm_read(&mut state, read(3, 2, grown));
+    assert_eq!(state.screen(), RewindScreen::Confirm);
+
+    assert!(key(&mut state, RewindKey::Esc).is_empty());
+    let effects = key(&mut state, RewindKey::Branch);
+    expect_only_call(
+        &effects,
+        Call::Branch {
+            through_message_id: Some(2),
+            text: "second".into(),
+            attachments_omitted: false,
+        },
+    );
+}
+
+#[test]
 fn confirm_rewind_emits_one_fenced_mutation() {
     let mut state = RewindState::default();
     let messages = vec![user(5, "prompt")];

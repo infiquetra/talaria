@@ -27,6 +27,8 @@ pub struct RewindTurn {
     pub edits_files: bool,
     /// Active rows whose id is at least this prompt's, this prompt included.
     pub later_count: usize,
+    /// The stored row just before this prompt. `None` for the oldest prompt.
+    pub through_message_id: Option<i64>,
 }
 
 /// Markers a compaction carrier row holds.
@@ -42,6 +44,28 @@ const TEXT_PART_TYPES: [&str; 3] = ["input_text", "output_text", "text"];
 /// Tool names that change files.
 const EDIT_TOOLS: [&str; 2] = ["write_file", "patch"];
 
+/// The id of the nearest kept row before the prompt row `prompt_row_id`, whatever its role.
+///
+/// Archived rows and rows without a positive integer id are skipped. `None` when the prompt is
+/// the first kept row or is not in `messages`.
+#[must_use]
+pub fn through_row_before(messages: &[Value], prompt_row_id: i64) -> Option<i64> {
+    let mut previous = None;
+    for row in messages {
+        if is_archived(row) {
+            continue;
+        }
+        let Some(row_id) = integer_row_id(row).filter(|id| *id > 0) else {
+            continue;
+        };
+        if row_id == prompt_row_id {
+            return previous;
+        }
+        previous = Some(row_id);
+    }
+    None
+}
+
 /// Eligible user prompts, newest first.
 #[must_use]
 pub fn rewind_turns(messages: &[Value]) -> Vec<RewindTurn> {
@@ -55,12 +79,15 @@ pub fn rewind_turns(messages: &[Value]) -> Vec<RewindTurn> {
 
     let mut turns: Vec<RewindTurn> = Vec::new();
     let mut newest_time: Option<f64> = None;
+    let mut previous_valid_row_id: Option<i64> = None;
     for row in messages {
         if is_archived(row) {
             continue;
         }
+        let valid_row_id = integer_row_id(row).filter(|id| *id > 0);
         let timestamp = row.get("timestamp").and_then(Value::as_f64);
         if let Some(mut turn) = turn_from_row(row, timestamp, newest_time, &active_ids) {
+            turn.through_message_id = previous_valid_row_id;
             if let Some(previous) = turns.last_mut() {
                 previous.window_end = timestamp.map(floor_seconds);
             }
@@ -70,6 +97,9 @@ pub fn rewind_turns(messages: &[Value]) -> Vec<RewindTurn> {
             && let Some(current) = turns.last_mut()
         {
             current.edits_files = true;
+        }
+        if let Some(id) = valid_row_id {
+            previous_valid_row_id = Some(id);
         }
         if let Some(time) = timestamp {
             newest_time = Some(newest_time.map_or(time, |newest| newest.max(time)));
@@ -197,6 +227,7 @@ fn turn_from_row(
         window_end: None,
         edits_files: false,
         later_count: at_or_after,
+        through_message_id: None,
     })
 }
 
