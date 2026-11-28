@@ -56,7 +56,7 @@ fn selected_queue_item_beats_the_row_and_the_foreground() {
     let selected = queue_item("queue-old", 1, true, FleetBackend::Acp);
     let newest = queue_item("queue-new", 9, false, FleetBackend::Hermes);
     let rows = vec![
-        row("selected-row", FleetBackend::Herdr, true, false, false),
+        row("selected-row", FleetBackend::Hermes, true, false, false),
         row("foreground", FleetBackend::Hermes, false, true, false),
         row("working", FleetBackend::Hermes, false, false, true),
     ];
@@ -72,20 +72,20 @@ fn selected_queue_item_beats_the_row_and_the_foreground() {
 fn selected_row_beats_the_foreground_when_nothing_in_the_queue_is_selected() {
     let newest = queue_item("queue-new", 9, false, FleetBackend::Hermes);
     let rows = vec![
-        row("selected-row", FleetBackend::Herdr, true, false, false),
+        row("selected-row", FleetBackend::Hermes, true, false, false),
         row("foreground", FleetBackend::Hermes, false, true, false),
         row("working", FleetBackend::Hermes, false, false, true),
     ];
     let bound = bind_record_target(&[newest], &rows).expect("the selected fleet row is the target");
     assert_eq!(bound.key.session_id, "selected-row");
-    assert_eq!(bound.backend, FleetBackend::Herdr);
+    assert_eq!(bound.backend, FleetBackend::Hermes);
     assert!(bound.need.is_none());
 }
 
 #[test]
 fn foreground_session_is_the_last_resort() {
     let rows = vec![
-        row("working", FleetBackend::Herdr, false, false, true),
+        row("working", FleetBackend::Hermes, false, false, true),
         row("foreground", FleetBackend::Hermes, false, true, false),
     ];
     let bound = bind_record_target(&[], &rows).expect("the foreground session is the target");
@@ -112,7 +112,7 @@ fn focus_change_keeps_the_transcript_on_the_recorded_row() {
 fn direct_submit_still_holds_a_fleet_transcript_for_enter() {
     let recorded = RecordTarget {
         key: key("recorded"),
-        backend: FleetBackend::Herdr,
+        backend: FleetBackend::Hermes,
         need: None,
     };
     let placement = place_transcript(&recorded, false, "ship the fix", SubmitMode::Direct);

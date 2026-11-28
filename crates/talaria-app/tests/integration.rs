@@ -29,9 +29,6 @@ mod gh_stub;
 #[path = "support/git_fixture.rs"]
 mod git_fixture;
 
-#[path = "support/herdr_harness.rs"]
-mod herdr_harness;
-
 #[path = "../../talaria-workflow/tests/support/lines.rs"]
 mod lines;
 
@@ -201,14 +198,8 @@ mod headless_stream;
 #[path = "integration/headless_wire.rs"]
 mod headless_wire;
 
-#[path = "integration/herdr.rs"]
-mod herdr;
-
 #[path = "integration/herdr_config.rs"]
 mod herdr_config;
-
-#[path = "integration/herdr_wire.rs"]
-mod herdr_wire;
 
 #[path = "integration/launch_machine.rs"]
 mod launch_machine;
