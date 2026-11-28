@@ -471,6 +471,143 @@ fn duplicate_message_complete_is_ignored() {
 }
 
 #[test]
+fn error_with_partial_keeps_the_answer_text() {
+    // The first partial-error completion shared by runs 1 to 3.
+    let partial_error_complete = |seq: u64| {
+        ev(
+            seq,
+            "message.complete",
+            json!({
+                "status": "error",
+                "partial": true,
+                "text": "kept answer",
+                "error": "provider refused",
+                "warning": "watch the limit"
+            }),
+        )
+    };
+
+    // Run 1: no cell yet. The partial text becomes the reply; a later complete is ignored.
+    let (state, _) = run(vec![
+        start(),
+        partial_error_complete(2),
+        ev(
+            3,
+            "message.complete",
+            json!({"status": "error", "partial": true, "text": "other", "error": "later"}),
+        ),
+    ]);
+    let replies = assistants(&state);
+    assert_eq!(replies.len(), 1, "run 1 (no cell yet): one assistant cell");
+    assert_eq!(replies[0].text, "kept answer", "run 1: reply text");
+    assert!(replies[0].sealed, "run 1: reply is sealed");
+    assert!(!replies[0].interim, "run 1: reply is not interim");
+    assert!(!replies[0].transformed, "run 1: reply is not transformed");
+    assert_eq!(
+        state.turn(),
+        &TurnState::Finished(TurnOutcome::Failed),
+        "run 1: turn outcome"
+    );
+    let notes = notices(&state);
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.kind == NoticeKind::Error && note.text == "provider refused"),
+        "run 1: error notice"
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.kind == NoticeKind::Warning && note.text == "watch the limit"),
+        "run 1: warning notice"
+    );
+    assert!(
+        notes.iter().all(|note| note.text != "later"),
+        "run 1: the later complete leaves no notice"
+    );
+    assert_eq!(
+        order(&state),
+        vec![
+            "reply kept answer".to_string(),
+            "notice provider refused".to_string(),
+            "notice watch the limit".to_string(),
+        ],
+        "run 1: cell order is reply, error notice, warning notice"
+    );
+
+    // Run 2: an open cell already holds the same text; the text is not appended again.
+    let (open, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "kept answer"})),
+        partial_error_complete(3),
+    ]);
+    assert_eq!(
+        assistant_text(&open),
+        vec!["kept answer".to_string()],
+        "run 2 (open cell, same text): one assistant cell"
+    );
+
+    // Run 3: a sealed cell already holds the text; no second cell is added.
+    let (sealed, _) = run(vec![
+        start(),
+        ev(2, "message.delta", json!({"text": "kept answer"})),
+        ev(3, "message.delta", json!({"text": null})),
+        partial_error_complete(4),
+    ]);
+    assert_eq!(
+        assistant_text(&sealed),
+        vec!["kept answer".to_string()],
+        "run 3 (sealed cell): one assistant cell"
+    );
+
+    // Run 4: an earlier turn already has a reply; the failed turn adds its own.
+    let (earlier, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "message.complete",
+            json!({"status": "complete", "text": "old"}),
+        ),
+        ev(3, "message.start", json!({})),
+        ev(
+            4,
+            "message.complete",
+            json!({
+                "status": "error",
+                "partial": true,
+                "text": "kept answer",
+                "error": "provider refused"
+            }),
+        ),
+    ]);
+    assert_eq!(
+        assistant_text(&earlier),
+        vec!["old".to_string(), "kept answer".to_string()],
+        "run 4 (earlier turn): both replies in order"
+    );
+
+    // Run 5: an error that is not marked partial never becomes the reply.
+    let (plain, _) = run(vec![
+        start(),
+        ev(
+            2,
+            "message.complete",
+            json!({"status": "error", "text": "model said", "error": "provider refused"}),
+        ),
+    ]);
+    assert!(
+        assistants(&plain).is_empty(),
+        "run 5 (not partial, no cell): no assistant cell"
+    );
+    assert!(
+        notices(&plain)
+            .iter()
+            .any(|note| note.kind == NoticeKind::Error && note.text == "provider refused"),
+        "run 5: error notice"
+    );
+}
+
+#[test]
 fn interrupt_latch_suppresses_late_writes_until_next_start() {
     let events = vec![
         start(),
