@@ -593,6 +593,37 @@ fn goal_first_seen_finished_after_attach_emits_once() {
         updated(SESSION, goal_completion_snapshot("done", "r2")),
     );
     assert_none("arm 5", "done at r2 after the note", &notices);
+
+    // After the note settled the goal, clearing and re-delivering the same done goal stays quiet.
+    let notices = step(&mut state, updated(SESSION, goal_absent_snapshot("r3")));
+    assert_none("arm 5", "goal null at r3 after note-settled done", &notices);
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r4")),
+    );
+    assert_none("arm 5", "same done goal at r4 after clear", &notices);
+
+    // Active goal A at attach -> Hermes completion note -> first snapshot shows goal B done:
+    // the note already announced completion, so B is not announced a second time (nor after clear).
+    let mut active_a = full_snapshot();
+    active_a["goal"]["title"] = json!("Keep the lights on");
+    active_a["goal"]["status"] = json!("active");
+    active_a["revision"] = json!("r1");
+    let mut state = attach_with(&active_a);
+    let notices = step(&mut state, goal_completion_note());
+    assert_eq!(notices.len(), 1, "active-A note: expected one: {notices:?}");
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r2")),
+    );
+    assert_none("active-A note", "done B at r2 after note", &notices);
+    let notices = step(&mut state, updated(SESSION, goal_absent_snapshot("r3")));
+    assert_none("active-A note", "goal null at r3", &notices);
+    let notices = step(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r4")),
+    );
+    assert_none("active-A note", "done B at r4 after clear", &notices);
 }
 
 #[test]

@@ -417,10 +417,15 @@ impl AutomationState {
         });
         if !continuing {
             let identity = (goal.created_ms, goal.title.clone());
+            let note_pending = self.pending_goal_completion
+                || self
+                    .goal_progress
+                    .as_ref()
+                    .is_some_and(|held| held.shown && held.completion_noted);
             // A goal first seen finished is new only against a known attach baseline.
             let announce = !visible
                 && self.attach_read_succeeded
-                && !self.pending_goal_completion
+                && !note_pending
                 && self.settled_goal.as_ref() != Some(&identity);
             self.goal_progress = Some(GoalProgress {
                 created_ms: goal.created_ms,
@@ -429,6 +434,10 @@ impl AutomationState {
                 completion_noted: !visible || self.pending_goal_completion,
             });
             self.pending_goal_completion = false;
+            if !visible && note_pending {
+                self.settled_goal = Some(identity);
+                return None;
+            }
             if !announce {
                 return None;
             }
@@ -436,11 +445,14 @@ impl AutomationState {
             return Some(goal_completion_text(goal));
         }
         let held = self.goal_progress.as_mut()?;
-        let completed = held.shown && !visible && !held.completion_noted;
+        let transitioned_finished = held.shown && !visible;
+        let completed = transitioned_finished && !held.completion_noted;
         held.shown = visible;
+        if transitioned_finished {
+            self.settled_goal = Some((goal.created_ms, goal.title.clone()));
+        }
         if completed {
             held.completion_noted = true;
-            self.settled_goal = Some((goal.created_ms, goal.title.clone()));
             Some(goal_completion_text(goal))
         } else {
             None
