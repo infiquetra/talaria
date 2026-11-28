@@ -18,9 +18,9 @@ pub mod tool_view;
 pub mod usage;
 
 pub use cell::{
-    AnswerRefusal, AssistantCell, Cell, NoticeCell, NoticeKind, PromptCell, PromptKind,
+    AnswerRefusal, AssistantCell, Cell, CopyBelow, NoticeCell, NoticeKind, PromptCell, PromptKind,
     PromptState, ReasoningCell, ReplyMiss, Settlement, ToolCell, ToolProgress, ToolStatus,
-    UserCell, assistant_reply, is_answerable, recovered_limit_seconds,
+    UserCell, assistant_reply, copy_below, is_answerable, recovered_limit_seconds,
 };
 pub use effect::Effect;
 pub use event::Event;

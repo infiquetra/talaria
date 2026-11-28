@@ -714,6 +714,7 @@ impl Composer {
             | Action::PagerPrevMatch
             | Action::PagerDetails
             | Action::PagerClose
+            | Action::PagerCopy
             | Action::ToggleTasks
             | Action::FocusHelp
             | Action::LayoutPanel

@@ -139,6 +139,7 @@ Typing `/` in the composer opens the slash command palette under the composer. A
 | Pager prev match | Shift+N | Go to the previous match. | `pager_prev_match` |
 | Pager details | T | Toggle details. | `pager_details` |
 | Pager close | Q | Close this view. | `pager_close` |
+| Pager copy | Y | Copy the finished reply at or below the top of the pager. | `pager_copy` |
 
 ## Queue selection keys
 

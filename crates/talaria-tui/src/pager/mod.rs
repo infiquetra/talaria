@@ -136,6 +136,8 @@ pub enum PagerAction {
     Escape,
     /// Close.
     Close,
+    /// Copy the finished reply at or below the top cell.
+    Copy,
 }
 
 /// One edit to the search prompt.
@@ -163,6 +165,12 @@ pub enum PagerOutcome {
     },
     /// The transcript closed. The agent was not interrupted.
     Close,
+    /// Copy the finished reply at or below cell `index`, the cell at the top. The transcript
+    /// stays open.
+    Copy {
+        /// The cell at the top of the transcript.
+        index: usize,
+    },
 }
 
 /// The state of the search prompt while it is open.
@@ -282,6 +290,9 @@ impl Pager {
         }
         match action {
             PagerAction::Close => PagerOutcome::Close,
+            PagerAction::Copy => PagerOutcome::Copy {
+                index: self.cell_index,
+            },
             PagerAction::Escape => {
                 if self.confirmed.is_some() {
                     self.confirmed = None;
@@ -407,6 +418,11 @@ impl Pager {
                 }
             }
         }
+    }
+
+    /// Show `sentence` in the footer until the next search.
+    pub fn show_notice(&mut self, sentence: &str) {
+        self.notice = Some(sentence.to_owned());
     }
 
     /// A search query is being typed.

@@ -740,6 +740,8 @@ pub enum Action {
     PagerDetails,
     /// Close the transcript.
     PagerClose,
+    /// Copy the finished reply at or below the top of the transcript.
+    PagerCopy,
     /// Open or close the task checklist drawer.
     ToggleTasks,
     /// Show keys for the current conversation focus.
@@ -1027,7 +1029,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 216] = [
+    pub const ALL: [Self; 217] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1099,6 +1101,7 @@ impl Action {
         Self::PagerPrevMatch,
         Self::PagerDetails,
         Self::PagerClose,
+        Self::PagerCopy,
         Self::ToggleTasks,
         Self::FocusHelp,
         Self::LayoutPanel,
@@ -1322,6 +1325,7 @@ impl Action {
             Self::PagerPrevMatch => "pager_prev_match",
             Self::PagerDetails => "pager_details",
             Self::PagerClose => "pager_close",
+            Self::PagerCopy => "pager_copy",
             Self::ToggleTasks => "toggle_tasks",
             Self::FocusHelp => "focus_help",
             Self::LayoutPanel => "layout_panel",
@@ -1568,7 +1572,8 @@ impl Action {
             | Self::PagerNextMatch
             | Self::PagerPrevMatch
             | Self::PagerDetails
-            | Self::PagerClose => KeyContext::Pager,
+            | Self::PagerClose
+            | Self::PagerCopy => KeyContext::Pager,
             Self::QueueEdit
             | Self::QueueRemove
             | Self::QueueSteer
@@ -1782,6 +1787,7 @@ impl Action {
             Self::PagerPrevMatch => &["shift+n"],
             Self::PagerDetails => &["t"],
             Self::PagerClose => &["q"],
+            Self::PagerCopy => &["y"],
             Self::ToggleTasks => &["ctrl+t"],
             Self::FocusHelp => &["f3"],
             Self::LayoutPanel => &["alt+d"],
